@@ -550,10 +550,13 @@ export class Hub {
     const user = conn.user;
     const w = this.workspaceFor(conn, msg.workspaceId);
     if (!s || !user || !w || !canWrite(this.roleOf(w, user.id))) {
-      return this.deny(conn, "セッションに出すには共同編集の権限が必要です");
+      this.deny(conn, "セッションに出すには共同編集の権限が必要です");
+      return;
     }
-    if (!looksLikeSnapshot(msg.snapshot, msg.outputId))
-      return this.deny(conn, "制作データが壊れています");
+    if (!looksLikeSnapshot(msg.snapshot, msg.outputId)) {
+      this.deny(conn, "制作データが壊れています");
+      return;
+    }
     s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
     const p: Placement = {
       id: shortId("pl"),
