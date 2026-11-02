@@ -74,6 +74,32 @@ describe("Simulation：銃と的のサンプル", () => {
   });
 });
 
+describe("Simulation：ホストの引き継ぎ", () => {
+  it("別の Simulation に状態を移しても、続きから動く", async () => {
+    sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "a" });
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    const snap = sim.world.snapshot();
+    const names = Object.fromEntries(
+      sim.world.entityIds().map((id) => [id, sim?.nameOf(id) ?? id]),
+    );
+    const time = sim.time;
+    sim.dispose();
+
+    sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "b" });
+    sim.restore(snap, names, time);
+    expect(sim.world.get("ent_target2", "ks_target")?.f_hp).toBe(2);
+    expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(11);
+    expect(sim.time).toBeCloseTo(1 / 60);
+    // 引き継いだあとも撃てて、当たる（物理ワールドは作り直される）
+    for (let t = 0; t < 15; t++) sim.step(1 / 60);
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_target2", "ks_target")?.f_hp).toBe(1);
+    expect(sim.nameOf("ent_target2")).toBe("的2");
+  });
+});
+
 function project(code: string, extra: Partial<ProjectSnapshot> = {}): ProjectSnapshot {
   const p = emptyProject("t");
   p.kokostates = [

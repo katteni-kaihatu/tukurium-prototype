@@ -2,6 +2,7 @@ import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
 import { newId, type OutputDef } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
+import { useCanEdit, useProject } from "./hooks";
 import { parseQuery } from "./queryInfo";
 import { type Selection, useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -75,10 +76,12 @@ function NameRow(props: {
 // ---------------------------------------------------------------------------
 
 function OutputProperties({ id }: { id: string }) {
-  const { project, mode } = useWorkspace();
+  useWorkspace((st) => st.rev);
+  const project = useProject();
+  const canEdit = useCanEdit();
   const output = project.output(id);
   if (!output) return <p className={ui.empty}>アウトプットが見つかりません</p>;
-  const editing = mode === "edit";
+  const editing = canEdit;
   const systems = project.systems();
   const update = (patch: Partial<OutputDef>) => project.updateOutput({ ...output, ...patch });
   const move = (i: number, d: -1 | 1) => {
@@ -214,11 +217,13 @@ function OutputProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function KokoDefProperties({ id }: { id: string }) {
-  const { project, mode, select } = useWorkspace();
+  const { select } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   const { error, safely } = useSafe();
   const def = project.registry().get(id);
   if (!def) return <p className={ui.empty}>KokoState が見つかりません</p>;
-  const editing = mode === "edit" && !def.builtin;
+  const editing = canEdit && !def.builtin;
   const save = (next: KokoStateDef) => safely(() => project.updateKokoState(next));
   const setField = (fid: string, patch: Partial<FieldDef>) =>
     save({
@@ -405,10 +410,12 @@ function KokoDefProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function SystemProperties({ id }: { id: string }) {
-  const { project, mode, openSystem, select, systemStatus } = useWorkspace();
+  const { openSystem, select, systemStatus } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   const def = project.system(id);
   if (!def) return <p className={ui.empty}>System が見つかりません</p>;
-  const editing = mode === "edit";
+  const editing = canEdit;
   const q = parseQuery(project.code(id)?.toString() ?? "");
   const usedBy = project.outputs().filter((o) => o.systems.some((s) => s.id === id));
   const status = systemStatus.find((s) => s.id === id);
@@ -514,10 +521,12 @@ function SystemProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function MaterialProperties({ id }: { id: string }) {
-  const { project, mode, select } = useWorkspace();
+  const { select } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   const m = project.material(id);
   if (!m) return <p className={ui.empty}>マテリアルが見つかりません</p>;
-  const editing = mode === "edit";
+  const editing = canEdit;
   const users = project.entities().filter((e) => e.states["builtin.Mesh"]?.material === id);
   const slider = (key: "roughness" | "metalness", label: string) => (
     <div className={ui.row}>

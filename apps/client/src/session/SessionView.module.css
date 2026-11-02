@@ -106,3 +106,27 @@
   border: 1px solid var(--c-line);
   background: #fff;
 }
+
+.closed {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 28px;
+  border-radius: 16px;
+  font-size: 14px;
+}
+
+.closed p {
+  margin: 0;
+}
+
+.closed a {
+  color: var(--c-brand);
+  font-weight: 700;
+}

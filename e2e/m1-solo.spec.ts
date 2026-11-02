@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { aimAt, fire, runtimeState } from "./helpers";
+import { aimAt, createSessionAndWorkspace, fire, runtimeState } from "./helpers";
 
 // M1 の完了条件：一人で、独自の KokoState と System を作り、Play で撃って当てられる（シナリオ 4）
 
@@ -66,11 +66,8 @@ async function addKoko(page: Page, name: string) {
 
 test("空のプロジェクトから銃と的を作り、Play で撃って当てる", async ({ page }) => {
   page.on("dialog", (d) => d.accept());
-  await page.goto("/");
+  await createSessionAndWorkspace(page, "れにうむ", "empty");
   const main = panel(page, "ワークスペース");
-  await main.getByText("ログ・保存").click();
-  await main.getByRole("button", { name: "空にする" }).click();
-  await main.getByText("ログ・保存").click(); // 折りたたんで Inspector を隠さないようにする
 
   // 独自の KokoState
   await newKokoState(page, "Gun", "ammo", "5");
@@ -96,7 +93,7 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   // System を書いてアウトプットに入れる
   await newScript(page, SHOOT);
   await newScript(page, TARGET);
-  await insp.getByRole("button", { name: /新しいプロジェクト/ }).click();
+  await insp.getByRole("button", { name: /新しいワークスペース/ }).click();
   const add = insp.getByLabel("System を追加");
   await add.selectOption({ label: "NewSystem1" });
   await add.selectOption({ label: "NewSystem2" });
@@ -107,15 +104,15 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   await expect(main.getByText("Play mode")).toBeVisible();
   await aimAt(page, [0, 1.5, -4]);
   await fire(page);
-  expect(await runtimeState(page, "的", "Target")).toEqual({ hp: 1 });
-  expect(await runtimeState(page, "銃", "Gun")).toEqual({ ammo: 4 });
+  await expect.poll(() => runtimeState(page, "的", "Target")).toEqual({ hp: 1 });
+  await expect.poll(() => runtimeState(page, "銃", "Gun")).toEqual({ ammo: 4 });
   await expect(main.locator("li", { hasText: "hit 1" })).toHaveCount(1);
 
   // 外すと当たらない
   await aimAt(page, [0, 10, -4]);
   await fire(page);
+  await expect.poll(() => runtimeState(page, "銃", "Gun")).toEqual({ ammo: 3 });
   expect(await runtimeState(page, "的", "Target")).toEqual({ hp: 1 });
-  expect(await runtimeState(page, "銃", "Gun")).toEqual({ ammo: 3 });
 
   // Stop すると制作データ（hp: 2）に戻る
   await main.getByRole("button", { name: /Stop/ }).click();

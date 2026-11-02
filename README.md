@@ -33,24 +33,23 @@ pnpm dev
 
 ### 周辺サービス（PostgreSQL・S3 互換ストレージ）
 
-M2 以降でサーバーが DB とストレージを使うようになったら、開発用の compose で起動する（Docker が必要）。
+サーバーの保存先（PostgreSQL）や、M3 以降の素材の置き場（S3 互換）を手元で使うときは、開発用の compose で起動する（Docker が必要）。
 
 ```bash
 pnpm services:up
 ```
 
-PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`localhost:8333`）が起動する。接続先は `.env.development.example` を参照。止めるときは `pnpm services:down`。
+PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`localhost:8333`）が起動する。接続先は `.env.development.example` を参照し、`apps/server/.env` にコピーするとサーバーが使う（`DATABASE_URL` がなければメモリに保存し、再起動で消える）。止めるときは `pnpm services:down`。
 
-## いまできること（M1 まで）
+## いまできること（M2 まで）
 
-- 3D 空間を FPS 視点で歩く。他の参加者の位置が見える
-- ワークスペースのパネル（ワークスペース・Inspector・Resources・コード）。ピンで「画面に固定」と「空間に置く」を切り替えられる
-- 独自の KokoState（フィールドと初期値）を作り、Entity に付ける。プロシージャル形状・マテリアル
-- JavaScript で System を書く（Query の With / Without、`onUpdate` / `onInput` / `onEvent` / `onCollision`）
-- Play / Pause / Stop。クリックで `fire`、R で `reload`、E で `use` を入力として渡す
-- 同梱サンプル「銃と的」（ワークスペースパネルの「ログ・保存」から読み込み直せる）
-
-制作データはまだブラウザの中に保存される（共同編集・サーバー保存は M2）。
+- ホームでセッションを作る・開いているセッションに参加する（URL を共有すれば同じセッションに入れる）。持ち主が閉じるとセッションはなくなる
+- 3D 空間を FPS 視点で歩く。他の参加者の位置と、その人が開いているパネル（権限に応じた要約）が見える
+- セッションの中でワークスペースを作り、複数人で同時に編集する（コードのカーソル共有を含む）。作業内容はサーバーに自動保存
+- 権限：閲覧・共同編集・管理。参加者の初期値は管理者が設定（既定は共同編集、非公開も可）
+- 再生はホスト（管理者）が実行して全員に共有。ホストが抜けたら別の管理者が引き継ぐ
+- 独自の KokoState、JavaScript の System（`onUpdate` / `onInput` / `onEvent` / `onCollision`）、プロシージャル形状・マテリアル
+- 同梱サンプル「銃と的」
 
 ## 構成
 

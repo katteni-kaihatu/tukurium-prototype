@@ -3,6 +3,7 @@ import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/re
 import { useState } from "react";
 import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
+import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
 import { parseQuery } from "./queryInfo";
 import { useWorkspace } from "./store";
@@ -42,18 +43,18 @@ interface TreeNode {
 }
 
 function Hierarchy() {
-  const { project, outputId, selection, select, mode, sim, viewPoint } = useWorkspace();
+  const { outputId, selection, select, mode, runtime, viewPoint } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
   const output = project.output(outputId);
-  const editing = mode === "edit";
+  const editing = canEdit;
+  const rt = mode !== "edit" ? runtime() : null;
 
-  const nodes: TreeNode[] =
-    !editing && sim
-      ? sim.world
-          .entityIds()
-          .map((id) => ({ id, name: sim.nameOf(id), parent: sim.world.parentOf(id) }))
-      : project.entities(outputId).map((e) => ({ id: e.id, name: e.name, parent: e.parent }));
+  const nodes: TreeNode[] = rt
+    ? rt.world.entityIds().map((id) => ({ id, name: rt.nameOf(id), parent: rt.world.parentOf(id) }))
+    : project.entities(outputId).map((e) => ({ id: e.id, name: e.name, parent: e.parent }));
 
   const selectedEntity = selection?.kind === "entity" ? selection.id : null;
 
@@ -194,21 +195,23 @@ function Properties() {
 }
 
 function EntityProperties({ id }: { id: EntityId }) {
-  const { project, mode, sim, stop, outputId } = useWorkspace();
+  const { mode, runtime, stop, outputId } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [picker, setPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const editing = mode === "edit";
+  const editing = canEdit;
   const registry = project.registry();
 
   // Edit：制作データ、Play：実行中の World
   let entity: Pick<EntityDef, "id" | "name" | "parent" | "states"> | undefined;
-  if (!editing && sim) {
-    if (sim.world.has(id)) {
+  const rt = mode !== "edit" ? runtime() : null;
+  if (rt) {
+    if (rt.world.has(id)) {
       const states: Record<string, KokoStateValues> = {};
-      for (const k of sim.world.statesOf(id))
-        states[k] = structuredClone(sim.world.get(id, k) ?? {});
-      entity = { id, name: sim.nameOf(id), parent: sim.world.parentOf(id), states };
+      for (const k of rt.world.statesOf(id)) states[k] = structuredClone(rt.world.get(id, k) ?? {});
+      entity = { id, name: rt.nameOf(id), parent: rt.world.parentOf(id), states };
     }
   } else {
     entity = project.entity(id);
@@ -251,7 +254,7 @@ function EntityProperties({ id }: { id: EntityId }) {
 
   return (
     <>
-      {!editing && (
+      {mode !== "edit" && (
         <div className={ui.section}>
           <p className={ui.notice}>
             Play mode 中は編集できません。Play mode 中の出来事はプロジェクトに残りません。

@@ -67,6 +67,14 @@ export class Avatars {
     this.avatars.delete(id);
   }
 
+  /** 参加者の（表示上の）位置と向き。いなければ undefined */
+  poseOf(id: string): { position: [number, number, number]; yaw: number } | undefined {
+    const a = this.avatars.get(id);
+    if (!a) return undefined;
+    const p = a.root.position;
+    return { position: [p.x, p.y, p.z], yaw: a.root.rotation.y };
+  }
+
   /** 表示中の参加者の位置（テスト・デバッグ用） */
   positions(): Record<string, [number, number, number]> {
     const out: Record<string, [number, number, number]> = {};

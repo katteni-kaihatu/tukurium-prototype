@@ -6,7 +6,7 @@ import type {
   KokoStateRegistry,
   Vec3,
 } from "@tukurium/eks";
-import { World } from "@tukurium/eks";
+import { World, type WorldSnapshot } from "@tukurium/eks";
 import { buildRegistry, type ProjectSnapshot } from "@tukurium/repo-model";
 import {
   type HostCallContext,
@@ -105,7 +105,7 @@ export class Simulation {
 
   private constructor(
     private readonly sandbox: ScriptSandbox,
-    private readonly physics: Physics,
+    private physics: Physics,
     registry: KokoStateRegistry,
     private readonly options: SimulationOptions,
   ) {
@@ -150,6 +150,18 @@ export class Simulation {
 
   nameOf(id: EntityId): string {
     return this.names.get(id) ?? id;
+  }
+
+  /**
+   * 別のホストから引き継いだ状態にする（ADR 0002）。物理ワールドは EKS の値（Transform・速度）から作り直す。
+   */
+  restore(world: WorldSnapshot, names: Record<string, string>, time: number): void {
+    this.world.restore(world);
+    this.names.clear();
+    for (const [id, n] of Object.entries(names)) this.names.set(id, n);
+    this.time = time;
+    this.physics.dispose();
+    this.physics = new Physics();
   }
 
   input(ev: InputEvent): void {

@@ -1,14 +1,18 @@
-import type { World } from "@tukurium/eks";
-import type { MaterialDef } from "@tukurium/repo-model";
-import { buildWorld } from "@tukurium/runtime";
+import { KokoStateRegistry, World } from "@tukurium/eks";
+import type { MaterialDef, ProjectDoc } from "@tukurium/repo-model";
+import { buildWorld, type Simulation } from "@tukurium/runtime";
 import * as THREE from "three";
+import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import type { SessionEngine } from "../session/SessionEngine";
-import { useWorkspace } from "./store";
+import { sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
 const UI_REFRESH_SEC = 0.2;
+/** ホストが実行状態を配る間隔 */
+const FRAME_SEC = 1 / 15;
+const EMPTY_WORLD = new World(new KokoStateRegistry());
 
 /** キー → 入力の動作名（スクリプトの onInput で受け取る） */
 const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF: "alt" };
@@ -16,7 +20,8 @@ const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF:
 /**
  * ワークスペースを 3D 空間に映す。
  * - Edit：制作データから組み立てた World を表示。クロスヘアのクリックで Entity を選ぶ。
- * - Play：Simulation を固定ステップで進め、その World を表示。クリックやキーを入力として渡す。
+ * - Play：ホストは Simulation を固定ステップで進めて状態を配り、ほかの人は届いた状態を表示する。
+ *   クリックやキーは入力としてホストへ渡す。
  * 編集空間はアウトプットの物体全体を囲む境界で示す（要件 §6「編集対象の表示」）。
  */
 export class WorkspaceController {
@@ -26,6 +31,9 @@ export class WorkspaceController {
   private readonly raycaster = new THREE.Raycaster();
   private editWorld: World | null = null;
   private editKey = "";
+  private editDoc: ProjectDoc | null = null;
+  private materialsDoc: ProjectDoc | null = null;
+  private frameTimer = 0;
   private materials: MaterialDef[] = [];
   private materialsRev = -1;
   private accumulator = 0;
@@ -67,15 +75,22 @@ export class WorkspaceController {
 
   private update(dt: number): void {
     const ws = useWorkspace.getState();
-    const playing = ws.mode !== "edit" && ws.sim;
+    if (!ws.project || !ws.ready) {
+      this.view.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
+      this.bounds.visible = false;
+      this.selectionBox.visible = false;
+      return;
+    }
     // マテリアルの一覧は制作データが変わったときだけ取り直す
-    if (this.materialsRev !== ws.rev) {
+    if (this.materialsRev !== ws.rev || this.materialsDoc !== ws.project) {
       this.materials = ws.project.materials();
       this.materialsRev = ws.rev;
+      this.materialsDoc = ws.project;
     }
     const materials = this.materials;
 
-    if (playing && ws.sim) {
+    if (ws.mode !== "edit" && ws.sim) {
+      // ホスト：実行して、状態を配る
       if (ws.mode === "play") {
         this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS_PER_FRAME);
         while (this.accumulator >= STEP) {
@@ -84,18 +99,20 @@ export class WorkspaceController {
         }
       }
       this.view.sync(ws.sim.world, { materials, holdCamera: this.engine.camera });
-      this.uiTimer += dt;
-      if (this.uiTimer > UI_REFRESH_SEC) {
-        this.uiTimer = 0;
-        useWorkspace.setState((s) => ({
-          simRev: s.simRev + 1,
-          systemStatus: ws.sim?.systemStatus() ?? [],
-        }));
+      this.frameTimer += dt;
+      if (this.frameTimer > FRAME_SEC) {
+        this.frameTimer = 0;
+        sendFrame();
       }
+      this.refreshUi(dt, ws.sim.systemStatus());
+    } else if (ws.mode !== "edit" && ws.remote) {
+      // ホスト以外：ホストから届いた状態を表示する
+      this.view.sync(ws.remote.world, { materials, holdCamera: this.engine.camera });
     } else {
       const key = `${ws.rev}:${ws.outputId}`;
-      if (key !== this.editKey || !this.editWorld) {
+      if (key !== this.editKey || !this.editWorld || this.editDoc !== ws.project) {
         this.editKey = key;
+        this.editDoc = ws.project;
         this.editWorld = buildWorld(ws.project.snapshot(), ws.outputId).world;
       }
       this.view.sync(this.editWorld, { materials, holdCamera: null });
@@ -116,6 +133,13 @@ export class WorkspaceController {
     if (sel && ws.mode === "edit") {
       this.selectionBox.setFromObject(sel);
     }
+  }
+
+  private refreshUi(dt: number, status: ReturnType<Simulation["systemStatus"]>): void {
+    this.uiTimer += dt;
+    if (this.uiTimer <= UI_REFRESH_SEC) return;
+    this.uiTimer = 0;
+    useWorkspace.setState((s) => ({ simRev: s.simRev + 1, systemStatus: status }));
   }
 
   /** 視線の先 distance m の位置（編集空間の座標系、高さは 0.5m 以上） */
@@ -139,10 +163,14 @@ export class WorkspaceController {
     return { origin: local.toArray(), direction: localDir.toArray() };
   }
 
+  private me(): string {
+    return useApp.getState().me?.id ?? "me";
+  }
+
   private onPointer(button: number, phase: "down" | "up"): void {
     const ws = useWorkspace.getState();
-    if (ws.mode === "play" && ws.sim && button === 0) {
-      ws.sim.input({ action: "fire", phase, player: "me", ...this.viewRay() });
+    if (ws.mode === "play" && button === 0) {
+      ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
       return;
     }
     if (ws.mode === "edit" && button === 0 && phase === "down") {
@@ -162,11 +190,11 @@ export class WorkspaceController {
       return;
     }
     const action = KEY_ACTIONS[e.code];
-    if (!action || e.repeat || ws.mode !== "play" || !ws.sim) return;
-    ws.sim.input({
+    if (!action || e.repeat || ws.mode !== "play") return;
+    ws.input({
       action,
       phase: e.type === "keydown" ? "down" : "up",
-      player: "me",
+      player: this.me(),
       ...this.viewRay(),
     });
   }
