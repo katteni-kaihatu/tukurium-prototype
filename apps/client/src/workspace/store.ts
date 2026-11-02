@@ -51,6 +51,8 @@ interface WorkspaceState {
   activeSystem: string | null;
   panelsHidden: boolean;
   viewPoint: (() => [number, number, number]) | null;
+  /** セッションに出すときの置き場所：視線の先の床（セッションの座標）と、自分の向き */
+  placePoint: (() => { position: [number, number, number]; yaw: number }) | null;
 
   create(name: string, snap: ProjectSnapshot): void;
   open(workspaceId: string): void;
@@ -110,6 +112,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     activeSystem: null,
     panelsHidden: false,
     viewPoint: null,
+    placePoint: null,
 
     create: (name, snap) => {
       const doc = new ProjectDoc();

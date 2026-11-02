@@ -1,0 +1,102 @@
+import * as THREE from "three";
+import { useApp } from "../app/store";
+import { EntityView } from "../render/EntityView";
+import { useWorkspace } from "../workspace/store";
+import type { SessionEngine } from "./SessionEngine";
+import { sendSessionFrame, useSessionWorld } from "./sessionWorld";
+
+const STEP = 1 / 60;
+const MAX_STEPS_PER_FRAME = 5;
+const FRAME_SEC = 1 / 15;
+const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF: "alt" };
+
+/**
+ * セッションの世界（配置された実体）を表示し、ホストなら実行する。
+ * 入力は、ワークスペースを再生していないときだけセッションの世界へ送る。
+ * ワークスペースを開いて編集しているときのクリックは「選ぶ」なので、
+ * パネルを隠す（Tab）か、ワークスペースを閉じているときに撃てる。
+ */
+export class SessionWorldController {
+  private readonly view = new EntityView();
+  private accumulator = 0;
+  private frameTimer = 0;
+  private uiTimer = 0;
+  private readonly disposers: (() => void)[] = [];
+
+  constructor(private readonly engine: SessionEngine) {
+    engine.scene.add(this.view.root);
+    this.disposers.push(
+      engine.onFrame((dt) => this.update(dt)),
+      engine.onPointer((button, phase) => {
+        if (button === 0 && this.routesHere()) this.input("fire", phase);
+      }),
+    );
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const action = KEY_ACTIONS[e.code];
+      if (!action || e.repeat || !this.routesHere()) return;
+      this.input(action, e.type === "keydown" ? "down" : "up");
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    this.disposers.push(() => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+    });
+  }
+
+  dispose(): void {
+    for (const d of this.disposers) d();
+    this.view.dispose();
+  }
+
+  private routesHere(): boolean {
+    const ws = useWorkspace.getState();
+    if (ws.mode !== "edit") return false; // ワークスペースの再生が優先
+    return !ws.project || ws.panelsHidden;
+  }
+
+  private input(action: string, phase: "down" | "up"): void {
+    const cam = this.engine.camera;
+    const origin = cam.getWorldPosition(new THREE.Vector3()).toArray();
+    const direction = cam.getWorldDirection(new THREE.Vector3()).toArray();
+    useSessionWorld.getState().input({
+      action,
+      phase,
+      origin,
+      direction,
+      player: useApp.getState().me?.id ?? "me",
+    });
+  }
+
+  private update(dt: number): void {
+    const s = useSessionWorld.getState();
+    if (s.isHost && s.sim) {
+      this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS_PER_FRAME);
+      while (this.accumulator >= STEP) {
+        s.sim.step(STEP);
+        this.accumulator -= STEP;
+      }
+      this.frameTimer += dt;
+      if (this.frameTimer > FRAME_SEC) {
+        this.frameTimer = 0;
+        sendSessionFrame();
+      }
+      this.uiTimer += dt;
+      if (this.uiTimer > 0.5) {
+        this.uiTimer = 0;
+        useSessionWorld.setState({ status: s.sim.systemStatus() });
+      }
+    }
+    const view = s.view();
+    if (!view) {
+      this.view.root.visible = false;
+      return;
+    }
+    this.view.root.visible = true;
+    // ワークスペースを再生中は、手に持つ物はワークスペースの方を優先する
+    const holdCamera = useWorkspace.getState().mode === "edit" ? this.engine.camera : null;
+    this.view.sync(view.world, { materials: view.materials, holdCamera });
+  }
+}

@@ -22,6 +22,8 @@ interface AppState {
   remotePanels: Record<string, RemotePanel[]>;
   /** セッションが閉じられた理由（表示用） */
   closedReason: string | null;
+  /** セッションの世界のログ（適用の結果など） */
+  sessionLogs: { message: string; level: "log" | "error" }[];
   setName(name: string): void;
 }
 
@@ -52,6 +54,7 @@ export const useApp = create<AppState>((set) => ({
   participants: {},
   remotePanels: {},
   closedReason: null,
+  sessionLogs: [],
   setName: (name) => {
     try {
       localStorage.setItem(NAME_KEY, name);

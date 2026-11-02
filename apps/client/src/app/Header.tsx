@@ -1,4 +1,9 @@
-import { emptyProject, gunAndTargetSample } from "@tukurium/repo-model";
+import {
+  emptyProject,
+  gunAndTargetSample,
+  gunSample,
+  targetRangeSample,
+} from "@tukurium/repo-model";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../workspace/store";
@@ -139,6 +144,26 @@ function WorkspaceSwitcher() {
               }}
             >
               ＋ サンプル「銃と的」
+            </button>
+            <button
+              type="button"
+              className={styles.popBtn}
+              onClick={() => {
+                ws.create("銃", gunSample());
+                setOpen(false);
+              }}
+            >
+              ＋ サンプル「銃」
+            </button>
+            <button
+              type="button"
+              className={styles.popBtn}
+              onClick={() => {
+                ws.create("射撃場", targetRangeSample());
+                setOpen(false);
+              }}
+            >
+              ＋ サンプル「射撃場」
             </button>
             {workspaceId && (
               <button

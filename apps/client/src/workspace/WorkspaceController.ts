@@ -54,8 +54,20 @@ export class WorkspaceController {
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => this.onPointer(button, phase)),
     );
-    useWorkspace.setState({ viewPoint: () => this.pointInFront(2) });
-    this.disposers.push(() => useWorkspace.setState({ viewPoint: null }));
+    useWorkspace.setState({
+      viewPoint: () => this.pointInFront(2),
+      placePoint: () => {
+        const cam = this.engine.camera;
+        const p = cam.getWorldPosition(new THREE.Vector3());
+        const d = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+        const r = (n: number) => Math.round(n * 100) / 100;
+        return {
+          position: [r(p.x + d.x * 3), 0, r(p.z + d.z * 3)],
+          yaw: this.engine.controller.yaw,
+        };
+      },
+    });
+    this.disposers.push(() => useWorkspace.setState({ viewPoint: null, placePoint: null }));
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
@@ -75,6 +87,10 @@ export class WorkspaceController {
 
   private update(dt: number): void {
     const ws = useWorkspace.getState();
+    // ワークスペースの編集空間の位置：セッションの中の何番目かで横にずらす（重ならないように）
+    const index =
+      useApp.getState().session?.workspaces.findIndex((w) => w.id === ws.workspaceId) ?? 0;
+    this.view.root.position.set(Math.max(index, 0) * 12, 0, 0);
     if (!ws.project || !ws.ready) {
       this.view.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
       this.bounds.visible = false;
@@ -173,7 +189,7 @@ export class WorkspaceController {
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
       return;
     }
-    if (ws.mode === "edit" && button === 0 && phase === "down") {
+    if (ws.mode === "edit" && !ws.panelsHidden && button === 0 && phase === "down") {
       this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
       const id = this.view.pick(this.raycaster);
       ws.select(id ? { kind: "entity", id } : null);

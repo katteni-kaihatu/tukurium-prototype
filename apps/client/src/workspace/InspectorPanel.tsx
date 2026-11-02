@@ -337,15 +337,25 @@ function EntityProperties({ id }: { id: EntityId }) {
               <p className={ui.muted}>フィールドなし（タグとして使う KokoState）</p>
             )}
             {def.fields.map((f) => (
-              <FieldInput
-                key={f.id}
-                koko={koko}
-                field={f}
-                value={(values[f.id] ?? f.default) as FieldValue}
-                choices={choices}
-                disabled={!editing}
-                onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
-              />
+              <div key={f.id} className={styles.fieldRow}>
+                <FieldInput
+                  koko={koko}
+                  field={f}
+                  value={(values[f.id] ?? f.default) as FieldValue}
+                  choices={choices}
+                  disabled={!editing}
+                  onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
+                />
+                {mode === "edit" && (
+                  <KeepToggle
+                    entity={id}
+                    koko={koko}
+                    field={f.id}
+                    label={`${def.name}.${f.name}`}
+                    disabled={!editing}
+                  />
+                )}
+              </div>
             ))}
           </section>
         );
@@ -429,5 +439,46 @@ function KokoPicker(props: {
       </ul>
       {shown.length === 0 && <p className={ui.empty}>付けられる KokoState はありません</p>}
     </div>
+  );
+}
+
+/**
+ * 状態維持のマーク：適用したとき、このフィールドの実行値を引き継ぐ（要件 §7）。
+ * マークはアウトプットごとに持つので、同じ KokoState を使う別のアウトプットには波及しない。
+ */
+function KeepToggle(props: {
+  entity: string;
+  koko: string;
+  field: string;
+  label: string;
+  disabled: boolean;
+}) {
+  const project = useProject();
+  const outputId = useWorkspace((s) => s.outputId);
+  useWorkspace((s) => s.rev);
+  const output = project.output(outputId);
+  if (!output) return null;
+  const match = (k: { entity: string; koko: string; field: string }) =>
+    k.entity === props.entity && k.koko === props.koko && k.field === props.field;
+  const on = output.keep.some(match);
+  return (
+    <button
+      type="button"
+      className={on ? styles.keepOn : styles.keep}
+      aria-pressed={on}
+      aria-label={`${props.label} を適用時に引き継ぐ`}
+      title={on ? "適用時に実行値を引き継ぐ（オン）" : "適用時に実行値を引き継ぐ（オフ）"}
+      disabled={props.disabled}
+      onClick={() =>
+        project.updateOutput({
+          ...output,
+          keep: on
+            ? output.keep.filter((k) => !match(k))
+            : [...output.keep, { entity: props.entity, koko: props.koko, field: props.field }],
+        })
+      }
+    >
+      維持
+    </button>
   );
 }

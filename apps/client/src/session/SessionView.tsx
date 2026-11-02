@@ -7,6 +7,8 @@ import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
+import { SessionWorldController } from "./SessionWorldController";
+import { resetSessionWorld } from "./sessionWorld";
 
 const POSE_INTERVAL_MS = 100;
 
@@ -29,6 +31,7 @@ export function SessionView() {
     return () => {
       off();
       useWorkspace.getState().leave();
+      resetSessionWorld();
       client.send({ t: "session.leave" });
       useApp.setState({ session: null, participants: {}, remotePanels: {} });
     };
@@ -43,6 +46,7 @@ export function SessionView() {
     setEngine(engine);
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const workspace = new WorkspaceController(engine);
+    const sessionWorld = new SessionWorldController(engine);
 
     // 参加者の表示
     const me = () => useApp.getState().me?.id;
@@ -87,6 +91,7 @@ export function SessionView() {
       offApp();
       offMsg();
       workspace.dispose();
+      sessionWorld.dispose();
       engine.dispose();
       engineRef.current = null;
       setEngine(null);
