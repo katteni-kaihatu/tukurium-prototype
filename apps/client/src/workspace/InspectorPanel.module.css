@@ -1,0 +1,44 @@
+.split {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 0;
+  height: 100%;
+}
+
+.tree {
+  padding: 8px 6px 10px 8px;
+  border-right: 1px solid rgba(38, 38, 46, 0.08);
+  overflow: auto;
+}
+
+.treeHead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 6px 6px;
+}
+
+.props {
+  min-width: 0;
+  overflow: auto;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+@media (max-width: 720px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  .tree {
+    border-right: 0;
+    border-bottom: 1px solid rgba(38, 38, 46, 0.08);
+    max-height: 200px;
+  }
+}

@@ -117,7 +117,12 @@ export class EntityView {
     node.object.scale.set(s[0], s[1], s[2]);
   }
 
-  private syncMesh(node: Node, world: World, id: EntityId, matDefs: Map<string, MaterialDef>): void {
+  private syncMesh(
+    node: Node,
+    world: World,
+    id: EntityId,
+    matDefs: Map<string, MaterialDef>,
+  ): void {
     const mesh = world.get(id, BUILTIN.Mesh);
     if (!mesh) {
       if (node.mesh) {

@@ -1,9 +1,10 @@
+import RELEASE_SYNC from "@jitl/quickjs-wasmfile-release-sync";
 import {
-  newQuickJSWASMModule,
+  newQuickJSWASMModuleFromVariant,
   type QuickJSContext,
   type QuickJSHandle,
   type QuickJSRuntime,
-} from "quickjs-emscripten";
+} from "quickjs-emscripten-core";
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -127,7 +128,8 @@ export class ScriptSandbox {
   ) {}
 
   static async create(options: SandboxOptions = {}): Promise<ScriptSandbox> {
-    const QuickJS = await newQuickJSWASMModule();
+    // リリース版の同期ビルドだけを使う（デバッグ版などを配信物に含めない）
+    const QuickJS = await newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
     const runtime = QuickJS.newRuntime();
     const opts = {
       timeLimitMs: options.timeLimitMs ?? 20,
@@ -183,7 +185,9 @@ export class ScriptSandbox {
     const vm = this.realms.get(realm);
     this.systemRealm.delete(id);
     if (vm)
-      this.withDeadline(this.options.timeLimitMs, () => this.callGlobal(vm, "__undefine", [vm.newString(id)], id, "runtime"));
+      this.withDeadline(this.options.timeLimitMs, () =>
+        this.callGlobal(vm, "__undefine", [vm.newString(id)], id, "runtime"),
+      );
   }
 
   /** 領域ごと破棄する（その領域の System もすべて取り除く）。 */

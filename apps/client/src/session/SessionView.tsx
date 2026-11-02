@@ -1,18 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "../app/store";
 import { Connection } from "../net/Connection";
-import { DemoInspector } from "../panels/DemoInspector";
-import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
+import { WorkspacePanels } from "../workspace/WorkspacePanels";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 
 const POSE_INTERVAL_MS = 100;
-
-// 試作：パネル基盤の確認用（M1 でワークスペースのパネルに置き換える）
-const DEMO_PANELS: PanelSpec[] = [
-  { id: "demo-inspector", title: "Inspector（試作）", render: () => <DemoInspector /> },
-];
 
 export function SessionView() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -20,6 +15,7 @@ export function SessionView() {
   const [locked, setLocked] = useState(false);
   const [engine, setEngine] = useState<SessionEngine | null>(null);
   const myName = useSession((s) => s.myName);
+  const mode = useWorkspace((s) => s.mode);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -100,7 +96,7 @@ export function SessionView() {
   return (
     <div className={styles.root}>
       <div ref={containerRef} className={styles.canvas} />
-      {engine && <PanelLayer engine={engine} panels={DEMO_PANELS} />}
+      {engine && <WorkspacePanels engine={engine} />}
       <div className={styles.crosshair} aria-hidden="true">
         <span className={styles.chV} />
         <span className={styles.chH} />
@@ -117,21 +113,27 @@ export function SessionView() {
         </button>
       )}
       <ul className={`glass ${styles.hints}`} aria-label="操作">
-        <li>
-          <kbd>WASD</kbd>移動
-        </li>
-        <li>
-          <kbd>マウス</kbd>見回す
-        </li>
-        <li>
-          <kbd>Shift</kbd>走る
-        </li>
-        <li>
-          <kbd>Space</kbd>ジャンプ
-        </li>
-        <li>
-          <kbd>Esc</kbd>マウスを解放
-        </li>
+        {(mode === "edit"
+          ? [
+              ["WASD", "移動"],
+              ["マウス", "見回す"],
+              ["クリック", "モノを選ぶ"],
+              ["Tab", "パネルを隠す"],
+              ["Esc", "マウスを解放"],
+            ]
+          : [
+              ["WASD", "移動"],
+              ["クリック", "撃つ（fire）"],
+              ["R", "reload"],
+              ["E", "use"],
+              ["Esc", "マウスを解放"],
+            ]
+        ).map(([key, label]) => (
+          <li key={key}>
+            <kbd>{key}</kbd>
+            {label}
+          </li>
+        ))}
       </ul>
     </div>
   );

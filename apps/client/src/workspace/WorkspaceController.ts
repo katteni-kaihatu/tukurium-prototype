@@ -1,4 +1,5 @@
 import type { World } from "@tukurium/eks";
+import type { MaterialDef } from "@tukurium/repo-model";
 import { buildWorld } from "@tukurium/runtime";
 import * as THREE from "three";
 import { EntityView } from "../render/EntityView";
@@ -25,6 +26,8 @@ export class WorkspaceController {
   private readonly raycaster = new THREE.Raycaster();
   private editWorld: World | null = null;
   private editKey = "";
+  private materials: MaterialDef[] = [];
+  private materialsRev = -1;
   private accumulator = 0;
   private uiTimer = 0;
   private readonly disposers: (() => void)[] = [];
@@ -43,6 +46,8 @@ export class WorkspaceController {
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => this.onPointer(button, phase)),
     );
+    useWorkspace.setState({ viewPoint: () => this.pointInFront(2) });
+    this.disposers.push(() => useWorkspace.setState({ viewPoint: null }));
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
@@ -63,7 +68,12 @@ export class WorkspaceController {
   private update(dt: number): void {
     const ws = useWorkspace.getState();
     const playing = ws.mode !== "edit" && ws.sim;
-    const materials = ws.project.materials();
+    // マテリアルの一覧は制作データが変わったときだけ取り直す
+    if (this.materialsRev !== ws.rev) {
+      this.materials = ws.project.materials();
+      this.materialsRev = ws.rev;
+    }
+    const materials = this.materials;
 
     if (playing && ws.sim) {
       if (ws.mode === "play") {
@@ -77,7 +87,10 @@ export class WorkspaceController {
       this.uiTimer += dt;
       if (this.uiTimer > UI_REFRESH_SEC) {
         this.uiTimer = 0;
-        useWorkspace.setState((s) => ({ simRev: s.simRev + 1, systemStatus: ws.sim?.systemStatus() ?? [] }));
+        useWorkspace.setState((s) => ({
+          simRev: s.simRev + 1,
+          systemStatus: ws.sim?.systemStatus() ?? [],
+        }));
       }
     } else {
       const key = `${ws.rev}:${ws.outputId}`;
@@ -105,16 +118,24 @@ export class WorkspaceController {
     }
   }
 
+  /** 視線の先 distance m の位置（編集空間の座標系、高さは 0.5m 以上） */
+  private pointInFront(distance: number): [number, number, number] {
+    const { origin, direction } = this.viewRay();
+    const p = new THREE.Vector3(...origin).addScaledVector(
+      new THREE.Vector3(...direction),
+      distance,
+    );
+    const r = (n: number) => Math.round(n * 100) / 100;
+    return [r(p.x), r(Math.max(p.y, 0.5)), r(p.z)];
+  }
+
   private viewRay(): { origin: [number, number, number]; direction: [number, number, number] } {
     const cam = this.engine.camera;
     const origin = cam.getWorldPosition(new THREE.Vector3());
     const dir = cam.getWorldDirection(new THREE.Vector3());
     // 編集空間の座標系へ（初版は原点に置いているが、移動しても正しく動くように）
     const local = this.view.root.worldToLocal(origin.clone());
-    const localDir = this.view.root
-      .worldToLocal(origin.clone().add(dir))
-      .sub(local)
-      .normalize();
+    const localDir = this.view.root.worldToLocal(origin.clone().add(dir)).sub(local).normalize();
     return { origin: local.toArray(), direction: localDir.toArray() };
   }
 
@@ -142,6 +163,11 @@ export class WorkspaceController {
     }
     const action = KEY_ACTIONS[e.code];
     if (!action || e.repeat || ws.mode !== "play" || !ws.sim) return;
-    ws.sim.input({ action, phase: e.type === "keydown" ? "down" : "up", player: "me", ...this.viewRay() });
+    ws.sim.input({
+      action,
+      phase: e.type === "keydown" ? "down" : "up",
+      player: "me",
+      ...this.viewRay(),
+    });
   }
 }

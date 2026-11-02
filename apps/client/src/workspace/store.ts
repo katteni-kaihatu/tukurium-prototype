@@ -12,6 +12,8 @@ export type Selection =
 
 export type Mode = "edit" | "play" | "paused";
 
+export type WorkspaceLog = LogEntry & { seq: number };
+
 interface WorkspaceState {
   project: ProjectDoc;
   /** 制作データが変わるたびに増える（React の再描画用） */
@@ -23,11 +25,13 @@ interface WorkspaceState {
   /** Play 中の実行状態が変わるたびに増える（Inspector の再描画用、間引いて更新） */
   simRev: number;
   systemStatus: SystemStatus[];
-  logs: LogEntry[];
+  logs: WorkspaceLog[];
   /** コードエディタで開いている System */
   openSystems: string[];
   activeSystem: string | null;
   panelsHidden: boolean;
+  /** 自分の視線の先（新しい Entity を置く位置）。3D 空間の準備ができると設定される */
+  viewPoint: (() => [number, number, number]) | null;
 
   select(sel: Selection | null): void;
   setOutput(id: string): void;
@@ -50,7 +54,10 @@ function loadProject(): ProjectDoc {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      Y.applyUpdate(project.doc, Uint8Array.from(atob(saved), (c) => c.charCodeAt(0)));
+      Y.applyUpdate(
+        project.doc,
+        Uint8Array.from(atob(saved), (c) => c.charCodeAt(0)),
+      );
       if (project.outputs().length > 0) return project;
     }
   } catch {
@@ -84,8 +91,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     saveTimer = setTimeout(() => saveProject(get().project), 400);
   });
 
+  let seq = 0;
   const pushLog = (entry: LogEntry) =>
-    set((s) => ({ logs: [...s.logs, entry].slice(-MAX_LOGS) }));
+    set((s) => ({ logs: [...s.logs, { ...entry, seq: seq++ }].slice(-MAX_LOGS) }));
 
   return {
     project: initialProject,
@@ -100,6 +108,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     openSystems: [],
     activeSystem: null,
     panelsHidden: false,
+    viewPoint: null,
 
     select: (selection) => set({ selection }),
 
@@ -168,4 +177,5 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 });
 
 // 開発時のみ：E2E テストやデバッグからストアを参照できるようにする
-if (import.meta.env.DEV) (window as { __workspace?: typeof useWorkspace }).__workspace = useWorkspace;
+if (import.meta.env.DEV)
+  (window as { __workspace?: typeof useWorkspace }).__workspace = useWorkspace;

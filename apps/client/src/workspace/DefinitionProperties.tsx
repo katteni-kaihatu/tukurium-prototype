@@ -1,0 +1,602 @@
+import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
+import { newId, type OutputDef } from "@tukurium/repo-model";
+import { useState } from "react";
+import { FieldInput } from "./FieldInput";
+import { parseQuery } from "./queryInfo";
+import { type Selection, useWorkspace } from "./store";
+import ui from "./ui.module.css";
+
+const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
+  { type: "number", label: "Number", default: 0 },
+  { type: "boolean", label: "Bool", default: false },
+  { type: "string", label: "Text", default: "" },
+  { type: "vec3", label: "Vector3", default: [0, 0, 0] },
+  { type: "color", label: "Color", default: "#ffffff" },
+  { type: "entity", label: "Entity", default: null },
+  { type: "resource", label: "Resource", default: null },
+];
+
+/** アウトプット・KokoState 定義・System・マテリアルの Properties */
+export function DefinitionProperties({
+  selection,
+}: {
+  selection: Exclude<Selection, { kind: "entity" }>;
+}) {
+  useWorkspace((s) => s.rev);
+  switch (selection.kind) {
+    case "output":
+      return <OutputProperties id={selection.id} />;
+    case "koko":
+      return <KokoDefProperties key={selection.id} id={selection.id} />;
+    case "system":
+      return <SystemProperties id={selection.id} />;
+    case "material":
+      return <MaterialProperties id={selection.id} />;
+  }
+}
+
+function useSafe() {
+  const [error, setError] = useState<string | null>(null);
+  const safely = (fn: () => void) => {
+    try {
+      setError(null);
+      fn();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return { error, safely };
+}
+
+function NameRow(props: {
+  id: string;
+  value: string;
+  disabled?: boolean;
+  onCommit: (v: string) => void;
+}) {
+  return (
+    <div className={ui.row}>
+      <label className={ui.label} htmlFor={`n-${props.id}`}>
+        Name
+      </label>
+      <input
+        id={`n-${props.id}`}
+        key={`${props.id}:${props.value}`}
+        className={ui.input}
+        defaultValue={props.value}
+        disabled={props.disabled}
+        onBlur={(e) => e.target.value !== props.value && props.onCommit(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function OutputProperties({ id }: { id: string }) {
+  const { project, mode } = useWorkspace();
+  const output = project.output(id);
+  if (!output) return <p className={ui.empty}>アウトプットが見つかりません</p>;
+  const editing = mode === "edit";
+  const systems = project.systems();
+  const update = (patch: Partial<OutputDef>) => project.updateOutput({ ...output, ...patch });
+  const move = (i: number, d: -1 | 1) => {
+    const list = [...output.systems];
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [
+      list[j] as OutputDef["systems"][number],
+      list[i] as OutputDef["systems"][number],
+    ];
+    update({ systems: list });
+  };
+  const unused = systems.filter((s) => !output.systems.some((o) => o.id === s.id));
+
+  return (
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>Output</h3>
+        </div>
+        <p className={ui.muted}>
+          ルートはアウトプットそのものです。Entity ではないので KokoState や Transform
+          は付きません。
+        </p>
+        <NameRow
+          id={id}
+          value={output.name}
+          disabled={!editing}
+          onCommit={(name) => update({ name })}
+        />
+        <div className={ui.row}>
+          <label className={ui.label} htmlFor={`kind-${id}`}>
+            Kind
+          </label>
+          <select
+            id={`kind-${id}`}
+            className={ui.select}
+            value={output.kind}
+            disabled={!editing}
+            onChange={(e) => update({ kind: e.target.value as OutputDef["kind"] })}
+          >
+            <option value="item">アイテム</option>
+            <option value="world">ワールド</option>
+            <option value="library" disabled>
+              ライブラリ（準備中）
+            </option>
+          </select>
+        </div>
+      </div>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>Systems</h3>
+          <span className={ui.badge}>{output.systems.filter((s) => s.enabled).length} 有効</span>
+        </div>
+        <p className={ui.muted}>
+          このアウトプットで動かす System と実行順。無効な System は Query
+          にマッチしても動きません。
+        </p>
+        <ul className={ui.list}>
+          {output.systems.map((ref, i) => {
+            const def = systems.find((s) => s.id === ref.id);
+            return (
+              <li key={ref.id} className={ui.item}>
+                <input
+                  type="checkbox"
+                  aria-label={`${def?.name ?? ref.id} を有効にする`}
+                  checked={ref.enabled}
+                  disabled={!editing}
+                  onChange={(e) =>
+                    update({
+                      systems: output.systems.map((s) =>
+                        s.id === ref.id ? { ...s, enabled: e.target.checked } : s,
+                      ),
+                    })
+                  }
+                />
+                <span className={ui.itemName}>{def?.name ?? "（削除された System）"}</span>
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label="上へ"
+                  disabled={!editing || i === 0}
+                  onClick={() => move(i, -1)}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label="下へ"
+                  disabled={!editing || i === output.systems.length - 1}
+                  onClick={() => move(i, 1)}
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label="一覧から外す"
+                  disabled={!editing}
+                  onClick={() => update({ systems: output.systems.filter((s) => s.id !== ref.id) })}
+                >
+                  ✕
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {output.systems.length === 0 && <p className={ui.empty}>System がありません</p>}
+        {editing && unused.length > 0 && (
+          <select
+            className={ui.select}
+            aria-label="System を追加"
+            value=""
+            onChange={(e) =>
+              e.target.value &&
+              update({ systems: [...output.systems, { id: e.target.value, enabled: true }] })
+            }
+          >
+            <option value="">＋ System を追加…</option>
+            {unused.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function KokoDefProperties({ id }: { id: string }) {
+  const { project, mode, select } = useWorkspace();
+  const { error, safely } = useSafe();
+  const def = project.registry().get(id);
+  if (!def) return <p className={ui.empty}>KokoState が見つかりません</p>;
+  const editing = mode === "edit" && !def.builtin;
+  const save = (next: KokoStateDef) => safely(() => project.updateKokoState(next));
+  const setField = (fid: string, patch: Partial<FieldDef>) =>
+    save({
+      ...def,
+      fields: def.fields.map((f) => (f.id === fid ? ({ ...f, ...patch } as FieldDef) : f)),
+    });
+
+  const holders = project.entities().filter((e) => id in e.states);
+  const queried = project.systems().filter((s) => {
+    const q = parseQuery(project.code(s.id)?.toString() ?? "");
+    return q.with.includes(def.name) || q.without.includes(def.name);
+  });
+
+  return (
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>KokoState</h3>
+          {def.builtin && <span className={ui.badge}>Built-in</span>}
+        </div>
+        {def.builtin && (
+          <p className={ui.muted}>Built-in の KokoState です。定義は変更できません。</p>
+        )}
+        <NameRow
+          id={id}
+          value={def.name}
+          disabled={!editing}
+          onCommit={(name) => save({ ...def, name })}
+        />
+        {error && <p className={ui.error}>{error}</p>}
+      </div>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>Fields</h3>
+        </div>
+        {def.fields.length === 0 && (
+          <p className={ui.muted}>
+            フィールドがありません。フィールドなしの KokoState は、Query
+            で絞り込むためのタグとして使えます。
+          </p>
+        )}
+        {def.fields.map((f) => (
+          <div
+            key={f.id}
+            style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 6 }}
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 26px", gap: 6 }}>
+              <input
+                key={`${f.id}:${f.name}`}
+                className={ui.input}
+                aria-label="フィールド名"
+                defaultValue={f.name}
+                disabled={!editing}
+                onBlur={(e) =>
+                  e.target.value !== f.name && setField(f.id, { name: e.target.value })
+                }
+                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+              />
+              <select
+                className={ui.select}
+                aria-label={`${f.name} の型`}
+                value={f.type}
+                disabled={!editing}
+                onChange={(e) => {
+                  const t = FIELD_TYPES.find((x) => x.type === e.target.value);
+                  if (t) setField(f.id, { type: t.type, default: structuredClone(t.default) });
+                }}
+              >
+                {FIELD_TYPES.map((t) => (
+                  <option key={t.type} value={t.type}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className={ui.iconBtn}
+                aria-label={`${f.name} を削除`}
+                disabled={!editing}
+                onClick={() => save({ ...def, fields: def.fields.filter((x) => x.id !== f.id) })}
+              >
+                ✕
+              </button>
+            </div>
+            <FieldInput
+              koko={id}
+              field={{ ...f, name: "初期値" }}
+              value={f.default}
+              choices={{ materials: project.materials(), entities: [] }}
+              disabled={!editing}
+              onChange={(v) => setField(f.id, { default: v })}
+            />
+          </div>
+        ))}
+        {editing && (
+          <div className={ui.toolbar}>
+            <button
+              type="button"
+              className={ui.btn}
+              onClick={() => {
+                let n = def.fields.length + 1;
+                while (def.fields.some((f) => f.name === `field${n}`)) n++;
+                save({
+                  ...def,
+                  fields: [
+                    ...def.fields,
+                    { id: newId("f"), name: `field${n}`, type: "number", default: 0 },
+                  ],
+                });
+              }}
+            >
+              ＋ Add field
+            </button>
+          </div>
+        )}
+      </div>
+      <div className={ui.section}>
+        <h3 className={ui.sectionTitle}>持っている Entity</h3>
+        {holders.length === 0 ? (
+          <p className={ui.muted}>
+            まだありません。Entity の Inspector の Add KokoState から付けられます。
+          </p>
+        ) : (
+          <ul className={ui.list}>
+            {holders.map((e) => (
+              <li key={e.id}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() => select({ kind: "entity", id: e.id })}
+                >
+                  <span className={ui.itemName}>{e.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <h3 className={ui.sectionTitle}>クエリしている System</h3>
+        {queried.length === 0 ? (
+          <p className={ui.muted}>まだどの System もクエリしていません</p>
+        ) : (
+          <ul className={ui.list}>
+            {queried.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() => select({ kind: "system", id: s.id })}
+                >
+                  <span className={ui.itemName}>{s.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {editing && (
+        <div className={ui.section}>
+          <div className={ui.toolbar}>
+            <button
+              type="button"
+              className={ui.btnDanger}
+              onClick={() => {
+                if (
+                  holders.length === 0 ||
+                  confirm(
+                    `${def.name} を削除すると、${holders.length} 個の Entity から外れます。削除しますか？`,
+                  )
+                ) {
+                  project.removeKokoState(id);
+                  select(null);
+                }
+              }}
+            >
+              KokoState を削除
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function SystemProperties({ id }: { id: string }) {
+  const { project, mode, openSystem, select, systemStatus } = useWorkspace();
+  const def = project.system(id);
+  if (!def) return <p className={ui.empty}>System が見つかりません</p>;
+  const editing = mode === "edit";
+  const q = parseQuery(project.code(id)?.toString() ?? "");
+  const usedBy = project.outputs().filter((o) => o.systems.some((s) => s.id === id));
+  const status = systemStatus.find((s) => s.id === id);
+
+  return (
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>System</h3>
+          <span className={ui.badgeBrand}>Script</span>
+        </div>
+        <NameRow
+          id={id}
+          value={def.name}
+          disabled={!editing}
+          onCommit={(name) => project.renameSystem(id, name)}
+        />
+        {status?.error && <p className={ui.error}>{status.error}</p>}
+        <div className={ui.toolbar}>
+          <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
+            コードを開く
+          </button>
+        </div>
+      </div>
+      <div className={ui.section}>
+        <h3 className={ui.sectionTitle}>Query</h3>
+        <p className={ui.muted}>
+          この System が処理する Entity の条件（コードの query から読み取り）
+        </p>
+        <div className={ui.row}>
+          <span className={ui.label}>With</span>
+          <span className={ui.toolbar}>
+            {q.with.length === 0 ? (
+              <span className={ui.muted}>なし</span>
+            ) : (
+              q.with.map((n) => (
+                <span key={n} className={ui.badgeBrand}>
+                  {n}
+                </span>
+              ))
+            )}
+          </span>
+        </div>
+        <div className={ui.row}>
+          <span className={ui.label}>Without</span>
+          <span className={ui.toolbar}>
+            {q.without.length === 0 ? (
+              <span className={ui.muted}>なし</span>
+            ) : (
+              q.without.map((n) => (
+                <span key={n} className={ui.badge}>
+                  {n}
+                </span>
+              ))
+            )}
+          </span>
+        </div>
+      </div>
+      <div className={ui.section}>
+        <h3 className={ui.sectionTitle}>使っているアウトプット</h3>
+        {usedBy.length === 0 ? (
+          <p className={ui.muted}>
+            どのアウトプットでも使われていません。アウトプットの Systems に追加すると動きます。
+          </p>
+        ) : (
+          <ul className={ui.list}>
+            {usedBy.map((o) => (
+              <li key={o.id}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() => select({ kind: "output", id: o.id })}
+                >
+                  <span className={ui.itemName}>{o.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {editing && (
+        <div className={ui.section}>
+          <div className={ui.toolbar}>
+            <button
+              type="button"
+              className={ui.btnDanger}
+              onClick={() => {
+                if (confirm(`${def.name} を削除しますか？`)) {
+                  project.removeSystem(id);
+                  select(null);
+                }
+              }}
+            >
+              System を削除
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function MaterialProperties({ id }: { id: string }) {
+  const { project, mode, select } = useWorkspace();
+  const m = project.material(id);
+  if (!m) return <p className={ui.empty}>マテリアルが見つかりません</p>;
+  const editing = mode === "edit";
+  const users = project.entities().filter((e) => e.states["builtin.Mesh"]?.material === id);
+  const slider = (key: "roughness" | "metalness", label: string) => (
+    <div className={ui.row}>
+      <label className={ui.label} htmlFor={`${key}-${id}`}>
+        {label}
+      </label>
+      <span className={ui.color}>
+        <input
+          id={`${key}-${id}`}
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={m[key]}
+          disabled={!editing}
+          style={{ flex: 1 }}
+          onChange={(e) => project.updateMaterial({ ...m, [key]: Number(e.target.value) })}
+        />
+        <code className={ui.num}>{m[key].toFixed(2)}</code>
+      </span>
+    </div>
+  );
+  return (
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>Material</h3>
+        </div>
+        <NameRow
+          id={id}
+          value={m.name}
+          disabled={!editing}
+          onCommit={(name) => project.updateMaterial({ ...m, name })}
+        />
+        <div className={ui.row}>
+          <span className={ui.label}>Shader</span>
+          <span className={ui.toolbar}>
+            <span className={ui.badge}>標準（固定）</span>
+            <button
+              type="button"
+              className={ui.btn}
+              disabled
+              title="独自シェーダーは初版の対象外です"
+            >
+              開く
+            </button>
+          </span>
+        </div>
+        <FieldInput
+          koko="material"
+          field={{ id: "color", name: "Color", type: "color", default: "#ffffff" }}
+          value={m.color}
+          choices={{ materials: [], entities: [] }}
+          disabled={!editing}
+          onChange={(v) => project.updateMaterial({ ...m, color: String(v) })}
+        />
+        {slider("roughness", "粗さ")}
+        {slider("metalness", "金属感")}
+        <p className={ui.muted}>
+          ここで変えると、このマテリアルを使っているすべてのモノに反映されます（{users.length}{" "}
+          個）。
+        </p>
+      </div>
+      {editing && (
+        <div className={ui.section}>
+          <div className={ui.toolbar}>
+            <button
+              type="button"
+              className={ui.btnDanger}
+              onClick={() => {
+                project.removeMaterial(id);
+                select(null);
+              }}
+            >
+              マテリアルを削除
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

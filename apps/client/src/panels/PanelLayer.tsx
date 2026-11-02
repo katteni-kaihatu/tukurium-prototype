@@ -4,10 +4,23 @@ import type { SessionEngine } from "../session/SessionEngine";
 import type { PanelTransform } from "./PanelSpace";
 import styles from "./Panels.module.css";
 
+export interface PanelPlacement {
+  /** 左端からの位置（px）。right を指定した場合は無視する */
+  x?: number;
+  /** 右端からの位置（px） */
+  right?: number;
+  y: number;
+  width: number;
+}
+
 export interface PanelSpec {
   id: string;
   title: string;
   render: () => ReactNode;
+  initial: PanelPlacement;
+  /** タイトルバーに並べる操作 */
+  actions?: ReactNode;
+  onClose?: () => void;
 }
 
 interface PanelState {
@@ -18,42 +31,67 @@ interface PanelState {
   transform: PanelTransform | null;
 }
 
-const initialState = (index: number): PanelState => ({
-  pinned: true,
-  x: 24 + index * 24,
-  y: 96 + index * 24,
-  transform: null,
-});
+const initialState = (spec: PanelSpec): PanelState => {
+  const { x, right, y, width } = spec.initial;
+  const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
+  const left = right !== undefined ? vw - right - width : (x ?? 16);
+  return { pinned: true, x: Math.max(8, left), y, transform: null };
+};
 
 /**
  * パネルを 2D（画面に固定）と 3D（空間に置く）で切り替えて表示する。
  * 中身は React のポータルで 1 つの DOM 要素に描き、その要素を 2D の層と空間の間で移すので、
  * 切り替えても入力中の内容やスクロール位置が保たれる。
  */
-export function PanelLayer({ engine, panels }: { engine: SessionEngine; panels: PanelSpec[] }) {
+export function PanelLayer({
+  engine,
+  panels,
+  hidden = false,
+}: {
+  engine: SessionEngine;
+  panels: PanelSpec[];
+  hidden?: boolean;
+}) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLDivElement>());
   const [states, setStates] = useState<Record<string, PanelState>>({});
 
+  const front = useRef(1);
   const elementFor = (id: string): HTMLDivElement => {
     let el = elements.current.get(id);
     if (!el) {
-      el = document.createElement("div");
-      el.className = styles.host ?? "";
-      elements.current.set(id, el);
+      const created = document.createElement("div");
+      created.className = styles.host ?? "";
+      // 触ったパネルを最前面に出す
+      created.addEventListener("pointerdown", () => {
+        created.style.zIndex = String(++front.current);
+      });
+      created.style.zIndex = String(++front.current);
+      elements.current.set(id, created);
+      el = created;
     }
     return el;
   };
 
-  const stateOf = (id: string, index: number): PanelState => states[id] ?? initialState(index);
+  const stateOf = (spec: PanelSpec): PanelState => states[spec.id] ?? initialState(spec);
 
   // 状態に合わせて要素を 2D の層か空間に置く
   useLayoutEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
-    panels.forEach((p, i) => {
-      const st = states[p.id] ?? initialState(i);
+    const ids = new Set(panels.map((p) => p.id));
+    // 閉じたパネルを片付ける
+    for (const [id, el] of elements.current) {
+      if (ids.has(id)) continue;
+      engine.panels.remove(id);
+      el.remove();
+      elements.current.delete(id);
+    }
+    for (const p of panels) {
+      const st = stateOf(p);
       const el = elementFor(p.id);
+      el.style.width = `${p.initial.width}px`;
+      el.style.display = hidden ? "none" : "";
       if (st.pinned || !st.transform) {
         engine.panels.remove(p.id);
         if (el.parentElement !== overlay) overlay.appendChild(el);
@@ -66,7 +104,7 @@ export function PanelLayer({ engine, panels }: { engine: SessionEngine; panels: 
         el.dataset.mode = "3d";
         engine.panels.place(p.id, el, st.transform);
       }
-    });
+    }
   });
 
   useLayoutEffect(
@@ -77,9 +115,10 @@ export function PanelLayer({ engine, panels }: { engine: SessionEngine; panels: 
   );
 
   const togglePin = useCallback(
-    (id: string, index: number) => {
+    (spec: PanelSpec) => {
+      const id = spec.id;
       setStates((prev) => {
-        const st = prev[id] ?? initialState(index);
+        const st = prev[id] ?? initialState(spec);
         if (st.pinned) {
           // 自分の前、目の高さより少し下に、こちらを向けて置く
           const pose = engine.pose();
@@ -101,23 +140,26 @@ export function PanelLayer({ engine, panels }: { engine: SessionEngine; panels: 
     [engine],
   );
 
-  const moveTo = useCallback((id: string, index: number, x: number, y: number) => {
+  const moveTo = useCallback((spec: PanelSpec, x: number, y: number) => {
     setStates((prev) => {
-      const st = prev[id] ?? initialState(index);
-      return { ...prev, [id]: { ...st, x, y } };
+      const st = prev[spec.id] ?? initialState(spec);
+      return { ...prev, [spec.id]: { ...st, x, y: Math.max(0, y) } };
     });
   }, []);
 
   return (
     <div ref={overlayRef} className={styles.overlay}>
-      {panels.map((p, i) => {
-        const st = stateOf(p.id, i);
+      {panels.map((p) => {
+        const st = stateOf(p);
         return createPortal(
           <PanelWindow
             title={p.title}
             pinned={st.pinned}
-            onTogglePin={() => togglePin(p.id, i)}
-            onDrag={(dx, dy) => moveTo(p.id, i, st.x + dx, st.y + dy)}
+            maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
+            actions={p.actions}
+            onClose={p.onClose}
+            onTogglePin={() => togglePin(p)}
+            onDrag={(dx, dy) => moveTo(p, st.x + dx, st.y + dy)}
           >
             {p.render()}
           </PanelWindow>,
@@ -132,6 +174,9 @@ export function PanelLayer({ engine, panels }: { engine: SessionEngine; panels: 
 function PanelWindow(props: {
   title: string;
   pinned: boolean;
+  maxHeight: string;
+  actions?: ReactNode;
+  onClose?: () => void;
   onTogglePin: () => void;
   onDrag: (dx: number, dy: number) => void;
   children: ReactNode;
@@ -139,7 +184,11 @@ function PanelWindow(props: {
   const drag = useRef<{ x: number; y: number } | null>(null);
 
   return (
-    <section className={`glass ${styles.window}`} aria-label={props.title}>
+    <section
+      className={`glass ${styles.window}`}
+      aria-label={props.title}
+      style={{ maxHeight: props.maxHeight }}
+    >
       <header
         className={styles.titlebar}
         onPointerDown={(e) => {
@@ -157,6 +206,7 @@ function PanelWindow(props: {
         }}
       >
         <h2 className={styles.title}>{props.title}</h2>
+        {props.actions}
         <button
           type="button"
           className={styles.pin}
@@ -177,6 +227,19 @@ function PanelWindow(props: {
             />
           </svg>
         </button>
+        {props.onClose && (
+          <button
+            type="button"
+            className={styles.pin}
+            aria-label={`${props.title} を閉じる`}
+            title="閉じる"
+            onClick={props.onClose}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+          </button>
+        )}
       </header>
       <div className={styles.body}>{props.children}</div>
     </section>
