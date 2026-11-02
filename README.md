@@ -47,7 +47,7 @@ docker/          Dockerfile
 docker compose up -d --build
 ```
 
-`app`（クライアント＋サーバー）と `postgres` が起動する。S3 互換ストレージはローカルなら `--profile local` で MinIO も起動できる。本番の設定値は `.env.example` を参照。
+`app`（クライアント＋サーバー）と `postgres` が起動する。S3 互換ストレージは外部のものを環境変数で指定する（設定値は `.env.example` を参照）。
 
 Docker Hub の取得制限に当たる場合は、ベースイメージを差し替えられる：
 

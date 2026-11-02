@@ -47,13 +47,13 @@
 | セッションの実行同期 | WebSocket リレー ＋ ホスト権威 | ホストが EKS＋物理＋スクリプトを動かし状態を配信、参加者は入力を送る |
 | サーバー | Node.js（Fastify ＋ `ws`） | 認証・権限・Yjs 同期・リレー・リポジトリ API・ビルド |
 | DB | PostgreSQL（ORM は Drizzle、提案） | ユーザー・リポジトリ・アウトプット・作品・Release・セッション・権限 |
-| 素材ストレージ | S3 互換（`@aws-sdk/client-s3`）、ローカル開発は MinIO | GLB・画像・音声を SHA-256 の内容アドレスで保存 |
+| 素材ストレージ | S3 互換（`@aws-sdk/client-s3`）。ローカル開発用のストレージは M3 で決める（MinIO は Docker Hub での配布が終了） | GLB・画像・音声を SHA-256 の内容アドレスで保存 |
 | バージョン管理 | Git（サーバー上の bare リポジトリ、Docker ボリューム）。操作は isomorphic-git（提案） | 純 JS でシェル実行が不要。素材本体は Git に入れず、ハッシュ参照だけをコミットする（LFS に似た方式） |
 | 本人識別 | 表示名＋ランダムトークン（パスワードなし、提案） | 「最小限の本人識別」。試験用 |
 | スキーマ検証 | zod | 通信メッセージ・リポジトリ内データ・スクリプトからの入力 |
 | テスト | Vitest（単体）、Playwright（E2E、複数ブラウザコンテキストで共同編集・ホスト引き継ぎを検証） | |
 | Lint / Format | Biome | |
-| デプロイ | Dockerfile（client は静的ファイルを server が配信、または nginx）＋ `docker-compose.yml`（server / postgres / minio はローカル用 profile） | Coolify で compose をそのまま使う |
+| デプロイ | Dockerfile（client は静的ファイルを server が配信、または nginx）＋ `docker-compose.yml`（app / postgres。S3 互換は外部） | Coolify で compose をそのまま使う |
 
 ### 3D パネルの表示方式（提案）
 
@@ -212,7 +212,7 @@ tukurium-prototype/
 ├─ samples/                   # 同梱サンプル（銃・的・射撃場）をリポジトリ形式で
 ├─ e2e/                       # Playwright
 ├─ docker/                    # Dockerfile 等
-├─ docker-compose.yml         # server / postgres / minio（ローカル用 profile）
+├─ docker-compose.yml         # app / postgres（S3 互換は外部）
 └─ docs/                      # 要件・計画・決定記録（ADR）
 ```
 
@@ -225,7 +225,7 @@ tukurium-prototype/
 期間は示さず順番のみ。各マイルストーン末に要件書 §10 の確認シナリオのどれを満たすかを示す。
 
 ### M0：基盤と技術スパイク
-- モノレポ、Vite / Node 雛形、Biome、Vitest、CI（lint・型・テスト）、docker compose（postgres・minio）。
+- モノレポ、Vite / Node 雛形、Biome、Vitest、CI（lint・型・テスト）、docker compose（app・postgres）。
 - スパイク（結果を `docs/adr/` に記録）：
   1. QuickJS：無限ループ・メモリ暴走の停止、1 フレームあたりの呼び出しコスト（Entity 数百で 60fps を保てるか）。
   2. 3D パネル：CSS3DRenderer での操作感、他人向けテクスチャ表示。
