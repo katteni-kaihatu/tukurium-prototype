@@ -114,13 +114,22 @@ importers:
       '@tukurium/eks':
         specifier: workspace:*
         version: link:../eks
+      '@tukurium/repo-model':
+        specifier: workspace:*
+        version: link:../repo-model
       '@tukurium/script':
         specifier: workspace:*
         version: link:../script
+      three:
+        specifier: 0.187.0
+        version: 0.187.0
     devDependencies:
       '@types/node':
         specifier: ^22.20.5
         version: 22.20.5
+      '@types/three':
+        specifier: 0.187.0
+        version: 0.187.0
 
   packages/script:
     dependencies:
