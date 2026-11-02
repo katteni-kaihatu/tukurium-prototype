@@ -1,5 +1,8 @@
 import type { Participant } from "@tukurium/shared";
 import * as THREE from "three";
+import { CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
+import { PanelSpace } from "../panels/PanelSpace";
+import { RemotePanelMesh } from "../panels/RemotePanelMesh";
 import { Avatars } from "./Avatars";
 import { FpsController } from "./FpsController";
 
@@ -19,6 +22,8 @@ export class SessionEngine {
   readonly camera = new THREE.PerspectiveCamera(70, 1, 0.05, 500);
   readonly controller: FpsController;
   readonly avatars: Avatars;
+  readonly panels: PanelSpace;
+  private readonly cssRenderer = new CSS3DRenderer();
 
   private readonly clock = new THREE.Clock();
   private readonly resizeObserver: ResizeObserver;
@@ -26,17 +31,26 @@ export class SessionEngine {
   private disposed = false;
 
   constructor(private readonly container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // 空は CSS で描き、WebGL は透明にする（パネルの穴あけのため。PanelSpace を参照）
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setClearColor(0x000000, 0);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.domElement.style.display = "block";
-    container.appendChild(this.renderer.domElement);
+    const canvas = this.renderer.domElement;
+    Object.assign(canvas.style, { position: "absolute", inset: "0", pointerEvents: "none" });
+    const css = this.cssRenderer.domElement;
+    Object.assign(css.style, { position: "absolute", inset: "0", pointerEvents: "none" });
+    container.style.background = "linear-gradient(#C9DDF6 0%, #DCE7F3 55%, #E9E4D6 100%)";
+    container.append(css, canvas);
+    this.panels = new PanelSpace(this.scene, this.cssRenderer);
 
     this.buildWorld();
-    this.controller = new FpsController(this.camera, this.renderer.domElement);
+    this.controller = new FpsController(this.camera, canvas);
+    // 何もない所をクリックしたら空間に入る（パネルの上のクリックはパネルが受け取る）
+    container.addEventListener("click", this.onContainerClick);
     this.avatars = new Avatars(this.scene);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -64,6 +78,9 @@ export class SessionEngine {
 
   dispose(): void {
     this.disposed = true;
+    this.container.removeEventListener("click", this.onContainerClick);
+    this.panels.dispose();
+    this.cssRenderer.domElement.remove();
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     this.controller.dispose();
@@ -85,6 +102,11 @@ export class SessionEngine {
     this.controller.update(dt);
     this.avatars.update(dt);
     this.renderer.render(this.scene, this.camera);
+    this.cssRenderer.render(this.scene, this.camera);
+  };
+
+  private onContainerClick = (e: MouseEvent): void => {
+    if (e.target === this.container) this.controller.lock();
   };
 
   private resize(): void {
@@ -94,15 +116,14 @@ export class SessionEngine {
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = "100%";
     this.renderer.domElement.style.height = "100%";
+    this.cssRenderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
   /** M0 用の仮の空間。M1 以降はワールドのアウトプットから組み立てる。 */
   private buildWorld(): void {
-    const sky = new THREE.Color("#C9DDF6");
-    this.scene.background = sky;
-    this.scene.fog = new THREE.Fog(sky, 30, 120);
+    this.scene.fog = new THREE.Fog("#E3E6E4", 30, 120);
 
     this.scene.add(new THREE.HemisphereLight("#ffffff", "#B8C4A8", 1.1));
     const sun = new THREE.DirectionalLight("#fff6e8", 2.2);
@@ -140,5 +161,25 @@ export class SessionEngine {
       m.receiveShadow = true;
       this.scene.add(m);
     }
+
+    // 試作：他の参加者のパネルの見え方（M2 でサーバーからの要約に置き換える）
+    const sample = new RemotePanelMesh({
+      title: "Inspector · Gun",
+      owner: "ここあ（見本）",
+      restricted: false,
+      lines: ["Gun", "  ammo      12", "  interval  0.2", "Transform", "  position  0, 1.2, -3"],
+    });
+    sample.position.set(-5, 1.5, -5);
+    sample.rotation.y = Math.PI / 5;
+    this.scene.add(sample);
+    const hidden = new RemotePanelMesh({
+      title: "",
+      owner: "れにうむ（見本）",
+      restricted: true,
+      lines: [],
+    });
+    hidden.position.set(5, 1.5, -5);
+    hidden.rotation.y = -Math.PI / 5;
+    this.scene.add(hidden);
   }
 }

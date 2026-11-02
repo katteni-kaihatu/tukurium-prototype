@@ -38,8 +38,8 @@ describe("ScriptSandbox", () => {
     sandbox = await ScriptSandbox.create({
       hostFunctions: {
         "world.raycast": () => ({ entity: "target", distance: 3 }),
-        "world.emit": (...args) => {
-          emitted.push(args);
+        "world.emit": (args, ctx) => {
+          emitted.push([...args, ctx]);
           return undefined;
         },
       },
@@ -50,7 +50,9 @@ describe("ScriptSandbox", () => {
 
     let es = sandbox.run("shoot", "onInput", [gun("g1")], [{ action: "fire" }]);
     expect(es[0]?.states.Gun).toEqual({ ammo: 1, interval: 0.5, cooldown: 0.5 });
-    expect(emitted).toEqual([["target", "hit", { damage: 1 }]]);
+    expect(emitted).toEqual([
+      ["target", "hit", { damage: 1 }, { realm: "default", systemId: "shoot" }],
+    ]);
 
     es = sandbox.run("shoot", "onUpdate", es, [0.2]);
     expect(es[0]?.states.Gun?.cooldown).toBeCloseTo(0.3);
@@ -129,13 +131,46 @@ describe("ScriptSandbox", () => {
 
   it("log を受け取れる", async () => {
     const logs: [string | null, string][] = [];
-    sandbox = await ScriptSandbox.create({ onLog: (id, m) => logs.push([id, m]) });
+    sandbox = await ScriptSandbox.create({ onLog: (m, ctx) => logs.push([ctx.systemId, m]) });
     sandbox.loadSystem(
       "hello",
       `export default system({ onUpdate(e) { log("hi", e.id, { a: 1 }); } });`,
     );
     sandbox.run("hello", "onUpdate", [{ id: "e1", states: {} }]);
     expect(logs).toEqual([["hello", 'hi e1 {"a":1}']]);
+  });
+
+  it("別の領域の System は、グローバルやプロトタイプの書き換えが届かない", async () => {
+    sandbox = await ScriptSandbox.create();
+    sandbox.loadSystem(
+      "evil",
+      `const define = system;
+       Object.prototype.hacked = true;
+       globalThis.system = () => { throw new Error("hijacked"); };
+       export default define({ onUpdate() {} });`,
+      "repo-evil",
+    );
+    sandbox.loadSystem(
+      "victim",
+      `export default system({ onUpdate(e) { e.out = { hacked: ({}).hacked === true }; } });`,
+      "repo-victim",
+    );
+    const [v] = sandbox.run("victim", "onUpdate", [{ id: "x", states: { out: {} } }]);
+    expect(v?.states.out).toEqual({ hacked: false });
+    // 同じ領域なら書き換えが見える（同じ作者の System はグローバルを共有する）
+    expect(() =>
+      sandbox?.loadSystem("same", "export default system({});", "repo-evil"),
+    ).toThrowError(/hijacked/);
+  });
+
+  it("System を別の領域へ読み込み直すと、元の領域からは消える", async () => {
+    sandbox = await ScriptSandbox.create();
+    sandbox.loadSystem("s", `export default system({ onUpdate(e) { e.out = { v: 1 }; } });`, "a");
+    sandbox.loadSystem("s", `export default system({ onUpdate(e) { e.out = { v: 2 }; } });`, "b");
+    const [e] = sandbox.run("s", "onUpdate", [{ id: "x", states: { out: {} } }]);
+    expect(e?.states.out).toEqual({ v: 2 });
+    sandbox.disposeRealm("b");
+    expect(() => sandbox?.run("s", "onUpdate", [])).toThrowError(/読み込まれていません/);
   });
 
   it("性能の目安：500 Entity の onUpdate を 1 回の呼び出しで処理", async () => {

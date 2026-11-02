@@ -1,0 +1,48 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.row label:first-child {
+  width: 64px;
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-ink-3);
+}
+
+.row input[type="text"],
+.row input:not([type]) {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+}
+
+.row input[type="range"] {
+  flex: 1;
+}
+
+.row output,
+.row code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-ink-2);
+  min-width: 28px;
+}
+
+.inline {
+  font-size: 12.5px;
+}
+
+.note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--c-ink-3);
+}

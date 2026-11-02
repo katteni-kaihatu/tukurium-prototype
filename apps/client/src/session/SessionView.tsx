@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "../app/store";
 import { Connection } from "../net/Connection";
+import { DemoInspector } from "../panels/DemoInspector";
+import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 
 const POSE_INTERVAL_MS = 100;
 
+// 試作：パネル基盤の確認用（M1 でワークスペースのパネルに置き換える）
+const DEMO_PANELS: PanelSpec[] = [
+  { id: "demo-inspector", title: "Inspector（試作）", render: () => <DemoInspector /> },
+];
+
 export function SessionView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SessionEngine | null>(null);
   const [locked, setLocked] = useState(false);
+  const [engine, setEngine] = useState<SessionEngine | null>(null);
   const myName = useSession((s) => s.myName);
 
   useEffect(() => {
@@ -17,6 +25,7 @@ export function SessionView() {
     if (!container) return;
     const engine = new SessionEngine(container);
     engineRef.current = engine;
+    setEngine(engine);
     // 開発時のみ：E2E テストやデバッグからエンジンを参照できるようにする
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const store = useSession.getState();
@@ -81,12 +90,14 @@ export function SessionView() {
       conn.close();
       engine.dispose();
       engineRef.current = null;
+      setEngine(null);
     };
   }, [myName]);
 
   return (
     <div className={styles.root}>
       <div ref={containerRef} className={styles.canvas} />
+      {engine && <PanelLayer engine={engine} panels={DEMO_PANELS} />}
       <div className={styles.crosshair} aria-hidden="true">
         <span className={styles.chV} />
         <span className={styles.chH} />
