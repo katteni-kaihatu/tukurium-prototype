@@ -30,6 +30,16 @@ pnpm dev
 | `pnpm lint` / `pnpm format` | Biome による検査・整形 |
 | `pnpm build` | クライアントとサーバーのビルド |
 
+### 周辺サービス（PostgreSQL・S3 互換ストレージ）
+
+M2 以降でサーバーが DB とストレージを使うようになったら、開発用の compose で起動する（Docker が必要）。
+
+```bash
+pnpm services:up
+```
+
+PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`localhost:8333`）が起動する。接続先は `.env.development.example` を参照。止めるときは `pnpm services:down`。
+
 ## 構成
 
 ```
@@ -47,7 +57,7 @@ docker/          Dockerfile
 docker compose up -d --build
 ```
 
-`app`（クライアント＋サーバー）と `postgres` が起動する。S3 互換ストレージはローカルなら `--profile local` で MinIO も起動できる。本番の設定値は `.env.example` を参照。
+`app`（クライアント＋サーバー）と `postgres` が起動する。S3 互換ストレージは外部のものを環境変数で指定する（設定値は `.env.example` を参照）。
 
 Docker Hub の取得制限に当たる場合は、ベースイメージを差し替えられる：
 

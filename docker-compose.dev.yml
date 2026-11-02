@@ -1,0 +1,40 @@
+# ローカル開発用：アプリが使う周辺サービス（PostgreSQL・S3 互換ストレージ）だけを起動する。
+# アプリ本体はホットリロードのため `pnpm dev` で動かす。
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# 接続先（.env.development.example と同じ値）
+#   PostgreSQL : postgres://tukurium:tukurium@localhost:5432/tukurium
+#   S3 互換    : http://localhost:8333  （アクセスキー tukurium / tukurium-dev-secret）
+name: tukurium-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: tukurium
+      POSTGRES_PASSWORD: tukurium
+      POSTGRES_DB: tukurium
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tukurium"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # SeaweedFS を S3 互換ストレージとして使う（MinIO は Docker Hub での配布が終了したため）
+  s3:
+    image: chrislusf/seaweedfs:4.50
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "8333:8333"
+    volumes:
+      - s3-data:/data
+      - ./docker/dev/s3.json:/etc/seaweedfs/s3.json:ro
+
+volumes:
+  pg-data:
+  s3-data:
