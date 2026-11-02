@@ -1,0 +1,380 @@
+import type {
+  EntityId,
+  FieldValue,
+  KokoStateDef,
+  KokoStateId,
+  KokoStateValues,
+} from "@tukurium/eks";
+import * as Y from "yjs";
+import { buildRegistry, isBuiltin } from "./builtins";
+import {
+  type EntityDef,
+  type MaterialDef,
+  newId,
+  type OutputDef,
+  type OutputKind,
+  type ProjectSnapshot,
+  type SystemDef,
+} from "./schema";
+
+const clone = <T>(v: T): T => structuredClone(v);
+
+/**
+ * ワークスペースの制作データ（編集中）。Y.Doc の上に載せ、共同編集でそのまま同期できるようにする。
+ *
+ * 構造：
+ * - meta        : Y.Map            name
+ * - kokostates  : Y.Map<KokoStateDef>   利用者定義（Built-in は含めない）
+ * - systems     : Y.Map<SystemDef>
+ * - code        : Y.Map<Y.Text>         System のスクリプト（文字単位で共同編集）
+ * - materials   : Y.Map<MaterialDef>
+ * - outputs     : Y.Map<OutputDef>
+ * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<KokoStateValues>)
+ *
+ * 変更はすべて transact でまとめ、利用者の 1 操作が 1 つの更新になるようにする。
+ */
+export class ProjectDoc {
+  readonly doc: Y.Doc;
+
+  constructor(doc: Y.Doc = new Y.Doc()) {
+    this.doc = doc;
+  }
+
+  private get meta() {
+    return this.doc.getMap<string>("meta");
+  }
+  private get kokoMap() {
+    return this.doc.getMap<KokoStateDef>("kokostates");
+  }
+  private get systemMap() {
+    return this.doc.getMap<SystemDef>("systems");
+  }
+  private get codeMap() {
+    return this.doc.getMap<Y.Text>("code");
+  }
+  private get materialMap() {
+    return this.doc.getMap<MaterialDef>("materials");
+  }
+  private get outputMap() {
+    return this.doc.getMap<OutputDef>("outputs");
+  }
+  private get entityMap() {
+    return this.doc.getMap<Y.Map<unknown>>("entities");
+  }
+
+  transact(fn: () => void, origin: unknown = "local"): void {
+    this.doc.transact(fn, origin);
+  }
+
+  /** 変更を購読する。戻り値で解除。 */
+  observe(fn: (origin: unknown) => void): () => void {
+    const handler = (_u: Uint8Array, origin: unknown) => fn(origin);
+    this.doc.on("update", handler);
+    return () => this.doc.off("update", handler);
+  }
+
+  // ---------- 名前 ----------
+  get name(): string {
+    return this.meta.get("name") ?? "untitled";
+  }
+  setName(name: string): void {
+    this.meta.set("name", name);
+  }
+
+  // ---------- KokoState 定義 ----------
+  kokostates(): KokoStateDef[] {
+    return [...this.kokoMap.values()].map(clone);
+  }
+  kokostate(id: KokoStateId): KokoStateDef | undefined {
+    const d = this.kokoMap.get(id);
+    return d ? clone(d) : undefined;
+  }
+  registry() {
+    return buildRegistry(this.kokostates());
+  }
+  addKokoState(name: string): KokoStateId {
+    this.assertKokoName(name, null);
+    const id = newId("ks");
+    this.kokoMap.set(id, { id, name, fields: [] });
+    return id;
+  }
+  /** 定義を書き換える。フィールドを消した・型を変えた場合、Entity の値も合わせる。 */
+  updateKokoState(def: KokoStateDef): void {
+    if (isBuiltin(def.id)) throw new Error("Built-in の KokoState は変更できません");
+    this.assertKokoName(def.name, def.id);
+    const ids = new Set<string>();
+    for (const f of def.fields) {
+      if (ids.has(f.id)) throw new Error(`フィールド ID が重複しています: ${f.id}`);
+      ids.add(f.id);
+    }
+    const names = def.fields.map((f) => f.name);
+    if (new Set(names).size !== names.length) throw new Error("フィールド名が重複しています");
+    this.transact(() => {
+      const prev = this.kokoMap.get(def.id);
+      this.kokoMap.set(def.id, clone(def));
+      if (!prev) return;
+      // Entity が持っている値を新しい定義に合わせる（消えたフィールドは削除、型が変わったら初期値）
+      for (const e of this.entityMap.values()) {
+        const states = e.get("states") as Y.Map<KokoStateValues>;
+        const values = states.get(def.id);
+        if (!values) continue;
+        const next: KokoStateValues = {};
+        for (const f of def.fields) {
+          const old = prev.fields.find((p) => p.id === f.id);
+          const kept = old && old.type === f.type ? values[f.id] : undefined;
+          next[f.id] = kept !== undefined ? kept : clone(f.default);
+        }
+        states.set(def.id, next);
+      }
+    });
+  }
+  removeKokoState(id: KokoStateId): void {
+    this.transact(() => {
+      this.kokoMap.delete(id);
+      for (const e of this.entityMap.values()) (e.get("states") as Y.Map<unknown>).delete(id);
+    });
+  }
+  private assertKokoName(name: string, self: KokoStateId | null): void {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error("KokoState の名前は英字で始まる英数字と _ にしてください");
+    }
+    const taken = this.registry().idOf(name);
+    if (taken !== undefined && taken !== self) throw new Error(`名前「${name}」は使われています`);
+  }
+
+  // ---------- System ----------
+  systems(): SystemDef[] {
+    return [...this.systemMap.values()].map(clone);
+  }
+  system(id: string): SystemDef | undefined {
+    const s = this.systemMap.get(id);
+    return s ? clone(s) : undefined;
+  }
+  code(id: string): Y.Text | undefined {
+    return this.codeMap.get(id);
+  }
+  addSystem(name: string, code: string): string {
+    const id = newId("sys");
+    this.transact(() => {
+      this.systemMap.set(id, { id, name });
+      const text = new Y.Text();
+      text.insert(0, code);
+      this.codeMap.set(id, text);
+    });
+    return id;
+  }
+  renameSystem(id: string, name: string): void {
+    const s = this.systemMap.get(id);
+    if (s) this.systemMap.set(id, { ...s, name });
+  }
+  removeSystem(id: string): void {
+    this.transact(() => {
+      this.systemMap.delete(id);
+      this.codeMap.delete(id);
+      for (const o of this.outputMap.values()) {
+        if (o.systems.some((s) => s.id === id)) {
+          this.outputMap.set(o.id, { ...o, systems: o.systems.filter((s) => s.id !== id) });
+        }
+      }
+    });
+  }
+
+  // ---------- マテリアル ----------
+  materials(): MaterialDef[] {
+    return [...this.materialMap.values()].map(clone);
+  }
+  material(id: string): MaterialDef | undefined {
+    const m = this.materialMap.get(id);
+    return m ? clone(m) : undefined;
+  }
+  addMaterial(name: string, init: Partial<Omit<MaterialDef, "id" | "name">> = {}): string {
+    const id = newId("mat");
+    this.materialMap.set(id, { id, name, color: "#d8d2c6", roughness: 0.6, metalness: 0, ...init });
+    return id;
+  }
+  updateMaterial(m: MaterialDef): void {
+    this.materialMap.set(m.id, clone(m));
+  }
+  removeMaterial(id: string): void {
+    this.transact(() => {
+      this.materialMap.delete(id);
+      for (const e of this.entityMap.values()) {
+        const states = e.get("states") as Y.Map<KokoStateValues>;
+        const mesh = states.get("builtin.Mesh");
+        if (mesh && mesh.material === id) states.set("builtin.Mesh", { ...mesh, material: null });
+      }
+    });
+  }
+
+  // ---------- アウトプット ----------
+  outputs(): OutputDef[] {
+    return [...this.outputMap.values()].map(clone);
+  }
+  output(id: string): OutputDef | undefined {
+    const o = this.outputMap.get(id);
+    return o ? clone(o) : undefined;
+  }
+  addOutput(name: string, kind: OutputKind): string {
+    const id = newId("out");
+    this.outputMap.set(id, { id, name, kind, systems: [], keep: [] });
+    return id;
+  }
+  updateOutput(o: OutputDef): void {
+    this.outputMap.set(o.id, clone(o));
+  }
+
+  // ---------- Entity ----------
+  entities(output?: string): EntityDef[] {
+    const out: EntityDef[] = [];
+    for (const e of this.entityMap.values()) {
+      const def = this.toEntityDef(e);
+      if (output === undefined || def.output === output) out.push(def);
+    }
+    return out.sort((a, b) => a.order - b.order);
+  }
+  entity(id: EntityId): EntityDef | undefined {
+    const e = this.entityMap.get(id);
+    return e ? this.toEntityDef(e) : undefined;
+  }
+  addEntity(init: {
+    output: string;
+    name: string;
+    parent?: EntityId | null;
+    states?: Record<KokoStateId, KokoStateValues>;
+    id?: EntityId;
+  }): EntityId {
+    const id = init.id ?? newId("ent");
+    const registry = this.registry();
+    this.transact(() => {
+      const e = new Y.Map<unknown>();
+      const siblings = this.entities(init.output).filter((s) => s.parent === (init.parent ?? null));
+      e.set("id", id);
+      e.set("name", init.name);
+      e.set("parent", init.parent ?? null);
+      e.set("output", init.output);
+      e.set("order", siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1);
+      const states = new Y.Map<KokoStateValues>();
+      for (const [koko, values] of Object.entries(init.states ?? {})) {
+        states.set(koko, registry.createValues(koko, values));
+      }
+      e.set("states", states);
+      this.entityMap.set(id, e);
+    });
+    return id;
+  }
+  renameEntity(id: EntityId, name: string): void {
+    this.entityMap.get(id)?.set("name", name);
+  }
+  setParent(id: EntityId, parent: EntityId | null): void {
+    // 自分の子孫を親にはできない
+    for (let p = parent; p !== null; p = this.entity(p)?.parent ?? null) {
+      if (p === id) throw new Error("自分の子孫を親にはできません");
+    }
+    this.entityMap.get(id)?.set("parent", parent);
+  }
+  /** Entity を削除する（子も削除）。状態維持のマークも外す。 */
+  removeEntity(id: EntityId): void {
+    this.transact(() => {
+      const ids = this.descendants(id);
+      for (const eid of ids) this.entityMap.delete(eid);
+      for (const o of this.outputMap.values()) {
+        if (o.keep.some((k) => ids.includes(k.entity))) {
+          this.outputMap.set(o.id, { ...o, keep: o.keep.filter((k) => !ids.includes(k.entity)) });
+        }
+      }
+    });
+  }
+  addState(id: EntityId, koko: KokoStateId, values?: KokoStateValues): void {
+    const states = this.statesOf(id);
+    if (states.has(koko)) return;
+    states.set(koko, this.registry().createValues(koko, values));
+  }
+  removeState(id: EntityId, koko: KokoStateId): void {
+    this.statesOf(id).delete(koko);
+  }
+  /** フィールドの値を変える（他のフィールドはそのまま）。 */
+  setField(id: EntityId, koko: KokoStateId, field: string, value: FieldValue): void {
+    const states = this.statesOf(id);
+    const values = states.get(koko);
+    if (!values) throw new Error(`Entity ${id} は ${koko} を持っていません`);
+    states.set(koko, { ...values, [field]: clone(value) });
+  }
+
+  // ---------- 丸ごと ----------
+  snapshot(): ProjectSnapshot {
+    return {
+      version: 1,
+      name: this.name,
+      kokostates: this.kokostates(),
+      systems: this.systems().map((s) => ({ ...s, code: this.code(s.id)?.toString() ?? "" })),
+      materials: this.materials(),
+      outputs: this.outputs(),
+      entities: this.entities(),
+    };
+  }
+
+  /** 中身を丸ごと置き換える（サンプルの読み込み、コミットからの復元など）。 */
+  load(snap: ProjectSnapshot): void {
+    this.transact(() => {
+      for (const m of [
+        this.kokoMap,
+        this.systemMap,
+        this.codeMap,
+        this.materialMap,
+        this.outputMap,
+        this.entityMap,
+      ]) {
+        m.clear();
+      }
+      this.meta.set("name", snap.name);
+      for (const k of snap.kokostates) this.kokoMap.set(k.id, clone(k));
+      for (const s of snap.systems) {
+        this.systemMap.set(s.id, { id: s.id, name: s.name });
+        const text = new Y.Text();
+        text.insert(0, s.code);
+        this.codeMap.set(s.id, text);
+      }
+      for (const m of snap.materials) this.materialMap.set(m.id, clone(m));
+      for (const o of snap.outputs) this.outputMap.set(o.id, clone(o));
+      for (const e of snap.entities) {
+        const map = new Y.Map<unknown>();
+        map.set("id", e.id);
+        map.set("name", e.name);
+        map.set("parent", e.parent);
+        map.set("output", e.output);
+        map.set("order", e.order);
+        const states = new Y.Map<KokoStateValues>();
+        for (const [k, v] of Object.entries(e.states)) states.set(k, clone(v));
+        map.set("states", states);
+        this.entityMap.set(e.id, map);
+      }
+    });
+  }
+
+  private descendants(id: EntityId): EntityId[] {
+    const all = this.entities();
+    const out = [id];
+    for (let i = 0; i < out.length; i++) {
+      for (const e of all) if (e.parent === out[i]) out.push(e.id);
+    }
+    return out;
+  }
+
+  private statesOf(id: EntityId): Y.Map<KokoStateValues> {
+    const e = this.entityMap.get(id);
+    if (!e) throw new Error(`Unknown entity: ${id}`);
+    return e.get("states") as Y.Map<KokoStateValues>;
+  }
+
+  private toEntityDef(e: Y.Map<unknown>): EntityDef {
+    const states = e.get("states") as Y.Map<KokoStateValues>;
+    return {
+      id: e.get("id") as string,
+      name: e.get("name") as string,
+      parent: (e.get("parent") as string | null) ?? null,
+      output: e.get("output") as string,
+      order: (e.get("order") as number) ?? 0,
+      states: clone(states.toJSON() as Record<KokoStateId, KokoStateValues>),
+    };
+  }
+}

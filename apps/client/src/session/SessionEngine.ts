@@ -26,6 +26,8 @@ export class SessionEngine {
   private readonly cssRenderer = new CSS3DRenderer();
 
   private readonly clock = new THREE.Clock();
+  private readonly frameListeners = new Set<(dt: number) => void>();
+  private readonly pointerListeners = new Set<(button: number, phase: "down" | "up") => void>();
   private readonly resizeObserver: ResizeObserver;
   private frame = 0;
   private disposed = false;
@@ -48,15 +50,31 @@ export class SessionEngine {
     this.panels = new PanelSpace(this.scene, this.cssRenderer);
 
     this.buildWorld();
+    // カメラの子（Play 中に手に持つ物）も描画されるよう、カメラをシーンに入れる
+    this.scene.add(this.camera);
     this.controller = new FpsController(this.camera, canvas);
     // 何もない所をクリックしたら空間に入る（パネルの上のクリックはパネルが受け取る）
     container.addEventListener("click", this.onContainerClick);
+    document.addEventListener("mousedown", this.onMouseDown);
+    document.addEventListener("mouseup", this.onMouseUp);
     this.avatars = new Avatars(this.scene);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
     this.loop();
+  }
+
+  /** 毎フレーム呼ばれる処理を登録する。戻り値で解除。 */
+  onFrame(fn: (dt: number) => void): () => void {
+    this.frameListeners.add(fn);
+    return () => this.frameListeners.delete(fn);
+  }
+
+  /** 空間に入っている（ポインターロック中）ときのマウスボタンの押下・解放。戻り値で解除。 */
+  onPointer(fn: (button: number, phase: "down" | "up") => void): () => void {
+    this.pointerListeners.add(fn);
+    return () => this.pointerListeners.delete(fn);
   }
 
   pose(): Pose {
@@ -79,6 +97,10 @@ export class SessionEngine {
   dispose(): void {
     this.disposed = true;
     this.container.removeEventListener("click", this.onContainerClick);
+    document.removeEventListener("mousedown", this.onMouseDown);
+    document.removeEventListener("mouseup", this.onMouseUp);
+    this.frameListeners.clear();
+    this.pointerListeners.clear();
     this.panels.dispose();
     this.cssRenderer.domElement.remove();
     cancelAnimationFrame(this.frame);
@@ -101,8 +123,19 @@ export class SessionEngine {
     const dt = Math.min(this.clock.getDelta(), 0.1);
     this.controller.update(dt);
     this.avatars.update(dt);
+    for (const fn of this.frameListeners) fn(dt);
     this.renderer.render(this.scene, this.camera);
     this.cssRenderer.render(this.scene, this.camera);
+  };
+
+  private onMouseDown = (e: MouseEvent): void => {
+    if (!this.controller.locked) return;
+    for (const fn of this.pointerListeners) fn(e.button, "down");
+  };
+
+  private onMouseUp = (e: MouseEvent): void => {
+    if (!this.controller.locked) return;
+    for (const fn of this.pointerListeners) fn(e.button, "up");
   };
 
   private onContainerClick = (e: MouseEvent): void => {
@@ -148,20 +181,6 @@ export class SessionEngine {
     (grid.material as THREE.Material).opacity = 0.6;
     this.scene.add(grid);
 
-    // 目印のプロシージャル形状
-    const shapes: [THREE.BufferGeometry, string, [number, number, number]][] = [
-      [new THREE.BoxGeometry(1, 1, 1), "#603D56", [-3, 0.5, -4]],
-      [new THREE.SphereGeometry(0.6, 32, 16), "#FDD046", [0, 0.6, -6]],
-      [new THREE.CylinderGeometry(0.5, 0.5, 1.4, 32), "#1F6B47", [3, 0.7, -4]],
-    ];
-    for (const [geo, color, pos] of shapes) {
-      const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
-      m.position.set(...pos);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      this.scene.add(m);
-    }
-
     // 試作：他の参加者のパネルの見え方（M2 でサーバーからの要約に置き換える）
     const sample = new RemotePanelMesh({
       title: "Inspector · Gun",
@@ -169,7 +188,7 @@ export class SessionEngine {
       restricted: false,
       lines: ["Gun", "  ammo      12", "  interval  0.2", "Transform", "  position  0, 1.2, -3"],
     });
-    sample.position.set(-5, 1.5, -5);
+    sample.position.set(-7, 1.5, -3);
     sample.rotation.y = Math.PI / 5;
     this.scene.add(sample);
     const hidden = new RemotePanelMesh({
@@ -178,7 +197,7 @@ export class SessionEngine {
       restricted: true,
       lines: [],
     });
-    hidden.position.set(5, 1.5, -5);
+    hidden.position.set(7, 1.5, -3);
     hidden.rotation.y = -Math.PI / 5;
     this.scene.add(hidden);
   }
