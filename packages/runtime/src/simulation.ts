@@ -7,7 +7,13 @@ import type {
   Vec3,
 } from "@tukurium/eks";
 import { World, type WorldSnapshot } from "@tukurium/eks";
-import { buildRegistry, type ProjectSnapshot } from "@tukurium/repo-model";
+import {
+  BUILTIN,
+  buildRegistry,
+  isBuiltin,
+  type MaterialDef,
+  type ProjectSnapshot,
+} from "@tukurium/repo-model";
 import {
   type HostCallContext,
   type Json,
@@ -50,8 +56,37 @@ export interface SimulationOptions {
   timeLimitMs?: number;
 }
 
-interface LoadedSystem {
+/** セッションに配置された実体（アウトプットの 1 回分の配置） */
+export interface PartSpec {
   id: string;
+  /** リポジトリ（ワークスペース）。KokoState の名前とスクリプトの領域はこの単位で分かれる */
+  realm: string;
+  outputId: string;
+  snapshot: ProjectSnapshot;
+  /** 配置の位置と向き（ルートの Entity に足す） */
+  position: Vec3;
+  yaw: number;
+}
+
+export interface ApplyReport {
+  /** 更新した配置の数 */
+  instances: number;
+  /** 実行値を引き継いだフィールドの数 */
+  kept: number;
+  /** マークはあったが、互換性がないなどで初期値に戻したフィールドの数 */
+  dropped: number;
+}
+
+interface Part extends PartSpec {
+  entities: Set<EntityId>;
+}
+
+interface LoadedSystem {
+  /** サンドボックス上の ID（セッションでは「領域:System ID」） */
+  id: string;
+  realm: string;
+  /** この System を使っている配置 */
+  users: Set<string>;
   name: string;
   with: KokoStateId[];
   without: KokoStateId[];
@@ -82,7 +117,13 @@ const HOST_API = [
 type HostName = (typeof HOST_API)[number];
 
 /**
- * 1 つのアウトプットを実行する。EKS の World ＋ 物理 ＋ スクリプト。
+ * アウトプットを実行する。EKS の World ＋ 物理 ＋ スクリプト。
+ *
+ * - ワークスペースの再生では、1 つのアウトプットをそのまま（ID を付け替えずに）実行する（create）。
+ * - セッションでは、複数のリポジトリのアウトプットを「配置」として同じ世界に置く（createSession / addPart）。
+ *   Entity の ID は配置ごと（「配置ID/EntityID」）、KokoState とマテリアルの ID はリポジトリごと
+ *   （「領域:ID」）に付け替え、KokoState の名前はリポジトリごとのスコープで引く。物理とイベントは共通なので、
+ *   別のリポジトリの銃で別のリポジトリの的を撃てる。
  *
  * 1 ステップの順序：
  *   1. 物理ワールドへ反映（追加・削除・動かない剛体の移動）して計算 → 衝突イベント → onCollision
@@ -99,6 +140,9 @@ export class Simulation {
   time = 0;
   private readonly systems: LoadedSystem[] = [];
   private readonly names = new Map<EntityId, string>();
+  private readonly parts = new Map<string, Part>();
+  private readonly realmDefs = new Map<string, Set<KokoStateId>>();
+  private readonly realmMaterials = new Map<string, MaterialDef[]>();
   private inputs: InputEvent[] = [];
   private pending: PendingEvent[] = [];
   private disposed = false;
@@ -106,20 +150,16 @@ export class Simulation {
   private constructor(
     private readonly sandbox: ScriptSandbox,
     private physics: Physics,
-    registry: KokoStateRegistry,
-    private readonly options: SimulationOptions,
+    /** true：セッション（ID を付け替える）、false：ワークスペースの再生（そのまま） */
+    private readonly multi: boolean,
+    private readonly options: { onLog?: (entry: LogEntry) => void },
   ) {
-    this.registry = registry;
-    this.world = new World(registry);
+    this.registry = buildRegistry([]);
+    this.world = new World(this.registry);
   }
 
-  static async create(
-    snapshot: ProjectSnapshot,
-    outputId: string,
-    options: SimulationOptions,
-  ): Promise<Simulation> {
+  private static async make(multi: boolean, options: Omit<SimulationOptions, "realm">) {
     await initPhysics();
-    const registry = buildRegistry(snapshot.kokostates);
     const ref: { sim: Simulation | null } = { sim: null };
     const sandbox = await ScriptSandbox.create({
       timeLimitMs: options.timeLimitMs ?? 20,
@@ -131,11 +171,148 @@ export class Simulation {
       ),
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
     });
-    const sim = new Simulation(sandbox, new Physics(), registry, options);
+    const sim = new Simulation(sandbox, new Physics(), multi, options);
     ref.sim = sim;
-    sim.loadEntities(snapshot, outputId);
-    sim.loadSystems(snapshot, outputId);
     return sim;
+  }
+
+  /** ワークスペースの再生：1 つのアウトプットを、ID を付け替えずに実行する */
+  static async create(
+    snapshot: ProjectSnapshot,
+    outputId: string,
+    options: SimulationOptions,
+  ): Promise<Simulation> {
+    const sim = await Simulation.make(false, options);
+    if (!snapshot.outputs.some((o) => o.id === outputId)) {
+      sim.dispose();
+      throw new Error(`Unknown output: ${outputId}`);
+    }
+    sim.addPart({
+      id: "main",
+      realm: options.realm,
+      outputId,
+      snapshot,
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    return sim;
+  }
+
+  /** セッションの世界：配置は addPart で足していく */
+  static async createSession(options: Omit<SimulationOptions, "realm"> = {}): Promise<Simulation> {
+    return Simulation.make(true, options);
+  }
+
+  /** 配置を足す（同じ ID があれば置き換える） */
+  addPart(spec: PartSpec): void {
+    if (this.parts.has(spec.id)) this.removePart(spec.id);
+    const part: Part = { ...spec, entities: new Set() };
+    this.parts.set(part.id, part);
+    this.registerRealm(part.realm, part.snapshot);
+    this.instantiate(part);
+    this.loadSystems(part);
+  }
+
+  removePart(id: string): void {
+    const part = this.parts.get(id);
+    if (!part) return;
+    this.clearEntities(part);
+    this.parts.delete(id);
+    for (const sys of [...this.systems]) {
+      sys.users.delete(id);
+      if (sys.users.size === 0) this.dropSystem(sys);
+    }
+    if (![...this.parts.values()].some((p) => p.realm === part.realm)) {
+      for (const k of this.realmDefs.get(part.realm) ?? []) this.registry.unregister(k);
+      this.realmDefs.delete(part.realm);
+      this.realmMaterials.delete(part.realm);
+    }
+  }
+
+  partList(): { id: string; realm: string; outputId: string; position: Vec3; yaw: number }[] {
+    return [...this.parts.values()].map((p) => ({
+      id: p.id,
+      realm: p.realm,
+      outputId: p.outputId,
+      position: p.position,
+      yaw: p.yaw,
+    }));
+  }
+
+  /**
+   * 適用：同じリポジトリ・アウトプットの配置を、新しい制作データで作り直す（要件 §7）。
+   * 状態維持のマークがあり、型が変わっていないフィールドだけ、現在の実行値を引き継ぐ。
+   * それ以外の値は新しい制作データの値になる。System のコードも読み直す。
+   */
+  applyPart(realm: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
+    const targets = [...this.parts.values()].filter(
+      (p) => p.realm === realm && p.outputId === outputId,
+    );
+    const report: ApplyReport = { instances: targets.length, kept: 0, dropped: 0 };
+    if (targets.length === 0) return report;
+    const marks = snapshot.outputs.find((o) => o.id === outputId)?.keep ?? [];
+    const newDefs = new Map(snapshot.kokostates.map((d) => [d.id, d]));
+
+    // 1. マークされたフィールドの現在値を集める（古い定義と新しい定義で型が同じものだけ）
+    const kept = new Map<
+      string,
+      { entity: EntityId; koko: KokoStateId; field: string; value: FieldValue }[]
+    >();
+    for (const part of targets) {
+      const list: { entity: EntityId; koko: KokoStateId; field: string; value: FieldValue }[] = [];
+      for (const m of marks) {
+        const entity = this.eid(part, m.entity);
+        const koko = this.kid(realm, m.koko);
+        const oldField = this.registry.get(koko)?.fields.find((f) => f.id === m.field);
+        const newDef = isBuiltin(m.koko) ? this.registry.get(koko) : newDefs.get(m.koko);
+        const newField = newDef?.fields.find((f) => f.id === m.field);
+        const current = this.world.get(entity, koko)?.[m.field];
+        if (oldField && newField && oldField.type === newField.type && current !== undefined) {
+          list.push({ entity, koko, field: m.field, value: structuredClone(current) });
+          report.kept++;
+        } else {
+          report.dropped++;
+        }
+      }
+      kept.set(part.id, list);
+    }
+
+    // 2. 定義・マテリアルを入れ替えて、配置を作り直す
+    for (const part of targets) {
+      this.clearEntities(part);
+      part.snapshot = snapshot;
+    }
+    this.registerRealm(realm, snapshot);
+    for (const part of targets) {
+      this.instantiate(part);
+      for (const k of kept.get(part.id) ?? []) {
+        const values = this.world.get(k.entity, k.koko);
+        if (values && k.field in values) values[k.field] = k.value;
+      }
+    }
+
+    // 3. System を読み直す
+    const ids = new Set(targets.map((p) => p.id));
+    for (const sys of [...this.systems]) {
+      if (sys.realm !== realm) continue;
+      for (const id of ids) sys.users.delete(id);
+      if (sys.users.size === 0) this.dropSystem(sys);
+    }
+    for (const part of targets) this.loadSystems(part, true);
+    return report;
+  }
+
+  /** リセット：配置を、いまの制作データの初期値で作り直す（実行値は引き継がない） */
+  resetPart(id: string): void {
+    const part = this.parts.get(id);
+    if (!part) return;
+    this.clearEntities(part);
+    this.instantiate(part);
+  }
+
+  /** 表示用のマテリアル一覧（セッションでは ID が付け替え済み） */
+  materials(): MaterialDef[] {
+    return [...this.realmMaterials.values()].flat();
   }
 
   /** 実行中の System の状態（Inspector・エラー表示用） */
@@ -210,20 +387,113 @@ export class Simulation {
 
   // ---------------------------------------------------------------------------
 
-  private loadEntities(snapshot: ProjectSnapshot, outputId: string): void {
-    const { world, names } = buildWorld(snapshot, outputId, this.registry);
-    this.world.restore(world.snapshot());
-    for (const [id, n] of names) this.names.set(id, n);
+  private kid(realm: string, id: KokoStateId): KokoStateId {
+    return this.multi && !isBuiltin(id) ? `${realm}:${id}` : id;
   }
 
-  private loadSystems(snapshot: ProjectSnapshot, outputId: string): void {
-    const output = snapshot.outputs.find((o) => o.id === outputId);
-    if (!output) throw new Error(`Unknown output: ${outputId}`);
+  private eid(part: { id: string }, id: EntityId): EntityId {
+    return this.multi ? `${part.id}/${id}` : id;
+  }
+
+  private mid(realm: string, id: string): string {
+    return this.multi ? `${realm}:${id}` : id;
+  }
+
+  private scopeOfRealm(realm: string): string {
+    return this.multi ? realm : "";
+  }
+
+  /** リポジトリの KokoState 定義とマテリアルを登録し直す */
+  private registerRealm(realm: string, snapshot: ProjectSnapshot): void {
+    const scope = this.scopeOfRealm(realm);
+    const next = new Set<KokoStateId>();
+    for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
+    for (const def of snapshot.kokostates) {
+      const id = this.kid(realm, def.id);
+      this.registry.register({ ...def, id }, scope);
+      next.add(id);
+    }
+    this.realmDefs.set(realm, next);
+    this.realmMaterials.set(
+      realm,
+      snapshot.materials.map((m) => ({ ...m, id: this.mid(realm, m.id) })),
+    );
+  }
+
+  /** 配置の Entity を World に作る（ID の付け替え、ルートへの配置の位置・向き） */
+  private instantiate(part: Part): void {
+    const { world, names } = buildWorld(
+      part.snapshot,
+      part.outputId,
+      buildRegistry(part.snapshot.kokostates),
+    );
+    const snap = world.snapshot();
+    const cos = Math.cos(part.yaw);
+    const sin = Math.sin(part.yaw);
+    const moved = part.yaw !== 0 || part.position.some((v) => v !== 0);
+    for (const e of snap.entities) {
+      const id = this.eid(part, e.id);
+      if (this.world.has(id)) this.world.destroy(id);
+      this.world.spawn(id, e.parent === null ? null : this.eid(part, e.parent));
+      for (const [koko, values] of Object.entries(e.states)) {
+        const k = this.kid(part.realm, koko);
+        if (!this.registry.get(k)) continue;
+        const v = { ...values };
+        if (koko === BUILTIN.Mesh && typeof v.material === "string")
+          v.material = this.mid(part.realm, v.material);
+        const def = this.registry.require(k);
+        for (const f of def.fields) {
+          if (f.type === "entity" && typeof v[f.id] === "string")
+            v[f.id] = this.eid(part, v[f.id] as string);
+        }
+        if (koko === BUILTIN.Transform && e.parent === null && moved) {
+          const p = v.position as Vec3;
+          const r = v.rotation as Vec3;
+          v.position = [
+            part.position[0] + p[0] * cos + p[2] * sin,
+            part.position[1] + p[1],
+            part.position[2] - p[0] * sin + p[2] * cos,
+          ];
+          v.rotation = [r[0], r[1] + (part.yaw * 180) / Math.PI, r[2]];
+        }
+        this.world.add(id, k, v);
+      }
+      this.names.set(id, names.get(e.id) ?? e.id);
+      part.entities.add(id);
+    }
+  }
+
+  private clearEntities(part: Part): void {
+    for (const id of part.entities) {
+      this.world.destroy(id);
+      this.physics.remove(id);
+      this.names.delete(id);
+    }
+    part.entities.clear();
+  }
+
+  private dropSystem(sys: LoadedSystem): void {
+    this.sandbox.unloadSystem(sys.id);
+    this.systems.splice(this.systems.indexOf(sys), 1);
+  }
+
+  private loadSystems(part: Part, reload = false): void {
+    const output = part.snapshot.outputs.find((o) => o.id === part.outputId);
+    if (!output) throw new Error(`Unknown output: ${part.outputId}`);
     for (const ref of output.systems) {
-      const def = snapshot.systems.find((s) => s.id === ref.id);
+      const def = part.snapshot.systems.find((s) => s.id === ref.id);
       if (!def) continue;
+      const id = this.multi ? `${part.realm}:${def.id}` : def.id;
+      const existing = this.systems.find((s) => s.id === id);
+      if (existing && !reload) {
+        existing.users.add(part.id);
+        continue;
+      }
+      if (existing) this.dropSystem(existing);
       const sys: LoadedSystem = {
-        id: def.id,
+        id,
+        realm: part.realm,
+        users: new Set([part.id]),
         name: def.name,
         with: [],
         without: [],
@@ -234,13 +504,13 @@ export class Simulation {
       this.systems.push(sys);
       if (!ref.enabled) continue;
       try {
-        const meta = this.sandbox.loadSystem(def.id, def.code, this.options.realm);
+        const meta = this.sandbox.loadSystem(id, def.code, part.realm);
+        const scope = this.scopeOfRealm(part.realm);
         const resolve = (names: string[]) =>
           names.map((n) => {
-            const id = this.registry.idOf(n);
-            if (!id)
-              throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, def.id, "load");
-            return id;
+            const k = this.registry.idOf(n, scope);
+            if (!k) throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, id, "load");
+            return k;
           });
         sys.with = resolve(meta.query.with);
         sys.without = resolve(meta.query.without);
@@ -251,7 +521,8 @@ export class Simulation {
     }
   }
 
-  private callHost(name: HostName, args: Json[], _ctx: HostCallContext): Json | undefined {
+  private callHost(name: HostName, args: Json[], ctx: HostCallContext): Json | undefined {
+    const scope = this.scopeOfRealm(ctx.realm);
     const vec3 = (v: Json): Vec3 => {
       if (!Array.isArray(v) || v.length !== 3 || !v.every((n) => typeof n === "number")) {
         throw new TypeError("[x, y, z] の形の数値の配列を渡してください");
@@ -282,12 +553,12 @@ export class Simulation {
         return undefined;
       },
       "world.get": ([id, kokoName]) => {
-        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName) : undefined;
+        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName, scope) : undefined;
         if (!koko || typeof id !== "string" || !this.world.hasState(id, koko)) return null;
         return this.toNamed(koko, this.world.get(id, koko) ?? {});
       },
       "world.set": ([id, kokoName, values]) => {
-        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName) : undefined;
+        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName, scope) : undefined;
         if (!koko || typeof id !== "string" || !this.world.hasState(id, koko)) return false;
         if (!values || typeof values !== "object" || Array.isArray(values)) return false;
         this.writeNamed(id, koko, values as Record<string, Json>, null);
@@ -310,7 +581,7 @@ export class Simulation {
           Json
         >;
         for (const [kokoName, values] of Object.entries(states)) {
-          const koko = this.registry.idOf(kokoName);
+          const koko = this.registry.idOf(kokoName, scope);
           if (!koko) continue;
           this.world.add(id, koko);
           if (values && typeof values === "object" && !Array.isArray(values)) {
@@ -366,9 +637,11 @@ export class Simulation {
         const prev = before[i];
         if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
         for (const [kokoName, values] of Object.entries(e.states)) {
-          const koko = this.registry.idOf(kokoName);
-          if (!koko || !this.world.hasState(e.id, koko) || !values || typeof values !== "object")
-            continue;
+          // 名前は、その Entity が持っている KokoState の中から引く（別リポジトリの Entity でも正しく書ける）
+          const koko = this.world
+            .statesOf(e.id)
+            .find((k) => this.registry.get(k)?.name === kokoName);
+          if (!koko || !values || typeof values !== "object") continue;
           this.writeNamed(
             e.id,
             koko,

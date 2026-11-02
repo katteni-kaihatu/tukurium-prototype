@@ -172,7 +172,8 @@ export class Physics {
     this.byCollider.clear();
   }
 
-  private remove(id: EntityId): void {
+  /** Entity の剛体を取り除く（次の sync で Transform から作り直される） */
+  remove(id: EntityId): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
     this.byCollider.delete(rec.collider.handle);
