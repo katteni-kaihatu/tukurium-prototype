@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
     "build": "node build.mjs",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json"
@@ -14,6 +14,7 @@
     "@fastify/websocket": "11.3.6",
     "@tukurium/shared": "workspace:*",
     "fastify": "5.12.8",
+    "postgres": "4.0.0",
     "yjs": "^13.6.33"
   },
   "devDependencies": {
