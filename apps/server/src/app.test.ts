@@ -34,7 +34,7 @@ function client(url: string) {
     }
   };
   const opened = new Promise<void>((r) => ws.once("open", () => r()));
-  return { ws, next, opened, send: (m: object) => ws.send(JSON.stringify(m)) };
+  return { ws, inbox, next, opened, send: (m: object) => ws.send(JSON.stringify(m)) };
 }
 
 describe("server", () => {
@@ -62,6 +62,25 @@ describe("server", () => {
 
     a.ws.close();
     expect((await b.next("left")).t).toBe("left");
+    b.ws.close();
+  });
+
+  it("2回目の hello では参加の通知を繰り返さない", async () => {
+    const { url } = await start();
+    const a = client(url);
+    const b = client(url);
+    await Promise.all([a.opened, b.opened]);
+    a.send({ t: "hello", protocol: PROTOCOL_VERSION, name: "a" });
+    await a.next("welcome");
+    b.send({ t: "hello", protocol: PROTOCOL_VERSION, name: "b" });
+    await b.next("welcome");
+    await a.next("joined");
+    b.send({ t: "hello", protocol: PROTOCOL_VERSION, name: "b2" });
+    b.send({ t: "pose", position: [0, 0, 1], yaw: 0, pitch: 0 });
+    await a.next("pose");
+    // 2回目の hello による joined は pose より先に届くはずなので、届いていなければ無視されている
+    expect(a.inbox.some((m) => m.t === "joined")).toBe(false);
+    a.ws.close();
     b.ws.close();
   });
 

@@ -43,6 +43,15 @@ export class Avatars {
     a.targetPitch = p.pitch;
   }
 
+  /** 既に表示している参加者の位置・向きを更新する。知らない参加者は無視する。 */
+  setPose(id: string, position: [number, number, number], yaw: number, pitch: number): void {
+    const a = this.avatars.get(id);
+    if (!a) return;
+    a.target.set(...position);
+    a.targetYaw = yaw;
+    a.targetPitch = pitch;
+  }
+
   remove(id: string): void {
     const a = this.avatars.get(id);
     if (!a) return;
@@ -56,6 +65,13 @@ export class Avatars {
       }
     });
     this.avatars.delete(id);
+  }
+
+  /** 表示中の参加者の位置（テスト・デバッグ用） */
+  positions(): Record<string, [number, number, number]> {
+    const out: Record<string, [number, number, number]> = {};
+    for (const [id, a] of this.avatars) out[id] = [a.target.x, a.target.y, a.target.z];
+    return out;
   }
 
   clear(): void {

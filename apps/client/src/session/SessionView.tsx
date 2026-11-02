@@ -17,6 +17,8 @@ export function SessionView() {
     if (!container) return;
     const engine = new SessionEngine(container);
     engineRef.current = engine;
+    // 開発時のみ：E2E テストやデバッグからエンジンを参照できるようにする
+    if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const store = useSession.getState();
 
     const conn = new Connection(myName, {
@@ -40,15 +42,10 @@ export function SessionView() {
             engine.upsertParticipant(msg.participant);
             store.set({ participants: { ...participants, [msg.participant.id]: msg.participant } });
             break;
-          case "pose": {
-            const prev = participants[msg.id];
-            if (!prev) break;
-            const p = { ...prev, position: msg.position, yaw: msg.yaw, pitch: msg.pitch };
-            engine.upsertParticipant(p);
-            // 位置は 3D 表示だけで使うので、ストアは参加者一覧の更新に留める
-            participants[msg.id] = p;
+          case "pose":
+            // 位置・向きは 3D 表示だけで使う。ストア（参加者一覧）は更新しない
+            engine.setParticipantPose(msg.id, msg.position, msg.yaw, msg.pitch);
             break;
-          }
           case "left": {
             engine.removeParticipant(msg.id);
             const { [msg.id]: _, ...rest } = participants;

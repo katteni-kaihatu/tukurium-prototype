@@ -48,6 +48,7 @@ export class Lobby {
     }
     switch (msg.t) {
       case "hello": {
+        if (m.p) return; // 2回目以降の hello は無視する
         if (msg.protocol !== PROTOCOL_VERSION) {
           this.send(m.peer, {
             t: "error",

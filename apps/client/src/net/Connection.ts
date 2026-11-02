@@ -41,7 +41,13 @@ export class Connection {
       this.send({ t: "hello", protocol: PROTOCOL_VERSION, name: this.name });
     };
     ws.onmessage = (ev) => {
-      const parsed = ServerMessage.safeParse(JSON.parse(String(ev.data)));
+      let data: unknown;
+      try {
+        data = JSON.parse(String(ev.data));
+      } catch {
+        return;
+      }
+      const parsed = ServerMessage.safeParse(data);
       if (!parsed.success) return;
       if (parsed.data.t === "welcome") this.handlers.onStatus("online");
       this.handlers.onMessage(parsed.data);

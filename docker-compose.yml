@@ -7,7 +7,7 @@ services:
       dockerfile: docker/Dockerfile
     environment:
       PORT: 8787
-      DATABASE_URL: ${DATABASE_URL:-postgres://tukurium:tukurium@postgres:5432/tukurium}
+      DATABASE_URL: postgres://tukurium:${POSTGRES_PASSWORD:-tukurium}@postgres:5432/tukurium
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-tukurium}

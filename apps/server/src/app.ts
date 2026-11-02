@@ -9,7 +9,8 @@ export async function buildApp(config: Config) {
   const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? "info" } });
   const lobby = new Lobby();
 
-  await app.register(fastifyWebsocket);
+  // 位置などの小さなメッセージしか扱わないので、受信サイズを絞る
+  await app.register(fastifyWebsocket, { options: { maxPayload: 64 * 1024 } });
 
   app.get("/api/health", async () => ({
     ok: true,

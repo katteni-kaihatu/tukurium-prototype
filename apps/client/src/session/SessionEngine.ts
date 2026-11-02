@@ -54,6 +54,10 @@ export class SessionEngine {
     this.avatars.upsert(p);
   }
 
+  setParticipantPose(id: string, position: Pose["position"], yaw: number, pitch: number): void {
+    this.avatars.setPose(id, position, yaw, pitch);
+  }
+
   removeParticipant(id: string): void {
     this.avatars.remove(id);
   }
