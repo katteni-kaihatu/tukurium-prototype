@@ -23,6 +23,12 @@ importers:
       '@tukurium/eks':
         specifier: workspace:*
         version: link:../../packages/eks
+      '@tukurium/repo-model':
+        specifier: workspace:*
+        version: link:../../packages/repo-model
+      '@tukurium/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@tukurium/shared':
         specifier: workspace:*
         version: link:../../packages/shared

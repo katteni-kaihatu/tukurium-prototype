@@ -15,6 +15,7 @@ import {
   ScriptError,
   ScriptSandbox,
 } from "@tukurium/script";
+import { buildWorld } from "./buildWorld";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
@@ -198,27 +199,9 @@ export class Simulation {
   // ---------------------------------------------------------------------------
 
   private loadEntities(snapshot: ProjectSnapshot, outputId: string): void {
-    const entities = snapshot.entities.filter((e) => e.output === outputId);
-    // 親を先に作る
-    const done = new Set<EntityId>();
-    const pending = [...entities];
-    while (pending.length > 0) {
-      const before = pending.length;
-      for (let i = pending.length - 1; i >= 0; i--) {
-        const e = pending[i];
-        if (!e) continue;
-        if (e.parent !== null && !done.has(e.parent) && entities.some((x) => x.id === e.parent))
-          continue;
-        this.world.spawn(e.id, e.parent !== null && done.has(e.parent) ? e.parent : null);
-        for (const [koko, values] of Object.entries(e.states)) {
-          if (this.registry.get(koko)) this.world.add(e.id, koko, values);
-        }
-        this.names.set(e.id, e.name);
-        done.add(e.id);
-        pending.splice(i, 1);
-      }
-      if (pending.length === before) break; // 親が見つからない（壊れたデータ）
-    }
+    const { world, names } = buildWorld(snapshot, outputId, this.registry);
+    this.world.restore(world.snapshot());
+    for (const [id, n] of names) this.names.set(id, n);
   }
 
   private loadSystems(snapshot: ProjectSnapshot, outputId: string): void {

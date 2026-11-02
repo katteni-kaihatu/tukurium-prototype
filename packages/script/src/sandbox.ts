@@ -29,8 +29,10 @@ export interface HostCallContext {
 export type HostFunction = (args: Json[], ctx: HostCallContext) => Json | undefined;
 
 export interface SandboxOptions {
-  /** 1回の呼び出し（ロード・ハンドラ実行）で使える時間。超えたら中断する。 */
+  /** ハンドラ 1 回の呼び出しで使える時間。超えたら中断する。 */
   timeLimitMs?: number;
+  /** 読み込み（領域の準備・スクリプトの評価）で使える時間。初回は VM の準備が入るので長めにする。 */
+  loadTimeLimitMs?: number;
   /** VM 全体のメモリ上限。 */
   memoryLimitBytes?: number;
   hostFunctions?: Record<string, HostFunction>;
@@ -113,6 +115,7 @@ export class ScriptSandbox {
   broken = false;
   private heapLimit = Number.POSITIVE_INFINITY;
   private overMemory = false;
+  private currentLimit = 0;
   private readonly realms = new Map<string, QuickJSContext>();
   private readonly systemRealm = new Map<string, string>();
 
@@ -128,6 +131,7 @@ export class ScriptSandbox {
     const runtime = QuickJS.newRuntime();
     const opts = {
       timeLimitMs: options.timeLimitMs ?? 20,
+      loadTimeLimitMs: options.loadTimeLimitMs ?? 1000,
       memoryLimitBytes: options.memoryLimitBytes ?? 32 * 1024 * 1024,
     };
     runtime.setMemoryLimit(opts.memoryLimitBytes);
@@ -148,7 +152,7 @@ export class ScriptSandbox {
     const prev = this.systemRealm.get(id);
     if (prev !== undefined && prev !== realm) this.unloadSystem(id);
     const vm = this.realm(realm);
-    return this.withDeadline(() => {
+    return this.withDeadline(this.options.loadTimeLimitMs, () => {
       const exportsHandle = this.unwrap(
         vm,
         vm.evalCode(source, `${realm}/${id}.js`, { type: "module", strict: true }),
@@ -179,7 +183,7 @@ export class ScriptSandbox {
     const vm = this.realms.get(realm);
     this.systemRealm.delete(id);
     if (vm)
-      this.withDeadline(() => this.callGlobal(vm, "__undefine", [vm.newString(id)], id, "runtime"));
+      this.withDeadline(this.options.timeLimitMs, () => this.callGlobal(vm, "__undefine", [vm.newString(id)], id, "runtime"));
   }
 
   /** 領域ごと破棄する（その領域の System もすべて取り除く）。 */
@@ -196,7 +200,7 @@ export class ScriptSandbox {
     const realm = this.systemRealm.get(id);
     const vm = realm === undefined ? undefined : this.realms.get(realm);
     if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
-    return this.withDeadline(() => {
+    return this.withDeadline(this.options.timeLimitMs, () => {
       const out = this.callGlobal(
         vm,
         "__run",
@@ -225,7 +229,7 @@ export class ScriptSandbox {
     if (existing) return existing;
     const vm = this.runtime.newContext();
     this.installHost(vm, name);
-    this.withDeadline(() => {
+    this.withDeadline(this.options.loadTimeLimitMs, () => {
       this.unwrap(
         vm,
         vm.evalCode(PRELUDE(Object.keys(this.host.hostFunctions ?? {})), "prelude.js"),
@@ -299,7 +303,7 @@ export class ScriptSandbox {
       }
       if (typeof err === "object" && err.message === "interrupted") {
         throw new ScriptError(
-          `時間制限（${this.options.timeLimitMs}ms）を超えたため停止しました`,
+          `時間制限（${this.currentLimit}ms）を超えたため停止しました`,
           systemId,
           "timeout",
         );
@@ -312,11 +316,12 @@ export class ScriptSandbox {
     return result.value;
   }
 
-  private withDeadline<T>(fn: () => T): T {
+  private withDeadline<T>(limitMs: number, fn: () => T): T {
     if (this.broken) {
       throw new ScriptError("サンドボックスはメモリ超過で停止済みです", null, "memory");
     }
-    const deadline = performance.now() + this.options.timeLimitMs;
+    const deadline = performance.now() + limitMs;
+    this.currentLimit = limitMs;
     this.overMemory = false;
     this.runtime.setInterruptHandler(() => {
       if (this.memory.buffer.byteLength > this.heapLimit) {

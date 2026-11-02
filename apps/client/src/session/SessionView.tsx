@@ -3,6 +3,7 @@ import { useSession } from "../app/store";
 import { Connection } from "../net/Connection";
 import { DemoInspector } from "../panels/DemoInspector";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { WorkspaceController } from "../workspace/WorkspaceController";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 
@@ -26,6 +27,7 @@ export function SessionView() {
     const engine = new SessionEngine(container);
     engineRef.current = engine;
     setEngine(engine);
+    const workspace = new WorkspaceController(engine);
     // 開発時のみ：E2E テストやデバッグからエンジンを参照できるようにする
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const store = useSession.getState();
@@ -88,6 +90,7 @@ export function SessionView() {
       clearInterval(timer);
       document.removeEventListener("pointerlockchange", onLockChange);
       conn.close();
+      workspace.dispose();
       engine.dispose();
       engineRef.current = null;
       setEngine(null);

@@ -90,7 +90,7 @@ describe("ScriptSandbox", () => {
   });
 
   it("読み込み時の無限ループも止める", async () => {
-    sandbox = await ScriptSandbox.create({ timeLimitMs: 30 });
+    sandbox = await ScriptSandbox.create({ timeLimitMs: 30, loadTimeLimitMs: 50 });
     expect(() => sandbox?.loadSystem("bad", "for(;;){} export default system({});")).toThrow(
       ScriptError,
     );

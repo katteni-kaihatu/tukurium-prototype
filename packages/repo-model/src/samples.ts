@@ -152,7 +152,7 @@ export function gunAndTargetSample(): ProjectSnapshot {
       { id: "sys_target", name: "TargetHit", code: TARGET },
     ],
     materials: [
-      { id: "mat_gun", name: "Gunmetal", color: "#3a3942", roughness: 0.35, metalness: 0.8 },
+      { id: "mat_gun", name: "Gunmetal", color: "#5e5c64", roughness: 0.45, metalness: 0.3 },
       { id: "mat_wood", name: "Wood", color: "#a47b55", roughness: 0.8, metalness: 0 },
     ],
     outputs: [
@@ -182,7 +182,7 @@ export function gunAndTargetSample(): ProjectSnapshot {
             material: "mat_gun",
             color: "#3a3942",
           },
-          [BUILTIN.Held]: { offset: [0.22, -0.2, -0.45] },
+          [BUILTIN.Held]: { offset: [0.28, -0.26, -0.75] },
           ks_gun: { f_ammo: 12, f_maxAmmo: 12, f_interval: 0.2, f_cooldown: 0, f_damage: 1 },
         },
       },
