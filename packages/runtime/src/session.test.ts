@@ -196,3 +196,31 @@ describe("セッションの世界（複数の配置）", () => {
     expect(s.systemStatus().map((x) => x.name)).toEqual(["Shoot"]);
   });
 });
+
+describe("音", () => {
+  it("audio.play で、名前で指定した音を Entity の位置で鳴らす", async () => {
+    const snap = gunSample();
+    const clip = "a".repeat(64);
+    snap.assets = [{ id: clip, name: "shot", kind: "audio", contentType: "audio/ogg" }];
+    const sys = snap.systems[0];
+    if (sys)
+      sys.code = sys.code.replace(
+        "gun.ammo -= 1;",
+        'gun.ammo -= 1; audio.play("shot", e.id, 0.5);',
+      );
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "g1",
+      realm: "r",
+      outputId: "out_gun",
+      snapshot: snap,
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+    sim.step(1 / 60);
+    const sounds = sim.drainSounds();
+    expect(sounds).toEqual([{ asset: clip, position: [0, 1.1, -1.5], volume: 0.5 }]);
+    expect(sim.drainSounds()).toEqual([]);
+  });
+});

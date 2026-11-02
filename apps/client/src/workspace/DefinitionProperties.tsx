@@ -585,6 +585,28 @@ function MaterialProperties({ id }: { id: string }) {
         />
         {slider("roughness", "粗さ")}
         {slider("metalness", "金属感")}
+        <div className={ui.row}>
+          <label className={ui.label} htmlFor={`map-${id}`}>
+            画像
+          </label>
+          <select
+            id={`map-${id}`}
+            className={ui.select}
+            value={m.map ?? ""}
+            disabled={!editing}
+            onChange={(e) => project.updateMaterial({ ...m, map: e.target.value || null })}
+          >
+            <option value="">（なし）</option>
+            {project
+              .assets()
+              .filter((a) => a.kind === "image")
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+          </select>
+        </div>
         <p className={ui.muted}>
           ここで変えると、このマテリアルを使っているすべてのモノに反映されます（{users.length}{" "}
           個）。

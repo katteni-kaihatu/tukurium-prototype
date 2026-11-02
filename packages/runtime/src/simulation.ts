@@ -8,6 +8,7 @@ import type {
 } from "@tukurium/eks";
 import { World, type WorldSnapshot } from "@tukurium/eks";
 import {
+  type AssetDef,
   BUILTIN,
   buildRegistry,
   isBuiltin,
@@ -23,6 +24,7 @@ import {
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
+import { worldTransform } from "./transform";
 
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
 export interface InputEvent {
@@ -66,6 +68,15 @@ export interface PartSpec {
   /** 配置の位置と向き（ルートの Entity に足す） */
   position: Vec3;
   yaw: number;
+}
+
+/** 鳴らす音（ホストが手元で鳴らし、状態と一緒にほかの人にも配る） */
+export interface SoundEvent {
+  /** 音声の素材 ID */
+  asset: string;
+  /** 鳴らす位置（なければ聞いている人の位置） */
+  position: Vec3 | null;
+  volume: number;
 }
 
 export interface ApplyReport {
@@ -113,6 +124,7 @@ const HOST_API = [
   "world.spawn",
   "world.destroy",
   "time.now",
+  "audio.play",
 ] as const;
 type HostName = (typeof HOST_API)[number];
 
@@ -143,6 +155,8 @@ export class Simulation {
   private readonly parts = new Map<string, Part>();
   private readonly realmDefs = new Map<string, Set<KokoStateId>>();
   private readonly realmMaterials = new Map<string, MaterialDef[]>();
+  private readonly realmAssets = new Map<string, AssetDef[]>();
+  private sounds: SoundEvent[] = [];
   private inputs: InputEvent[] = [];
   private pending: PendingEvent[] = [];
   private disposed = false;
@@ -226,6 +240,7 @@ export class Simulation {
       for (const k of this.realmDefs.get(part.realm) ?? []) this.registry.unregister(k);
       this.realmDefs.delete(part.realm);
       this.realmMaterials.delete(part.realm);
+      this.realmAssets.delete(part.realm);
     }
   }
 
@@ -308,6 +323,13 @@ export class Simulation {
     if (!part) return;
     this.clearEntities(part);
     this.instantiate(part);
+  }
+
+  /** この間に鳴らされた音を取り出す */
+  drainSounds(): SoundEvent[] {
+    const out = this.sounds;
+    this.sounds = [];
+    return out;
   }
 
   /** 表示用のマテリアル一覧（セッションでは ID が付け替え済み） */
@@ -418,6 +440,7 @@ export class Simulation {
       realm,
       snapshot.materials.map((m) => ({ ...m, id: this.mid(realm, m.id) })),
     );
+    this.realmAssets.set(realm, snapshot.assets ?? []);
   }
 
   /** 配置の Entity を World に作る（ID の付け替え、ルートへの配置の位置・向き） */
@@ -595,6 +618,28 @@ export class Simulation {
         return undefined;
       },
       "time.now": () => this.time,
+      "audio.play": ([clip, entity, volume]) => {
+        // clip：素材の名前か ID。null なら entity の AudioSource の clip を鳴らす
+        const target = typeof entity === "string" && this.world.has(entity) ? entity : null;
+        const source = target ? this.world.get(target, BUILTIN.AudioSource) : undefined;
+        const assets = this.realmAssets.get(ctx.realm) ?? [];
+        const ref = typeof clip === "string" ? clip : (source?.clip as string | null | undefined);
+        const asset =
+          assets.find((a) => a.kind === "audio" && (a.name === ref || a.id === ref))?.id ??
+          (typeof ref === "string" && /^[0-9a-f]{64}$/.test(ref) ? ref : null);
+        if (!asset) return false;
+        const pos = target ? worldTransform(this.world, target).position : null;
+        const vol =
+          typeof volume === "number"
+            ? volume
+            : typeof source?.volume === "number"
+              ? source.volume
+              : 1;
+        if (this.sounds.length < 32) {
+          this.sounds.push({ asset, position: pos ? [pos.x, pos.y, pos.z] : null, volume: vol });
+        }
+        return true;
+      },
     };
     return api[name](args);
   }

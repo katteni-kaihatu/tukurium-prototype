@@ -86,8 +86,16 @@ export const PlayInput = z.object({
   player: z.string(),
 });
 
+/** 鳴らす音 */
+export const SoundEvent = z.object({
+  asset: z.string(),
+  position: vec3.nullable(),
+  volume: z.number(),
+});
+
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
 export const PlayFrame = z.object({
+  sounds: z.array(SoundEvent).max(32).optional(),
   mode: PlayMode,
   outputId: z.string(),
   time: z.number(),
@@ -106,6 +114,7 @@ export type PlayFrame = z.infer<typeof PlayFrame>;
 
 /** セッションのホストが配る、セッションの世界の状態 */
 export const SessionFrame = z.object({
+  sounds: z.array(SoundEvent).max(32).optional(),
   time: z.number(),
   world: z.unknown(),
   names: z.record(z.string(), z.string()),

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { buildApp } from "./app";
+import { type AssetStore, assetId } from "./assets/assetStore";
 import { MemoryStore } from "./store/store";
 
 let close: (() => Promise<void>) | undefined;
@@ -11,17 +12,37 @@ afterEach(async () => {
   close = undefined;
 });
 
+class MemoryAssets implements AssetStore {
+  readonly items = new Map<string, { data: Buffer; contentType: string }>();
+  async put(data: Buffer, contentType: string) {
+    const id = assetId(data);
+    this.items.set(id, { data, contentType });
+    return id;
+  }
+  async get(id: string) {
+    return this.items.get(id) ?? null;
+  }
+}
+
 async function start(opts: { ownerGraceMs?: number } = {}) {
   const store = new MemoryStore();
+  const assets = new MemoryAssets();
   const app = await buildApp(
-    { host: "127.0.0.1", port: 0, clientDir: undefined, databaseUrl: undefined },
-    { store, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
+    {
+      host: "127.0.0.1",
+      port: 0,
+      clientDir: undefined,
+      databaseUrl: undefined,
+      s3: undefined,
+      assetDir: "",
+    },
+    { store, assets, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
   );
   await app.listen({ host: "127.0.0.1", port: 0 });
   close = () => app.close();
   const addr = app.server.address();
   if (!addr || typeof addr === "string") throw new Error("no address");
-  return { app, store, url: `ws://127.0.0.1:${addr.port}/ws` };
+  return { app, store, assets, url: `ws://127.0.0.1:${addr.port}/ws` };
 }
 
 type Msg<T extends ServerMessage["t"]> = Extract<ServerMessage, { t: T }>;
@@ -437,5 +458,46 @@ describe("セッションの世界（配置・適用）", () => {
     expect((await a2.next("host.resetPart")).id).toBe(pid);
     a2.send({ t: "unplace", placementId: pid });
     expect((await a2.next("host.removePart")).id).toBe(pid);
+  });
+});
+
+describe("素材", () => {
+  it("本人確認できればアップロードでき、ID（SHA-256）で取り出せる", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const up = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      payload: png,
+    });
+    expect(up.statusCode).toBe(200);
+    expect(up.json()).toMatchObject({ id: assetId(png), kind: "image", size: png.length });
+    const get = await app.inject({ method: "GET", url: `/api/assets/${assetId(png)}` });
+    expect(get.statusCode).toBe(200);
+    expect(get.headers["content-type"]).toBe("image/png");
+    expect(get.rawPayload.equals(png)).toBe(true);
+  });
+
+  it("本人確認できない・対応していない種類・存在しない ID を拒む", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const noAuth = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "image/png" },
+      payload: Buffer.from([1]),
+    });
+    expect(noAuth.statusCode).toBe(401);
+    const bad = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "application/x-sh", "x-tukurium-token": a.token },
+      payload: Buffer.from("echo hi"),
+    });
+    expect(bad.statusCode).toBe(415);
+    const missing = await app.inject({ method: "GET", url: `/api/assets/${"0".repeat(64)}` });
+    expect(missing.statusCode).toBe(404);
   });
 });

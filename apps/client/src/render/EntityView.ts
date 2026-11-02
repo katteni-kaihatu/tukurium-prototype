@@ -1,12 +1,18 @@
 import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN, type MaterialDef } from "@tukurium/repo-model";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+
+const assetUrl = (id: string) => `/api/assets/${id}`;
 
 const DEG = THREE.MathUtils.DEG2RAD;
 
 interface Node {
   object: THREE.Object3D;
   mesh: THREE.Mesh | null;
+  /** GLB のモデル（Mesh.model が指定されているとき） */
+  model: THREE.Object3D | null;
+  modelId: string | null;
   geometryKey: string;
   materialKey: string;
 }
@@ -29,6 +35,9 @@ export class EntityView {
   private readonly geometries = new Map<string, THREE.BufferGeometry>();
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
   private readonly held = new Set<EntityId>();
+  private readonly gltf = new GLTFLoader();
+  private readonly modelCache = new Map<string, Promise<THREE.Group>>();
+  private readonly textures = new Map<string, THREE.Texture>();
 
   sync(world: World, opts: SyncOptions): void {
     const ids = new Set(world.entityIds());
@@ -40,7 +49,7 @@ export class EntityView {
       if (!node) {
         const object = new THREE.Object3D();
         object.userData.entityId = id;
-        node = { object, mesh: null, geometryKey: "", materialKey: "" };
+        node = { object, mesh: null, model: null, modelId: null, geometryKey: "", materialKey: "" };
         this.nodes.set(id, node);
       }
       this.syncMesh(node, world, id, matDefs);
@@ -70,10 +79,18 @@ export class EntityView {
 
   /** 画面中央（カメラの視線）にある Entity を返す。Held は除く。 */
   pick(raycaster: THREE.Raycaster): EntityId | null {
-    const meshes: THREE.Object3D[] = [];
-    for (const [id, n] of this.nodes) if (n.mesh && !this.held.has(id)) meshes.push(n.mesh);
-    const hit = raycaster.intersectObjects(meshes, false)[0];
-    return (hit?.object.parent?.userData.entityId as EntityId | undefined) ?? null;
+    const targets: THREE.Object3D[] = [];
+    for (const [id, n] of this.nodes) {
+      if (this.held.has(id)) continue;
+      if (n.mesh) targets.push(n.mesh);
+      if (n.model) targets.push(n.model);
+    }
+    const hit = raycaster.intersectObjects(targets, true)[0];
+    // 当たったオブジェクトから親をたどって、Entity の ID を探す
+    for (let o: THREE.Object3D | null = hit?.object ?? null; o; o = o.parent) {
+      if (o.userData.entityId) return o.userData.entityId as EntityId;
+    }
+    return null;
   }
 
   objectOf(id: EntityId): THREE.Object3D | undefined {
@@ -85,8 +102,10 @@ export class EntityView {
     const box = new THREE.Box3();
     let any = false;
     for (const [id, n] of this.nodes) {
-      if (!n.mesh || this.held.has(id)) continue;
-      box.expandByObject(n.mesh);
+      if (this.held.has(id)) continue;
+      const target = n.model ?? n.mesh;
+      if (!target) continue;
+      box.expandByObject(target);
       any = true;
     }
     return any ? box : null;
@@ -96,6 +115,8 @@ export class EntityView {
     for (const id of [...this.nodes.keys()]) this.removeNode(id);
     for (const g of this.geometries.values()) g.dispose();
     for (const m of this.materials.values()) m.dispose();
+    for (const t of this.textures.values()) t.dispose();
+    this.textures.clear();
     this.geometries.clear();
     this.materials.clear();
     this.root.removeFromParent();
@@ -124,11 +145,15 @@ export class EntityView {
     matDefs: Map<string, MaterialDef>,
   ): void {
     const mesh = world.get(id, BUILTIN.Mesh);
-    if (!mesh) {
+    const modelId = mesh && typeof mesh.model === "string" ? mesh.model : null;
+    this.syncModel(node, modelId);
+    if (!mesh || modelId) {
+      // メッシュがない、または GLB で表示するときは形状を消す
       if (node.mesh) {
         node.mesh.removeFromParent();
         node.mesh = null;
         node.geometryKey = "";
+        node.materialKey = "";
       }
       return;
     }
@@ -138,7 +163,7 @@ export class EntityView {
     const md = typeof mesh.material === "string" ? matDefs.get(mesh.material) : undefined;
     // マテリアルが指定されていれば色はマテリアル、なければ Mesh.color
     const color = md ? md.color : String(mesh.color);
-    const materialKey = `${color}:${md?.roughness ?? 0.6}:${md?.metalness ?? 0}`;
+    const materialKey = `${color}:${md?.roughness ?? 0.6}:${md?.metalness ?? 0}:${md?.map ?? ""}`;
 
     if (!node.mesh) {
       node.mesh = new THREE.Mesh();
@@ -188,10 +213,49 @@ export class EntityView {
         color,
         roughness: md?.roughness ?? 0.6,
         metalness: md?.metalness ?? 0,
+        map: md?.map ? this.texture(md.map) : null,
       });
       this.materials.set(key, m);
     }
     return m;
+  }
+
+  private texture(id: string): THREE.Texture {
+    let t = this.textures.get(id);
+    if (!t) {
+      t = new THREE.TextureLoader().load(assetUrl(id));
+      t.colorSpace = THREE.SRGBColorSpace;
+      this.textures.set(id, t);
+    }
+    return t;
+  }
+
+  /** GLB のモデルを付け外しする（読み込みは素材 ID ごとに 1 回、表示はその複製） */
+  private syncModel(node: Node, modelId: string | null): void {
+    if (node.modelId === modelId) return;
+    node.model?.removeFromParent();
+    node.model = null;
+    node.modelId = modelId;
+    if (!modelId) return;
+    let loading = this.modelCache.get(modelId);
+    if (!loading) {
+      loading = this.gltf.loadAsync(assetUrl(modelId)).then((g) => g.scene);
+      this.modelCache.set(modelId, loading);
+    }
+    loading
+      .then((scene) => {
+        if (node.modelId !== modelId) return; // 読み込み中に別のモデルに変わった
+        const copy = scene.clone(true);
+        copy.traverse((o) => {
+          if (o instanceof THREE.Mesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        node.model = copy;
+        node.object.add(copy);
+      })
+      .catch(() => this.modelCache.delete(modelId));
   }
 
   private removeNode(id: EntityId): void {

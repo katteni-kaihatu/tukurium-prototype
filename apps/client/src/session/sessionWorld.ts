@@ -1,6 +1,6 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
 import type { MaterialDef, ProjectSnapshot } from "@tukurium/repo-model";
-import { type InputEvent, Simulation, type SystemStatus } from "@tukurium/runtime";
+import { type InputEvent, Simulation, type SoundEvent, type SystemStatus } from "@tukurium/runtime";
 import type { HostPart, SessionFrame } from "@tukurium/shared";
 import { create } from "zustand";
 import { useApp } from "../app/store";
@@ -16,6 +16,8 @@ interface SessionWorldState {
   sim: Simulation | null;
   remote: { world: World; names: Record<string, string>; materials: MaterialDef[] } | null;
   status: SystemStatus[];
+  /** ホストから届いた、まだ鳴らしていない音（ホスト以外） */
+  incomingSounds: SoundEvent[];
   input(ev: InputEvent): void;
   /** 表示する World とマテリアル */
   view(): { world: World; materials: MaterialDef[] } | null;
@@ -28,6 +30,7 @@ export const useSessionWorld = create<SessionWorldState>((_set, get) => ({
   sim: null,
   remote: null,
   status: [],
+  incomingSounds: [],
   input: (ev) => {
     const { isHost, sim } = get();
     if (isHost && sim) sim.input(ev);
@@ -147,13 +150,21 @@ function applyFrame(frame: SessionFrame): void {
   });
 }
 
+let outgoingSounds: SoundEvent[] = [];
+export function queueSessionSounds(sounds: SoundEvent[]): void {
+  outgoingSounds = [...outgoingSounds, ...sounds].slice(-32);
+}
+
 /** ホストが世界の状態を配る（SessionWorldController が間隔を見て呼ぶ） */
 export function sendSessionFrame(): void {
   const sim = st().sim;
   if (!st().isHost || !sim) return;
+  const sounds = outgoingSounds;
+  outgoingSounds = [];
   client().send({
     t: "session.frame",
     frame: {
+      sounds,
       time: sim.time,
       world: sim.world.snapshot(),
       names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),

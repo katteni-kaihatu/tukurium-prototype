@@ -3,7 +3,7 @@ import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
 import type { SessionEngine } from "./SessionEngine";
-import { sendSessionFrame, useSessionWorld } from "./sessionWorld";
+import { queueSessionSounds, sendSessionFrame, useSessionWorld } from "./sessionWorld";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -78,6 +78,9 @@ export class SessionWorldController {
         s.sim.step(STEP);
         this.accumulator -= STEP;
       }
+      const sounds = s.sim.drainSounds();
+      for (const snd of sounds) this.engine.audio.play(snd.asset, snd.position, snd.volume);
+      if (sounds.length > 0) queueSessionSounds(sounds);
       this.frameTimer += dt;
       if (this.frameTimer > FRAME_SEC) {
         this.frameTimer = 0;
@@ -88,6 +91,11 @@ export class SessionWorldController {
         this.uiTimer = 0;
         useSessionWorld.setState({ status: s.sim.systemStatus() });
       }
+    }
+    if (!s.isHost && s.incomingSounds.length > 0) {
+      for (const snd of s.incomingSounds)
+        this.engine.audio.play(snd.asset, snd.position, snd.volume);
+      useSessionWorld.setState({ incomingSounds: [] });
     }
     const view = s.view();
     if (!view) {

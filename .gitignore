@@ -10,3 +10,5 @@ coverage/
 /data/
 test-results/
 playwright-report/
+
+apps/server/data/

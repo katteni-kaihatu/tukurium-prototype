@@ -30,6 +30,8 @@ COPY --from=build /out/server/node_modules ./node_modules
 COPY --from=build /out/server/package.json ./package.json
 COPY --from=build /repo/apps/server/dist ./dist
 COPY --from=build /repo/apps/client/dist ./public
+# ボリュームの初期の持ち主を node にする（Git の保存先と、S3 互換ストレージがないときの素材の置き場）
+RUN mkdir -p /data/git /data/assets && chown -R node:node /data
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s \

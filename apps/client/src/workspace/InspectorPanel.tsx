@@ -229,6 +229,7 @@ function EntityProperties({ id }: { id: EntityId }) {
   const choices = {
     materials: project.materials().map((m) => ({ id: m.id, name: m.name })),
     entities: project.entities(outputId).map((e) => ({ id: e.id, name: e.name })),
+    assets: project.assets(),
   };
   const attached = Object.keys(entity.states);
   const order = (k: string) => (k === BUILTIN.Transform ? 0 : isBuiltin(k) ? 1 : 2);
