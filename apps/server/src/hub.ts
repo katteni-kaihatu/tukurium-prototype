@@ -213,7 +213,7 @@ export class Hub {
       }
       case "ws.input": {
         const w = this.workspaceFor(conn, msg.workspaceId);
-        if (!w || !w.host || !canRead(this.roleOf(w, user.id))) return;
+        if (!w?.host || !canRead(this.roleOf(w, user.id))) return;
         this.send(w.host, { t: "ws.input", workspaceId: w.meta.id, input: msg.input });
         return;
       }
