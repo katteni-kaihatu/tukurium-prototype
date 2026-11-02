@@ -1,0 +1,79 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* パネル 1 枚の入れ物。2D では overlay の中、3D では CSS3DObject の中に置かれる */
+.host {
+  width: 340px;
+  pointer-events: auto;
+}
+
+.host[data-mode="2d"] {
+  position: absolute;
+}
+
+.window {
+  border-radius: 14px;
+  overflow: hidden;
+  color: var(--c-ink);
+  font-size: 13px;
+}
+
+.host[data-mode="3d"] .window {
+  /* 空間では背景のぼかしが効かないので不透明にする */
+  background: var(--c-paper);
+  backdrop-filter: none;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 6px 0 14px;
+  background: var(--c-brand-soft);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.host[data-mode="3d"] .titlebar {
+  cursor: default;
+}
+
+.title {
+  flex: 1;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-brand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pin {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--c-brand);
+}
+
+.pin:hover {
+  background: rgba(96, 61, 86, 0.1);
+}
+
+.body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
