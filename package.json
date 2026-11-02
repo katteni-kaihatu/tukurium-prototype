@@ -13,7 +13,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
-    "lint": "biome check .",
+    "lint": "biome check . && node scripts/check-dockerfile.mjs",
     "format": "biome check --write ."
   },
   "devDependencies": {
