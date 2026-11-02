@@ -117,5 +117,5 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   // Stop すると制作データ（hp: 2）に戻る
   await main.getByRole("button", { name: /Stop/ }).click();
   await insp.getByRole("button", { name: "的" }).click();
-  await expect(insp.getByLabel("hp")).toHaveValue("2");
+  await expect(insp.getByLabel("hp", { exact: true })).toHaveValue("2");
 });

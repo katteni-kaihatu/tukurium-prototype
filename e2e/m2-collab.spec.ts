@@ -60,7 +60,8 @@ test("2 人で同じワークスペースを編集し、再生を共有し、相
   await expect.poll(async () => (await runtimeState(a, "的2", "Target"))?.hp).toBe(2);
   await expect.poll(async () => (await runtimeState(b, "的2", "Target"))?.hp).toBe(2);
 
-  // ホストの a 自身も撃てる
+  // ホストの a 自身も撃てる（直前の射撃のクールダウン 0.2 秒が明けるまで待つ）
+  await a.waitForTimeout(600);
   await aimAt(a, [1.6, 1.5, -5]);
   await fire(a);
   await expect.poll(async () => (await runtimeState(b, "的3", "Target"))?.hp).toBe(2);

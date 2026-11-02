@@ -4,6 +4,9 @@ import { aimAt, createSessionAndWorkspace, fireInSession, sessionState, standAt 
 // M3 の完了条件：遊んでいる人がいる横で銃を改造し、適用すると残弾だけ保ったまま新しい挙動になる
 // （シナリオ 2・6・7・8）
 
+// 2 つのブラウザでソフトウェア描画するため、手順の長いこのファイルは上限を延ばす
+test.describe.configure({ timeout: 150_000 });
+
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 
 async function join(browser: Browser, path: string, name: string) {
