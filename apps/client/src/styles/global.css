@@ -1,0 +1,52 @@
+/* デザイン「ツクリウム デザイン」のトークン */
+:root {
+  --c-ink: #26262e;
+  --c-ink-2: #3a3942;
+  --c-ink-3: #5e5c64;
+  --c-ink-4: #8a8792;
+  --c-paper: #fffdf9;
+  --c-line: #dcd5c8;
+  --c-line-2: #e7e1d6;
+  --c-brand: #603d56;
+  --c-brand-soft: #f3eaf0;
+  --c-host: #fdd046;
+  --c-green: #1f6b47;
+  --c-green-soft: #e5f3ec;
+  --c-blue: #2f4a9c;
+  --c-night: #1e2c3a;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", system-ui, sans-serif;
+  --font-logo: "Zen Maru Gothic", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--c-night);
+  color: var(--c-ink);
+  font-family: var(--font-body);
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.glass {
+  background: rgba(255, 253, 249, 0.9);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 8px 24px rgba(15, 25, 40, 0.22);
+}

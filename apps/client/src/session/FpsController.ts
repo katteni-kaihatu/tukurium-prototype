@@ -1,0 +1,125 @@
+import * as THREE from "three";
+
+export interface FpsOptions {
+  eyeHeight?: number;
+  walkSpeed?: number;
+  runSpeed?: number;
+  jumpSpeed?: number;
+  gravity?: number;
+  /** マウス感度（ラジアン / px） */
+  sensitivity?: number;
+}
+
+/**
+ * FPS 視点の移動。WASD で移動、マウスで見回す（ポインターロック中のみ）、Shift で走る、Space でジャンプ。
+ * 地面は y = 0 の平面として扱う（衝突は M1 で物理エンジンに置き換える）。
+ */
+export class FpsController {
+  yaw = 0;
+  pitch = 0;
+  readonly position = new THREE.Vector3((Math.random() - 0.5) * 6, 0, 6 + Math.random() * 2);
+
+  private readonly keys = new Set<string>();
+  private velocityY = 0;
+  private readonly opts: Required<FpsOptions>;
+  private readonly disposers: (() => void)[] = [];
+
+  constructor(
+    private readonly camera: THREE.PerspectiveCamera,
+    private readonly element: HTMLElement,
+    options: FpsOptions = {},
+  ) {
+    this.opts = {
+      eyeHeight: 1.6,
+      walkSpeed: 3.5,
+      runSpeed: 7,
+      jumpSpeed: 4.5,
+      gravity: 12,
+      sensitivity: 0.0022,
+      ...options,
+    };
+    this.listen(window, "keydown", (e) => this.onKey(e as KeyboardEvent, true));
+    this.listen(window, "keyup", (e) => this.onKey(e as KeyboardEvent, false));
+    this.listen(window, "blur", () => this.keys.clear());
+    this.listen(document, "mousemove", (e) => this.onMouseMove(e as MouseEvent));
+    this.apply();
+  }
+
+  get locked(): boolean {
+    return document.pointerLockElement === this.element;
+  }
+
+  lock(): void {
+    if (!this.locked) void this.element.requestPointerLock();
+  }
+
+  unlock(): void {
+    if (this.locked) document.exitPointerLock();
+  }
+
+  update(dt: number): void {
+    const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
+    const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
+    const speed =
+      this.keys.has("ShiftLeft") || this.keys.has("ShiftRight")
+        ? this.opts.runSpeed
+        : this.opts.walkSpeed;
+
+    if (forward !== 0 || strafe !== 0) {
+      const len = Math.hypot(forward, strafe);
+      const sin = Math.sin(this.yaw);
+      const cos = Math.cos(this.yaw);
+      // yaw = 0 で -Z 方向を向く
+      const dx = (strafe * cos - forward * sin) / len;
+      const dz = (-strafe * sin - forward * cos) / len;
+      this.position.x += dx * speed * dt;
+      this.position.z += dz * speed * dt;
+    }
+
+    const onGround = this.position.y <= 0;
+    if (onGround && this.keys.has("Space")) this.velocityY = this.opts.jumpSpeed;
+    this.velocityY -= this.opts.gravity * dt;
+    this.position.y += this.velocityY * dt;
+    if (this.position.y < 0) {
+      this.position.y = 0;
+      this.velocityY = 0;
+    }
+    this.apply();
+  }
+
+  dispose(): void {
+    for (const d of this.disposers) d();
+    this.unlock();
+  }
+
+  private apply(): void {
+    this.camera.position.set(
+      this.position.x,
+      this.position.y + this.opts.eyeHeight,
+      this.position.z,
+    );
+    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+  }
+
+  private onKey(e: KeyboardEvent, down: boolean): void {
+    // 入力欄にフォーカスがあるときは移動しない
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (down) this.keys.add(e.code);
+    else this.keys.delete(e.code);
+    if (down && e.code === "Space" && this.locked) e.preventDefault();
+  }
+
+  private onMouseMove(e: MouseEvent): void {
+    if (!this.locked) return;
+    this.yaw -= e.movementX * this.opts.sensitivity;
+    this.pitch -= e.movementY * this.opts.sensitivity;
+    const limit = Math.PI / 2 - 0.01;
+    this.pitch = Math.max(-limit, Math.min(limit, this.pitch));
+  }
+
+  private listen(target: EventTarget, type: string, fn: (e: Event) => void): void {
+    target.addEventListener(type, fn);
+    this.disposers.push(() => target.removeEventListener(type, fn));
+  }
+}
