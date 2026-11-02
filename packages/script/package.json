@@ -1,0 +1,16 @@
+{
+  "name": "@tukurium/script",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tukurium/eks": "workspace:*",
+    "quickjs-emscripten": "0.32.0"
+  }
+}
