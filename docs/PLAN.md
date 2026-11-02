@@ -47,7 +47,7 @@
 | セッションの実行同期 | WebSocket リレー ＋ ホスト権威 | ホストが EKS＋物理＋スクリプトを動かし状態を配信、参加者は入力を送る |
 | サーバー | Node.js（Fastify ＋ `ws`） | 認証・権限・Yjs 同期・リレー・リポジトリ API・ビルド |
 | DB | PostgreSQL（ORM は Drizzle、提案） | ユーザー・リポジトリ・アウトプット・作品・Release・セッション・権限 |
-| 素材ストレージ | S3 互換（`@aws-sdk/client-s3`）。ローカル開発用のストレージは M3 で決める（MinIO は Docker Hub での配布が終了） | GLB・画像・音声を SHA-256 の内容アドレスで保存 |
+| 素材ストレージ | S3 互換（`@aws-sdk/client-s3`）。ローカル開発は SeaweedFS（`docker-compose.dev.yml`。MinIO は Docker Hub での配布が終了） | GLB・画像・音声を SHA-256 の内容アドレスで保存 |
 | バージョン管理 | Git（サーバー上の bare リポジトリ、Docker ボリューム）。操作は isomorphic-git（提案） | 純 JS でシェル実行が不要。素材本体は Git に入れず、ハッシュ参照だけをコミットする（LFS に似た方式） |
 | 本人識別 | 表示名＋ランダムトークン（パスワードなし、提案） | 「最小限の本人識別」。試験用 |
 | スキーマ検証 | zod | 通信メッセージ・リポジトリ内データ・スクリプトからの入力 |
@@ -212,7 +212,8 @@ tukurium-prototype/
 ├─ samples/                   # 同梱サンプル（銃・的・射撃場）をリポジトリ形式で
 ├─ e2e/                       # Playwright
 ├─ docker/                    # Dockerfile 等
-├─ docker-compose.yml         # app / postgres（S3 互換は外部）
+├─ docker-compose.yml         # 本番（Coolify）：app / postgres（S3 互換は外部）
+├─ docker-compose.dev.yml     # 開発用の周辺サービス：postgres / SeaweedFS
 └─ docs/                      # 要件・計画・決定記録（ADR）
 ```
 

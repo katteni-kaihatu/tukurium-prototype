@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "tukurium-dev",
+      "credentials": [{ "accessKey": "tukurium", "secretKey": "tukurium-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

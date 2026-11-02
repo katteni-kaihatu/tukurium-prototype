@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @tukurium/client --filter @tukurium/server dev",
+    "services:up": "docker compose -f docker-compose.dev.yml up -d",
+    "services:down": "docker compose -f docker-compose.dev.yml down",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
