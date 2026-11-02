@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
     "@fastify/static": "10.1.8",
     "@fastify/websocket": "11.3.6",
     "@tukurium/shared": "workspace:*",

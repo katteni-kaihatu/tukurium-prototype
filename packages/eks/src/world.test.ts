@@ -105,3 +105,20 @@ describe("Scheduler", () => {
     expect(s.errors).toHaveLength(1);
   });
 });
+
+describe("KokoStateRegistry のスコープ", () => {
+  it("スコープが違えば同じ名前を登録でき、名前はスコープ→全体の順に引く", () => {
+    const r = new KokoStateRegistry();
+    r.register({ id: "builtin.T", name: "Transform", fields: [] });
+    r.register({ id: "a:gun", name: "Gun", fields: [] }, "a");
+    r.register({ id: "b:gun", name: "Gun", fields: [] }, "b");
+    expect(r.idOf("Gun", "a")).toBe("a:gun");
+    expect(r.idOf("Gun", "b")).toBe("b:gun");
+    expect(r.idOf("Gun")).toBeUndefined();
+    expect(r.idOf("Transform", "a")).toBe("builtin.T");
+    expect(() => r.register({ id: "a:gun2", name: "Gun", fields: [] }, "a")).toThrow();
+    r.unregister("a:gun");
+    expect(r.idOf("Gun", "a")).toBeUndefined();
+    expect(r.scopeOf("b:gun")).toBe("b");
+  });
+});

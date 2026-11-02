@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import type { SessionEngine } from "../session/SessionEngine";
-import { sendFrame, useWorkspace } from "./store";
+import { queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -54,8 +54,20 @@ export class WorkspaceController {
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => this.onPointer(button, phase)),
     );
-    useWorkspace.setState({ viewPoint: () => this.pointInFront(2) });
-    this.disposers.push(() => useWorkspace.setState({ viewPoint: null }));
+    useWorkspace.setState({
+      viewPoint: () => this.pointInFront(2),
+      placePoint: () => {
+        const cam = this.engine.camera;
+        const p = cam.getWorldPosition(new THREE.Vector3());
+        const d = cam.getWorldDirection(new THREE.Vector3()).setY(0).normalize();
+        const r = (n: number) => Math.round(n * 100) / 100;
+        return {
+          position: [r(p.x + d.x * 3), 0, r(p.z + d.z * 3)],
+          yaw: this.engine.controller.yaw,
+        };
+      },
+    });
+    this.disposers.push(() => useWorkspace.setState({ viewPoint: null, placePoint: null }));
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
@@ -75,6 +87,10 @@ export class WorkspaceController {
 
   private update(dt: number): void {
     const ws = useWorkspace.getState();
+    // ワークスペースの編集空間の位置：セッションの中の何番目かで横にずらす（重ならないように）
+    const index =
+      useApp.getState().session?.workspaces.findIndex((w) => w.id === ws.workspaceId) ?? 0;
+    this.view.root.position.set(Math.max(index, 0) * 12, 0, 0);
     if (!ws.project || !ws.ready) {
       this.view.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
       this.bounds.visible = false;
@@ -99,6 +115,11 @@ export class WorkspaceController {
         }
       }
       this.view.sync(ws.sim.world, { materials, holdCamera: this.engine.camera });
+      const sounds = ws.sim.drainSounds();
+      if (sounds.length > 0) {
+        this.playSounds(sounds);
+        queueOutgoingSounds(sounds);
+      }
       this.frameTimer += dt;
       if (this.frameTimer > FRAME_SEC) {
         this.frameTimer = 0;
@@ -108,6 +129,10 @@ export class WorkspaceController {
     } else if (ws.mode !== "edit" && ws.remote) {
       // ホスト以外：ホストから届いた状態を表示する
       this.view.sync(ws.remote.world, { materials, holdCamera: this.engine.camera });
+      if (ws.incomingSounds.length > 0) {
+        this.playSounds(ws.incomingSounds);
+        useWorkspace.setState({ incomingSounds: [] });
+      }
     } else {
       const key = `${ws.rev}:${ws.outputId}`;
       if (key !== this.editKey || !this.editWorld || this.editDoc !== ws.project) {
@@ -132,6 +157,18 @@ export class WorkspaceController {
     this.selectionBox.visible = Boolean(sel) && ws.mode === "edit";
     if (sel && ws.mode === "edit") {
       this.selectionBox.setFromObject(sel);
+    }
+  }
+
+  /** 編集空間の座標の音を、セッションの座標に直して鳴らす */
+  private playSounds(
+    sounds: { asset: string; position: [number, number, number] | null; volume: number }[],
+  ) {
+    for (const snd of sounds) {
+      const p = snd.position
+        ? this.view.root.localToWorld(new THREE.Vector3(...snd.position)).toArray()
+        : null;
+      this.engine.audio.play(snd.asset, p, snd.volume);
     }
   }
 
@@ -173,7 +210,7 @@ export class WorkspaceController {
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
       return;
     }
-    if (ws.mode === "edit" && button === 0 && phase === "down") {
+    if (ws.mode === "edit" && !ws.panelsHidden && button === 0 && phase === "down") {
       this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
       const id = this.view.pick(this.raycaster);
       ws.select(id ? { kind: "entity", id } : null);

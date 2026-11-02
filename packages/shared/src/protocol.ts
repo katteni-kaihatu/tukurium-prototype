@@ -44,12 +44,28 @@ export const WorkspaceInfo = z.object({
 });
 export type WorkspaceInfo = z.infer<typeof WorkspaceInfo>;
 
+/** セッションに配置された実体（ワークスペースのアウトプット 1 回分） */
+export const PlacementInfo = z.object({
+  id,
+  workspaceId: id,
+  workspaceName: z.string(),
+  outputId: z.string(),
+  outputName: z.string(),
+  position: vec3,
+  yaw: z.number(),
+  placedBy: id,
+});
+export type PlacementInfo = z.infer<typeof PlacementInfo>;
+
 export const SessionInfo = z.object({
   id,
   name: z.string(),
   owner: id,
   participants: z.array(UserInfo),
   workspaces: z.array(WorkspaceInfo),
+  placements: z.array(PlacementInfo),
+  /** セッションの世界を実行している人（持ち主）。いなければ null */
+  host: id.nullable(),
 });
 export type SessionInfo = z.infer<typeof SessionInfo>;
 
@@ -70,8 +86,16 @@ export const PlayInput = z.object({
   player: z.string(),
 });
 
+/** 鳴らす音 */
+export const SoundEvent = z.object({
+  asset: z.string(),
+  position: vec3.nullable(),
+  volume: z.number(),
+});
+
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
 export const PlayFrame = z.object({
+  sounds: z.array(SoundEvent).max(32).optional(),
   mode: PlayMode,
   outputId: z.string(),
   time: z.number(),
@@ -87,6 +111,36 @@ export const PlayFrame = z.object({
   ),
 });
 export type PlayFrame = z.infer<typeof PlayFrame>;
+
+/** セッションのホストが配る、セッションの世界の状態 */
+export const SessionFrame = z.object({
+  sounds: z.array(SoundEvent).max(32).optional(),
+  time: z.number(),
+  world: z.unknown(),
+  names: z.record(z.string(), z.string()),
+  /** 表示用のマテリアル（ID はリポジトリごとに付け替え済み） */
+  materials: z.array(z.unknown()),
+  status: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      enabled: z.boolean(),
+      error: z.string().nullable(),
+    }),
+  ),
+});
+export type SessionFrame = z.infer<typeof SessionFrame>;
+
+/** ホストに渡す配置（制作データ込み） */
+export const HostPart = z.object({
+  id,
+  realm: id,
+  outputId: z.string(),
+  snapshot: z.unknown(),
+  position: vec3,
+  yaw: z.number(),
+});
+export type HostPart = z.infer<typeof HostPart>;
 
 /**
  * 自分が開いているパネルの公開用の情報。内容（lines）はサーバーが権限を確かめてから相手に渡す。
@@ -155,6 +209,27 @@ export const ClientMessage = z.discriminatedUnion("t", [
     message: z.string().max(500),
     level: z.enum(["log", "error"]),
   }),
+  /** ワークスペースのアウトプットをセッションに出す（共同編集以上） */
+  z.object({
+    t: z.literal("place"),
+    workspaceId: id,
+    outputId: z.string(),
+    snapshot: z.unknown(),
+    position: vec3,
+    yaw: z.number(),
+  }),
+  /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */
+  z.object({ t: z.literal("apply"), workspaceId: id, outputId: z.string(), snapshot: z.unknown() }),
+  z.object({ t: z.literal("unplace"), placementId: id }),
+  z.object({ t: z.literal("resetPart"), placementId: id }),
+  z.object({ t: z.literal("session.input"), input: PlayInput }),
+  /** セッションのホストだけが送る */
+  z.object({ t: z.literal("session.frame"), frame: SessionFrame }),
+  z.object({
+    t: z.literal("session.log"),
+    message: z.string().max(500),
+    level: z.enum(["log", "error"]),
+  }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
@@ -202,6 +277,26 @@ export const ServerMessage = z.discriminatedUnion("t", [
     message: z.string(),
     level: z.enum(["log", "error"]),
   }),
+  /** セッションのホストへ：配置の追加・適用・削除・リセット・入力 */
+  z.object({ t: z.literal("host.addPart"), part: HostPart }),
+  z.object({
+    t: z.literal("host.apply"),
+    realm: id,
+    outputId: z.string(),
+    snapshot: z.unknown(),
+    by: z.string(),
+  }),
+  z.object({ t: z.literal("host.removePart"), id }),
+  z.object({ t: z.literal("host.resetPart"), id }),
+  z.object({ t: z.literal("host.input"), input: PlayInput }),
+  /** 自分がセッションのホストになった。parts はいまの配置すべて、resume は最後の状態 */
+  z.object({
+    t: z.literal("session.host"),
+    parts: z.array(HostPart),
+    resume: SessionFrame.nullable(),
+  }),
+  z.object({ t: z.literal("session.frame"), frame: SessionFrame }),
+  z.object({ t: z.literal("session.log"), message: z.string(), level: z.enum(["log", "error"]) }),
   z.object({ t: z.literal("error"), message: z.string() }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;

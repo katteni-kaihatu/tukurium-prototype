@@ -34,6 +34,18 @@ export interface MaterialDef {
   color: string;
   roughness: number;
   metalness: number;
+  /** 画像の素材 ID（色のテクスチャ）。なければ null */
+  map?: string | null;
+}
+
+export type AssetKind = "model" | "image" | "audio";
+
+/** 取り込んだ素材。id はサーバーに置いた中身の SHA-256 */
+export interface AssetDef {
+  id: string;
+  name: string;
+  kind: AssetKind;
+  contentType: string;
 }
 
 export interface EntityDef {
@@ -53,6 +65,8 @@ export interface ProjectSnapshot {
   kokostates: KokoStateDef[];
   systems: (SystemDef & { code: string })[];
   materials: MaterialDef[];
+  /** 古いデータにはない */
+  assets?: AssetDef[];
   outputs: OutputDef[];
   entities: EntityDef[];
 }

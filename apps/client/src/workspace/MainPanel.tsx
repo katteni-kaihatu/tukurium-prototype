@@ -1,6 +1,7 @@
 import { useApp } from "../app/store";
 import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
+import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
@@ -12,7 +13,7 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
 /**
  * ワークスペースのメインパネル：アウトプットの切り替え、再生・一時停止・停止、ログ。
  * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
- * 適用（M3）・コミット（M4）・History / Releases（M4）は、該当の段階で動くようにする。
+ * セッションに出す・適用・リンク先一覧は SessionLinks。コミット（M4）・History / Releases（M4）は後の段階で。
  */
 export function MainPanel() {
   const ws = useWorkspace();
@@ -105,14 +106,6 @@ export function MainPanel() {
           >
             ■ Stop
           </button>
-          <button
-            type="button"
-            className={ui.btn}
-            disabled
-            title="セッションへの適用は M3 で動くようになります"
-          >
-            適用
-          </button>
         </div>
 
         <span className={mode === "edit" ? ui.badge : ui.badgeWarn} aria-live="polite">
@@ -124,6 +117,8 @@ export function MainPanel() {
           ? `再生の実行（ホスト）: ${isHost ? "あなた" : (hostName ?? "?")}`
           : "ホストを務められる人（管理権限）がいないため、再生できません"}
       </p>
+
+      <SessionLinks />
 
       <details className={styles.details} open={errors.length > 0 || undefined}>
         <summary className={styles.summary}>

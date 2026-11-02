@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   ClientMessage,
+  type HostPart,
   type PanelPublic,
   type Participant,
   type PlayFrame,
   type PlayMode,
   PROTOCOL_VERSION,
   type ServerMessage,
+  type SessionFrame,
   type SessionInfo,
   type WorkspaceRole,
 } from "@tukurium/shared";
@@ -37,6 +39,15 @@ interface Conn {
   panels: PanelPublic[];
 }
 
+interface Placement {
+  id: string;
+  workspaceId: string;
+  outputId: string;
+  position: [number, number, number];
+  yaw: number;
+  placedBy: string;
+}
+
 interface Session {
   id: string;
   name: string;
@@ -44,6 +55,22 @@ interface Session {
   conns: Set<Conn>;
   workspaces: Set<string>;
   closeTimer: ReturnType<typeof setTimeout> | null;
+  /** 配置された実体の台帳 */
+  placements: Map<string, Placement>;
+  /** ワークスペース・アウトプットごとの、最後に出した（適用した）制作データ */
+  builds: Map<string, unknown>;
+  /** セッションの世界を実行する接続（持ち主） */
+  host: Conn | null;
+  lastFrame: SessionFrame | null;
+}
+
+const buildKey = (workspaceId: string, outputId: string) => `${workspaceId}\u0000${outputId}`;
+
+/** 制作データが最低限の形をしているか（中身はホストのサンドボックスで実行される） */
+function looksLikeSnapshot(v: unknown, outputId: string): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = (v as { outputs?: unknown }).outputs;
+  return Array.isArray(o) && o.some((x) => (x as { id?: unknown })?.id === outputId);
 }
 
 interface Workspace {
@@ -164,6 +191,69 @@ export class Hub {
         if (conn.session)
           for (const other of conn.session.conns) if (other !== conn) this.sendPanels(conn, other);
         return;
+      case "place":
+        return this.place(conn, msg);
+      case "apply": {
+        const s = conn.session;
+        const w = this.workspaceFor(conn, msg.workspaceId);
+        if (!s || !w || !canWrite(this.roleOf(w, user.id)))
+          return this.deny(conn, "適用には共同編集の権限が必要です");
+        if (!looksLikeSnapshot(msg.snapshot, msg.outputId))
+          return this.deny(conn, "制作データが壊れています");
+        const links = [...s.placements.values()].filter(
+          (p) => p.workspaceId === msg.workspaceId && p.outputId === msg.outputId,
+        );
+        if (links.length === 0)
+          return this.deny(conn, "このアウトプットはセッションに出ていません");
+        s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
+        if (s.host) {
+          this.send(s.host, {
+            t: "host.apply",
+            realm: msg.workspaceId,
+            outputId: msg.outputId,
+            snapshot: msg.snapshot,
+            by: user.name,
+          });
+        }
+        this.broadcastSession(s);
+        return;
+      }
+      case "unplace":
+      case "resetPart": {
+        const s = conn.session;
+        const p = s?.placements.get(msg.placementId);
+        if (!s || !p) return;
+        const w = this.workspaces.get(p.workspaceId);
+        const allowed = s.owner === user.id || (w && canWrite(this.roleOf(w, user.id)));
+        if (!allowed) return this.deny(conn, "この配置を操作する権限がありません");
+        if (msg.t === "unplace") {
+          s.placements.delete(p.id);
+          if (s.host) this.send(s.host, { t: "host.removePart", id: p.id });
+          this.broadcastSession(s);
+        } else if (s.host) {
+          this.send(s.host, { t: "host.resetPart", id: p.id });
+        }
+        return;
+      }
+      case "session.input":
+        if (conn.session?.host) this.send(conn.session.host, { t: "host.input", input: msg.input });
+        return;
+      case "session.frame": {
+        const s = conn.session;
+        if (!s || s.host !== conn) return; // ホスト以外の状態は受け付けない
+        s.lastFrame = msg.frame;
+        for (const c of s.conns)
+          if (c !== conn) this.send(c, { t: "session.frame", frame: msg.frame });
+        return;
+      }
+      case "session.log": {
+        const s = conn.session;
+        if (!s || s.host !== conn) return;
+        for (const c of s.conns)
+          if (c !== conn)
+            this.send(c, { t: "session.log", message: msg.message, level: msg.level });
+        return;
+      }
       case "ws.create":
         return this.createWorkspace(conn, msg.name, msg.initial);
       case "ws.open":
@@ -289,6 +379,10 @@ export class Hub {
       conns: new Set(),
       workspaces: new Set(),
       closeTimer: null,
+      placements: new Map(),
+      builds: new Map(),
+      host: null,
+      lastFrame: null,
     };
     this.sessions.set(s.id, s);
     this.opts.log(`session created ${s.id} by ${conn.user.id}`);
@@ -320,6 +414,7 @@ export class Hub {
       s.closeTimer = null;
     }
     this.toSession(s, { t: "joined", participant: this.participant(conn) }, conn);
+    if (!s.host && conn.user.id === s.owner) this.setSessionHost(s, conn);
     this.broadcastSession(s);
     for (const other of s.conns) {
       if (other === conn) continue;
@@ -336,6 +431,12 @@ export class Hub {
     s.conns.delete(conn);
     conn.session = null;
     conn.panels = [];
+    if (s.host === conn) {
+      s.host = null;
+      // 持ち主の別の接続（別のタブなど）があれば引き継ぐ。いなければ世界は止まり、戻ったら続きから
+      const next = [...s.conns].find((c) => c.user?.id === s.owner);
+      if (next) this.setSessionHost(s, next);
+    }
     const stillHere = [...s.conns].some((c) => c.user?.id === conn.user?.id);
     if (!stillHere) this.toSession(s, { t: "left", id: conn.user.id });
     this.broadcastSession(s);
@@ -393,6 +494,18 @@ export class Hub {
       id: s.id,
       name: s.name,
       owner: s.owner,
+      host: s.host?.user?.id ?? null,
+      placements: [...s.placements.values()].map((p) => {
+        const snap = s.builds.get(buildKey(p.workspaceId, p.outputId)) as
+          | { outputs?: { id: string; name: string }[] }
+          | undefined;
+        return {
+          ...p,
+          workspaceName:
+            this.workspaces.get(p.workspaceId)?.meta.name ?? "（閉じたワークスペース）",
+          outputName: snap?.outputs?.find((o) => o.id === p.outputId)?.name ?? p.outputId,
+        };
+      }),
       participants: [...users.values()].map((u) => ({ id: u.id, name: u.name })),
       workspaces: [...s.workspaces].flatMap((wid) => {
         const w = this.workspaces.get(wid);
@@ -427,6 +540,52 @@ export class Hub {
 
   private participant(c: Conn): Participant {
     return { id: c.user?.id ?? c.id, name: c.user?.name ?? "?", ...c.pose };
+  }
+
+  // ---------------------------------------------------------------------------
+  // セッションの世界（配置された実体）
+
+  private place(conn: Conn, msg: Extract<ClientMessage, { t: "place" }>): void {
+    const s = conn.session;
+    const user = conn.user;
+    const w = this.workspaceFor(conn, msg.workspaceId);
+    if (!s || !user || !w || !canWrite(this.roleOf(w, user.id))) {
+      this.deny(conn, "セッションに出すには共同編集の権限が必要です");
+      return;
+    }
+    if (!looksLikeSnapshot(msg.snapshot, msg.outputId)) {
+      this.deny(conn, "制作データが壊れています");
+      return;
+    }
+    s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
+    const p: Placement = {
+      id: shortId("pl"),
+      workspaceId: msg.workspaceId,
+      outputId: msg.outputId,
+      position: msg.position,
+      yaw: msg.yaw,
+      placedBy: user.id,
+    };
+    s.placements.set(p.id, p);
+    if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
+    this.broadcastSession(s);
+  }
+
+  private hostPart(s: Session, p: Placement): HostPart {
+    return {
+      id: p.id,
+      realm: p.workspaceId,
+      outputId: p.outputId,
+      snapshot: s.builds.get(buildKey(p.workspaceId, p.outputId)),
+      position: p.position,
+      yaw: p.yaw,
+    };
+  }
+
+  private setSessionHost(s: Session, conn: Conn): void {
+    s.host = conn;
+    const parts = [...s.placements.values()].map((p) => this.hostPart(s, p));
+    this.send(conn, { t: "session.host", parts, resume: s.lastFrame });
   }
 
   // ---------------------------------------------------------------------------

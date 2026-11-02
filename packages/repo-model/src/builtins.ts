@@ -10,6 +10,7 @@ export const BUILTIN = {
   Collider: "builtin.Collider",
   RigidBody: "builtin.RigidBody",
   Held: "builtin.Held",
+  AudioSource: "builtin.AudioSource",
 } as const;
 
 /** プロシージャルメッシュの形状。size の意味は形状ごとに異なる（docs/PLAN.md §6 参照）。 */
@@ -41,6 +42,8 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       { id: "material", name: "material", type: "resource", default: null },
       /** マテリアル未指定のときの色 */
       { id: "color", name: "color", type: "color", default: "#d8d2c6" },
+      /** GLB の素材 ID。指定すると形状の代わりにモデルを表示する（当たり判定は size のまま） */
+      { id: "model", name: "model", type: "resource", default: null },
     ],
   },
   {
@@ -70,7 +73,24 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
     ],
   },
+  {
+    id: BUILTIN.AudioSource,
+    name: "AudioSource",
+    builtin: true,
+    fields: [
+      /** 音声の素材 ID */
+      { id: "clip", name: "clip", type: "resource", default: null },
+      { id: "volume", name: "volume", type: "number", default: 1 },
+    ],
+  },
 ];
+
+/** Resource 型の Built-in フィールドが参照する素材の種類 */
+export const RESOURCE_KIND: Record<string, "material" | "model" | "image" | "audio"> = {
+  [`${BUILTIN.Mesh}/material`]: "material",
+  [`${BUILTIN.Mesh}/model`]: "model",
+  [`${BUILTIN.AudioSource}/clip`]: "audio",
+};
 
 export function isBuiltin(id: string): boolean {
   return id.startsWith("builtin.");

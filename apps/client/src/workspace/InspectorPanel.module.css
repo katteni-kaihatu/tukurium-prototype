@@ -42,3 +42,33 @@
     max-height: 200px;
   }
 }
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.keep,
+.keepOn {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--c-line);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-ink-4);
+}
+
+.keepOn {
+  border-color: var(--c-brand);
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+}
+
+.keep:disabled,
+.keepOn:disabled {
+  opacity: 0.5;
+}

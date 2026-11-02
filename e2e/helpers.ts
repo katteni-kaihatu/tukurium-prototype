@@ -73,3 +73,69 @@ export async function createSessionAndWorkspace(
   await page.locator('section[aria-label="Inspector"]').waitFor();
   return new URL(page.url()).pathname;
 }
+
+/** セッションの世界で、名前で Entity を探して KokoState の値を返す（ホストは Simulation、ほかは届いた状態） */
+export async function sessionState(page: Page, entityName: string, kokoName: string) {
+  return page.evaluate(
+    ([name, koko]) => {
+      const s = (window as unknown as { __sessionWorld: any }).__sessionWorld.getState();
+      const sim = s.sim;
+      if (sim) {
+        const id = sim.world.entityIds().find((x: string) => sim.nameOf(x) === name);
+        if (!id) return null;
+        const kid = sim.world.statesOf(id).find((k: string) => sim.registry.get(k)?.name === koko);
+        if (!kid) return null;
+        const def = sim.registry.get(kid);
+        const v = sim.world.get(id, kid);
+        return Object.fromEntries(
+          def.fields.map((f: { id: string; name: string }) => [f.name, v[f.id]]),
+        );
+      }
+      if (!s.remote) return null;
+      const id = Object.keys(s.remote.names).find((x) => s.remote.names[x] === name);
+      if (!id) return null;
+      const states = s.remote.world.statesOf(id);
+      // 届いた状態にはフィールド名がないので、値（フィールド ID）をそのまま返す
+      const kid = states.find((k: string) => k.endsWith(`:ks_${koko.toLowerCase()}`));
+      return kid ? s.remote.world.get(id, kid) : null;
+    },
+    [entityName, kokoName] as const,
+  );
+}
+
+/** セッションの世界へ、視線の先に向けて入力を送る */
+export async function fireInSession(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __tukurium: any; __sessionWorld: any };
+    const cam = w.__tukurium.camera;
+    const o = cam.getWorldPosition(cam.position.clone());
+    const d = cam.getWorldDirection(cam.position.clone());
+    w.__sessionWorld.getState().input({
+      action: "fire",
+      phase: "down",
+      player: "e2e",
+      origin: o.toArray(),
+      direction: d.toArray(),
+    });
+  });
+}
+
+/** プレイヤーの位置と向きを決める（yaw はラジアン、0 で -Z を向く） */
+export async function standAt(
+  page: Page,
+  position: [number, number, number],
+  yaw = 0,
+): Promise<void> {
+  await page.evaluate(
+    ([p, y]) => {
+      const c = (window as unknown as { __tukurium: any }).__tukurium.controller;
+      c.position.set(p[0], p[1], p[2]);
+      c.yaw = y;
+      c.pitch = 0;
+    },
+    [position, yaw] as const,
+  );
+  await page.evaluate(
+    () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+  );
+}

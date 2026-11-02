@@ -1,26 +1,36 @@
 import type { FieldDef, FieldValue, KokoStateDef, KokoStateId, KokoStateValues } from "./types";
 
-/** KokoState 定義の登録簿。利用者定義と Built-in を同じ仕組みで扱う。 */
+const key = (scope: string, name: string) => `${scope}\u0000${name}`;
+
+/**
+ * KokoState 定義の登録簿。利用者定義と Built-in を同じ仕組みで扱う。
+ *
+ * 名前は「スコープ」の中で一意。セッションでは別々のリポジトリの KokoState が同じ名前を持ちうるので、
+ * リポジトリごとにスコープを分ける。スコープ ""（既定）は全体で、Built-in はここに置き、どのスコープからも見える。
+ */
 export class KokoStateRegistry {
   private readonly defs = new Map<KokoStateId, KokoStateDef>();
+  private readonly scopes = new Map<KokoStateId, string>();
   private readonly byName = new Map<string, KokoStateId>();
 
-  register(def: KokoStateDef): void {
-    const existing = this.byName.get(def.name);
+  register(def: KokoStateDef, scope = ""): void {
+    const k = key(scope, def.name);
+    const existing = this.byName.get(k);
     if (existing !== undefined && existing !== def.id) {
       throw new Error(`KokoState name "${def.name}" is already used by ${existing}`);
     }
-    const prev = this.defs.get(def.id);
-    if (prev) this.byName.delete(prev.name);
+    this.unregister(def.id);
     this.defs.set(def.id, def);
-    this.byName.set(def.name, def.id);
+    this.scopes.set(def.id, scope);
+    this.byName.set(k, def.id);
   }
 
   unregister(id: KokoStateId): void {
     const def = this.defs.get(id);
     if (!def) return;
+    this.byName.delete(key(this.scopes.get(id) ?? "", def.name));
     this.defs.delete(id);
-    this.byName.delete(def.name);
+    this.scopes.delete(id);
   }
 
   get(id: KokoStateId): KokoStateDef | undefined {
@@ -33,8 +43,15 @@ export class KokoStateRegistry {
     return def;
   }
 
-  idOf(name: string): KokoStateId | undefined {
-    return this.byName.get(name);
+  /** 名前から ID を引く。スコープを指定したら、まずそのスコープ、なければ全体（Built-in など）を探す。 */
+  idOf(name: string, scope = ""): KokoStateId | undefined {
+    return (
+      this.byName.get(key(scope, name)) ?? (scope ? this.byName.get(key("", name)) : undefined)
+    );
+  }
+
+  scopeOf(id: KokoStateId): string | undefined {
+    return this.scopes.get(id);
   }
 
   all(): KokoStateDef[] {

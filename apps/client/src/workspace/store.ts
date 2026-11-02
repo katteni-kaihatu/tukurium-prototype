@@ -1,6 +1,12 @@
 import { type EntityId, World } from "@tukurium/eks";
 import { buildRegistry, ProjectDoc, type ProjectSnapshot } from "@tukurium/repo-model";
-import { type InputEvent, type LogEntry, Simulation, type SystemStatus } from "@tukurium/runtime";
+import {
+  type InputEvent,
+  type LogEntry,
+  Simulation,
+  type SoundEvent,
+  type SystemStatus,
+} from "@tukurium/runtime";
 import type { PlayFrame, PlayMode, WorkspaceRole } from "@tukurium/shared";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
@@ -51,6 +57,10 @@ interface WorkspaceState {
   activeSystem: string | null;
   panelsHidden: boolean;
   viewPoint: (() => [number, number, number]) | null;
+  /** ホストから届いた、まだ鳴らしていない音（ホスト以外） */
+  incomingSounds: SoundEvent[];
+  /** セッションに出すときの置き場所：視線の先の床（セッションの座標）と、自分の向き */
+  placePoint: (() => { position: [number, number, number]; yaw: number }) | null;
 
   create(name: string, snap: ProjectSnapshot): void;
   open(workspaceId: string): void;
@@ -110,6 +120,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     activeSystem: null,
     panelsHidden: false,
     viewPoint: null,
+    incomingSounds: [],
+    placePoint: null,
 
     create: (name, snap) => {
       const doc = new ProjectDoc();
@@ -361,13 +373,23 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
   sendFrame();
 }
 
+let outgoingSounds: SoundEvent[] = [];
+/** ホストが鳴らした音を、次に配る状態に入れる */
+export function queueOutgoingSounds(sounds: SoundEvent[]): void {
+  outgoingSounds.push(...sounds);
+  if (outgoingSounds.length > 32) outgoingSounds = outgoingSounds.slice(-32);
+}
+
 /** ホストが実行状態を配信する（WorkspaceController が間隔を見て呼ぶ） */
 export function sendFrame(): void {
   const s = ws();
   if (!s.isHost || !s.workspaceId) return;
   const sim = s.sim;
+  const sounds = outgoingSounds;
+  outgoingSounds = [];
   const frame: PlayFrame = sim
     ? {
+        sounds,
         mode: s.mode,
         outputId: s.outputId,
         time: sim.time,
@@ -388,6 +410,7 @@ function applyFrame(frame: PlayFrame) {
   const world = s.remote?.world ?? new World(buildRegistry(s.project.kokostates()));
   world.restore(frame.world as Parameters<World["restore"]>[0]);
   set((st) => ({
+    incomingSounds: [...st.incomingSounds, ...(frame.sounds ?? [])].slice(-32),
     mode: frame.mode,
     outputId: frame.outputId || st.outputId,
     remote: { world, names: frame.names },

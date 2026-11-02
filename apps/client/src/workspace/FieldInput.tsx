@@ -1,11 +1,13 @@
 import type { FieldDef, FieldValue, Vec3 } from "@tukurium/eks";
-import { BUILTIN, MESH_SHAPES, RIGID_BODY_TYPES } from "@tukurium/repo-model";
+import { BUILTIN, MESH_SHAPES, RESOURCE_KIND, RIGID_BODY_TYPES } from "@tukurium/repo-model";
 import { useEffect, useId, useState } from "react";
 import ui from "./ui.module.css";
 
 export interface FieldChoices {
   materials: { id: string; name: string }[];
   entities: { id: string; name: string }[];
+  /** 素材（GLB・画像・音声） */
+  assets?: { id: string; name: string; kind: string }[];
 }
 
 /** 文字列で選ぶ Built-in のフィールド */
@@ -119,8 +121,16 @@ export function FieldInput(props: {
       }
       case "resource":
       case "entity": {
+        const kind = RESOURCE_KIND[`${props.koko}/${field.id}`];
+        const assets = props.choices.assets ?? [];
         const options =
-          field.type === "resource" ? props.choices.materials : props.choices.entities;
+          field.type === "entity"
+            ? props.choices.entities
+            : kind === "material"
+              ? props.choices.materials
+              : kind
+                ? assets.filter((a) => a.kind === kind)
+                : [...props.choices.materials, ...assets];
         control = (
           <select
             id={id}

@@ -8,6 +8,7 @@ import type {
 import * as Y from "yjs";
 import { buildRegistry, isBuiltin } from "./builtins";
 import {
+  type AssetDef,
   type EntityDef,
   type MaterialDef,
   newId,
@@ -54,6 +55,9 @@ export class ProjectDoc {
   }
   private get materialMap() {
     return this.doc.getMap<MaterialDef>("materials");
+  }
+  private get assetMap() {
+    return this.doc.getMap<AssetDef>("assets");
   }
   private get outputMap() {
     return this.doc.getMap<OutputDef>("outputs");
@@ -206,6 +210,35 @@ export class ProjectDoc {
     });
   }
 
+  // ---------- 素材 ----------
+  assets(): AssetDef[] {
+    return [...this.assetMap.values()].map(clone);
+  }
+  asset(id: string): AssetDef | undefined {
+    const a = this.assetMap.get(id);
+    return a ? clone(a) : undefined;
+  }
+  /** 素材を加える（同じ中身はすでにあれば名前だけ更新） */
+  addAsset(a: AssetDef): void {
+    this.assetMap.set(a.id, clone(a));
+  }
+  removeAsset(id: string): void {
+    this.transact(() => {
+      this.assetMap.delete(id);
+      for (const m of this.materialMap.values()) {
+        if (m.map === id) this.materialMap.set(m.id, { ...m, map: null });
+      }
+      for (const e of this.entityMap.values()) {
+        const states = e.get("states") as Y.Map<KokoStateValues>;
+        for (const [k, v] of states.entries()) {
+          const hit = Object.entries(v).filter(([, val]) => val === id);
+          if (hit.length > 0)
+            states.set(k, { ...v, ...Object.fromEntries(hit.map(([f]) => [f, null])) });
+        }
+      }
+    });
+  }
+
   // ---------- アウトプット ----------
   outputs(): OutputDef[] {
     return [...this.outputMap.values()].map(clone);
@@ -308,6 +341,7 @@ export class ProjectDoc {
       kokostates: this.kokostates(),
       systems: this.systems().map((s) => ({ ...s, code: this.code(s.id)?.toString() ?? "" })),
       materials: this.materials(),
+      assets: this.assets(),
       outputs: this.outputs(),
       entities: this.entities(),
     };
@@ -321,6 +355,7 @@ export class ProjectDoc {
         this.systemMap,
         this.codeMap,
         this.materialMap,
+        this.assetMap,
         this.outputMap,
         this.entityMap,
       ]) {
@@ -335,6 +370,7 @@ export class ProjectDoc {
         this.codeMap.set(s.id, text);
       }
       for (const m of snap.materials) this.materialMap.set(m.id, clone(m));
+      for (const a of snap.assets ?? []) this.assetMap.set(a.id, clone(a));
       for (const o of snap.outputs) this.outputMap.set(o.id, clone(o));
       for (const e of snap.entities) {
         const map = new Y.Map<unknown>();

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import { PanelSpace } from "../panels/PanelSpace";
 import { RemotePanels } from "../panels/RemotePanels";
+import { AudioPlayer } from "../render/AudioPlayer";
 import { Avatars } from "./Avatars";
 import { FpsController } from "./FpsController";
 
@@ -24,6 +25,7 @@ export class SessionEngine {
   readonly avatars: Avatars;
   readonly panels: PanelSpace;
   readonly remotePanels: RemotePanels;
+  readonly audio: AudioPlayer;
   private readonly cssRenderer = new CSS3DRenderer();
 
   private readonly clock = new THREE.Clock();
@@ -60,6 +62,7 @@ export class SessionEngine {
     document.addEventListener("mouseup", this.onMouseUp);
     this.avatars = new Avatars(this.scene);
     this.remotePanels = new RemotePanels(this.scene, this.avatars);
+    this.audio = new AudioPlayer(this.scene, this.camera);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -110,6 +113,7 @@ export class SessionEngine {
     this.controller.dispose();
     this.avatars.clear();
     this.remotePanels.dispose();
+    this.audio.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();

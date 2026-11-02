@@ -195,3 +195,49 @@ export function gunAndTargetSample(): ProjectSnapshot {
     ],
   };
 }
+
+/** 同梱サンプル：銃だけ（セッションで別のリポジトリの的と組み合わせる用） */
+export function gunSample(): ProjectSnapshot {
+  const all = gunAndTargetSample();
+  return {
+    ...all,
+    name: "銃",
+    kokostates: all.kokostates.filter((k) => k.id === "ks_gun"),
+    systems: all.systems.filter((s) => s.id === "sys_shoot"),
+    materials: all.materials.filter((m) => m.id === "mat_gun"),
+    outputs: [
+      {
+        id: "out_gun",
+        name: "銃",
+        kind: "item",
+        systems: [{ id: "sys_shoot", enabled: true }],
+        keep: [{ entity: "ent_gun", koko: "ks_gun", field: "f_ammo" }],
+      },
+    ],
+    entities: all.entities
+      .filter((e) => e.id === "ent_gun")
+      .map((e) => ({ ...e, output: "out_gun" })),
+  };
+}
+
+/** 同梱サンプル：射撃場（的と支柱） */
+export function targetRangeSample(): ProjectSnapshot {
+  const all = gunAndTargetSample();
+  return {
+    ...all,
+    name: "射撃場",
+    kokostates: all.kokostates.filter((k) => k.id === "ks_target"),
+    systems: all.systems.filter((s) => s.id === "sys_target"),
+    materials: all.materials.filter((m) => m.id === "mat_wood"),
+    outputs: [
+      {
+        id: "out_range",
+        name: "射撃場",
+        kind: "item",
+        systems: [{ id: "sys_target", enabled: true }],
+        keep: [],
+      },
+    ],
+    entities: all.entities.filter((e) => e.id !== "ent_gun"),
+  };
+}

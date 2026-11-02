@@ -1,16 +1,20 @@
 import { NEW_SYSTEM_CODE } from "@tukurium/repo-model";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { ASSET_ACCEPT, assetUrl, uploadAsset } from "./assets";
 import { useCanEdit, useProject } from "./hooks";
 import { type Selection, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-type Tab = "koko" | "system" | "material";
+type Tab = "koko" | "system" | "material" | "asset";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "koko", label: "KokoState" },
   { id: "system", label: "System" },
   { id: "material", label: "Material" },
+  { id: "asset", label: "素材" },
 ];
+
+const KIND_LABEL: Record<string, string> = { model: "GLB", image: "画像", audio: "音声" };
 
 /** Resources：リポジトリの KokoState 定義・System・マテリアル（アウトプット間で共有） */
 export function ResourcesPanel() {
@@ -23,7 +27,7 @@ export function ResourcesPanel() {
   const [error, setError] = useState<string | null>(null);
   const editing = canEdit;
 
-  const items: { id: string; name: string; sub: string; kind: Tab }[] =
+  const items: { id: string; name: string; sub: string; kind: Exclude<Tab, "asset"> }[] =
     tab === "koko"
       ? project
           .registry()
@@ -35,11 +39,18 @@ export function ResourcesPanel() {
             sub: `${d.fields.length} fields`,
             kind: "koko",
           }))
-      : tab === "system"
-        ? project.systems().map((s) => ({ id: s.id, name: s.name, sub: "Script", kind: "system" }))
-        : project
-            .materials()
-            .map((m) => ({ id: m.id, name: m.name, sub: m.color.toUpperCase(), kind: "material" }));
+      : tab === "asset"
+        ? []
+        : tab === "system"
+          ? project
+              .systems()
+              .map((s) => ({ id: s.id, name: s.name, sub: "Script", kind: "system" }))
+          : project.materials().map((m) => ({
+              id: m.id,
+              name: m.name,
+              sub: m.color.toUpperCase(),
+              kind: "material",
+            }));
 
   const builtins =
     tab === "koko"
@@ -161,7 +172,11 @@ export function ResourcesPanel() {
             </li>
           ))}
         </ul>
-        {items.length === 0 && <p className={ui.empty}>＋ New から作れます</p>}
+        {tab === "asset" ? (
+          <AssetSection editing={editing} />
+        ) : (
+          items.length === 0 && <p className={ui.empty}>＋ New から作れます</p>
+        )}
         {tab === "system" && items.length > 0 && (
           <p className={ui.muted}>ダブルクリックでコードを開きます</p>
         )}
@@ -186,6 +201,103 @@ export function ResourcesPanel() {
           </ul>
         </div>
       )}
+    </>
+  );
+}
+
+/** 素材（GLB・画像・音声）：取り込みと一覧。中身はサーバーに置き、制作データには ID と名前だけを入れる */
+function AssetSection({ editing }: { editing: boolean }) {
+  const project = useProject();
+  useWorkspace((s) => s.rev);
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const assets = project.assets();
+
+  const onFiles = async (files: FileList | null) => {
+    if (!files) return;
+    setBusy(true);
+    setError(null);
+    try {
+      for (const f of Array.from(files)) project.addAsset(await uploadAsset(f));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  };
+
+  return (
+    <>
+      <div className={ui.toolbar}>
+        <input
+          ref={input}
+          type="file"
+          accept={ASSET_ACCEPT}
+          multiple
+          hidden
+          aria-label="素材ファイルを選ぶ"
+          onChange={(e) => void onFiles(e.target.files)}
+        />
+        <button
+          type="button"
+          className={ui.btn}
+          disabled={!editing || busy}
+          onClick={() => input.current?.click()}
+        >
+          {busy ? "取り込み中…" : "＋ 素材を取り込む"}
+        </button>
+        <span className={ui.muted}>
+          GLB・PNG・JPEG・WebP・MP3・OGG・WAV（1 ファイル 20MB まで）
+        </span>
+      </div>
+      {error && <p className={ui.error}>{error}</p>}
+      {assets.length === 0 ? (
+        <p className={ui.empty}>まだありません</p>
+      ) : (
+        <ul className={ui.list} aria-label="素材">
+          {assets.map((a) => (
+            <li key={a.id} className={ui.item} style={{ cursor: "default" }}>
+              {a.kind === "image" && (
+                <img
+                  src={assetUrl(a.id)}
+                  alt=""
+                  width={28}
+                  height={28}
+                  style={{ objectFit: "cover", borderRadius: 4 }}
+                />
+              )}
+              <span className={ui.itemName}>{a.name}</span>
+              <span className={ui.badge}>{KIND_LABEL[a.kind] ?? a.kind}</span>
+              {a.kind === "audio" && (
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label={`${a.name} を試聴`}
+                  onClick={() => void new Audio(assetUrl(a.id)).play()}
+                >
+                  ▶
+                </button>
+              )}
+              {editing && (
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label={`${a.name} を外す`}
+                  onClick={() => project.removeAsset(a.id)}
+                >
+                  ✕
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className={ui.muted}>
+        GLB は Mesh の model、画像はマテリアルの「画像」、音声は AudioSource の clip
+        か、スクリプトの audio.play("名前", e.id) で使えます。
+      </p>
     </>
   );
 }

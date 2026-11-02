@@ -1,4 +1,9 @@
-import { emptyProject, gunAndTargetSample } from "@tukurium/repo-model";
+import {
+  emptyProject,
+  gunAndTargetSample,
+  gunSample,
+  targetRangeSample,
+} from "@tukurium/repo-model";
 import type { PanelPublic } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
@@ -23,7 +28,7 @@ const MAIN: PanelSpec = {
 const INSPECTOR: PanelSpec = {
   id: "ws-inspector",
   title: "Inspector",
-  initial: { x: 16, y: 284, width: 600 },
+  initial: { x: 16, y: 470, width: 600 },
   render: () => <InspectorPanel />,
 };
 
@@ -176,6 +181,16 @@ function WorkspaceStart() {
           onClick={() => ws.create("銃と的", gunAndTargetSample())}
         >
           ＋ サンプル「銃と的」で作る
+        </button>
+        <button type="button" className={ui.btn} onClick={() => ws.create("銃", gunSample())}>
+          ＋ サンプル「銃」
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          onClick={() => ws.create("射撃場", targetRangeSample())}
+        >
+          ＋ サンプル「射撃場」
         </button>
         <button
           type="button"

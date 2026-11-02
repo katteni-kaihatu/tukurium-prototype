@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { buildApp } from "./app";
+import { type AssetStore, assetId } from "./assets/assetStore";
 import { MemoryStore } from "./store/store";
 
 let close: (() => Promise<void>) | undefined;
@@ -11,17 +12,37 @@ afterEach(async () => {
   close = undefined;
 });
 
+class MemoryAssets implements AssetStore {
+  readonly items = new Map<string, { data: Buffer; contentType: string }>();
+  async put(data: Buffer, contentType: string) {
+    const id = assetId(data);
+    this.items.set(id, { data, contentType });
+    return id;
+  }
+  async get(id: string) {
+    return this.items.get(id) ?? null;
+  }
+}
+
 async function start(opts: { ownerGraceMs?: number } = {}) {
   const store = new MemoryStore();
+  const assets = new MemoryAssets();
   const app = await buildApp(
-    { host: "127.0.0.1", port: 0, clientDir: undefined, databaseUrl: undefined },
-    { store, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
+    {
+      host: "127.0.0.1",
+      port: 0,
+      clientDir: undefined,
+      databaseUrl: undefined,
+      s3: undefined,
+      assetDir: "",
+    },
+    { store, assets, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
   );
   await app.listen({ host: "127.0.0.1", port: 0 });
   close = () => app.close();
   const addr = app.server.address();
   if (!addr || typeof addr === "string") throw new Error("no address");
-  return { app, store, url: `ws://127.0.0.1:${addr.port}/ws` };
+  return { app, store, assets, url: `ws://127.0.0.1:${addr.port}/ws` };
 }
 
 type Msg<T extends ServerMessage["t"]> = Extract<ServerMessage, { t: T }>;
@@ -319,5 +340,164 @@ describe("ワークスペースのホストと共有再生", () => {
     a.send({ t: "ws.close", workspaceId });
     expect((await b.next("ws.frame", (m) => m.frame.mode === "edit")).frame.mode).toBe("edit");
     expect((await b.next("ws.log")).message).toMatch(/管理権限/);
+  });
+});
+
+describe("セッションの世界（配置・適用）", () => {
+  const snap = (marker: string) => ({ marker, outputs: [{ id: "out", name: "銃" }] });
+
+  it("持ち主がセッションのホスト。配置・適用・入力はホストへ、世界の状態は全員へ", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    const hostMsg = await a.next("session.host");
+    expect(hostMsg.parts).toEqual([]);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+
+    b.send({
+      t: "place",
+      workspaceId,
+      outputId: "out",
+      snapshot: snap("v1"),
+      position: [1, 0, 2],
+      yaw: 0,
+    });
+    const add = await a.next("host.addPart");
+    expect(add.part).toMatchObject({ realm: workspaceId, outputId: "out", position: [1, 0, 2] });
+    const info = await b.next("session", (m) => m.session.placements.length === 1);
+    expect(info.session.placements[0]).toMatchObject({
+      workspaceName: "銃",
+      outputName: "銃",
+      placedBy: b.me.id,
+    });
+    expect(info.session.host).toBe(a.me.id);
+
+    b.send({ t: "apply", workspaceId, outputId: "out", snapshot: snap("v2") });
+    const applied = await a.next("host.apply");
+    expect(applied).toMatchObject({ realm: workspaceId, outputId: "out", by: "ここあ" });
+    expect((applied.snapshot as { marker: string }).marker).toBe("v2");
+
+    b.send({
+      t: "session.input",
+      input: {
+        action: "fire",
+        phase: "down",
+        origin: [0, 0, 0],
+        direction: [0, 0, -1],
+        player: "b",
+      },
+    });
+    expect((await a.next("host.input")).input.action).toBe("fire");
+
+    const frame = { time: 1, world: { entities: [] }, names: {}, materials: [], status: [] };
+    a.send({ t: "session.frame", frame });
+    expect((await b.next("session.frame")).frame.time).toBe(1);
+    // ホスト以外の世界の状態は受け付けない
+    b.send({ t: "session.frame", frame: { ...frame, time: 9 } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(a.inbox.some((m) => m.t === "session.frame")).toBe(false);
+  });
+
+  it("出していないアウトプットは適用できない。壊れた制作データは拒む。閲覧者は出せない", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    a.send({ t: "apply", workspaceId, outputId: "out", snapshot: snap("v") });
+    expect((await a.next("error")).message).toMatch(/出ていません/);
+    a.send({
+      t: "place",
+      workspaceId,
+      outputId: "nope",
+      snapshot: snap("v"),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    expect((await a.next("error")).message).toMatch(/壊れて/);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "viewer" });
+    await b.next("ws.role");
+    b.send({
+      t: "place",
+      workspaceId,
+      outputId: "out",
+      snapshot: snap("v"),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    expect((await b.next("error")).message).toMatch(/共同編集/);
+  });
+
+  it("持ち主が戻ると、いまの配置と最後の状態を受け取ってホストに戻る。リセットと削除も中継する", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("session.host");
+    a.send({
+      t: "place",
+      workspaceId,
+      outputId: "out",
+      snapshot: snap("v1"),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    await a.next("host.addPart");
+    const frame = { time: 4.2, world: { entities: [] }, names: {}, materials: [], status: [] };
+    a.send({ t: "session.frame", frame });
+    await b.next("session.frame");
+    const pid = (await b.next("session", (m) => m.session.placements.length === 1)).session
+      .placements[0]?.id as string;
+
+    a.ws.close();
+    await b.next("session", (m) => m.session.host === null);
+    const a2 = await client(url, "れにうむ", a.token);
+    a2.send({ t: "session.join", sessionId: (await b.next("session")).session.id });
+    const host = await a2.next("session.host");
+    expect(host.parts.map((p) => p.id)).toEqual([pid]);
+    expect(host.resume?.time).toBe(4.2);
+
+    a2.send({ t: "resetPart", placementId: pid });
+    expect((await a2.next("host.resetPart")).id).toBe(pid);
+    a2.send({ t: "unplace", placementId: pid });
+    expect((await a2.next("host.removePart")).id).toBe(pid);
+  });
+});
+
+describe("素材", () => {
+  it("本人確認できればアップロードでき、ID（SHA-256）で取り出せる", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const up = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      payload: png,
+    });
+    expect(up.statusCode).toBe(200);
+    expect(up.json()).toMatchObject({ id: assetId(png), kind: "image", size: png.length });
+    const get = await app.inject({ method: "GET", url: `/api/assets/${assetId(png)}` });
+    expect(get.statusCode).toBe(200);
+    expect(get.headers["content-type"]).toBe("image/png");
+    expect(get.rawPayload.equals(png)).toBe(true);
+  });
+
+  it("本人確認できない・対応していない種類・存在しない ID を拒む", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const noAuth = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "image/png" },
+      payload: Buffer.from([1]),
+    });
+    expect(noAuth.statusCode).toBe(401);
+    const bad = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "application/x-sh", "x-tukurium-token": a.token },
+      payload: Buffer.from("echo hi"),
+    });
+    expect(bad.statusCode).toBe(415);
+    const missing = await app.inject({ method: "GET", url: `/api/assets/${"0".repeat(64)}` });
+    expect(missing.statusCode).toBe(404);
   });
 });
