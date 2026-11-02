@@ -2,7 +2,7 @@ import type { Participant } from "@tukurium/shared";
 import * as THREE from "three";
 import { CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import { PanelSpace } from "../panels/PanelSpace";
-import { RemotePanelMesh } from "../panels/RemotePanelMesh";
+import { RemotePanels } from "../panels/RemotePanels";
 import { Avatars } from "./Avatars";
 import { FpsController } from "./FpsController";
 
@@ -23,6 +23,7 @@ export class SessionEngine {
   readonly controller: FpsController;
   readonly avatars: Avatars;
   readonly panels: PanelSpace;
+  readonly remotePanels: RemotePanels;
   private readonly cssRenderer = new CSS3DRenderer();
 
   private readonly clock = new THREE.Clock();
@@ -58,6 +59,7 @@ export class SessionEngine {
     document.addEventListener("mousedown", this.onMouseDown);
     document.addEventListener("mouseup", this.onMouseUp);
     this.avatars = new Avatars(this.scene);
+    this.remotePanels = new RemotePanels(this.scene, this.avatars);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -107,6 +109,7 @@ export class SessionEngine {
     this.resizeObserver.disconnect();
     this.controller.dispose();
     this.avatars.clear();
+    this.remotePanels.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
@@ -123,6 +126,7 @@ export class SessionEngine {
     const dt = Math.min(this.clock.getDelta(), 0.1);
     this.controller.update(dt);
     this.avatars.update(dt);
+    this.remotePanels.update();
     for (const fn of this.frameListeners) fn(dt);
     this.renderer.render(this.scene, this.camera);
     this.cssRenderer.render(this.scene, this.camera);
@@ -180,25 +184,5 @@ export class SessionEngine {
     (grid.material as THREE.Material).transparent = true;
     (grid.material as THREE.Material).opacity = 0.6;
     this.scene.add(grid);
-
-    // 試作：他の参加者のパネルの見え方（M2 でサーバーからの要約に置き換える）
-    const sample = new RemotePanelMesh({
-      title: "Inspector · Gun",
-      owner: "ここあ（見本）",
-      restricted: false,
-      lines: ["Gun", "  ammo      12", "  interval  0.2", "Transform", "  position  0, 1.2, -3"],
-    });
-    sample.position.set(-7, 1.5, -3);
-    sample.rotation.y = Math.PI / 5;
-    this.scene.add(sample);
-    const hidden = new RemotePanelMesh({
-      title: "",
-      owner: "れにうむ（見本）",
-      restricted: true,
-      lines: [],
-    });
-    hidden.position.set(7, 1.5, -3);
-    hidden.rotation.y = -Math.PI / 5;
-    this.scene.add(hidden);
   }
 }

@@ -38,11 +38,14 @@ export class DocRoom {
     });
   }
 
-  /** 参加する。閲覧権限がなければ false（何も送らない）。 */
-  join(peer: DocPeer): boolean {
+  /**
+   * 参加する。閲覧権限がなければ false（何も送らない）。
+   * sendInitial が false なら、全体の送信は呼び出し側に任せる（権限と一緒に送る場合など）。
+   */
+  join(peer: DocPeer, sendInitial = true): boolean {
     if (!canRead(this.roleOf(peer.id))) return false;
     this.peers.set(peer.id, peer);
-    peer.sendUpdate(Y.encodeStateAsUpdate(this.doc));
+    if (sendInitial) peer.sendUpdate(Y.encodeStateAsUpdate(this.doc));
     return true;
   }
 

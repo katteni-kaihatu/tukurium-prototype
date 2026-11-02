@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: "e2e",
   timeout: 60_000,
   fullyParallel: false,
+  // WebGL をソフトウェアで描くため重い。1 つずつ実行する
+  workers: 1,
   use: {
     baseURL: "http://localhost:5173",
     viewport: { width: 1440, height: 900 },

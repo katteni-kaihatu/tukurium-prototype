@@ -4,6 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
+import { useProject } from "./hooks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
@@ -12,8 +13,8 @@ import ui from "./ui.module.css";
  * （M2 でそのまま共同編集・カーソル共有になる）。
  */
 export function EditorPanel() {
-  const { openSystems, activeSystem, openSystem, closeSystem, project, systemStatus, mode } =
-    useWorkspace();
+  const { openSystems, activeSystem, openSystem, closeSystem, systemStatus, mode } = useWorkspace();
+  const project = useProject();
   useWorkspace((s) => s.rev);
   const status = systemStatus.find((s) => s.id === activeSystem);
 
@@ -57,7 +58,10 @@ export function EditorPanel() {
 
 function CodeView({ systemId }: { systemId: string }) {
   const host = useRef<HTMLDivElement>(null);
-  const project = useWorkspace((s) => s.project);
+  const project = useProject();
+  const awareness = useWorkspace((s) => s.awareness);
+  const role = useWorkspace((s) => s.role);
+  const readOnly = role === "viewer";
 
   useEffect(() => {
     const text = project.code(systemId);
@@ -69,7 +73,9 @@ function CodeView({ systemId }: { systemId: string }) {
         extensions: [
           basicSetup,
           javascript(),
-          yCollab(text, null),
+          // カーソル・選択の共有（awareness は閲覧権限のある人にだけ中継される）
+          yCollab(text, awareness),
+          EditorState.readOnly.of(readOnly),
           EditorView.theme({
             "&": { fontSize: "12.5px", height: "100%" },
             ".cm-scroller": { fontFamily: "var(--font-mono)" },
@@ -79,7 +85,7 @@ function CodeView({ systemId }: { systemId: string }) {
       }),
     });
     return () => view.destroy();
-  }, [project, systemId]);
+  }, [project, systemId, awareness, readOnly]);
 
   return (
     <div

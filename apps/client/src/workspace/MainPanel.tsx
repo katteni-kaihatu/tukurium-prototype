@@ -1,5 +1,5 @@
-import { emptyProject, gunAndTargetSample } from "@tukurium/repo-model";
-import { useState } from "react";
+import { useApp } from "../app/store";
+import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -7,38 +7,38 @@ import ui from "./ui.module.css";
 /** 初版では見た目だけ置く機能（計画 §9） */
 const LATER = "初版では見た目だけです";
 
+const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" } as const;
+
 /**
  * ワークスペースのメインパネル：アウトプットの切り替え、再生・一時停止・停止、ログ。
- * 適用（M3）・コミット（M4）・History / Releases / Members（M4・M5）は、該当の段階で動くようにする。
+ * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
+ * 適用（M3）・コミット（M4）・History / Releases（M4）は、該当の段階で動くようにする。
  */
 export function MainPanel() {
   const ws = useWorkspace();
-  const { project, outputId, mode, logs, systemStatus } = ws;
+  const project = useProject();
+  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId } = ws;
   useWorkspace((s) => s.rev);
-  const [starting, setStarting] = useState(false);
+  const info = useApp((s) => s.session?.workspaces.find((w) => w.id === workspaceId));
+  const hostName = useApp((s) => s.session?.participants.find((p) => p.id === info?.host)?.name);
   const outputs = project.outputs();
   const errors = systemStatus.filter((s) => s.error);
-
-  const play = async () => {
-    setStarting(true);
-    try {
-      await ws.play();
-    } finally {
-      setStarting(false);
-    }
-  };
+  const canOperate = role === "editor" || role === "admin";
 
   return (
     <>
       <div className={styles.head}>
         <span className={styles.repo}>
-          <span className={styles.owner}>ローカル</span>
-          <span className={styles.slash}>/</span>
-          <b>{project.name}</b>
+          <b>{info?.name ?? project.name}</b>
         </span>
         <span className={styles.branch}>main</span>
+        {role && (
+          <span className={role === "viewer" ? ui.badgeWarn : ui.badgeBrand}>
+            {ROLE_LABEL[role]}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
-        {["Project", "History", "Releases", "Members"].map((label) => (
+        {["Project", "History", "Releases"].map((label) => (
           <button key={label} type="button" className={ui.btn} disabled title={LATER}>
             {label}
           </button>
@@ -54,6 +54,7 @@ export function MainPanel() {
             className={ui.select}
             aria-label="アウトプット"
             value={outputId}
+            disabled={mode !== "edit"}
             onChange={(e) => {
               if (e.target.value === "__new") {
                 const id = project.addOutput(`アウトプット${outputs.length + 1}`, "item");
@@ -68,25 +69,40 @@ export function MainPanel() {
                 {o.name}
               </option>
             ))}
-            <option value="__new">＋ アウトプットを追加</option>
+            {canOperate && <option value="__new">＋ アウトプットを追加</option>}
           </select>
         </label>
 
         <div className={styles.transport}>
           {mode === "edit" ? (
-            <button type="button" className={ui.btnPrimary} onClick={play} disabled={starting}>
-              ▶ {starting ? "準備中…" : "Play"}
+            <button
+              type="button"
+              className={ui.btnPrimary}
+              onClick={ws.play}
+              disabled={!canOperate || !info?.host}
+            >
+              ▶ Play
             </button>
           ) : mode === "play" ? (
-            <button type="button" className={ui.btn} onClick={ws.pause}>
+            <button type="button" className={ui.btn} onClick={ws.pause} disabled={!canOperate}>
               ❚❚ Pause
             </button>
           ) : (
-            <button type="button" className={ui.btnPrimary} onClick={ws.resume}>
+            <button
+              type="button"
+              className={ui.btnPrimary}
+              onClick={ws.resume}
+              disabled={!canOperate}
+            >
               ▶ Resume
             </button>
           )}
-          <button type="button" className={ui.btn} onClick={ws.stop} disabled={mode === "edit"}>
+          <button
+            type="button"
+            className={ui.btn}
+            onClick={ws.stop}
+            disabled={!canOperate || mode === "edit"}
+          >
             ■ Stop
           </button>
           <button
@@ -103,6 +119,11 @@ export function MainPanel() {
           {mode === "edit" ? "Edit mode" : mode === "play" ? "Play mode" : "一時停止中"}
         </span>
       </div>
+      <p className={`${ui.muted} ${styles.hostLine}`}>
+        {info?.host
+          ? `再生の実行（ホスト）: ${isHost ? "あなた" : (hostName ?? "?")}`
+          : "ホストを務められる人（管理権限）がいないため、再生できません"}
+      </p>
 
       <details className={styles.details} open={errors.length > 0 || undefined}>
         <summary className={styles.summary}>
@@ -142,38 +163,17 @@ export function MainPanel() {
             ))}
           </ol>
         </div>
-
         <div className={ui.section}>
           <div className={ui.sectionHead}>
             <h3 className={ui.sectionTitle}>保存</h3>
           </div>
           <p className={ui.muted}>
-            作業内容はこのブラウザに自動保存されています。メッセージ付きのコミットは M4
+            作業内容はサーバーに自動保存されています。メッセージ付きのコミットは M4
             で使えるようになります。
           </p>
           <div className={ui.toolbar}>
             <button type="button" className={ui.btn} disabled title={LATER}>
               コミット
-            </button>
-            <button
-              type="button"
-              className={ui.btn}
-              onClick={() =>
-                confirm("いまの内容を捨てて、サンプル「銃と的」を読み込みますか？") &&
-                ws.loadSnapshot(gunAndTargetSample())
-              }
-            >
-              サンプル「銃と的」を読み込む
-            </button>
-            <button
-              type="button"
-              className={ui.btnDanger}
-              onClick={() =>
-                confirm("いまの内容を捨てて、空のプロジェクトにしますか？") &&
-                ws.loadSnapshot(emptyProject("新しいプロジェクト"))
-              }
-            >
-              空にする
             </button>
           </div>
         </div>

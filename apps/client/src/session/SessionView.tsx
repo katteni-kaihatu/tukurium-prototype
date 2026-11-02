@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useSession } from "../app/store";
-import { Connection } from "../net/Connection";
+import { Link, useParams } from "react-router-dom";
+import { Header } from "../app/Header";
+import { useApp } from "../app/store";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
@@ -9,61 +10,59 @@ import styles from "./SessionView.module.css";
 
 const POSE_INTERVAL_MS = 100;
 
+/** セッションの 3D 空間。参加・退出、参加者の表示、ワークスペースのパネル。 */
 export function SessionView() {
+  const { sessionId = "" } = useParams();
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SessionEngine | null>(null);
   const [locked, setLocked] = useState(false);
   const [engine, setEngine] = useState<SessionEngine | null>(null);
-  const myName = useSession((s) => s.myName);
   const mode = useWorkspace((s) => s.mode);
+  const client = useApp((s) => s.client);
+  const session = useApp((s) => s.session);
+  const closedReason = useApp((s) => s.closedReason);
 
+  // 参加（接続し直したときも参加し直す）と退出
+  useEffect(() => {
+    useApp.setState({ closedReason: null });
+    const off = client.onWelcome(() => client.send({ t: "session.join", sessionId }));
+    return () => {
+      off();
+      useWorkspace.getState().leave();
+      client.send({ t: "session.leave" });
+      useApp.setState({ session: null, participants: {}, remotePanels: {} });
+    };
+  }, [client, sessionId]);
+
+  // 3D 空間
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const engine = new SessionEngine(container);
     engineRef.current = engine;
     setEngine(engine);
-    const workspace = new WorkspaceController(engine);
-    // 開発時のみ：E2E テストやデバッグからエンジンを参照できるようにする
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
-    const store = useSession.getState();
+    const workspace = new WorkspaceController(engine);
 
-    const conn = new Connection(myName, {
-      onStatus: (status) => {
-        store.set({ status });
-        if (status !== "online") {
-          engine.avatars.clear();
-          store.set({ participants: {} });
-        }
-      },
-      onMessage: (msg) => {
-        const { participants } = useSession.getState();
-        switch (msg.t) {
-          case "welcome": {
-            const next = Object.fromEntries(msg.participants.map((p) => [p.id, p]));
-            for (const p of msg.participants) engine.upsertParticipant(p);
-            store.set({ myId: msg.you, participants: next });
-            break;
-          }
-          case "joined":
-            engine.upsertParticipant(msg.participant);
-            store.set({ participants: { ...participants, [msg.participant.id]: msg.participant } });
-            break;
-          case "pose":
-            // 位置・向きは 3D 表示だけで使う。ストア（参加者一覧）は更新しない
-            engine.setParticipantPose(msg.id, msg.position, msg.yaw, msg.pitch);
-            break;
-          case "left": {
-            engine.removeParticipant(msg.id);
-            const { [msg.id]: _, ...rest } = participants;
-            store.set({ participants: rest });
-            break;
-          }
-          case "error":
-            console.warn("[server]", msg.message);
-            break;
-        }
-      },
+    // 参加者の表示
+    const me = () => useApp.getState().me?.id;
+    const syncAvatars = () => {
+      const { participants } = useApp.getState();
+      const ids = new Set(Object.keys(participants));
+      for (const p of Object.values(participants)) if (p.id !== me()) engine.upsertParticipant(p);
+      for (const id of Object.keys(engine.avatars.positions())) {
+        if (!ids.has(id)) engine.removeParticipant(id);
+      }
+    };
+    const offApp = useApp.subscribe((s, prev) => {
+      if (s.participants !== prev.participants) syncAvatars();
+      if (s.remotePanels !== prev.remotePanels) engine.remotePanels.set(s.remotePanels);
+    });
+    syncAvatars();
+    const offMsg = client.on((msg) => {
+      if (msg.t === "pose" && msg.id !== me()) {
+        engine.setParticipantPose(msg.id, msg.position, msg.yaw, msg.pitch);
+      }
     });
 
     let last = "";
@@ -76,7 +75,7 @@ export function SessionView() {
       ]);
       if (key === last) return;
       last = key;
-      conn.send({ t: "pose", ...pose });
+      client.send({ t: "pose", ...pose });
     }, POSE_INTERVAL_MS);
 
     const onLockChange = () => setLocked(engine.controller.locked);
@@ -85,24 +84,32 @@ export function SessionView() {
     return () => {
       clearInterval(timer);
       document.removeEventListener("pointerlockchange", onLockChange);
-      conn.close();
+      offApp();
+      offMsg();
       workspace.dispose();
       engine.dispose();
       engineRef.current = null;
       setEngine(null);
     };
-  }, [myName]);
+  }, [client]);
 
   return (
     <div className={styles.root}>
       <div ref={containerRef} className={styles.canvas} />
-      {engine && <WorkspacePanels engine={engine} />}
+      {engine && session && <WorkspacePanels engine={engine} />}
+      <Header inSession />
       <div className={styles.crosshair} aria-hidden="true">
         <span className={styles.chV} />
         <span className={styles.chH} />
         <span className={styles.chDot} />
       </div>
-      {!locked && (
+      {closedReason && (
+        <div className={`glass ${styles.closed}`} role="alert">
+          <p>{closedReason}</p>
+          <Link to="/">ホームに戻る</Link>
+        </div>
+      )}
+      {!locked && !closedReason && (
         <button
           type="button"
           className={`glass ${styles.start}`}

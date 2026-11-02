@@ -107,3 +107,7 @@
   cursor: pointer;
   list-style-position: inside;
 }
+
+.hostLine {
+  padding: 0 14px 8px;
+}

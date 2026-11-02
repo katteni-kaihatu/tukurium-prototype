@@ -1,5 +1,6 @@
 import { NEW_SYSTEM_CODE } from "@tukurium/repo-model";
 import { useState } from "react";
+import { useCanEdit, useProject } from "./hooks";
 import { type Selection, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
@@ -13,12 +14,14 @@ const TABS: { id: Tab; label: string }[] = [
 
 /** Resources：リポジトリの KokoState 定義・System・マテリアル（アウトプット間で共有） */
 export function ResourcesPanel() {
-  const { project, selection, select, openSystem, mode } = useWorkspace();
+  const { selection, select, openSystem } = useWorkspace();
+  const project = useProject();
+  const canEdit = useCanEdit();
   useWorkspace((s) => s.rev);
   const [tab, setTab] = useState<Tab>("koko");
   const [menu, setMenu] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const editing = mode === "edit";
+  const editing = canEdit;
 
   const items: { id: string; name: string; sub: string; kind: Tab }[] =
     tab === "koko"
