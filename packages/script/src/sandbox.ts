@@ -19,8 +19,14 @@ export interface SystemMeta {
   handlers: string[];
 }
 
+/** ホスト関数を呼んだ System。権限や所有者の判定に使う。 */
+export interface HostCallContext {
+  realm: string;
+  systemId: string | null;
+}
+
 /** スクリプトから呼べるホスト関数。名前は "world.raycast" のように「名前空間.関数名」。 */
-export type HostFunction = (...args: Json[]) => Json | undefined;
+export type HostFunction = (args: Json[], ctx: HostCallContext) => Json | undefined;
 
 export interface SandboxOptions {
   /** 1回の呼び出し（ロード・ハンドラ実行）で使える時間。超えたら中断する。 */
@@ -28,7 +34,7 @@ export interface SandboxOptions {
   /** VM 全体のメモリ上限。 */
   memoryLimitBytes?: number;
   hostFunctions?: Record<string, HostFunction>;
-  onLog?: (systemId: string | null, message: string) => void;
+  onLog?: (message: string, ctx: HostCallContext) => void;
 }
 
 export class ScriptError extends Error {
@@ -56,7 +62,7 @@ const __ns = {};
 for (const full of ${JSON.stringify(hostNames)}) {
   const [ns, fn] = full.split(".");
   (__ns[ns] ??= {})[fn] = (...args) => {
-    const r = __hostCall(full, JSON.stringify(args));
+    const r = __hostCall(full, JSON.stringify(args), __current);
     return r === undefined ? undefined : JSON.parse(r);
   };
 }
@@ -93,6 +99,9 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
 /**
  * 利用者の System スクリプトを、ページとは別の QuickJS VM で動かす。
  * - DOM・ネットワーク・ページのグローバルには触れられない。
+ * - System は「領域（realm）」ごとに別の QuickJSContext に読み込む。別のリポジトリ（作者）の
+ *   System は別の領域にすることで、`Object.prototype` やグローバルの書き換えが互いに届かない。
+ *   同じ領域の System どうしはグローバルを共有する。
  * - 呼び出しごとに時間制限、VM 全体にメモリ制限をかける。
  *   QuickJS のメモリ上限は配列要素の確保を数えないため、サンドボックスごとに専用の WASM
  *   インスタンスを持ち、割り込みハンドラでヒープの大きさも監視する。WASM のヒープは縮まないので、
@@ -104,12 +113,14 @@ export class ScriptSandbox {
   broken = false;
   private heapLimit = Number.POSITIVE_INFINITY;
   private overMemory = false;
+  private readonly realms = new Map<string, QuickJSContext>();
+  private readonly systemRealm = new Map<string, string>();
 
   private constructor(
     private readonly memory: WebAssembly.Memory,
     private readonly runtime: QuickJSRuntime,
-    private readonly vm: QuickJSContext,
     private readonly options: Required<Omit<SandboxOptions, "hostFunctions" | "onLog">>,
+    private readonly host: Pick<SandboxOptions, "hostFunctions" | "onLog">,
   ) {}
 
   static async create(options: SandboxOptions = {}): Promise<ScriptSandbox> {
@@ -121,37 +132,37 @@ export class ScriptSandbox {
     };
     runtime.setMemoryLimit(opts.memoryLimitBytes);
     runtime.setMaxStackSize(512 * 1024);
-    const vm = runtime.newContext();
-    const sandbox = new ScriptSandbox(QuickJS.getWasmMemory(), runtime, vm, opts);
-    sandbox.installHost(options);
-    sandbox.withDeadline(() => {
-      sandbox
-        .unwrap(
-          vm.evalCode(PRELUDE(Object.keys(options.hostFunctions ?? {})), "prelude.js"),
-          null,
-          "load",
-        )
-        .dispose();
+    const sandbox = new ScriptSandbox(QuickJS.getWasmMemory(), runtime, opts, {
+      hostFunctions: options.hostFunctions,
+      onLog: options.onLog,
     });
     sandbox.heapLimit = sandbox.memory.buffer.byteLength + opts.memoryLimitBytes;
     return sandbox;
   }
 
-  /** System スクリプト（`export default system({...})`）を読み込む。同じ ID は置き換える。 */
-  loadSystem(id: string, source: string): SystemMeta {
+  /**
+   * System スクリプト（`export default system({...})`）を指定の領域に読み込む。
+   * 同じ ID は置き換える（別の領域へ移す場合も、元の領域からは取り除く）。
+   */
+  loadSystem(id: string, source: string, realm = "default"): SystemMeta {
+    const prev = this.systemRealm.get(id);
+    if (prev !== undefined && prev !== realm) this.unloadSystem(id);
+    const vm = this.realm(realm);
     return this.withDeadline(() => {
       const exportsHandle = this.unwrap(
-        this.vm.evalCode(source, `${id}.js`, { type: "module", strict: true }),
+        vm,
+        vm.evalCode(source, `${realm}/${id}.js`, { type: "module", strict: true }),
         id,
         "load",
       );
       try {
-        const def = this.vm.getProp(exportsHandle, "default");
+        const def = vm.getProp(exportsHandle, "default");
         try {
-          if (this.vm.typeof(def) !== "object") {
+          if (vm.typeof(def) !== "object") {
             throw new ScriptError("export default system({...}) が見つかりません", id, "load");
           }
-          const meta = this.callGlobal("__define", [this.vm.newString(id), def], id, "load");
+          const meta = this.callGlobal(vm, "__define", [vm.newString(id), def], id, "load");
+          this.systemRealm.set(id, realm);
           return JSON.parse(meta) as SystemMeta;
         } finally {
           if (def.alive) def.dispose();
@@ -163,19 +174,37 @@ export class ScriptSandbox {
   }
 
   unloadSystem(id: string): void {
-    this.callGlobal("__undefine", [this.vm.newString(id)], id, "runtime");
+    const realm = this.systemRealm.get(id);
+    if (realm === undefined) return;
+    const vm = this.realms.get(realm);
+    this.systemRealm.delete(id);
+    if (vm)
+      this.withDeadline(() => this.callGlobal(vm, "__undefine", [vm.newString(id)], id, "runtime"));
+  }
+
+  /** 領域ごと破棄する（その領域の System もすべて取り除く）。 */
+  disposeRealm(realm: string): void {
+    const vm = this.realms.get(realm);
+    if (!vm) return;
+    for (const [id, r] of [...this.systemRealm]) if (r === realm) this.systemRealm.delete(id);
+    this.realms.delete(realm);
+    vm.dispose();
   }
 
   /** ハンドラ（onUpdate など）を Entity ごとに呼び、変更後の値を返す。 */
   run(id: string, handler: string, entities: ScriptEntity[], args: Json[] = []): ScriptEntity[] {
+    const realm = this.systemRealm.get(id);
+    const vm = realm === undefined ? undefined : this.realms.get(realm);
+    if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
     return this.withDeadline(() => {
       const out = this.callGlobal(
+        vm,
         "__run",
         [
-          this.vm.newString(id),
-          this.vm.newString(handler),
-          this.vm.newString(JSON.stringify(entities)),
-          this.vm.newString(JSON.stringify(args)),
+          vm.newString(id),
+          vm.newString(handler),
+          vm.newString(JSON.stringify(entities)),
+          vm.newString(JSON.stringify(args)),
         ],
         id,
         "runtime",
@@ -184,56 +213,66 @@ export class ScriptSandbox {
     });
   }
 
-  memoryUsageBytes(): number {
-    const handle = this.runtime.computeMemoryUsage();
-    try {
-      const usage = this.vm.dump(handle) as { memory_used_size?: number };
-      return usage.memory_used_size ?? 0;
-    } finally {
-      handle.dispose();
-    }
-  }
-
   dispose(): void {
-    this.vm.dispose();
+    for (const vm of this.realms.values()) vm.dispose();
+    this.realms.clear();
+    this.systemRealm.clear();
     this.runtime.dispose();
   }
 
-  private installHost(options: SandboxOptions): void {
-    const hostFns = options.hostFunctions ?? {};
-    const hostCall = this.vm.newFunction("__hostCall", (nameH, argsH) => {
-      const name = this.vm.getString(nameH);
+  private realm(name: string): QuickJSContext {
+    const existing = this.realms.get(name);
+    if (existing) return existing;
+    const vm = this.runtime.newContext();
+    this.installHost(vm, name);
+    this.withDeadline(() => {
+      this.unwrap(
+        vm,
+        vm.evalCode(PRELUDE(Object.keys(this.host.hostFunctions ?? {})), "prelude.js"),
+        null,
+        "load",
+      ).dispose();
+    });
+    this.realms.set(name, vm);
+    return vm;
+  }
+
+  private installHost(vm: QuickJSContext, realm: string): void {
+    const hostFns = this.host.hostFunctions ?? {};
+    const ctxOf = (idH: QuickJSHandle): HostCallContext => ({
+      realm,
+      systemId: vm.typeof(idH) === "string" ? vm.getString(idH) : null,
+    });
+
+    const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH) => {
+      const name = vm.getString(nameH);
       const fn = hostFns[name];
       if (!fn) throw new Error(`unknown host function ${name}`);
-      const result = fn(...(JSON.parse(this.vm.getString(argsH)) as Json[]));
-      return result === undefined ? this.vm.undefined : this.vm.newString(JSON.stringify(result));
+      const result = fn(JSON.parse(vm.getString(argsH)) as Json[], ctxOf(idH));
+      return result === undefined ? vm.undefined : vm.newString(JSON.stringify(result));
     });
-    this.vm.setProp(this.vm.global, "__hostCall", hostCall);
+    vm.setProp(vm.global, "__hostCall", hostCall);
     hostCall.dispose();
 
-    const log = this.vm.newFunction("__log", (idH, msgH) => {
-      const id = this.vm.typeof(idH) === "string" ? this.vm.getString(idH) : null;
-      options.onLog?.(id, this.vm.getString(msgH));
+    const log = vm.newFunction("__log", (idH, msgH) => {
+      this.host.onLog?.(vm.getString(msgH), ctxOf(idH));
     });
-    this.vm.setProp(this.vm.global, "__log", log);
+    vm.setProp(vm.global, "__log", log);
     log.dispose();
   }
 
   private callGlobal(
+    vm: QuickJSContext,
     name: string,
     args: QuickJSHandle[],
     systemId: string | null,
     kind: "load" | "runtime",
   ): string {
-    const fn = this.vm.getProp(this.vm.global, name);
+    const fn = vm.getProp(vm.global, name);
     try {
-      const result = this.unwrap(
-        this.vm.callFunction(fn, this.vm.undefined, ...args),
-        systemId,
-        kind,
-      );
+      const result = this.unwrap(vm, vm.callFunction(fn, vm.undefined, ...args), systemId, kind);
       try {
-        return this.vm.typeof(result) === "string" ? this.vm.getString(result) : "";
+        return vm.typeof(result) === "string" ? vm.getString(result) : "";
       } finally {
         result.dispose();
       }
@@ -244,12 +283,13 @@ export class ScriptSandbox {
   }
 
   private unwrap(
+    vm: QuickJSContext,
     result: ReturnType<QuickJSContext["evalCode"]>,
     systemId: string | null,
     kind: "load" | "runtime",
   ): QuickJSHandle {
     if (result.error) {
-      const err = this.vm.dump(result.error) as { name?: string; message?: string } | string;
+      const err = vm.dump(result.error) as { name?: string; message?: string } | string;
       result.error.dispose();
       const message =
         typeof err === "string" ? err : `${err.name ?? "Error"}: ${err.message ?? ""}`;
