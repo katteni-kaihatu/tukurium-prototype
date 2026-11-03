@@ -1,10 +1,12 @@
 import {
   OFFICIAL_COMBAT,
   OFFICIAL_INTERACTION,
+  OFFICIAL_ITEMS,
   type PackageDependency,
   type ProjectSnapshot,
   referenceDoorAndSwitch,
   referenceGunAndTarget,
+  referenceKeyAndDoor,
 } from "@tukurium/repo-model";
 import { api } from "../net/api";
 import { useWorkspace } from "./store";
@@ -13,6 +15,7 @@ import { useWorkspace } from "./store";
 const REFERENCES = {
   gunAndTarget: { library: OFFICIAL_COMBAT, build: referenceGunAndTarget },
   doorAndSwitch: { library: OFFICIAL_INTERACTION, build: referenceDoorAndSwitch },
+  keyAndDoor: { library: OFFICIAL_ITEMS, build: referenceKeyAndDoor },
 } satisfies Record<
   string,
   {

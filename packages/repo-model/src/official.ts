@@ -138,9 +138,68 @@ function interactionLibrary(): ProjectSnapshot {
   };
 }
 
+const KEY_PICKUP = `// 鍵を E で拾う：押した人のバッグに入れて、自分（落ちている鍵）を消す（ADR 0018）。
+import Key from "./Key.koko";
+
+export default system({
+  query: { with: [Key] },
+
+  contracts: {
+    Interact(e, ev) {
+      if (bag.add(Key, e.get(Key))) {
+        log("鍵を拾った", "（" + ev.player + "）");
+        world.destroy(e.id);
+      } else {
+        log("バッグがいっぱいです");
+      }
+    },
+  },
+});
+`;
+
+/** 公式「items」：持ち物の種類 Key と、E で拾ってバッグに入れる System */
+export const OFFICIAL_ITEMS = {
+  alias: "items",
+  repoId: "r_official_items",
+  workId: "w_official_items",
+  outputId: "out_items",
+  key: "ks_key",
+  keyPickup: "sys_key_pickup",
+} as const;
+
+function itemsLibrary(): ProjectSnapshot {
+  return {
+    version: 1,
+    name: "items",
+    kokostates: [
+      {
+        id: OFFICIAL_ITEMS.key,
+        name: "Key",
+        fields: [{ id: "f_color", name: "color", type: "color", default: "#f1c40f" }],
+      },
+    ],
+    systems: [{ id: OFFICIAL_ITEMS.keyPickup, name: "KeyPickup", code: KEY_PICKUP }],
+    materials: [],
+    outputs: [
+      { id: OFFICIAL_ITEMS.outputId, name: "items", kind: "library", systems: [], keep: [] },
+    ],
+    entities: [],
+    exports: [OFFICIAL_ITEMS.key, OFFICIAL_ITEMS.keyPickup].sort(),
+  };
+}
+
 /** サーバーに同梱する公式ライブラリ */
 export function officialLibraries(): OfficialLibrary[] {
   return [
+    {
+      alias: OFFICIAL_ITEMS.alias,
+      repoId: OFFICIAL_ITEMS.repoId,
+      workId: OFFICIAL_ITEMS.workId,
+      outputId: OFFICIAL_ITEMS.outputId,
+      name: "items",
+      description: "持ち物の種類 Key と、E で拾ってプレイヤーのバッグに入れる System（公式）",
+      snapshot: itemsLibrary(),
+    },
     {
       alias: OFFICIAL_INTERACTION.alias,
       repoId: OFFICIAL_INTERACTION.repoId,
@@ -365,6 +424,120 @@ export function referenceDoorAndSwitch(interaction: PackageDependency): ProjectS
             color: "#d8d2c6",
           },
           [BUILTIN.Collider]: { sensor: false },
+        },
+      },
+    ],
+  };
+}
+
+const LOCKED_DOOR = `// 鍵のかかった扉：E で押すと、押した人のバッグから同じ色の鍵（公式の Key）を取り出して開く。
+// 開いた扉は上へ上がる。鍵は別の作者の作品で拾ったものでもよい（同じ公式 items の版なら同じ種類）。
+import Key from "@items/Key.koko";
+import Lock from "./Lock.koko";
+import Transform from "@builtin/Transform.koko";
+
+export default system({
+  query: { with: [Lock, Transform] },
+
+  contracts: {
+    Interact(e, ev) {
+      const l = e.get(Lock);
+      if (l.open) return;
+      if (bag.take(Key, { color: l.color })) {
+        l.open = true;
+        log(e.id, "鍵で開いた");
+      } else {
+        log(e.id, "鍵がかかっている（持っている鍵：" + bag.count(Key) + " 本）");
+      }
+    },
+  },
+
+  onUpdate(e, dt) {
+    const l = e.get(Lock);
+    if (!l.open || l.height >= l.lift) return;
+    const step = Math.min(l.lift - l.height, l.speed * dt);
+    l.height += step;
+    const t = e.get(Transform);
+    t.position = [t.position[0], t.position[1] + step, t.position[2]];
+  },
+});
+`;
+
+/**
+ * reference UGC「鍵と扉」：落ちている鍵を E で拾うとバッグに入り、鍵のかかった扉を E で押すと、
+ * 同じ色の鍵を取り出して開く（ADR 0018）。拾う仕組みと鍵の種類は公式「items」、扉は自分の System。
+ * `items` は、そのサーバーの公式 items の lock。
+ */
+export function referenceKeyAndDoor(items: PackageDependency): ProjectSnapshot {
+  const key = packageResourceId(items, OFFICIAL_ITEMS.key);
+  const keyPickup = packageResourceId(items, OFFICIAL_ITEMS.keyPickup);
+  const out = "out_key_door";
+  const transform = (position: Vec3): KokoStateValues => ({
+    position,
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  });
+  return {
+    version: 1,
+    name: "鍵と扉",
+    dependencies: [items],
+    kokostates: [
+      {
+        id: "ks_lock",
+        name: "Lock",
+        fields: [
+          { id: "f_color", name: "color", type: "color", default: "#f1c40f" },
+          { id: "f_open", name: "open", type: "boolean", default: false },
+          { id: "f_height", name: "height", type: "number", default: 0 },
+          { id: "f_lift", name: "lift", type: "number", default: 2.2 },
+          { id: "f_speed", name: "speed", type: "number", default: 2 },
+        ],
+      },
+    ],
+    systems: [{ id: "sys_locked_door", name: "LockedDoor", code: LOCKED_DOOR }],
+    materials: [{ id: "mat_wood", name: "Wood", color: "#a47b55", roughness: 0.8, metalness: 0 }],
+    outputs: [
+      {
+        id: out,
+        name: "鍵と扉",
+        kind: "item",
+        systems: [
+          { id: keyPickup, enabled: true },
+          { id: "sys_locked_door", enabled: true },
+        ],
+        keep: [],
+      },
+    ],
+    entities: [
+      {
+        id: "ent_key",
+        name: "鍵",
+        parent: null,
+        output: out,
+        order: 0,
+        states: {
+          [BUILTIN.Transform]: transform([-1, 0.6, -2.5]),
+          [BUILTIN.Mesh]: { shape: "box", size: [0.3, 0.1, 0.1], material: null, color: "#f1c40f" },
+          [BUILTIN.Collider]: { sensor: false },
+          [key]: { f_color: "#f1c40f" },
+        },
+      },
+      {
+        id: "ent_locked_door",
+        name: "鍵のかかった扉",
+        parent: null,
+        output: out,
+        order: 1,
+        states: {
+          [BUILTIN.Transform]: transform([1, 1, -4]),
+          [BUILTIN.Mesh]: {
+            shape: "box",
+            size: [1, 2, 0.1],
+            material: "mat_wood",
+            color: "#d8d2c6",
+          },
+          [BUILTIN.Collider]: { sensor: false },
+          ks_lock: { f_color: "#f1c40f", f_open: false, f_height: 0, f_lift: 2.2, f_speed: 2 },
         },
       },
     ],

@@ -33,7 +33,76 @@ interface SpecEntry<A extends z.ZodType> extends HostApiPolicy {
 
 const entry = <A extends z.ZodType>(e: SpecEntry<A>) => e;
 
+const BAG_NOTE =
+  "E で押された Interact を受けている間だけ、押した人のバッグ（どの配置にも属さない）に触れる。種類は import したライブラリの KokoState だけ（ADR 0018）";
+
 export const HOST_API_SPEC = {
+  "bag.add": entry({
+    args: z
+      .tuple([
+        z.string({ error: "持ち物の種類（import したライブラリの KokoState）を渡してください" }),
+        lenient(record),
+      ])
+      .rest(z.unknown()),
+    capability: "bag.write",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "server-revalidate",
+    note: BAG_NOTE,
+    denied: false,
+    params: "(type: KokoState, values?: Record<string, unknown>)",
+    returns: "boolean",
+    doc: "E で押した人のバッグに 1 個入れる（Interact の中だけ）。値は type の定義で確かめる。いっぱい（64 個）なら false",
+  }),
+  "bag.take": entry({
+    args: z
+      .tuple([
+        z.string({ error: "持ち物の種類（import したライブラリの KokoState）を渡してください" }),
+        lenient(record),
+      ])
+      .rest(z.unknown()),
+    capability: "bag.write",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "server-revalidate",
+    note: BAG_NOTE,
+    denied: null,
+    params: "(type: KokoState, match?: Record<string, unknown>)",
+    returns: "Record<string, unknown> | null",
+    doc: "E で押した人のバッグから、match のフィールドが一致する type を 1 個取り出して値を返す（Interact の中だけ。なければ null）",
+  }),
+  "bag.count": entry({
+    args: z
+      .tuple([
+        z.string({ error: "持ち物の種類（import したライブラリの KokoState）を渡してください" }),
+      ])
+      .rest(z.unknown()),
+    capability: "bag.read",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "runtime-host",
+    note: BAG_NOTE,
+    denied: 0,
+    params: "(type: KokoState)",
+    returns: "number",
+    doc: "E で押した人のバッグに、type がいくつあるか（Interact の中だけ）",
+  }),
+  "bag.list": entry({
+    args: z
+      .tuple([
+        z.string({ error: "持ち物の種類（import したライブラリの KokoState）を渡してください" }),
+      ])
+      .rest(z.unknown()),
+    capability: "bag.read",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "runtime-host",
+    note: BAG_NOTE,
+    denied: [],
+    params: "(type: KokoState)",
+    returns: "Record<string, unknown>[]",
+    doc: "E で押した人のバッグの、type の値の一覧（Interact の中だけ）",
+  }),
   "time.now": entry({
     args: z.tuple([]).rest(z.unknown()),
     capability: "time.read",

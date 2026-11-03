@@ -18,6 +18,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
   const location = useLocation();
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
+  const bagOpen = useWorkspace((s) => s.bagOpen);
   const placedCount = session?.placements.length ?? 0;
   const others = (session?.participants ?? []).filter((p) => p.id !== me?.id);
 
@@ -67,6 +68,17 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
           >
             セッション
             <span className={styles.navCount}>{placedCount}</span>
+          </button>
+        )}
+        {inSession && (
+          <button
+            type="button"
+            className={bagOpen ? styles.navActive : styles.navItem}
+            aria-pressed={bagOpen}
+            title="自分のバッグ（E で拾った物）"
+            onClick={() => useWorkspace.setState({ bagOpen: !bagOpen })}
+          >
+            バッグ
           </button>
         )}
       </nav>

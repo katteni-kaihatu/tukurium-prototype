@@ -799,6 +799,30 @@ describe("リポジトリ・コミット・作品", () => {
     expect(profile.works).toHaveLength(1);
   });
 
+  it("入力のプレイヤー ID は、自己申告ではなく接続の本人にしてホストへ渡す（ADR 0018）", async () => {
+    const { url } = await start();
+    const a = await client(url, "a");
+    a.send({ t: "session.create", name: "部屋" });
+    const host = await a.next("session.host");
+    const info = await a.next("session");
+    expect(host).toBeTruthy();
+    const b = await client(url, "b");
+    b.send({ t: "session.join", sessionId: info.session.id });
+    await b.next("session");
+    b.send({
+      t: "session.input",
+      input: {
+        action: "use",
+        phase: "down",
+        origin: [0, 0, 0],
+        direction: [0, 0, -1],
+        player: a.me.id,
+      },
+    });
+    const got = await a.next("host.input");
+    expect(got.input.player).toBe(b.me.id);
+  });
+
   it("公式ライブラリは起動のときに用意され、公式の印は発行者で決まる", async () => {
     const { app, url } = await start();
     const a = await client(url, "Tukurium 公式");

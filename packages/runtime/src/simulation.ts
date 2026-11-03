@@ -62,7 +62,7 @@ export interface InputEvent {
   origin: Vec3;
   direction: Vec3;
   player: string;
-  /** 表示名。無いときは空。player と同じく、今はクライアントの申告を信じる */
+  /** 表示名。無いときは空。今はクライアントの申告を信じる（player の ID はサーバーが本人で上書きする。ADR 0018） */
   playerName?: string;
   /**
    * 追加の数値。
@@ -141,6 +141,19 @@ export type EffectKind = (typeof EFFECT_KINDS)[number];
 const MAX_EFFECTS = 32;
 /** E（use）で押せる距離（m） */
 const INTERACT_RANGE = 3;
+/** 一つのバッグに入る数（ADR 0018） */
+export const BAG_LIMIT = 64;
+
+/**
+ * バッグの中の 1 個（ADR 0018）。種類はライブラリの KokoState（`pkg:` の ID）、値はフィールドの名前で持つ
+ * （その種類のライブラリが読み込まれていなくても、表示と引き継ぎができるように）。
+ */
+export interface BagItem {
+  type: KokoStateId;
+  /** 種類の表示名 */
+  name: string;
+  values: Record<string, Json>;
+}
 
 /** 鳴らす音（ホストが手元で鳴らし、状態と一緒にほかの人にも配る） */
 export interface SoundEvent {
@@ -257,6 +270,10 @@ export const HOST_API = [
   "audio.play",
   "contract.send",
   "effects.spawn",
+  "bag.add",
+  "bag.take",
+  "bag.count",
+  "bag.list",
 ] as const;
 export type HostName = (typeof HOST_API)[number];
 
@@ -295,6 +312,10 @@ export class Simulation {
   private inputs: InputEvent[] = [];
   private pending: PendingEvent[] = [];
   private readonly handles = new Map<string, HitHandle>();
+  /** プレイヤー → バッグ（どの配置にも属さない。セッションの間だけ。ADR 0018） */
+  private bags = new Map<string, BagItem[]>();
+  /** いま Interact を受けている System と、押した人（bag.* はこの間だけ使える） */
+  private interacting: { systemId: string; player: string } | null = null;
   private disposed = false;
 
   private constructor(
@@ -455,6 +476,77 @@ export class Simulation {
       placementId: part.id,
       worldInstanceId: this.baseWorld()?.id ?? "session",
     };
+  }
+
+  /** バッグの中身（フレームに入れて配る・ホストが替わったら引き継ぐ。ADR 0018） */
+  bagsSnapshot(): Record<string, BagItem[]> {
+    return Object.fromEntries([...this.bags].map(([p, items]) => [p, structuredClone(items)]));
+  }
+
+  /** バッグの中身を戻す（ホストが替わったとき・再生を続けるとき） */
+  restoreBags(bags: Record<string, BagItem[]> | undefined): void {
+    this.bags = new Map(
+      Object.entries(bags ?? {}).map(([p, items]) => [
+        p,
+        structuredClone(items).slice(0, BAG_LIMIT),
+      ]),
+    );
+  }
+
+  /**
+   * bag.* が触れるバッグと種類。Interact を受けている System の中だけで、種類は import した
+   * ライブラリの KokoState だけ。使えないときは理由を注意に残して null
+   */
+  private bagFor(
+    ctx: HostCallContext,
+    typeRef: string,
+  ): { koko: KokoStateId; name: string; items: BagItem[] } | null {
+    if (!this.interacting || this.interacting.systemId !== ctx.systemId) {
+      this.warn(
+        ctx.systemId,
+        "bag-outside-interact",
+        "バッグに触れられるのは、プレイヤーが E で押した Interact を受けている間だけです",
+      );
+      return null;
+    }
+    const koko = this.resolveKoko(typeRef, ctx.realm);
+    const def = koko ? this.registry.get(koko) : undefined;
+    if (!koko || !def || !isPackageResourceId(koko)) {
+      this.warn(
+        ctx.systemId,
+        "bag-type-invalid",
+        "持ち物の種類にできるのは、import したライブラリの KokoState だけです",
+      );
+      return null;
+    }
+    const player = this.interacting.player;
+    const items = this.bags.get(player) ?? [];
+    this.bags.set(player, items);
+    return { koko, name: def.name, items };
+  }
+
+  /** 持ち物の値：種類の定義のフィールドだけを、型を確かめて入れる（ないものは初期値。参照は入れない） */
+  private bagValues(
+    koko: KokoStateId,
+    given: Record<string, unknown> | undefined,
+  ): Record<string, Json> {
+    const out: Record<string, Json> = {};
+    for (const f of this.registry.require(koko).fields) {
+      const v = given?.[f.name];
+      const ok =
+        (f.type === "number" && typeof v === "number" && Number.isFinite(v)) ||
+        (f.type === "boolean" && typeof v === "boolean") ||
+        ((f.type === "string" || f.type === "color") && typeof v === "string" && v.length <= 256) ||
+        (f.type === "vec3" &&
+          Array.isArray(v) &&
+          v.length === 3 &&
+          v.every((n) => typeof n === "number" && Number.isFinite(n)));
+      // Entity・リソースの参照は、配置をまたぐと意味がないので持たない
+      out[f.name] = (
+        ok ? v : f.type === "entity" || f.type === "resource" ? null : f.default
+      ) as Json;
+    }
+    return out;
   }
 
   /** 配置と、制作データの中の KokoState ID から、実行時の KokoState ID を求める（版付きの realm を含む） */
@@ -658,9 +750,20 @@ export class Simulation {
       if (!this.world.has(ev.target)) continue;
       if (ev.kind === "contract") {
         const handler = `contract:${ev.name}`;
+        const player =
+          ev.name === "Interact"
+            ? ((ev.data as { player?: unknown } | null)?.player ?? null)
+            : null;
         for (const sys of this.active(handler))
-          if (this.entityMatches(sys, ev.target))
-            this.runSystem(sys, handler, [ev.target], [ev.data]);
+          if (this.entityMatches(sys, ev.target)) {
+            // Interact を受けている間だけ、押した人のバッグに触れられる（ADR 0018）
+            this.interacting = typeof player === "string" ? { systemId: sys.id, player } : null;
+            try {
+              this.runSystem(sys, handler, [ev.target], [ev.data]);
+            } finally {
+              this.interacting = null;
+            }
+          }
         continue;
       }
       for (const sys of this.active("onEvent")) {
@@ -1315,6 +1418,40 @@ export class Simulation {
       "world.destroy": ([id]) => {
         if (own(id)) this.world.destroy(id);
         return undefined;
+      },
+      "bag.add": ([type, values]) => {
+        const bag = this.bagFor(ctx, type);
+        if (!bag || bag.items.length >= BAG_LIMIT) return false;
+        bag.items.push({
+          type: bag.koko,
+          name: bag.name,
+          values: this.bagValues(bag.koko, values),
+        });
+        return true;
+      },
+      "bag.take": ([type, match]) => {
+        const bag = this.bagFor(ctx, type);
+        if (!bag) return null;
+        const i = bag.items.findIndex(
+          (it) =>
+            it.type === bag.koko &&
+            Object.entries(match ?? {}).every(
+              ([k, v]) => JSON.stringify(it.values[k]) === JSON.stringify(v),
+            ),
+        );
+        if (i < 0) return null;
+        const [taken] = bag.items.splice(i, 1);
+        return taken ? structuredClone(taken.values) : null;
+      },
+      "bag.count": ([type]) => {
+        const bag = this.bagFor(ctx, type);
+        return bag ? bag.items.filter((it) => it.type === bag.koko).length : 0;
+      },
+      "bag.list": ([type]) => {
+        const bag = this.bagFor(ctx, type);
+        return bag
+          ? bag.items.filter((it) => it.type === bag.koko).map((it) => structuredClone(it.values))
+          : [];
       },
       "time.now": () => this.time,
       "audio.play": ([clip, entity, volume]) => {
