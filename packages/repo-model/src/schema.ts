@@ -21,7 +21,16 @@ export interface OutputDef {
   /** このアウトプットで動かす System。並び順が実行順。 */
   systems: OutputSystem[];
   keep: KeepMark[];
+  /**
+   * 別の配置（別の作者の Item / World）からの見え方（ADR 0012）。ないときは interactive。
+   * - private：Raycast も当たらない（見つからない）
+   * - collision：Raycast は当たるが、Contract は受け付けない
+   * - interactive：公開した Contract（System の contracts）を受け付ける
+   */
+  exposure?: OutputExposure;
 }
+
+export type OutputExposure = "private" | "collision" | "interactive";
 
 export interface SystemDef {
   id: string;

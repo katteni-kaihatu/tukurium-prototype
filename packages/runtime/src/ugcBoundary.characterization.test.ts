@@ -6,9 +6,8 @@ import { type LogEntry, Simulation } from "./simulation";
 /**
  * UGC の境界についての、今の動きの記録（characterization。計画 UGC U0）。
  *
- * ここに書いた動きの多くは「境界がない」ことを示しており、望ましい仕様ではない。
- * U1 / U2 で Capability gateway と対象の policy を入れるときに、このテストを
- * 意図して書き換える（黙って壊さない）。どの行をどう変えるかは ADR 0012 の表に従う。
+ * U0 で「境界がない」今の動きを記録し、U1 / U2 で ADR 0012 の表のとおりに意図して書き換えた。
+ * 残っている「入力の player を申告どおりに信じる」は、サーバーでの判定（U2 以降）で書き換える。
  */
 
 let sim: Simulation | undefined;
@@ -86,21 +85,21 @@ async function session(logs: LogEntry[]) {
 
 const messages = (logs: LogEntry[]) => logs.filter((l) => l.level === "log").map((l) => l.message);
 
-describe("今の動き：U2 まで別の配置に届くもの（Raycast・emit）", () => {
-  it("Raycast は、別の配置の Entity の生の ID を返す（発見できる）", async () => {
+describe("U2：別の配置へは opaque handle と公開 Contract だけ（ADR 0012）", () => {
+  it("Raycast は、別の配置の Entity の生の ID を返さない（handle の token だけ）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
     s.input(input("probe"));
     s.step(1 / 60);
-    expect(messages(logs)).toContain("hit victim/ent_target2");
+    expect(messages(logs)).toContain("hit null");
   });
 
-  it("world.emit は、別の配置の Entity にイベントを送れる（的の System が受けて hp が減る）", async () => {
+  it("world.emit は、別の配置の Entity には届かない（見つからないのと同じ）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
     s.input(input("poke"));
     s.step(1 / 60);
-    expect(s.world.get("victim/ent_target2", "repoVictim:ks_target")?.f_hp).toBe(2);
+    expect(s.world.get("victim/ent_target2", "repoVictim:ks_target")?.f_hp).toBe(3);
   });
 });
 
@@ -166,17 +165,5 @@ describe("今の動き：入力の player は申告どおりに信じる", () =>
     s.input({ ...input("grab", "alice"), origin: [0, 1.5, -3] as Vec3, phase: "up" as const });
     s.step(1 / 60);
     expect(s.world.hasState("victim/ent_target2", BUILTIN.Held)).toBe(false);
-  });
-});
-
-describe("U1 で満たすこと（今は満たしていない）", () => {
-  // U1 / U2 の最初の縦の一本で、Raycast の結果を opaque handle にする（ADR 0012）。
-  // 今は生の Entity ID が返るので、このテストは「失敗すること」を確かめている。
-  it.fails("Raycast の結果に、別の配置の生の Entity ID が含まれない", async () => {
-    const logs: LogEntry[] = [];
-    const s = await session(logs);
-    s.input(input("probe"));
-    s.step(1 / 60);
-    expect(messages(logs).some((m) => m.startsWith("hit victim/"))).toBe(false);
   });
 });

@@ -66,7 +66,7 @@ PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`loc
 - Resources はフォルダで整理できる（フォルダの木・場所の表示・さがす・アイコン／一覧／詳細の表示・ドラッグで移す）。KokoState・マテリアル・スクリプトの詳細は、Inspector とは別のパネルで開く。スクリプトのコードと、その詳細は、Resources が 3D なら 3D のパネルで、2D なら 2D のパネルで開く
 - System は KokoState を import で読み込める：`import Gun from "../States/Gun.koko";`（System のフォルダからの相対パス）、`/Combat/States/Gun.koko`（いちばん上から）、`@builtin/Transform.koko`。`query: { with: [Gun] }` と書き、`e.get(Gun)` で値を読み書きする。見つからない・曖昧な import は、その行の問題として出る。KokoState やフォルダの名前を変えたり移したりすると、import のパスも新しい場所に合わせて書き直される。これまでの名前での書き方（`with: ["Gun"]`・`e.Gun`）も、移行の間は動く
 - 同じフォルダの中では、種類が違っても名前を一つにする（大文字・小文字の違いは同じとみなす）。別のフォルダなら同じ名前を使える。名前の衝突・フォルダの輪・素材やマテリアルの参照切れ・Entity の親子のくい違いなどは、Play しなくても「問題」の欄に出る（KokoState・マテリアル・スクリプトは詳細パネル、Entity は Inspector）。Resources では、自分の問題は塗りつぶしの点、フォルダの中や関係するものの問題は輪郭の点で示す。スクリプトの問題は、編集した後で確かめ直すまでの間、「編集前の確認／実行」として薄く出す。確かめ直すのは、変更の影響を受ける System だけ（依存グラフでたどる）
-- セッションでは、スクリプトの `world.find` / `world.get` / `world.set` / `world.destroy` は、その System の配置（置いた Item / World）の中の Entity にだけ届く（ADR 0012）。別のリポジトリの的を撃つ `world.raycast` と `world.emit` は、今は別の配置にも届く
+- セッションでは、スクリプトの `world.find` / `get` / `set` / `destroy` / `emit` は、その System の配置（置いた Item / World）の中の Entity にだけ届く（ADR 0012）。別の作者の Item / World とは、公開 Contract でだけやり取りする：受ける側は System に `contracts: { Damage(e, damage) { ... } }` と書き、送る側は `const hit = world.raycast(...); if (hit) hit.send("Damage", { amount: 1 })` と書く（`hit` は一度だけ・1 秒の間だけ使える。別の配置に当たったときは `hit.entity` が null）。Output の「外からの見え方」で、インタラクション可能（初期値）／衝突のみ／非公開を選べる
 - プロジェクト名の変更（ワークスペースのメインパネル、またはプロジェクトページの Settings。持ち主だけ）
 - Web ページ：ホーム・プロジェクト・新規作成・プロフィール・探す
 - 同梱サンプル「銃と的」「銃」「射撃場」

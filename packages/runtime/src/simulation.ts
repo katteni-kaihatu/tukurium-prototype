@@ -14,6 +14,7 @@ import {
   compileSystem,
   isBuiltin,
   type MaterialDef,
+  type OutputExposure,
   type ProjectSnapshot,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
@@ -25,6 +26,7 @@ import {
   ScriptSandbox,
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
+import { isContractName, parseContractPayload } from "./contracts";
 import { type HostArgs, parseHostArgs } from "./hostApi";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
@@ -129,10 +131,24 @@ interface LoadedSystem {
 }
 
 interface PendingEvent {
+  /** event：同じ配置の中のイベント（onEvent）、contract：公開 Contract（contracts.名前） */
+  kind: "event" | "contract";
   target: EntityId;
   name: string;
   data: Json;
 }
+
+/** Raycast の結果の opaque handle（ADR 0012）。token は推測しにくい文字列で、表を引く鍵 */
+interface HitHandle {
+  target: EntityId;
+  /** 発行したときの呼び出しの主体の配置 */
+  parts: Set<string>;
+  /** この時刻を過ぎたら使えない */
+  expires: number;
+}
+
+/** handle の寿命（秒） */
+const HANDLE_TTL = 1;
 
 const MAX_EVENTS_PER_STEP = 256;
 
@@ -147,6 +163,7 @@ export const HOST_API = [
   "world.destroy",
   "time.now",
   "audio.play",
+  "contract.send",
 ] as const;
 export type HostName = (typeof HOST_API)[number];
 
@@ -181,6 +198,7 @@ export class Simulation {
   private sounds: SoundEvent[] = [];
   private inputs: InputEvent[] = [];
   private pending: PendingEvent[] = [];
+  private readonly handles = new Map<string, HitHandle>();
   private disposed = false;
 
   private constructor(
@@ -241,6 +259,8 @@ export class Simulation {
 
   /** 配置を足す（同じ ID があれば置き換える） */
   addPart(spec: PartSpec): void {
+    // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
+    this.handles.clear();
     if (this.parts.has(spec.id)) this.removePart(spec.id);
     const part: Part = { ...spec, entities: new Set() };
     this.parts.set(part.id, part);
@@ -250,6 +270,8 @@ export class Simulation {
   }
 
   removePart(id: string): void {
+    // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
+    this.handles.clear();
     const part = this.parts.get(id);
     if (!part) return;
     this.clearEntities(part);
@@ -282,6 +304,8 @@ export class Simulation {
    * それ以外の値は新しい制作データの値になる。System のコードも読み直す。
    */
   applyPart(realm: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
+    // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
+    this.handles.clear();
     const targets = [...this.parts.values()].filter(
       (p) => p.realm === realm && p.outputId === outputId,
     );
@@ -341,6 +365,8 @@ export class Simulation {
 
   /** リセット：配置を、いまの制作データの初期値で作り直す（実行値は引き継がない） */
   resetPart(id: string): void {
+    // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
+    this.handles.clear();
     const part = this.parts.get(id);
     if (!part) return;
     this.clearEntities(part);
@@ -378,6 +404,8 @@ export class Simulation {
    * 別のホストから引き継いだ状態にする（ADR 0002）。物理ワールドは EKS の値（Transform・速度）から作り直す。
    */
   restore(world: WorldSnapshot, names: Record<string, string>, time: number): void {
+    // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
+    this.handles.clear();
     this.world.restore(world);
     this.names.clear();
     for (const [id, n] of Object.entries(names)) this.names.set(id, n);
@@ -412,6 +440,13 @@ export class Simulation {
     while (this.pending.length > 0 && budget-- > 0) {
       const ev = this.pending.shift() as PendingEvent;
       if (!this.world.has(ev.target)) continue;
+      if (ev.kind === "contract") {
+        const handler = `contract:${ev.name}`;
+        for (const sys of this.active(handler))
+          if (this.entityMatches(sys, ev.target))
+            this.runSystem(sys, handler, [ev.target], [ev.data]);
+        continue;
+      }
       for (const sys of this.active("onEvent")) {
         if (this.entityMatches(sys, ev.target)) {
           this.runSystem(sys, "onEvent", [ev.target], [{ name: ev.name, data: ev.data }]);
@@ -711,11 +746,36 @@ export class Simulation {
     return sys ? [...sys.users].flatMap((id) => this.parts.get(id) ?? []) : [];
   }
 
+  /** Entity が入っている配置 */
+  private partOf(id: EntityId): Part | undefined {
+    return [...this.parts.values()].find((p) => p.entities.has(id));
+  }
+
+  /** 別の配置からの見え方（ADR 0012。ないときは interactive） */
+  private exposureOf(part: Part): OutputExposure {
+    return part.snapshot.outputs.find((o) => o.id === part.outputId)?.exposure ?? "interactive";
+  }
+
+  /** opaque handle を発行する（推測しにくい token） */
+  private issueHandle(target: EntityId, callers: Part[]): string {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const token = `tk_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    // 古い handle がたまりすぎないよう、期限切れを捨てる
+    if (this.handles.size > 1024)
+      for (const [k, h] of this.handles) if (h.expires < this.time) this.handles.delete(k);
+    this.handles.set(token, {
+      target,
+      parts: new Set(callers.map((p) => p.id)),
+      expires: this.time + HANDLE_TTL,
+    });
+    return token;
+  }
+
   /**
    * スクリプトから呼ばれた Host API。引数は HOST_API_ARGS で検証し、対象は
    * 呼んだ System の配置の中だけに絞る（別の配置は「見つからない」。ADR 0012）。
-   * world.raycast と world.emit は、U2 で opaque handle と公開 Contract に置き換えるまで、
-   * 別の配置にも届く（HOST_API_POLICY）。
+   * 別の配置へは、Raycast の opaque handle と公開 Contract（contract.send）だけで届く（U2）。
    */
   private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
     const scope = this.scopeOfRealm(ctx.realm);
@@ -724,12 +784,57 @@ export class Simulation {
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
     const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
       "world.raycast": ([origin, direction, max, opts]) => {
-        const hit = this.physics.raycast(origin, direction, max ?? 100, opts?.exclude ?? []);
-        return hit ? { entity: hit.entity, distance: hit.distance, point: hit.point } : null;
+        // 非公開（private）の別の配置には当たらない（見つからない）
+        const hidden = [...this.parts.values()]
+          .filter((p) => !callers.includes(p) && this.exposureOf(p) === "private")
+          .flatMap((p) => [...p.entities]);
+        const hit = this.physics.raycast(origin, direction, max ?? 100, [
+          ...(opts?.exclude ?? []),
+          ...hidden,
+        ]);
+        if (!hit) return null;
+        const token = this.issueHandle(hit.entity, callers);
+        // 自分の配置の Entity のときだけ、生の ID を渡す
+        return {
+          token,
+          entity: own(hit.entity) ? hit.entity : null,
+          distance: hit.distance,
+          point: hit.point,
+        };
       },
       "world.emit": ([target, name, data]) => {
-        this.pending.push({ target, name, data: (data ?? null) as Json });
+        // イベントは同じ配置の中だけ。別の配置へは公開 Contract（hit.send）で送る
+        if (own(target))
+          this.pending.push({ kind: "event", target, name, data: (data ?? null) as Json });
         return undefined;
+      },
+      "contract.send": ([token, name, payload]) => {
+        if (!isContractName(name)) throw new TypeError(`Contract「${name}」はありません`);
+        const data = parseContractPayload(name, payload) as Json;
+        const handle = this.handles.get(token);
+        // 偽の・期限切れの・別の配置で発行された handle は「無いもの」と同じ
+        if (!handle) return false;
+        if (handle.expires < this.time) {
+          this.handles.delete(token);
+          return false;
+        }
+        if (!callers.some((p) => handle.parts.has(p.id))) return false;
+        this.handles.delete(token);
+        const target = handle.target;
+        if (!this.world.has(target)) return false;
+        const targetPart = this.partOf(target);
+        if (!own(target) && (!targetPart || this.exposureOf(targetPart) !== "interactive")) {
+          this.log(
+            ctx.systemId,
+            `${name} は受け付けられませんでした（相手が受け付けていません）`,
+            "log",
+          );
+          return false;
+        }
+        const handler = `contract:${name}`;
+        if (!this.active(handler).some((sys) => this.entityMatches(sys, target))) return false;
+        this.pending.push({ kind: "contract", target, name, data });
+        return true;
       },
       "world.get": ([id, kokoName]) => {
         const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;

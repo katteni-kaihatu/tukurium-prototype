@@ -1,5 +1,5 @@
 import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
-import { newId, type OutputDef } from "@tukurium/repo-model";
+import { newId, type OutputDef, type OutputExposure } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
@@ -136,6 +136,23 @@ function OutputProperties({ id }: { id: string }) {
             <option value="library" disabled>
               ライブラリ（準備中）
             </option>
+          </select>
+        </div>
+        <div className={ui.row}>
+          <label className={ui.label} htmlFor={`exposure-${id}`}>
+            外からの見え方
+          </label>
+          <select
+            id={`exposure-${id}`}
+            className={ui.select}
+            value={output.exposure ?? "interactive"}
+            disabled={!editing}
+            title="セッションで、別の作者の Item / World からどう見えるか。インタラクション可能：公開した Contract を受ける／衝突のみ：Raycast は当たるが Contract は受けない／非公開：Raycast も当たらない"
+            onChange={(e) => update({ exposure: e.target.value as OutputExposure })}
+          >
+            <option value="interactive">インタラクション可能</option>
+            <option value="collision">衝突のみ</option>
+            <option value="private">非公開</option>
           </select>
         </div>
       </div>

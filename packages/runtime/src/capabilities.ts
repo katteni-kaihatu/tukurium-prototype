@@ -96,14 +96,14 @@ export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = {
     currentReach: "any-placement",
     crossPlacement: "target-policy",
     authority: "runtime-host",
-    note: "今は別の配置の生の Entity ID を返す。U2 で opaque handle にし、対象が公開した Collider だけに当てる",
+    note: "U2：別の配置に当たったときは生の Entity ID を返さず、opaque handle（token）だけを返す。相手が private なら当たらない",
   },
   "world.emit": {
     capability: "interaction.send",
-    currentReach: "any-placement",
+    currentReach: "own-placement",
     crossPlacement: "public-contract",
     authority: "server-revalidate",
-    note: "今は任意の Entity へ任意のイベントを送れる。U2 で対象が公開した Contract（Damage など）だけにする",
+    note: "U2 で、同じ配置の中だけにした。別の配置へは contract.send（公開 Contract）で送る",
   },
   "world.find": {
     capability: "entity.discover",
@@ -132,6 +132,13 @@ export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = {
     crossPlacement: "deny",
     authority: "server-revalidate",
     note: "親は自分の配置の Entity だけ（U1）。作った Entity は呼んだ System の配置のものになる。一時的な effect（effects.spawn）とは分ける",
+  },
+  "contract.send": {
+    capability: "interaction.send",
+    currentReach: "any-placement",
+    crossPlacement: "public-contract",
+    authority: "server-revalidate",
+    note: "U2：Raycast で得た opaque handle（一度だけ・1 秒・発行した配置だけ）で、相手が公開した Contract を呼ぶ。相手の公開範囲が interactive のときだけ届く",
   },
   "world.destroy": {
     capability: "entity.destroy",
