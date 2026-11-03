@@ -18,7 +18,8 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
 export function MainPanel() {
   const ws = useWorkspace();
   const project = useProject();
-  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId, historyOpen } = ws;
+  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId, historyOpen, saveOpen } =
+    ws;
   useWorkspace((s) => s.rev);
   const info = useApp((s) => s.session?.workspaces.find((w) => w.id === workspaceId));
   const hostName = useApp((s) => s.session?.participants.find((p) => p.id === info?.host)?.name);
@@ -45,10 +46,21 @@ export function MainPanel() {
         <button
           type="button"
           className={ui.btn}
+          aria-pressed={saveOpen}
+          onClick={() => {
+            if (saveOpen) useWorkspace.setState({ saveOpen: false });
+            else useWorkspace.getState().openSave();
+          }}
+        >
+          保存
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
           aria-pressed={historyOpen}
           onClick={() => useWorkspace.setState({ historyOpen: !historyOpen })}
         >
-          History
+          履歴
         </button>
         {info?.repoId && (
           <a
@@ -187,7 +199,7 @@ export function MainPanel() {
             <h3 className={ui.sectionTitle}>保存</h3>
           </div>
           <p className={ui.muted}>
-            作業内容はサーバーに自動保存されています。メッセージ付きのコミットは History から。
+            作業内容はサーバーに自動保存されています。メッセージを付けて残すときは「保存」から。
           </p>
         </div>
       </details>

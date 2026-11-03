@@ -18,6 +18,7 @@ import { LibraryPanel } from "./LibraryPanel";
 import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
 import { ResourcesPanel } from "./ResourcesPanel";
+import { SavePanel } from "./SavePanel";
 import { useWorkspace } from "./store";
 import { summarize } from "./summary";
 import ui from "./ui.module.css";
@@ -63,6 +64,8 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const [members, setMembers] = useState(false);
 
   const historyOpen = useWorkspace((s) => s.historyOpen);
+  const saveOpen = useWorkspace((s) => s.saveOpen);
+  const saveSeq = useWorkspace((s) => s.saveSeq);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const detail = useWorkspace((s) => s.detail);
   const panels: PanelSpec[] = [];
@@ -78,11 +81,21 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   if (!ready) {
     panels.push(START);
   } else {
+    if (saveOpen) {
+      panels.push({
+        id: "ws-save",
+        title: "保存",
+        initial: { x: 36, y: 168, width: 440, height: 560 },
+        focusKey: saveSeq,
+        render: () => <SavePanel />,
+        onClose: () => useWorkspace.setState({ saveOpen: false }),
+      });
+    }
     if (historyOpen) {
       panels.push({
         id: "ws-history",
-        title: "History",
-        initial: { x: 600, y: 84, width: 460 },
+        title: "履歴",
+        initial: { x: 500, y: 168, width: 900, height: 560 },
         render: () => <HistoryPanel />,
         onClose: () => useWorkspace.setState({ historyOpen: false }),
       });
