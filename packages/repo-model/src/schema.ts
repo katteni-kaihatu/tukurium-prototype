@@ -130,6 +130,8 @@ export interface Provenance {
   commit: string;
   /** 抽出したもの（アウトプット・リソースの名前） */
   items: string[];
+  /** 抽出と一緒に持ってきた依存（取り込み先での別名。ADR 0015） */
+  dependencies?: PackageDependency[];
   at: string;
 }
 

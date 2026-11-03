@@ -590,15 +590,18 @@ export class ProjectDoc {
       .sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0));
   }
 
-  /** ライブラリを使う。版と content hash を固定する。一つの Package は一つの版だけ */
+  /**
+   * ライブラリを使う。版と content hash を固定する。同じライブラリの別の版は、別の別名で共存できる
+   * （ID が版で区切られているので、ぶつからない。混ざっていることは注意で知らせる）
+   */
   addDependency(dep: PackageDependency): void {
     const problem = validateAlias(dep.alias);
     if (problem) throw new Error(problem);
     if (this.dependencyMap.has(dep.alias))
       throw new Error(`別名「${dep.alias}」はもう使われています`);
     for (const d of this.dependencyMap.values())
-      if (d.packageId === dep.packageId)
-        throw new Error(`このライブラリはもう「@${d.alias}」で使っています`);
+      if (d.packageId === dep.packageId && d.version === dep.version)
+        throw new Error(`このライブラリの v${dep.version} はもう「@${d.alias}」で使っています`);
     this.dependencyMap.set(dep.alias, clone(dep));
   }
 
