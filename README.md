@@ -29,7 +29,8 @@ pnpm dev
 | `pnpm typecheck` | 型チェック |
 | `pnpm lint` / `pnpm format` | Biome による検査・整形 |
 | `pnpm build` | クライアントとサーバーのビルド |
-| `pnpm e2e` | ブラウザでの通しテスト（Playwright。開発サーバーを自動で起動） |
+| `pnpm e2e` | ブラウザでの通しテスト（Playwright。開発サーバーを自動で起動）。`m6-full-loop` は 3 人で一周する |
+| `pnpm smoke <URL>` | 設置した環境の動作確認（セッション作成・ワークスペース作成・再生） |
 
 ### 周辺サービス（PostgreSQL・S3 互換ストレージ）
 
@@ -41,7 +42,7 @@ pnpm services:up
 
 PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`localhost:8333`）が起動する。接続先は `.env.development.example` を参照し、`apps/server/.env` にコピーするとサーバーが使う（`DATABASE_URL` がなければメモリに保存し、再起動で消える）。止めるときは `pnpm services:down`。
 
-## いまできること（M5 まで）
+## いまできること（M6 まで）
 
 - ホームでセッションを作る・開いているセッションに参加する（URL を共有すれば同じセッションに入れる）。持ち主が閉じるとセッションはなくなる
 - 3D 空間を FPS 視点で歩く。他の参加者の位置と、その人が開いているパネル（権限に応じた要約）が見える
@@ -76,6 +77,8 @@ docker/          Dockerfile
 ```
 
 ## デプロイ（Coolify / docker compose）
+
+手順・環境変数・バックアップ・確認方法は [docs/DEPLOY.md](docs/DEPLOY.md) を参照。
 
 ```bash
 docker compose up -d --build

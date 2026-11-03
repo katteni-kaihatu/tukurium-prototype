@@ -15,7 +15,8 @@
     "test": "vitest run",
     "lint": "biome check . && node scripts/check-dockerfile.mjs",
     "format": "biome check --write .",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
