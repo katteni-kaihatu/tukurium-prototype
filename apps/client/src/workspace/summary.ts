@@ -70,6 +70,10 @@ export function summarize(panelId: string): string[] {
     }
     case "ws-members":
       return ["権限の設定"];
+    case "ws-history":
+      return ["履歴"];
+    case "ws-save":
+      return ["保存"];
     default:
       return [];
   }

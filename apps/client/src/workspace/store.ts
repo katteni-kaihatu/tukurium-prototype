@@ -93,6 +93,11 @@ interface WorkspaceState {
   /** セッションのライブラリ（作品を置く）パネルを開いているか */
   libraryOpen: boolean;
   historyOpen: boolean;
+  /** 保存パネルを開いているか */
+  saveOpen: boolean;
+  /** 保存パネルを前に出すため。開くたびに増やす */
+  saveSeq: number;
+  openSave(): void;
   open(workspaceId: string): void;
   leave(): void;
   select(sel: Selection | null): void;
@@ -183,6 +188,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     commitRev: 0,
     libraryOpen: false,
     historyOpen: false,
+    saveOpen: false,
+    saveSeq: 0,
+    openSave: () => set((s) => ({ saveOpen: true, saveSeq: s.saveSeq + 1 })),
     openRepo: (repoId) => client().send({ t: "ws.openRepo", repoId }),
     create: (name, snap) => {
       const doc = new ProjectDoc();
