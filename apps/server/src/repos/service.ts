@@ -3,6 +3,8 @@ import {
   type ExtractSelection,
   extractInto,
   fromFiles,
+  lockKey,
+  type PackageDependency,
   type PackageManifest,
   type PackageResolution,
   type ProjectSnapshot,
@@ -219,6 +221,12 @@ export class RepoService {
       throw new HttpError(409, "このコミットには作品のアウトプットがありません");
     }
     const output = snap.outputs.find((o) => o.id === work.outputId);
+    // ライブラリが（依存の依存を通してでも）自分自身に依存していたら、輪になるので出さない
+    if (output?.kind === "library") {
+      const pool = await this.resolveDependencies(snap, user, [workId]);
+      if (pool.some((r) => r.status === "unavailable" && r.message === CYCLE))
+        throw new HttpError(409, `このライブラリは自分自身に依存しています（${CYCLE}）`);
+    }
     const prev = await this.store.releases(workId);
     const version = (prev[0]?.version ?? 0) + 1;
     const contentHash =
@@ -242,6 +250,7 @@ export class RepoService {
   /**
    * ライブラリの版の中身（公開したものだけ）。作品の「利用」が許されていれば誰でも取り出せる
    * （持ち主はいつでも）。hash はリリースのときに残したものを返し、取り出すたびに確かめる。
+   * 依存の依存も、そのライブラリの作者の許可で取り出して添える。
    */
   async packageVersion(
     user: Pick<User, "id"> | null,
@@ -252,7 +261,28 @@ export class RepoService {
     version: number;
     contentHash: string;
     manifest: PackageManifest;
+    /** 依存の依存（間のライブラリの作者の許可で取り出したもの。lock ごとに一つ） */
+    dependencies: PackageResolution[];
   }> {
+    const got = await this.loadPackage(user, workId, version);
+    const dependencies = dedupe(
+      await this.resolveDependencies(got.manifest, { id: got.owner }, [workId]),
+    );
+    return {
+      packageId: workId,
+      version,
+      contentHash: got.contentHash,
+      manifest: got.manifest,
+      dependencies,
+    };
+  }
+
+  /** 版の中身を取り出す（許可は毎回確かめる。中身はリリースごとに覚える） */
+  private async loadPackage(
+    user: Pick<User, "id"> | null,
+    workId: string,
+    version: number,
+  ): Promise<{ owner: string; contentHash: string; manifest: PackageManifest }> {
     const work = await this.store.work(workId);
     if (!work) throw new HttpError(404, "作品が見つかりません");
     if (!work.perms.use && work.owner !== user?.id)
@@ -266,33 +296,63 @@ export class RepoService {
         throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
       this.manifests.set(rel.id, manifest);
     }
-    return { packageId: work.id, version, contentHash: rel.contentHash, manifest };
+    return { owner: work.owner, contentHash: rel.contentHash, manifest };
   }
 
   /**
-   * 制作データの依存の中身を、viewer（リポジトリの持ち主）の許可で取り出す（ADR 0015）。
-   * セッションのホストへ配置と一緒に渡す。取り出せない依存・lock と hash が違う依存は、理由つきで使えないものにする。
+   * 依存の中身を、依存の依存までたどって取り出す（ADR 0015）。直接の依存は viewer（リポジトリの持ち主）の許可、
+   * 依存の依存は、それを依存に書いたライブラリの作者の許可で取り出す（利用者と決めた）。
+   * セッションのホストへ配置と一緒に渡す。取り出せない依存・lock と hash が違う依存・輪になった依存は、
+   * 理由つきで使えないものにする。`path` はたどってきた Package ID（輪の検出に使う）。
    */
   async resolveDependencies(
-    snap: Pick<ProjectSnapshot, "dependencies">,
+    snap: { dependencies?: PackageDependency[] },
     viewer: Pick<User, "id"> | null,
+    path: string[] = [],
   ): Promise<PackageResolution[]> {
-    return Promise.all(
-      (snap.dependencies ?? []).map(async (dependency): Promise<PackageResolution> => {
+    const lists = await Promise.all(
+      (snap.dependencies ?? []).map(async (dependency): Promise<PackageResolution[]> => {
+        if (path.includes(dependency.packageId))
+          return [{ status: "unavailable", dependency, message: CYCLE }];
+        if (path.length >= MAX_DEPTH)
+          return [{ status: "unavailable", dependency, message: "依存が深すぎます" }];
         try {
-          const got = await this.packageVersion(viewer, dependency.packageId, dependency.version);
+          const got = await this.loadPackage(viewer, dependency.packageId, dependency.version);
           if (got.contentHash !== dependency.contentHash)
-            return {
-              status: "unavailable",
-              dependency,
-              message: `v${dependency.version} の中身が、足したときと違います`,
-            };
-          return { status: "ready", dependency, manifest: got.manifest };
+            return [
+              {
+                status: "unavailable",
+                dependency,
+                message: `v${dependency.version} の中身が、足したときと違います`,
+              },
+            ];
+          const below = await this.resolveDependencies(got.manifest, { id: got.owner }, [
+            ...path,
+            dependency.packageId,
+          ]);
+          return [{ status: "ready", dependency, manifest: got.manifest }, ...below];
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
-          return { status: "unavailable", dependency, message };
+          return [{ status: "unavailable", dependency, message }];
         }
       }),
     );
+    return lists.flat();
   }
+}
+
+/** 依存が輪になっているときの理由（リリースで拒むときにも使う） */
+const CYCLE = "依存が輪になっています";
+/** 依存の依存をたどる深さの上限 */
+const MAX_DEPTH = 16;
+
+/** lock ごとに一つにする（使えるものを優先） */
+function dedupe(list: PackageResolution[]): PackageResolution[] {
+  const out = new Map<string, PackageResolution>();
+  for (const r of list) {
+    const key = lockKey(r.dependency);
+    const prev = out.get(key);
+    if (!prev || (prev.status !== "ready" && r.status === "ready")) out.set(key, r);
+  }
+  return [...out.values()];
 }

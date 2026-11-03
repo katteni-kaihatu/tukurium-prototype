@@ -224,7 +224,7 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
         });
     }
   }
-  // 公開した System は、使う側では同じライブラリの公開したものと Built-in しか見えない（ADR 0015）
+  // 公開した System は、使う側では同じライブラリの公開したもの・Built-in・そのライブラリの依存しか見えない（ADR 0015）
   const exported = new Set(snap.exports ?? []);
   let index: ResourcePathIndex | null = null;
   for (const s of snap.systems) {
@@ -243,15 +243,6 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
         message: `公開した System「${s.name}」が、公開していない「${b.name}」を import しています（使う側では見つかりません。「${b.name}」も公開してください）`,
       });
     }
-    for (const alias of compiled.packageImports)
-      push({
-        code: "exported-system-imports-package",
-        severity: "error",
-        subject,
-        location: { kind: "script", line: null, symbol: `@${alias}` },
-        related: [],
-        message: `公開した System「${s.name}」が、ライブラリ（@${alias}）を import しています。依存の依存はまだ使えません`,
-      });
   }
   return out;
 }

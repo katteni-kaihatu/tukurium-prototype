@@ -1,5 +1,5 @@
 import { type PathKind, ResourcePathIndex } from "./resourcePath";
-import type { ProjectSnapshot } from "./schema";
+import type { PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
  * Library Package の中身（ADR 0013・0015）。公開の印を付けたリソースだけを、決まった並び（ID の順）で
@@ -20,6 +20,11 @@ export interface PackageManifest {
   /** manifest の形の版。互換性なく変えるときに上げる */
   format: 1;
   exports: PackageExport[];
+  /**
+   * このライブラリの依存（lock。別名の順）。依存があるときだけ入れる
+   * （依存のないライブラリの hash は、これを足す前と同じ）
+   */
+  dependencies?: PackageDependency[];
 }
 
 export function packageManifest(snap: ProjectSnapshot): PackageManifest {
@@ -37,7 +42,10 @@ export function packageManifest(snap: ProjectSnapshot): PackageManifest {
     if (!entry || entry.kind === "folder" || path === null || !defs.has(id)) continue;
     exports.push({ kind: entry.kind, id, path, definition: defs.get(id) });
   }
-  return { format: 1, exports };
+  const deps = [...(snap.dependencies ?? [])].sort((a, b) =>
+    a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0,
+  );
+  return deps.length > 0 ? { format: 1, exports, dependencies: deps } : { format: 1, exports };
 }
 
 /** キーを並べ替えて書く JSON（同じ中身なら、作り方によらず同じ文字列になる） */

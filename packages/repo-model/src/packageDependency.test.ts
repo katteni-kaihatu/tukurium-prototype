@@ -5,11 +5,13 @@ import { fromFiles, toFiles } from "./files";
 import {
   isPackageResourceId,
   librarySnapshot,
+  mixedPackageVersions,
   type PackageResolution,
   packageKokoStates,
   packageResourceId,
   packageSystems,
   parsePackageResourceId,
+  reachablePackages,
   resolutionMap,
   validateAlias,
 } from "./packageDependency";
@@ -307,14 +309,12 @@ describe("依存の System（ADR 0015）", () => {
     expect(ng.diagnostics[0]?.code).toBe("import-unresolved");
   });
 
-  it("公開した System が公開していないもの・依存を import していたら、ライブラリ側で問題にする", () => {
+  it("公開した System が公開していないものを import していたら、ライブラリ側で問題にする", () => {
     const codes = checkProjectReferences(libraryWithSystems())
       .filter((d) => d.code.startsWith("exported-system"))
       .map((d) => [d.code, d.subject.id]);
-    expect(codes).toEqual([
-      ["exported-system-imports-private", "sys_peek"],
-      ["exported-system-imports-package", "sys_dep"],
-    ]);
+    // ほかのライブラリ（@other）の import は、依存の依存として使える
+    expect(codes).toEqual([["exported-system-imports-private", "sys_peek"]]);
   });
 
   it("アウトプットのライブラリの System が、今の依存にない版なら注意にする", () => {
@@ -328,5 +328,71 @@ describe("依存の System（ADR 0015）", () => {
     expect(code(s)).toEqual([]);
     s.dependencies = [{ ...dep, version: 4 }];
     expect(code(s)).toEqual(["output-system-not-in-dependencies"]);
+  });
+});
+
+describe("依存の依存（ADR 0015）", () => {
+  const lib = (packageId: string, version: number, deps: PackageDependency[] = []) => {
+    const s: ProjectSnapshot = {
+      version: 1,
+      name: packageId,
+      kokostates: [{ id: "ks_h", name: "Health", fields: [] }],
+      systems: [],
+      materials: [],
+      outputs: [],
+      entities: [],
+      exports: ["ks_h"],
+      dependencies: deps,
+    };
+    const dependency: PackageDependency = {
+      alias: packageId,
+      packageId,
+      version,
+      contentHash: `${packageId}${version}`,
+    };
+    return {
+      dependency,
+      resolution: { status: "ready", dependency, manifest: packageManifest(s) },
+    };
+  };
+
+  it("manifest には依存があるときだけ入れる（依存のないライブラリの中身は前と同じ）", () => {
+    const s = gunAndTargetSample();
+    s.exports = ["ks_gun"];
+    expect("dependencies" in packageManifest(s)).toBe(false);
+    s.dependencies = [
+      { ...dep, alias: "z" },
+      { ...dep, alias: "a", packageId: "w_a" },
+    ];
+    expect(packageManifest(s).dependencies?.map((d) => d.alias)).toEqual(["a", "z"]);
+  });
+
+  it("依存の依存をたどる。別名ではなく lock で照らし合わせる。輪でも止まる", () => {
+    const lib1 = lib("w_1", 1);
+    const lib2 = lib("w_2", 1, [{ ...lib1.dependency, alias: "base" }]);
+    const pool = [lib2.resolution, lib1.resolution] as PackageResolution[];
+    const reached = reachablePackages([lib2.dependency], pool).map((r) => r.dependency.packageId);
+    expect(reached).toEqual(["w_2", "w_1"]);
+    // 届いていない依存の依存は、たどらない
+    expect(
+      reachablePackages([lib2.dependency], [lib2.resolution] as PackageResolution[]),
+    ).toHaveLength(1);
+    // 輪（w_3 → w_4 → w_3）でも止まる
+    const a = lib("w_3", 1, [lib("w_4", 1).dependency]);
+    const b = lib("w_4", 1, [a.dependency]);
+    expect(
+      reachablePackages([a.dependency], [a.resolution, b.resolution] as PackageResolution[]),
+    ).toHaveLength(2);
+  });
+
+  it("同じライブラリの別の版が混ざっていたら知らせる（共存はする）", () => {
+    const v1 = lib("w_1", 1);
+    const v2 = lib("w_1", 2);
+    const lib2 = lib("w_2", 1, [v1.dependency]);
+    const pool = [v1.resolution, v2.resolution, lib2.resolution] as PackageResolution[];
+    expect([...mixedPackageVersions([v2.dependency, lib2.dependency], pool)]).toEqual([
+      ["w_1", [1, 2]],
+    ]);
+    expect(mixedPackageVersions([v2.dependency], pool).size).toBe(0);
   });
 });

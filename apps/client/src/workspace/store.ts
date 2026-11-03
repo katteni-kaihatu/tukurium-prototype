@@ -21,7 +21,7 @@ import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
 import type { WorkspaceAnchor } from "./anchor";
-import { resolvePackages } from "./packages";
+import { resolvePackagePool } from "./packages";
 import { mergeRun, runDiagnostics, scriptLine } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
@@ -57,6 +57,8 @@ interface WorkspaceState {
   rev: number;
   /** 依存の中身（別名 → 取り出した結果。ADR 0015）。usePackageDefinitions が更新する */
   packages: ReadonlyMap<string, PackageResolution>;
+  /** 依存の依存の中身も含めた集まり（別の版が混ざっていないかを見るのに使う） */
+  packagePool: readonly PackageResolution[];
   outputId: string;
   selection: Selection | null;
   /** 開いている詳細（KokoState・マテリアル・スクリプト）。null ならパネルを出さない */
@@ -176,6 +178,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     error: null,
     rev: 0,
     packages: new Map(),
+    packagePool: [],
     outputId: "",
     selection: null,
     detail: null,
@@ -259,6 +262,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         selection: null,
         detail: null,
         packages: new Map(),
+        packagePool: [],
         mode: "edit",
         remote: null,
         logs: [],
@@ -302,6 +306,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         selection: null,
         detail: null,
         packages: new Map(),
+        packagePool: [],
         checkProblems: [],
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
@@ -489,8 +494,8 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
   s.sim?.dispose();
   const workspaceId = s.workspaceId;
   const snapshot = s.project.snapshot();
-  // 依存の中身（ADR 0015）。取り出せない依存は、それを import した System が理由つきで止まる
-  const packages = [...(await resolvePackages(snapshot.dependencies ?? [])).values()];
+  // 依存の中身（依存の依存も。ADR 0015）。取り出せない依存は、それを import した System が理由つきで止まる
+  const packages = await resolvePackagePool(snapshot.dependencies ?? []);
   const sim = await Simulation.create(snapshot, outputId, {
     // 同じワークスペース（＝同じリポジトリ）の System は同じ領域で動かす
     realm: workspaceId,

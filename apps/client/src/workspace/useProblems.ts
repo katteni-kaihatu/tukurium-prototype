@@ -1,5 +1,6 @@
 import {
   belongsToDependency,
+  checkPackageVersions,
   checkProjectReferences,
   checkProjectStructure,
   countCurrent,
@@ -16,7 +17,7 @@ import {
 } from "@tukurium/repo-model";
 import { useEffect, useMemo, useRef } from "react";
 import { IncrementalCheck } from "./incrementalCheck";
-import { resolvePackages } from "./packages";
+import { resolvePackagePool, resolvePackages } from "./packages";
 import { checkScripts, type Problem, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
 
@@ -63,12 +64,17 @@ export function useProjectDiagnostics(): {
 } {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
+  const pool = useWorkspace((s) => s.packagePool);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(() => {
     if (!project) return { diagnostics: [], index: null, summary: new Map() };
     const snap = project.snapshot();
     const index = ResourcePathIndex.fromSnapshot(snap);
-    const diagnostics = [...checkProjectStructure(snap, index), ...checkProjectReferences(snap)];
+    const diagnostics = [
+      ...checkProjectStructure(snap, index),
+      ...checkProjectReferences(snap),
+      ...checkPackageVersions(snap.dependencies, pool),
+    ];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
   }, [project, rev]);
 }
@@ -148,11 +154,12 @@ export function usePackageDefinitions(): void {
       const key = JSON.stringify(deps);
       if (key === last) return;
       last = key;
-      void resolvePackages(deps).then((map) => {
+      void Promise.all([resolvePackages(deps), resolvePackagePool(deps)]).then(([map, pool]) => {
         if (cancelled || last !== key || useWorkspace.getState().project !== project) return;
+        // 使う側から見えるのは直接の依存だけ（依存の依存は、ライブラリの System のために読み込む）
         project.setPackageKokoStates(packageKokoStates(map.values()));
         // 定義は Y.Doc の外なので、変わったことを rev で知らせる
-        useWorkspace.setState((s) => ({ packages: map, rev: s.rev + 1 }));
+        useWorkspace.setState((s) => ({ packages: map, packagePool: pool, rev: s.rev + 1 }));
       });
     };
     refresh();

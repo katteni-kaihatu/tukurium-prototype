@@ -6,7 +6,7 @@ import {
 } from "@tukurium/repo-model";
 import { describe, expect, it, vi } from "vitest";
 import type { PackageVersion } from "../net/api";
-import { resolvePackages } from "./packages";
+import { resolvePackagePool, resolvePackages } from "./packages";
 import { checkScripts } from "./problems";
 
 const manifest: PackageManifest = {
@@ -63,6 +63,23 @@ describe("resolvePackages（依存の中身を取り出す。ADR 0015）", () =>
       status: "unavailable",
       message: expect.stringContaining("足したときと違います"),
     });
+  });
+});
+
+describe("resolvePackagePool（依存の依存も含めた集まり）", () => {
+  it("直接の依存と、サーバーが添えた依存の依存を並べる。依存の依存が届かなかった版は覚えない", async () => {
+    const below = { status: "unavailable" as const, dependency: dep("w_base"), message: "x" };
+    const fetch = vi.fn(async (id: string, v: number) => ({
+      ...version(id, v),
+      dependencies: [below],
+    }));
+    const pool = await resolvePackagePool([dep("w_pool")], fetch);
+    expect(pool.map((r) => [r.dependency.packageId, r.status])).toEqual([
+      ["w_pool", "ready"],
+      ["w_base", "unavailable"],
+    ]);
+    await resolvePackagePool([dep("w_pool")], fetch);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });
 
