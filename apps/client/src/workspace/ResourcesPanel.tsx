@@ -14,7 +14,7 @@ import {
 } from "./resourceItems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems, useStructureDiagnostics } from "./useProblems";
+import { useProblems, useProjectDiagnostics } from "./useProblems";
 
 type View = "icon" | "list" | "detail";
 const VIEWS: { id: View; label: string }[] = [
@@ -45,17 +45,7 @@ export function ResourcesPanel() {
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
-  const { diagnostics } = useStructureDiagnostics();
-  // 名前の衝突などで直す必要があるフォルダ・リソース
-  const structureErrorIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const d of diagnostics) {
-      if (d.severity !== "error") continue;
-      if (d.subject.kind !== "project") ids.add(d.subject.id);
-      for (const r of d.related) ids.add(r.id);
-    }
-    return ids;
-  }, [diagnostics]);
+  const { summary } = useProjectDiagnostics();
   const rev = useWorkspace((s) => s.rev);
   const [cwd, setCwd] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(loadView);
@@ -117,9 +107,30 @@ export function ResourcesPanel() {
     if (id) setOpened((o) => ({ ...o, [id]: true }));
   };
 
-  const hasError = (it: ResItem) =>
-    (it.kind === "system" && problems.some((p) => p.systemId === it.id)) ||
-    structureErrorIds.has(it.id);
+  /**
+   * 問題の印。自分の問題（塗りつぶし）と、中や関係するものの問題（輪郭）を分ける。
+   * スクリプトの問題（構文など）は System 自身の問題に数える。
+   */
+  const badgeOf = (it: ResItem): Badge | null => {
+    const s = summary.get(it.id);
+    const script = it.kind === "system" ? problems.filter((p) => p.systemId === it.id).length : 0;
+    const errors = (s?.errors ?? 0) + script;
+    if (errors > 0) return { tone: "error", label: `エラー ${errors} 件` };
+    if (s?.warnings) return { tone: "warning", label: `注意 ${s.warnings} 件` };
+    if (s?.nestedErrors)
+      return { tone: "nestedError", label: `中や関係するものにエラー ${s.nestedErrors} 件` };
+    if (s?.nestedWarnings)
+      return { tone: "nestedWarning", label: `中や関係するものに注意 ${s.nestedWarnings} 件` };
+    return null;
+  };
+  const kindText = (it: ResItem) => {
+    const b = badgeOf(it);
+    return b?.tone === "error"
+      ? "エラー"
+      : b?.tone === "warning"
+        ? "注意"
+        : KIND_META[it.kind].label;
+  };
 
   const pick = (it: ResItem) => {
     setSel(it.id);
@@ -260,6 +271,7 @@ export function ResourcesPanel() {
     const key = id ?? "__root";
     const isOpen = opened[key] ?? (id === null || ancestors.has(id));
     const current = here === id;
+    const folderItem = id ? byId.get(id) : undefined;
     tree.push(
       <div
         key={key}
@@ -290,6 +302,7 @@ export function ResourcesPanel() {
         >
           <FolderIcon size={15} filled={current} />
           <span className={styles.treeLabel}>{name}</span>
+          {folderItem && <BadgeDot badge={badgeOf(folderItem)} inline />}
         </button>
       </div>,
     );
@@ -452,12 +465,10 @@ export function ResourcesPanel() {
                     style={{ background: KIND_META[it.kind].bg, color: KIND_META[it.kind].fg }}
                   >
                     <KindIcon item={it} size={30} large />
-                    {hasError(it) && <span className={styles.errorDot} title="エラー" />}
+                    <BadgeDot badge={badgeOf(it)} />
                   </span>
                   <span className={styles.tileName}>{it.name}</span>
-                  <span className={styles.tileKind}>
-                    {hasError(it) ? "エラー" : KIND_META[it.kind].label}
-                  </span>
+                  <span className={styles.tileKind}>{kindText(it)}</span>
                 </button>
               ))}
             </div>
@@ -484,9 +495,7 @@ export function ResourcesPanel() {
                       in {it.parent ? (byId.get(it.parent)?.name ?? "") : project.name}
                     </span>
                   )}
-                  <span className={styles.rowKind}>
-                    {hasError(it) ? "エラー" : KIND_META[it.kind].label}
-                  </span>
+                  <span className={styles.rowKind}>{kindText(it)}</span>
                 </button>
               ))}
             </div>
@@ -514,7 +523,7 @@ export function ResourcesPanel() {
                     <SmallIcon item={it} />
                     <span className={styles.rowName}>{it.name}</span>
                   </span>
-                  <span>{hasError(it) ? "エラー" : KIND_META[it.kind].label}</span>
+                  <span>{kindText(it)}</span>
                   <span className={styles.usage}>{usageOf(project, it, all)}</span>
                 </button>
               ))}
@@ -746,4 +755,23 @@ function KindIcon({ item, size, large }: { item: ResItem; size: number; large?: 
         </svg>
       );
   }
+}
+
+interface Badge {
+  tone: "error" | "warning" | "nestedError" | "nestedWarning";
+  label: string;
+}
+
+/** 問題の印（色だけに頼らず、title と aria-label で件数を伝える） */
+function BadgeDot({ badge, inline }: { badge: Badge | null; inline?: boolean }) {
+  if (!badge) return null;
+  return (
+    <span
+      className={inline ? styles.badgeInline : styles.errorDot}
+      data-tone={badge.tone}
+      role="img"
+      aria-label={badge.label}
+      title={badge.label}
+    />
+  );
 }

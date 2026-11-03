@@ -375,6 +375,16 @@
   background: #f0d4d4;
 }
 
+.problem[data-tone="warning"] {
+  background: #f8edd6;
+  color: #7a5208;
+}
+
+div.problem,
+div.problem:hover {
+  cursor: default;
+}
+
 .problemPlace {
   display: flex;
   gap: 8px;

@@ -1,8 +1,9 @@
+import type { Diagnostic, ProjectDoc, ResourcePathIndex } from "@tukurium/repo-model";
 import { useProject } from "./hooks";
 import type { Problem } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems, useStructureDiagnostics } from "./useProblems";
+import { useProblems, useProjectDiagnostics } from "./useProblems";
 
 /** 問題 1 件の場所の表示（「Shoot.js 4 行目」） */
 export function problemPlace(name: string, p: Problem): string {
@@ -17,7 +18,28 @@ export function ProblemsList() {
   const problems = useProblems();
   const project = useProject();
   const showProblem = useWorkspace((s) => s.showProblem);
-  const { diagnostics, index } = useStructureDiagnostics();
+  const { diagnostics, index } = useProjectDiagnostics();
+  const { select, setOutput, outputId } = useWorkspace();
+  /** 問題の対象を Inspector で選ぶ（選べるものだけ） */
+  const target = (d: Diagnostic): (() => void) | null => {
+    const { kind, id } = d.subject;
+    if (kind === "entity") {
+      const e = project.entity(id);
+      if (!e || !project.output(e.output)) return null;
+      return () => {
+        if (e.output !== outputId) setOutput(e.output);
+        select({ kind: "entity", id });
+      };
+    }
+    if (kind === "output")
+      return () => {
+        setOutput(id);
+        select({ kind: "output", id });
+      };
+    if (kind === "kokostate") return () => select({ kind: "koko", id });
+    if (kind === "system" || kind === "material") return () => select({ kind, id });
+    return null;
+  };
   const count = problems.length + diagnostics.length;
   if (count === 0) return null;
   return (
@@ -45,22 +67,49 @@ export function ProblemsList() {
             </button>
           </li>
         ))}
-        {diagnostics.map((d) => (
-          <li key={d.id}>
-            <div className={ui.problem} title={d.detail}>
+        {diagnostics.map((d) => {
+          const go = target(d);
+          const body = (
+            <>
               <span className={ui.problemPlace}>
-                {d.subject.kind === "project"
-                  ? "/（いちばん上）"
-                  : (index?.pathOf(d.subject.id) ?? d.subject.id)}
+                {placeOf(d, project, index)}
                 <span className={ui.problemKind}>
                   {d.severity === "warning" ? "注意" : "Play 前の確認"}
                 </span>
               </span>
               <span>{d.message}</span>
-            </div>
-          </li>
-        ))}
+            </>
+          );
+          return (
+            <li key={d.id}>
+              {go ? (
+                <button
+                  type="button"
+                  className={ui.problem}
+                  data-tone={d.severity}
+                  title={d.detail ?? "Inspector で選ぶ"}
+                  onClick={go}
+                >
+                  {body}
+                </button>
+              ) : (
+                <div className={ui.problem} data-tone={d.severity} title={d.detail}>
+                  {body}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
+}
+
+/** 問題の対象の場所（リソースは論理パス、Entity・アウトプットは名前） */
+function placeOf(d: Diagnostic, project: ProjectDoc, index: ResourcePathIndex | null): string {
+  const { kind, id } = d.subject;
+  if (kind === "project") return "/（いちばん上）";
+  if (kind === "entity") return `Entity「${project.entity(id)?.name ?? id}」`;
+  if (kind === "output") return `アウトプット「${project.output(id)?.name ?? id}」`;
+  return index?.pathOf(id) ?? id;
 }
