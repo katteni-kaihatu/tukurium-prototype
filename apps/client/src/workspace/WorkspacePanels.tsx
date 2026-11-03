@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
 import { api, type RepoMeta } from "../net/api";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { BagPanel } from "../session/BagPanel";
 import { SessionBelongings } from "../session/SessionBelongings";
 import type { SessionEngine } from "../session/SessionEngine";
 import { DetailPanel } from "./DefinitionProperties";
@@ -77,6 +78,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const saveSeq = useWorkspace((s) => s.saveSeq);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
+  const bagOpen = useWorkspace((s) => s.bagOpen);
   const sessionOpen = useWorkspace((s) => s.sessionOpen);
   const inspectorOpen = useWorkspace((s) => s.inspectorOpen);
   const resourcesOpen = useWorkspace((s) => s.resourcesOpen);
@@ -218,6 +220,17 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
     });
   }
 
+  if (bagOpen) {
+    panels.push({
+      id: "session-bag",
+      title: "バッグ",
+      initial: { right: 16, y: 420, width: 360 },
+      focusKey: "bag",
+      render: () => <BagPanel />,
+      onClose: () => useWorkspace.setState({ bagOpen: false }),
+    });
+  }
+
   usePublishPanels(engine, panels, hidden);
 
   return <PanelLayer engine={engine} panels={panels} hidden={hidden} />;
@@ -326,6 +339,18 @@ function WorkspaceStart() {
           }}
         >
           ＋ サンプル「扉とスイッチ」
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          title="E で鍵を拾ってバッグに入れ、鍵のかかった扉を開ける。拾う仕組みと鍵の種類は公式ライブラリ「items」"
+          onClick={() => {
+            void createReferenceSample("keyAndDoor").catch((e: Error) =>
+              useWorkspace.setState({ error: e.message }),
+            );
+          }}
+        >
+          ＋ サンプル「鍵と扉」
         </button>
         <button type="button" className={ui.btn} onClick={() => ws.create("銃", gunSample())}>
           ＋ サンプル「銃」

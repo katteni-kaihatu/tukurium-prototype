@@ -8,6 +8,7 @@ import {
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
 import {
+  type BagItem,
   type EffectEvent,
   type InputEvent,
   type LogEntry,
@@ -67,7 +68,12 @@ interface WorkspaceState {
   /** ホストのときだけ：実行中の Simulation */
   sim: Simulation | null;
   /** ホスト以外：ホストから届いた実行状態 */
-  remote: { world: World; names: Record<string, string> } | null;
+  remote: {
+    world: World;
+    names: Record<string, string>;
+    /** プレイヤー → バッグ（再生中。ADR 0018） */
+    bags: Record<string, BagItem[]>;
+  } | null;
   simRev: number;
   systemStatus: SystemStatus[];
   /** 編集中の確認で見つかった問題（構文など）。System ごとに、調べたときの版（rev）と組で持つ */
@@ -103,6 +109,8 @@ interface WorkspaceState {
   libraryOpen: boolean;
   /** セッションに置いてあるものの一覧を開いているか */
   belongingsOpen: boolean;
+  /** 自分のバッグのパネル（ADR 0018） */
+  bagOpen: boolean;
   historyOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
@@ -222,6 +230,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     commitRev: 0,
     libraryOpen: false,
     belongingsOpen: false,
+    bagOpen: false,
     historyOpen: false,
     sessionOpen: false,
     inspectorOpen: true,
@@ -520,6 +529,7 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
   }
   if (resume?.world) {
     sim.restore(resume.world as Parameters<Simulation["restore"]>[0], resume.names, resume.time);
+    sim.restoreBags(resume.bags as Record<string, BagItem[]> | undefined);
   }
   set({
     sim,
@@ -563,6 +573,7 @@ export function sendFrame(): void {
         world: sim.world.snapshot(),
         names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
         status: sim.systemStatus(),
+        bags: sim.bagsSnapshot(),
       }
     : { mode: "edit", outputId: s.outputId, time: 0, world: null, names: {}, status: [] };
   client().send({ t: "ws.frame", workspaceId: s.workspaceId, frame });
@@ -581,7 +592,7 @@ function applyFrame(frame: PlayFrame) {
     incomingEffects: [...st.incomingEffects, ...(frame.effects ?? [])].slice(-32),
     mode: frame.mode,
     outputId: frame.outputId || st.outputId,
-    remote: { world, names: frame.names },
+    remote: { world, names: frame.names, bags: (frame.bags ?? {}) as Record<string, BagItem[]> },
     systemStatus: frame.status,
     simRev: st.simRev + 1,
   }));

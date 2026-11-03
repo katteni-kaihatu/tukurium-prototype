@@ -1,6 +1,7 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
 import type { MaterialDef, PackageResolution, ProjectSnapshot } from "@tukurium/repo-model";
 import {
+  type BagItem,
   type CapabilityId,
   type EffectEvent,
   type InputEvent,
@@ -21,7 +22,13 @@ import { useApp } from "../app/store";
 interface SessionWorldState {
   isHost: boolean;
   sim: Simulation | null;
-  remote: { world: World; names: Record<string, string>; materials: MaterialDef[] } | null;
+  remote: {
+    world: World;
+    names: Record<string, string>;
+    materials: MaterialDef[];
+    /** プレイヤー → バッグ（ADR 0018） */
+    bags: Record<string, BagItem[]>;
+  } | null;
   status: SystemStatus[];
   /** ホストから届いた、まだ鳴らしていない音（ホスト以外） */
   incomingSounds: SoundEvent[];
@@ -106,6 +113,8 @@ client().on((msg) => {
         for (const part of msg.parts) addPart(sim, part);
         if (msg.resume?.world) {
           sim.restore(msg.resume.world as WorldSnapshot, msg.resume.names, msg.resume.time);
+          // バッグも引き継ぐ（ADR 0018）
+          sim.restoreBags(msg.resume.bags as Record<string, BagItem[]> | undefined);
         }
         set({ isHost: true, sim, remote: null, status: sim.systemStatus() });
       });
@@ -178,7 +187,12 @@ function applyFrame(frame: SessionFrame): void {
   const world = st().remote?.world ?? new World(new KokoStateRegistry());
   world.restore(frame.world as WorldSnapshot);
   set({
-    remote: { world, names: frame.names, materials: frame.materials as MaterialDef[] },
+    remote: {
+      world,
+      names: frame.names,
+      materials: frame.materials as MaterialDef[],
+      bags: (frame.bags ?? {}) as Record<string, BagItem[]>,
+    },
     // 届いた音と effect を、ホスト以外が手元で鳴らす・出す
     incomingSounds: [...st().incomingSounds, ...(frame.sounds ?? [])].slice(-32),
     incomingEffects: [...st().incomingEffects, ...(frame.effects ?? [])].slice(-32),
@@ -214,6 +228,7 @@ export function sendSessionFrame(): void {
       names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
       materials: sim.materials(),
       status: sim.systemStatus(),
+      bags: sim.bagsSnapshot(),
     },
   });
 }

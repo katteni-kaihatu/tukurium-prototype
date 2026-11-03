@@ -144,6 +144,15 @@ export const SystemStatusInfo = z.object({
 });
 
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
+/** バッグの中の 1 個（ADR 0018）。種類はライブラリの KokoState の ID、値はフィールドの名前で持つ */
+export const BagItem = z.object({
+  type: z.string().max(200),
+  name: z.string().max(80),
+  values: z.record(z.string(), z.unknown()),
+});
+/** プレイヤー → バッグ。ホストが替わっても引き継げるよう、フレームに入れて配る */
+const Bags = z.record(z.string(), z.array(BagItem).max(64));
+
 export const PlayFrame = z.object({
   sounds: z.array(SoundEvent).max(32).optional(),
   effects: z.array(EffectEvent).max(32).optional(),
@@ -153,6 +162,7 @@ export const PlayFrame = z.object({
   world: z.unknown(),
   names: z.record(z.string(), z.string()),
   status: z.array(SystemStatusInfo),
+  bags: Bags.optional(),
 });
 export type PlayFrame = z.infer<typeof PlayFrame>;
 
@@ -166,6 +176,7 @@ export const SessionFrame = z.object({
   /** 表示用のマテリアル（ID はリポジトリごとに付け替え済み） */
   materials: z.array(z.unknown()),
   status: z.array(SystemStatusInfo),
+  bags: Bags.optional(),
 });
 export type SessionFrame = z.infer<typeof SessionFrame>;
 

@@ -86,5 +86,5 @@ export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = Object.fromEntri
 /** 組み込みの入力（grab など）の、主体の扱い */
 export const BUILTIN_INPUT_AUTHORITY = {
   player: "server-execute",
-  note: "今は入力の player をクライアントの申告どおりに信じる（サーバーも書き換えずに中継する）。接続から本人を決めるのはサーバーの役目",
+  note: "入力の player は、サーバーが接続の本人で上書きしてからホストへ渡す（ADR 0018）。改変したホストからの保護はまだない",
 } as const satisfies { player: Authority; note: string };

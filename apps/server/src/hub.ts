@@ -305,7 +305,12 @@ export class Hub {
         return;
       }
       case "session.input":
-        if (conn.session?.host) this.send(conn.session.host, { t: "host.input", input: msg.input });
+        // プレイヤー ID は自己申告を使わず、接続の本人にする（バッグの持ち主の元。ADR 0018）
+        if (conn.session?.host)
+          this.send(conn.session.host, {
+            t: "host.input",
+            input: { ...msg.input, player: user.id },
+          });
         return;
       case "session.frame": {
         const s = conn.session;
@@ -374,7 +379,11 @@ export class Hub {
       case "ws.input": {
         const w = this.workspaceFor(conn, msg.workspaceId);
         if (!w?.host || !canRead(this.roleOf(w, user.id))) return;
-        this.send(w.host, { t: "ws.input", workspaceId: w.meta.id, input: msg.input });
+        this.send(w.host, {
+          t: "ws.input",
+          workspaceId: w.meta.id,
+          input: { ...msg.input, player: user.id },
+        });
         return;
       }
       case "ws.frame": {

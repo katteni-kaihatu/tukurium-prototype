@@ -18,7 +18,9 @@ export type CapabilityId =
   | "state.read"
   | "state.write"
   | "entity.spawn"
-  | "entity.destroy";
+  | "entity.destroy"
+  | "bag.read"
+  | "bag.write";
 
 /** Host API（名前空間.関数名）→ 要る Capability。runtime の HOST_API_POLICY と一致させる（テストで検査） */
 export const HOST_CAPABILITIES: Record<string, CapabilityId> = {
@@ -33,6 +35,10 @@ export const HOST_CAPABILITIES: Record<string, CapabilityId> = {
   "world.destroy": "entity.destroy",
   "contract.send": "interaction.send",
   "effects.spawn": "effects.spawn",
+  "bag.add": "bag.write",
+  "bag.take": "bag.write",
+  "bag.count": "bag.read",
+  "bag.list": "bag.read",
 };
 
 /** Host API の名前空間 */
