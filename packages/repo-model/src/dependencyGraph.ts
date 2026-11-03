@@ -14,6 +14,7 @@ import { compileSystem } from "./systemCompiler";
  * - Entity → 持っている KokoState・指しているリソースや Entity・親の Entity
  * - Output → その System・その Entity
  * - System → Query に書いた KokoState の名前（`name:kokostate/<名前>`）
+ * - System → `@別名/...` で import したライブラリ（`name:package/<別名>`。ADR 0015）
  *
  * System の Query は今は表示名で書くため、名前の節を介して KokoState の変更とつなぐ
  * （見つからない名前も節として持つので、その名前の KokoState を作ったときにも気付ける）。
@@ -40,6 +41,12 @@ export const PATHS_REF: GraphRef = { kind: "name", id: "paths" };
 
 /** KokoState の名前の節 */
 export const kokoNameRef = (name: string): GraphRef => ({ kind: "name", id: `kokostate/${name}` });
+
+/** 依存の別名の節（別名が指す Package・版を変えると、それを import した System に届く） */
+export const packageAliasRef = (alias: string): GraphRef => ({
+  kind: "name",
+  id: `package/${alias}`,
+});
 
 export class ProjectDependencyGraph {
   /** 依存先（A → B の B） */
@@ -91,6 +98,7 @@ export class ProjectDependencyGraph {
       const compiled = compileSystem(s.id, s.code, index);
       if (compiled.bindings.length === 0 && compiled.diagnostics.length === 0) continue;
       this.edge(from, PATHS_REF);
+      for (const alias of compiled.packageImports) this.edge(from, packageAliasRef(alias));
       for (const b of compiled.bindings) this.edge(from, { kind: "kokostate", id: b.resourceId });
     }
   }
@@ -169,6 +177,11 @@ export function changedRefs(prev: ProjectSnapshot, next: ProjectSnapshot): Graph
   for (const k of prev.kokostates) names.set(`prev:${k.id}`, k.name);
   for (const k of next.kokostates) names.set(`next:${k.id}`, k.name);
   if (pathSignature(prev) !== pathSignature(next)) changed.add(refKey(PATHS_REF));
+  const deps = (snap: ProjectSnapshot) =>
+    new Map((snap.dependencies ?? []).map((d) => [d.alias, JSON.stringify(d)] as const));
+  const [depsA, depsB] = [deps(prev), deps(next)];
+  for (const alias of new Set([...depsA.keys(), ...depsB.keys()]))
+    if (depsA.get(alias) !== depsB.get(alias)) changed.add(refKey(packageAliasRef(alias)));
   for (const key of [...changed]) {
     const r = parseKey(key);
     if (r.kind !== "kokostate") continue;

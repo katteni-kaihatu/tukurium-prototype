@@ -1,17 +1,36 @@
-import { useEffect, useState } from "react";
+import { validateAlias } from "@tukurium/repo-model";
+import { Fragment, useEffect, useState } from "react";
 import { useApp } from "../app/store";
 import { api, type Work } from "../net/api";
+import { useCanEdit } from "./hooks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
 const KIND_LABEL = { item: "アイテム", world: "ワールド", library: "ライブラリ" } as const;
 
-/** ライブラリ：公開されたワールドとアイテム（最新のリリース）をセッションに置く */
+/** 作品の名前から、別名の初めの案を作る（空白・@・/ は - にする） */
+const aliasFrom = (name: string) =>
+  name
+    .trim()
+    .replace(/[\s@/]+/g, "-")
+    .slice(0, 64) || "lib";
+
+/**
+ * ライブラリ：公開されたワールドとアイテム（最新のリリース）をセッションに置く。
+ * ライブラリの作品は、開いているプロジェクトの依存に足して import で使う（ADR 0015）。
+ */
 export function LibraryPanel() {
   const { client, session, me } = useApp();
   const placePoint = useWorkspace((s) => s.placePoint);
+  const project = useWorkspace((s) => s.project);
+  useWorkspace((s) => s.rev);
+  const canEdit = useCanEdit();
   const [works, setWorks] = useState<Work[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 依存に足そうとしている作品と、入力中の別名 */
+  const [adding, setAdding] = useState<{ work: Work; alias: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const deps = project?.dependencies() ?? [];
   useEffect(() => {
     api.works().then(setWorks, (e: Error) => setError(e.message));
   }, []);
@@ -29,10 +48,79 @@ export function LibraryPanel() {
     });
   };
 
+  const addDependency = async () => {
+    const latest = adding?.work.latest;
+    if (!project || !adding || !latest) return;
+    const { work, alias } = adding;
+    const problem = validateAlias(alias);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      // 版の content hash はサーバーが計算したものを固定する（取り出せることも確かめる）
+      const pkg = await api.packageVersion(work.id, latest.version);
+      project.addDependency({
+        alias,
+        packageId: pkg.packageId,
+        version: pkg.version,
+        contentHash: pkg.contentHash,
+      });
+      setAdding(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
+      {project && (
+        <div className={ui.section}>
+          <h3 className={ui.sectionTitle}>このプロジェクトで使うライブラリ</h3>
+          {deps.length === 0 ? (
+            <p className={ui.muted}>
+              まだありません。下の一覧のライブラリを足すと、System から import できます。
+            </p>
+          ) : (
+            <>
+              <ul className={ui.list} aria-label="使うライブラリ">
+                {deps.map((d) => (
+                  <li key={d.alias} className={ui.item} style={{ cursor: "default" }}>
+                    <span className={ui.itemName}>
+                      @{d.alias}
+                      <span className={ui.muted}>
+                        {" "}
+                        · {works.find((w) => w.id === d.packageId)?.name ?? d.packageId}
+                      </span>
+                    </span>
+                    <span className={ui.badge}>v{d.version}</span>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className={ui.iconBtn}
+                        aria-label={`@${d.alias} を外す`}
+                        onClick={() => project.removeDependency(d.alias)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className={ui.muted}>
+                書き方：import Health from "@{deps[0]?.alias}/States/Health.koko";
+                （公開の印を付けた KokoState だけ。再生で動くのは次の段階）
+              </p>
+            </>
+          )}
+        </div>
+      )}
       <div className={ui.section}>
-        <h3 className={ui.sectionTitle}>公開されたワールドとアイテム</h3>
+        <h3 className={ui.sectionTitle}>公開された作品</h3>
         <p className={ui.muted}>
           ワールドは原点に、アイテムは視線の先に置きます。置いたあとは、作っているワークスペースとは別です。
         </p>
@@ -41,43 +129,96 @@ export function LibraryPanel() {
         <ul className={ui.list} aria-label="作品">
           {works.map((w) => {
             const canUse = w.perms.use || w.owner === me?.id;
-            // ライブラリは置くものではなく、ほかのプロジェクトから import して使う（ADR 0015）
+            // ライブラリは置くものではなく、プロジェクトの依存に足して import で使う（ADR 0015）
             const isLibrary = w.outputKind === "library";
             const kind = w.outputKind ? KIND_LABEL[w.outputKind] : null;
+            const used = deps.some((d) => d.packageId === w.id);
             return (
-              <li key={w.id} className={ui.item} style={{ cursor: "default" }}>
-                <span className={ui.itemName}>
-                  {w.name}
-                  <span className={ui.muted}>
-                    {" "}
-                    · {w.ownerName} / {w.repoName}
+              <Fragment key={w.id}>
+                <li className={ui.item} style={{ cursor: "default" }}>
+                  <span className={ui.itemName}>
+                    {w.name}
+                    <span className={ui.muted}>
+                      {" "}
+                      · {w.ownerName} / {w.repoName}
+                    </span>
                   </span>
-                </span>
-                {kind && <span className={ui.badge}>{kind}</span>}
-                {w.latest ? (
-                  <span className={ui.badge}>v{w.latest.version}</span>
-                ) : (
-                  <span className={ui.badge}>未リリース</span>
+                  {kind && <span className={ui.badge}>{kind}</span>}
+                  {w.latest ? (
+                    <span className={ui.badge}>v{w.latest.version}</span>
+                  ) : (
+                    <span className={ui.badge}>未リリース</span>
+                  )}
+                  {isLibrary ? (
+                    project &&
+                    canEdit && (
+                      <button
+                        type="button"
+                        className={ui.btn}
+                        style={{ height: 26 }}
+                        disabled={!w.latest || !canUse || used}
+                        title={
+                          used
+                            ? "もう使っています"
+                            : !canUse
+                              ? "利用の権限がありません"
+                              : "このプロジェクトの依存に足します（今の最新の版に固定します）"
+                        }
+                        onClick={() => {
+                          setError(null);
+                          setAdding({ work: w, alias: aliasFrom(w.name) });
+                        }}
+                      >
+                        プロジェクトで使う
+                      </button>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      className={ui.btn}
+                      style={{ height: 26 }}
+                      disabled={!w.latest || !canUse}
+                      title={
+                        !canUse
+                          ? "利用の権限がありません"
+                          : w.outputKind === "world"
+                            ? "セッションの原点に置きます"
+                            : "視線の先に置きます"
+                      }
+                      onClick={() => place(w)}
+                    >
+                      セッションに置く
+                    </button>
+                  )}
+                </li>
+                {adding?.work.id === w.id && (
+                  <li>
+                    <form
+                      style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 8px" }}
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void addDependency();
+                      }}
+                    >
+                      <span className={ui.muted}>@</span>
+                      <input
+                        className={ui.input}
+                        aria-label="別名"
+                        value={adding.alias}
+                        // biome-ignore lint/a11y/noAutofocus: 押した直後に別名を入れるため
+                        autoFocus
+                        onChange={(e) => setAdding({ work: w, alias: e.target.value })}
+                      />
+                      <button type="submit" className={ui.btn} disabled={busy}>
+                        足す
+                      </button>
+                      <button type="button" className={ui.btn} onClick={() => setAdding(null)}>
+                        やめる
+                      </button>
+                    </form>
+                  </li>
                 )}
-                <button
-                  type="button"
-                  className={ui.btn}
-                  style={{ height: 26 }}
-                  disabled={!w.latest || !canUse || isLibrary}
-                  title={
-                    isLibrary
-                      ? "ライブラリは置けません。ほかのプロジェクトから import して使います"
-                      : !canUse
-                        ? "利用の権限がありません"
-                        : w.outputKind === "world"
-                          ? "セッションの原点に置きます"
-                          : "視線の先に置きます"
-                  }
-                  onClick={() => place(w)}
-                >
-                  セッションに置く
-                </button>
-              </li>
+              </Fragment>
             );
           })}
         </ul>

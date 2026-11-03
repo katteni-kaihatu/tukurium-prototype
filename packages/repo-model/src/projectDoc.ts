@@ -7,6 +7,7 @@ import type {
 } from "@tukurium/eks";
 import * as Y from "yjs";
 import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
+import { validateAlias } from "./packageDependency";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -16,6 +17,7 @@ import {
   newId,
   type OutputDef,
   type OutputKind,
+  type PackageDependency,
   type ProjectSnapshot,
   type SystemDef,
 } from "./schema";
@@ -72,6 +74,10 @@ export class ProjectDoc {
   /** 公開の印（リソース ID → true。ADR 0015） */
   private get exportMap() {
     return this.doc.getMap<boolean>("exports");
+  }
+  /** 使うライブラリ（別名 → 依存。ADR 0015） */
+  private get dependencyMap() {
+    return this.doc.getMap<PackageDependency>("dependencies");
   }
   private get outputMap() {
     return this.doc.getMap<OutputDef>("outputs");
@@ -388,6 +394,7 @@ export class ProjectDoc {
       folders,
       placement,
       exports: [...this.exportMap.keys()].filter((r) => resources.has(r)).sort(),
+      dependencies: this.dependencies(),
     };
   }
 
@@ -405,12 +412,14 @@ export class ProjectDoc {
         this.folderMap,
         this.placementMap,
         this.exportMap,
+        this.dependencyMap,
       ]) {
         m.clear();
       }
       for (const f of snap.folders ?? []) this.folderMap.set(f.id, clone(f));
       for (const [r, f] of Object.entries(snap.placement ?? {})) this.placementMap.set(r, f);
       for (const r of snap.exports ?? []) this.exportMap.set(r, true);
+      for (const d of snap.dependencies ?? []) this.dependencyMap.set(d.alias, clone(d));
       this.meta.set("name", snap.name);
       this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
       for (const k of snap.kokostates) this.kokoMap.set(k.id, clone(k));
@@ -559,6 +568,30 @@ export class ProjectDoc {
 
   isExported(resourceId: string): boolean {
     return this.exportMap.get(resourceId) === true;
+  }
+
+  // ---------- 依存（ADR 0015） ----------
+  /** 使うライブラリ（別名の順） */
+  dependencies(): PackageDependency[] {
+    return [...this.dependencyMap.values()]
+      .map(clone)
+      .sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0));
+  }
+
+  /** ライブラリを使う。版と content hash を固定する。一つの Package は一つの版だけ */
+  addDependency(dep: PackageDependency): void {
+    const problem = validateAlias(dep.alias);
+    if (problem) throw new Error(problem);
+    if (this.dependencyMap.has(dep.alias))
+      throw new Error(`別名「${dep.alias}」はもう使われています`);
+    for (const d of this.dependencyMap.values())
+      if (d.packageId === dep.packageId)
+        throw new Error(`このライブラリはもう「@${d.alias}」で使っています`);
+    this.dependencyMap.set(dep.alias, clone(dep));
+  }
+
+  removeDependency(alias: string): void {
+    this.dependencyMap.delete(alias);
   }
 
   /** リソースが入っているフォルダ（null はいちばん上） */

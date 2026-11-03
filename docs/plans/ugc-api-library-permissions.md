@@ -288,8 +288,9 @@ Placement grant の保存形式と effective permission の計算も U1 の runt
 
 - [x] Output の Kind「ライブラリ」、公開の印（`exports`）、manifest（`packageManifest`・`stableStringify`）
 - [x] リリースのときにサーバーが content hash を計算して残す。同じ版の違う hash を拒む。版の中身を取り出す API
-- [ ] プロジェクトの依存（別名・Package ID・版・hash の lock）と `@別名/...` の import
-- [ ] 依存の診断（見つからない・公開されていない・輪・hash の不一致）と依存グラフの辺
+- [x] プロジェクトの依存（別名・Package ID・版・hash の lock）と `@別名/...` の import（KokoState。依存を足す・外す最小の画面はライブラリの欄）
+- [x] 依存の診断（依存にない別名・見つからない／公開されていない（区別しない）・hash の不一致・取り出せない）と依存グラフの辺（System → 別名）
+- [ ] 依存の依存と輪の検出（manifest に依存を入れる。自分のライブラリへの依存も輪として扱う）
 - [ ] 実行時の取り込み（Package の定義を realm に登録し、PackageExecutionContext を付ける）
 - [ ] 抽出／フォークで出所と結び付けを保つ
 

@@ -1,5 +1,11 @@
 import { type Expression, type ImportDeclaration, parse } from "acorn";
 import { type Diagnostic, makeDiagnostic } from "./diagnostics/types";
+import {
+  findPackageExport,
+  type PackageResolution,
+  packageResourceId,
+  parsePackageSpelling,
+} from "./packageDependency";
 import { BUILTIN_PREFIX, ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
 
@@ -23,6 +29,8 @@ export interface SystemBinding {
   resourceId: string;
   /** 解決した KokoState の表示名（移行の間、実行時に名前でも引けるように渡す） */
   name: string;
+  /** ライブラリから取り込んだときの別名（ADR 0015） */
+  package?: string;
   /** import が書かれた行 */
   line: number;
   /** パスの文字列（引用符を含む）がソースのどこにあるか [始め, 終わり) */
@@ -35,14 +43,21 @@ export interface CompiledSystem {
   javascript: string;
   bindings: SystemBinding[];
   diagnostics: Diagnostic[];
+  /** `@別名/...` で import しているライブラリの別名（解決できたかによらない） */
+  packageImports: string[];
 }
 
 const KOKO_EXT = ".koko";
 
+/**
+ * `packages` は依存の中身を取り出した結果（別名ごと）。渡さないとき（再生）は、
+ * ライブラリからの import をまだ使えない問題にする（実行時の取り込みは次の段階。ADR 0015）。
+ */
 export function compileSystem(
   systemId: string,
   source: string,
   index: ResourcePathIndex,
+  packages?: ReadonlyMap<string, PackageResolution>,
 ): CompiledSystem {
   let imports: ImportDeclaration[];
   try {
@@ -50,12 +65,14 @@ export function compileSystem(
     imports = ast.body.filter((n): n is ImportDeclaration => n.type === "ImportDeclaration");
   } catch {
     // 構文の誤りは、QuickJS が読み込むときに行番号つきで知らせる
-    return { ok: true, javascript: source, bindings: [], diagnostics: [] };
+    return { ok: true, javascript: source, bindings: [], diagnostics: [], packageImports: [] };
   }
-  if (imports.length === 0) return { ok: true, javascript: source, bindings: [], diagnostics: [] };
+  if (imports.length === 0)
+    return { ok: true, javascript: source, bindings: [], diagnostics: [], packageImports: [] };
 
   const bindings: SystemBinding[] = [];
   const diagnostics: Diagnostic[] = [];
+  const packageImports = new Set<string>();
   const problem = (code: string, line: number, spelling: string, message: string) =>
     diagnostics.push(
       makeDiagnostic({
@@ -92,6 +109,57 @@ export function compileSystem(
         spelling,
         `KokoState は「import 名前 from "${spelling}"」の形で読み込みます`,
       );
+    } else if (parsePackageSpelling(spelling)) {
+      const { alias, path } = parsePackageSpelling(spelling) as { alias: string; path: string };
+      packageImports.add(alias);
+      const resolution = packages?.get(alias);
+      if (!packages) {
+        problem(
+          "import-package-unavailable",
+          line,
+          spelling,
+          `ライブラリ（@${alias}）からの import は、まだ再生では使えません`,
+        );
+      } else if (!resolution) {
+        problem(
+          "import-package-unknown",
+          line,
+          spelling,
+          `依存に「@${alias}」がありません（ライブラリの欄で、このプロジェクトに足してください）`,
+        );
+      } else if (resolution.status === "unavailable") {
+        problem(
+          "import-package-unavailable",
+          line,
+          spelling,
+          `ライブラリ「@${alias}」を使えません：${resolution.message}`,
+        );
+      } else {
+        const found = findPackageExport(resolution.manifest, path);
+        const def = found?.definition as { name?: unknown } | undefined;
+        if (found?.kind !== "kokostate" || typeof def?.name !== "string") {
+          // 公開していないものと、ないものを区別しない（中身を漏らさない）
+          problem(
+            "import-package-not-found",
+            line,
+            spelling,
+            `ライブラリ「@${alias}」（v${resolution.dependency.version}）に「${path}」が見つかりません（公開されていないか、ありません）`,
+          );
+        } else {
+          const id = packageResourceId(resolution.dependency, found.id);
+          bindings.push({
+            alias: only.local.name,
+            kind: "kokostate",
+            spelling,
+            resourceId: id,
+            name: def.name,
+            package: alias,
+            line,
+            range: [node.source.start, node.source.end],
+          });
+          replacement = `const ${only.local.name} = __koko(${JSON.stringify(id)}, ${JSON.stringify(def.name)});`;
+        }
+      }
     } else {
       const r = index.resolve(spelling, systemId);
       if (r.ok && r.kind === "kokostate") {
@@ -124,7 +192,13 @@ export function compileSystem(
     at = node.end;
   }
   out += source.slice(at);
-  return { ok: diagnostics.length === 0, javascript: out, bindings, diagnostics };
+  return {
+    ok: diagnostics.length === 0,
+    javascript: out,
+    bindings,
+    diagnostics,
+    packageImports: [...packageImports],
+  };
 }
 
 export interface QueryItem {
