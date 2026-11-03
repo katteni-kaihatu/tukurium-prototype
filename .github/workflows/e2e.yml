@@ -3,6 +3,11 @@ name: E2E
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".claude/**"
+      - ".github/workflows/ci.yml"
   schedule:
     # 毎日 03:00 JST。main の更新がない日もブラウザや依存の変化を確認する。
     - cron: "0 18 * * *"

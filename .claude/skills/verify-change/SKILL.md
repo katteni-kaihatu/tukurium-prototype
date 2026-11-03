@@ -13,6 +13,8 @@ pnpm format && pnpm lint && pnpm typecheck && pnpm test
 
 `pnpm lint` は Biome に加えて、Dockerfile がすべての package.json を COPY しているかも検査する。
 
+Markdown、`docs/`、`.claude/`だけの変更はCIでも省略される。コード、依存関係、ビルド・実行・E2E設定に触れた場合は省略しない。
+
 ## 2. E2E（背骨の 4 本だけ）
 
 - `pnpm e2e`（2 分ほど）。背骨の流れ（作る・一緒に編集・セッションに出して適用・公開）に触れたときに流す。
