@@ -78,6 +78,16 @@
 - `world.find` / `get` / `set` / `destroy` と `spawn` の親、`audio.play` の音源の Entity は、呼んだ System の配置の中だけにした。別の配置は「見つからない」と同じ結果になる。`world.spawn` で作った Entity は、呼んだ System の配置のものになる。
 - U1 の最初の slice では、`world.raycast` と `world.emit` に別の配置への正当な使い道が残っていた。U2 の最初の縦切りで、Raycast は別の配置の生 Entity ID を返さない opaque handle に、別の配置への通知は公開 Contract に置き換えた。要求 Capability と effective grant の強制が未実装なので、U1 全体はまだ途中である。
 
+### U1 の続き：実効権限（宣言 ∩ 付与）
+
+利用者と相談して、次のように決めた。
+
+- 要る Capability は、利用者が書くのではなく、System のコードから AST で読み取る（`inferCapabilities`）。`world.raycast` → physics.raycast、`hit.send` → interaction.send、`hit.effect` → effects.spawn のように対応させる。対応表（`HOST_CAPABILITIES`）は `HOST_API_POLICY` と一致することをテストで検査する。`world[name]()` や `const w = world` のように読み取れない使い方は、その行の注意にする。
+- 置いた物への付与（`PartSpec.grants`）は、指定がなければ宣言をそのまま付与する。サーバーの配置の台帳への保存と、細かく取り消す画面は U5 で作る。
+- 強制はセッションだけにかけ、ワークスペースの再生ではかけない。
+- セッションでは、Host API を呼ぶたびに「その System の宣言にあり、呼び出しの主体の配置すべてに付与されている」かを判定する。外れたら、見つからない・できなかったのと同じ値を返し、その System に注意（`capability-denied`）を残す。System は止めない。別の配置への届き方（World の上限・相手の公開範囲）は、これまでどおりそれぞれの Host API の中で判定する。
+- 実行の主体（`PackageExecutionContext`）は、Package の仕組みができるまで、ワークスペースの出力を暗黙の Package（`workspace:<リポジトリ>`）とし、版は realm の版、置いた物は配置、World は土台の World（ないときは `session`）で組み立てる（`Simulation.executionContext`）。
+
 ### U2 の最初の縦の一本でしたこと
 
 利用者と相談して、書き方と初期設定を次のように決めた。

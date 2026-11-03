@@ -39,7 +39,7 @@
 
 - [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
 - [x] schema-first の Host API 引数検証と既定の配置境界を作る（引数を一つの定義で検証し、別の配置へは opaque handle と公開 Contract だけで届くようにした）
-- [ ] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する
+- [ ] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する（要る Capability はコードから読み取り、セッションでは「宣言 ∩ 付与」で全 Host API に強制、PackageExecutionContext も組み立てた。付与のサーバーでの保存、利用者向け型・Diagnostic metadata の生成が残り）
 - [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。土台の World の上限（guestPolicy のプリセット）も済み、拒否の知らせ（contract-denied）も済み。呼び出し側 grant の強制は上の gateway 項目、対象側はサーバーでの判定が残り。設定 UI は U5）
 - [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する
 - [ ] 公式 Platform Primitive / Library カタログを整備する。銃と的、扉とスイッチ、収集物と Inventory を reference UGC として縦に実装し、複数用途で共通する機能、Host 境界でしか安全に提供できない機能、Package 間相互運用に必要な機能だけを Runtime Built-in・Host Capability・公式 Library へ段階的に昇格させる

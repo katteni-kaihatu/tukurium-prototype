@@ -2,6 +2,7 @@ import {
   compileSystem,
   type Diagnostic,
   type DiagnosticView,
+  inferCapabilities,
   makeDiagnostic,
   type ProjectDoc,
   ResourcePathIndex,
@@ -100,6 +101,8 @@ export async function checkScripts(
       problems.push(...compiled.diagnostics);
       continue;
     }
+    // 要る権限を読み取れない使い方（world[name]() など）は注意にする（セッションでは拒まれる。ADR 0012）
+    problems.push(...inferCapabilities(def.id, code).diagnostics);
     try {
       const meta = sb.loadSystem(def.id, compiled.javascript, CHECK_REALM);
       for (const name of [...meta.query.with, ...meta.query.without]) {
