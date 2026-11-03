@@ -132,4 +132,34 @@ describe("ProjectDoc", () => {
     p.removeKokoState(gun.id);
     expect(p.snapshot().placement).toEqual({});
   });
+  it("同じ親の直下の名前は種類をまたいで一つ：名前を変えるときに拒み、空いている名前を出せる", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const gun = p.kokostates().find((k) => k.name === "Gun");
+    if (!gun) throw new Error("Gun がありません");
+    const f = p.addFolder("Weapons", null);
+    p.moveResource(gun.id, f);
+    const sys = p.addSystem("Shoot2", "");
+    p.moveResource(sys, f);
+    expect(p.siblingNameTaken("gun", f)).toBe(true);
+    expect(p.siblingNameTaken("Gun", f, gun.id)).toBe(false);
+    expect(p.siblingNameTaken("Gun", null)).toBe(false);
+    expect(() => p.renameSystem(sys, "GUN")).toThrow("同じ場所");
+    expect(p.system(sys)?.name).toBe("Shoot2");
+    // 別のフォルダなら同じ名前でよい
+    const mat = p.addMaterial("Gun");
+    expect(p.material(mat)?.name).toBe("Gun");
+    expect(() => p.renameFolder(f, "Arms")).not.toThrow();
+    const g = p.addFolder("Other", null);
+    expect(() => p.renameFolder(g, "ARMS ")).toThrow("同じ場所");
+    expect(() => p.renameFolder(g, "a/b")).toThrow("使えません");
+    const m = p.material(mat);
+    if (!m) throw new Error("Material がありません");
+    p.moveResource(mat, f);
+    expect(() => p.updateMaterial({ ...m, name: "Shoot2" })).toThrow("同じ場所");
+    p.updateMaterial({ ...m, color: "#000000" }); // 名前を変えなければ検査しない
+    expect(p.freeName("Gun", f)).toBe("Gun 2");
+    expect(p.freeName("New", f)).toBe("New");
+    expect(p.freeName("NewKokoState", null, (b, n) => `${b}${n}`)).toBe("NewKokoState1");
+  });
 });

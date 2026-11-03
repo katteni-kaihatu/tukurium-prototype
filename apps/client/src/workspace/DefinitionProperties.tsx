@@ -413,6 +413,7 @@ function KokoDefProperties({ id }: { id: string }) {
 
 function SystemProperties({ id }: { id: string }) {
   const { openSystem, select, showProblem } = useWorkspace();
+  const { error, safely } = useSafe();
   const problems = useProblems().filter((p) => p.systemId === id);
   const project = useProject();
   const canEdit = useCanEdit();
@@ -433,8 +434,9 @@ function SystemProperties({ id }: { id: string }) {
           id={id}
           value={def.name}
           disabled={!editing}
-          onCommit={(name) => project.renameSystem(id, name)}
+          onCommit={(name) => safely(() => project.renameSystem(id, name))}
         />
+        {error && <p className={ui.error}>{error}</p>}
         {problems.map((p) => (
           <button
             key={p.message}
@@ -534,6 +536,7 @@ function SystemProperties({ id }: { id: string }) {
 
 function MaterialProperties({ id }: { id: string }) {
   const { select } = useWorkspace();
+  const { error, safely } = useSafe();
   const project = useProject();
   const canEdit = useCanEdit();
   const m = project.material(id);
@@ -571,8 +574,9 @@ function MaterialProperties({ id }: { id: string }) {
           id={id}
           value={m.name}
           disabled={!editing}
-          onCommit={(name) => project.updateMaterial({ ...m, name })}
+          onCommit={(name) => safely(() => project.updateMaterial({ ...m, name }))}
         />
+        {error && <p className={ui.error}>{error}</p>}
         <div className={ui.row}>
           <span className={ui.label}>Shader</span>
           <span className={ui.toolbar}>
