@@ -1,5 +1,5 @@
 import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
-import { newId, type OutputDef, type OutputExposure } from "@tukurium/repo-model";
+import { type GuestPolicy, newId, type OutputDef, type OutputExposure } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
@@ -155,6 +155,25 @@ function OutputProperties({ id }: { id: string }) {
             <option value="private">非公開</option>
           </select>
         </div>
+        {output.kind === "world" && (
+          <div className={ui.row}>
+            <label className={ui.label} htmlFor={`guest-${id}`}>
+              外から来た Item
+            </label>
+            <select
+              id={`guest-${id}`}
+              className={ui.select}
+              value={output.guestPolicy ?? "interactive"}
+              disabled={!editing}
+              title="セッションでこの World が土台（最初に置いた World）のとき、別の作者の Item に許すこと。インタラクション可能：公開された Contract も送れる／衝突のみ：Raycast と一時的な effect まで／許さない：自分の配置の外は見つからない"
+              onChange={(e) => update({ guestPolicy: e.target.value as GuestPolicy })}
+            >
+              <option value="interactive">インタラクション可能</option>
+              <option value="collision">衝突のみ</option>
+              <option value="deny">許さない</option>
+            </select>
+          </div>
+        )}
       </div>
       <div className={ui.section}>
         <div className={ui.sectionHead}>

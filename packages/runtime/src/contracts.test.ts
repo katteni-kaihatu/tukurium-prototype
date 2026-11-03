@@ -196,3 +196,83 @@ describe("公開 Contract と opaque handle", () => {
     expect(hp(s)).toBe(3);
   });
 });
+
+describe("World の上限（外から来た Item に許すこと。ADR 0012）", () => {
+  /** 射撃場を World にして、外から来た Item（別の作者の銃）に許すことを決める */
+  function world(guestPolicy?: "deny" | "collision" | "interactive"): ProjectSnapshot {
+    const s = targetRangeSample();
+    s.outputs = s.outputs.map((o) => ({
+      ...o,
+      kind: "world" as const,
+      ...(guestPolicy ? { guestPolicy } : {}),
+    }));
+    return s;
+  }
+
+  async function inWorld(logs: LogEntry[], guestPolicy?: "deny" | "collision" | "interactive") {
+    sim = await Simulation.createSession({ onLog: (l) => logs.push(l) });
+    // 最初に置いた World が土台になる
+    sim.addPart({
+      id: "range",
+      realm: "repoRange",
+      outputId: "out_range",
+      snapshot: world(guestPolicy),
+      position: [0, 0, -2],
+      yaw: 0,
+    });
+    sim.addPart({
+      id: "gun",
+      realm: "repoGun",
+      outputId: "out_gun",
+      snapshot: probeSample(),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    return sim;
+  }
+
+  it("初期値（インタラクション可能）なら、外から来た銃も Damage を送れる", async () => {
+    const logs: LogEntry[] = [];
+    const s = await inWorld(logs);
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(said(logs, "sent")).toEqual(["sent true"]);
+    expect(hp(s)).toBe(2);
+  });
+
+  it("「衝突のみ」なら、当たって effect は出せるが、Contract は送れない", async () => {
+    const logs: LogEntry[] = [];
+    const s = await inWorld(logs, "collision");
+    s.input(input("spark"));
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(said(logs, "fx1")).toEqual(["fx1 true"]);
+    expect(said(logs, "sent")).toEqual(["sent false"]);
+    expect(hp(s)).toBe(3);
+  });
+
+  it("「許さない」なら、外から来た銃からは、自分の配置の外は見つからない", async () => {
+    const logs: LogEntry[] = [];
+    const s = await inWorld(logs, "deny");
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(said(logs, "sent")).toEqual(["sent nohit"]);
+  });
+
+  it("土台は最初に置いた World。あとから置いた World の上限は、外から来た Item にかからない", async () => {
+    const logs: LogEntry[] = [];
+    const s = await inWorld(logs);
+    const other = world("deny");
+    s.addPart({
+      id: "range2",
+      realm: "repoOther",
+      outputId: "out_range",
+      snapshot: other,
+      position: [50, 0, 0],
+      yaw: 0,
+    });
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(said(logs, "sent")).toEqual(["sent true"]);
+  });
+});

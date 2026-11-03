@@ -12,6 +12,7 @@ import {
   BUILTIN,
   buildRegistry,
   compileSystem,
+  type GuestPolicy,
   isBuiltin,
   type MaterialDef,
   type OutputExposure,
@@ -785,6 +786,27 @@ export class Simulation {
     return part.snapshot.outputs.find((o) => o.id === part.outputId)?.exposure ?? "interactive";
   }
 
+  /** セッションの土台の World（最初に置いた World の配置） */
+  private baseWorld(): Part | undefined {
+    return [...this.parts.values()].find(
+      (p) => p.snapshot.outputs.find((o) => o.id === p.outputId)?.kind === "world",
+    );
+  }
+
+  /**
+   * 呼び出しの主体にかかる上限（ADR 0012）。主体がすべて「外から来た Item」（土台の World と別の作者の
+   * Item）なら、土台の World の guestPolicy。それ以外は上限なし（interactive）。
+   */
+  private guestLimit(callers: Part[]): GuestPolicy {
+    const base = this.baseWorld();
+    if (!base || callers.length === 0) return "interactive";
+    const guest = (p: Part) =>
+      p.realm !== base.realm &&
+      p.snapshot.outputs.find((o) => o.id === p.outputId)?.kind !== "world";
+    if (!callers.every(guest)) return "interactive";
+    return base.snapshot.outputs.find((o) => o.id === base.outputId)?.guestPolicy ?? "interactive";
+  }
+
   /** opaque handle を発行する（推測しにくい token） */
   private issueHandle(target: EntityId, point: Vec3, callers: Part[]): string {
     const bytes = new Uint8Array(16);
@@ -816,9 +838,13 @@ export class Simulation {
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
     const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
       "world.raycast": ([origin, direction, max, opts]) => {
-        // 非公開（private）の別の配置には当たらない（見つからない）
+        // 非公開（private）の別の配置には当たらない（見つからない）。土台の World が外から来た Item に
+        // 何も許さないときは、自分の配置の外はすべて見つからない
+        const limit = this.guestLimit(callers);
         const hidden = [...this.parts.values()]
-          .filter((p) => !callers.includes(p) && this.exposureOf(p) === "private")
+          .filter(
+            (p) => !callers.includes(p) && (limit === "deny" || this.exposureOf(p) === "private"),
+          )
           .flatMap((p) => [...p.entities]);
         const hit = this.physics.raycast(origin, direction, max ?? 100, [
           ...(opts?.exclude ?? []),
@@ -855,7 +881,11 @@ export class Simulation {
         const target = handle.target;
         if (!this.world.has(target)) return false;
         const targetPart = this.partOf(target);
-        if (!own(target) && (!targetPart || this.exposureOf(targetPart) !== "interactive")) {
+        const allowed =
+          targetPart &&
+          this.exposureOf(targetPart) === "interactive" &&
+          this.guestLimit(callers) === "interactive";
+        if (!own(target) && !allowed) {
           this.log(
             ctx.systemId,
             `${name} は受け付けられませんでした（相手が受け付けていません）`,

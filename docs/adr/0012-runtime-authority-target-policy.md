@@ -94,7 +94,15 @@ handle は、発行した配置からだけ・一度だけ・1 秒の間だけ�
 
 一時的な effect：`hit.effect("spark", { color, size, life })` で、handle の当たった点にだけ出せる（相手が「衝突のみ」でも出せる。非公開には当たらないので出せない）。handle 一つにつき一つ、大きさは 1m まで、寿命は 2 秒まで、1 フレームに 32 個まで。effect は保存も物理もせず、音と同じようにホストが手元で出して、状態と一緒にほかの人へ配る。Contract と effect は、同じ handle でそれぞれ一度ずつ使える。
 
-まだ残っているもの：拒否の構造化された Runtime Diagnostic、サーバーでの判定、World の上限 policy と置いた物への付与（今は出力ごとの exposure だけ）。
+World の上限：利用者と相談して、プリセットだけを作った。セッションでは最初に置いた World を土台とし、土台の World と別の作者の Item（外から来た Item）には、土台の World の `guestPolicy` がかかる（初期値はインタラクション可能）。
+
+- `deny`（許さない）：外から来た Item からは、自分の配置の外は見つからない
+- `collision`（衝突のみ）：Raycast と一時的な effect まで。Contract は送れない
+- `interactive`（インタラクション可能）：相手が公開した Contract も送れる
+
+実際に届くかは「外から来た Item への上限 ∩ 相手の公開範囲（exposure）」で決まる。土台の World と同じ作者の Item、World 自身には上限をかけない。あとから置いた World の上限は、外から来た Item にかからない（World が複数あるときの扱いは後で決める）。置いた物ごとの細かい付与は U5（権限の画面）で作る。
+
+まだ残っているもの：拒否の構造化された Runtime Diagnostic、サーバーでの判定、置いた物ごとの付与。
 
 ### この先
 

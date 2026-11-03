@@ -28,7 +28,17 @@ export interface OutputDef {
    * - interactive：公開した Contract（System の contracts）を受け付ける
    */
   exposure?: OutputExposure;
+  /**
+   * World のときだけ：外から来た Item（別の作者の Item）に許すこと（ADR 0012）。ないときは interactive。
+   * セッションでは、最初に置いた World が土台になり、その上限がほかの作者の Item にかかる。
+   * - deny：自分の配置の外は見つからない
+   * - collision：Raycast と一時的な effect まで。Contract は送れない
+   * - interactive：相手が公開した Contract も送れる
+   */
+  guestPolicy?: GuestPolicy;
 }
+
+export type GuestPolicy = "deny" | "collision" | "interactive";
 
 export type OutputExposure = "private" | "collision" | "interactive";
 
