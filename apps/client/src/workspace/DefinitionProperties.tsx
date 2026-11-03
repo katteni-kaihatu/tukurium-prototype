@@ -4,7 +4,7 @@ import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import { problemKind, problemPlace } from "./ProblemsList";
-import { type Selection, useWorkspace } from "./store";
+import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems, useSystemQuery } from "./useProblems";
 
@@ -18,11 +18,18 @@ const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"
   { type: "resource", label: "Resource", default: null },
 ];
 
+/** 開いている KokoState・マテリアル・スクリプトの詳細 */
+export function DetailPanel() {
+  const detail = useWorkspace((s) => s.detail);
+  if (!detail) return null;
+  return <DefinitionProperties selection={detail} />;
+}
+
 /** アウトプット・KokoState 定義・System・マテリアルの Properties */
 export function DefinitionProperties({
   selection,
 }: {
-  selection: Exclude<Selection, { kind: "entity" }>;
+  selection: { kind: "output"; id: string } | DetailTarget;
 }) {
   useWorkspace((s) => s.rev);
   switch (selection.kind) {
@@ -218,7 +225,7 @@ function OutputProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function KokoDefProperties({ id }: { id: string }) {
-  const { select } = useWorkspace();
+  const { select, openDetail, closeDetail } = useWorkspace();
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
@@ -373,7 +380,7 @@ function KokoDefProperties({ id }: { id: string }) {
                 <button
                   type="button"
                   className={ui.item}
-                  onClick={() => select({ kind: "system", id: s.id })}
+                  onClick={() => openDetail({ kind: "system", id: s.id })}
                 >
                   <span className={ui.itemName}>{s.name}</span>
                 </button>
@@ -396,7 +403,7 @@ function KokoDefProperties({ id }: { id: string }) {
                   )
                 ) {
                   project.removeKokoState(id);
-                  select(null);
+                  closeDetail();
                 }
               }}
             >
@@ -412,7 +419,7 @@ function KokoDefProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function SystemProperties({ id }: { id: string }) {
-  const { openSystem, select, showProblem } = useWorkspace();
+  const { openSystem, select, showProblem, closeDetail } = useWorkspace();
   const queryOf = useSystemQuery();
   const { error, safely } = useSafe();
   const problems = useProblems().filter((p) => p.subject.id === id);
@@ -532,7 +539,7 @@ function SystemProperties({ id }: { id: string }) {
               onClick={() => {
                 if (confirm(`${def.name} を削除しますか？`)) {
                   project.removeSystem(id);
-                  select(null);
+                  closeDetail();
                 }
               }}
             >
@@ -548,7 +555,7 @@ function SystemProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function MaterialProperties({ id }: { id: string }) {
-  const { select } = useWorkspace();
+  const { closeDetail } = useWorkspace();
   const { error, safely } = useSafe();
   const project = useProject();
   const canEdit = useCanEdit();
@@ -649,7 +656,7 @@ function MaterialProperties({ id }: { id: string }) {
               className={ui.btnDanger}
               onClick={() => {
                 project.removeMaterial(id);
-                select(null);
+                closeDetail();
               }}
             >
               マテリアルを削除

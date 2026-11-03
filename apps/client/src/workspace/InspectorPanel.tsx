@@ -184,8 +184,9 @@ function Properties() {
     return (
       <div className={ui.section}>
         <p className={ui.muted}>
-          Hierarchy や Resources
-          で選ぶと、ここに設定が出ます。空間ではクロスヘアを物に合わせてクリックしても選べます。
+          Hierarchy
+          で選ぶと、ここに設定が出ます。空間ではクロスヘアを物に合わせてクリックしても選べます。KokoState・マテリアル・スクリプトは、Resources
+          で選ぶと詳細パネルに出ます。
         </p>
       </div>
     );

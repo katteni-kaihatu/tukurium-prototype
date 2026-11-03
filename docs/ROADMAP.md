@@ -6,7 +6,7 @@
 
 ## 現在
 
-プロトタイプの一周は完成している。次は制作規模を増やす前に、リソース参照、System の型と境界、プロジェクト全体の診断を整理する。
+プロトタイプの一周は完成している。次は制作規模を増やす前に、リソース参照、System の型と境界、プロジェクト全体の診断を整理する。あわせて、UGC が他の Item / World と安全に相互作用するための Capability・権限・Library Package の基盤を、公開 API が固定される前に設計する。
 
 ### 1. リソースパスと全体診断
 
@@ -31,13 +31,27 @@
 - [ ] 構造化された ScriptDiagnostic を Runtime・通信・Problems UI まで保つ
 - [ ] メモリ超過時の復旧動作と ADR 0001 を一致させる
 
+### 3. UGC API・権限・Library Package
+
+詳細計画（Draft）: [`plans/ugc-api-library-permissions.md`](plans/ugc-api-library-permissions.md)
+
+現在の dependency graph の次から設計判断を始め、System binding と Runtime Host API を固定する前に権限境界を組み込む。Library の検索・共有 UI より、実行時に強制できる安全な API と最小 package model を先に作る。
+
+- [ ] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する
+- [ ] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る
+- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する
+- [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する
+- [ ] 公式 Library を通して入力・Raycast・Damage・一時 effect を提供し、銃サンプルを最初の移行例にする
+- [ ] Dependencies / 権限プリセット / Problems の UI を追加する
+- [ ] 基盤の実測後、ユーザー間の公開・検索・install・fork・更新へ広げる
+
 ## 後で判断するもの
 
 実測や利用経験が必要なため、先回りして作り込まない。
 
 - QuickJS の Worker 化
 - Entity / field の差分転送
-- 外部 package / library output
+- Library marketplace のランキング・評価・収益化・自動推薦
 - commit 単位のサーバー診断・CIキャッシュ
 - 診断 suppression policy
 - TypeScript を正式な利用者スクリプト形式にするか

@@ -36,11 +36,11 @@ async function newKokoState(page: Page, name: string, field: string, def: string
   const res = panel(page, "Resources");
   await res.getByRole("button", { name: "New", exact: true }).click();
   await res.getByRole("menuitem", { name: /^KokoState/ }).click();
-  const insp = panel(page, "Inspector");
-  await commitInput(insp.getByLabel("Name"), name);
-  await insp.getByRole("button", { name: "＋ Add field" }).click();
-  await commitInput(insp.getByLabel("フィールド名"), field);
-  await commitInput(insp.getByLabel("初期値"), def);
+  const detail = panel(page, "詳細");
+  await commitInput(detail.getByLabel("Name"), name);
+  await detail.getByRole("button", { name: "＋ Add field" }).click();
+  await commitInput(detail.getByLabel("フィールド名"), field);
+  await commitInput(detail.getByLabel("初期値"), def);
 }
 
 async function newScript(page: Page, code: string) {

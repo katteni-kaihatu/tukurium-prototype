@@ -10,6 +10,7 @@ import { useApp } from "../app/store";
 import { api, type RepoMeta } from "../net/api";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
 import type { SessionEngine } from "../session/SessionEngine";
+import { DetailPanel } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { InspectorPanel } from "./InspectorPanel";
@@ -63,6 +64,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
 
   const historyOpen = useWorkspace((s) => s.historyOpen);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
+  const detail = useWorkspace((s) => s.detail);
   const panels: PanelSpec[] = [];
   if (libraryOpen) {
     panels.push({
@@ -114,6 +116,17 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
           const ws = useWorkspace.getState();
           for (const id of ws.openSystems) ws.closeSystem(id);
         },
+      });
+    }
+    if (detail) {
+      panels.push({
+        id: "ws-detail",
+        title: "詳細",
+        // フィールドの数では高さを変えない。あふれた分は中でスクロールする
+        initial: { x: 420, y: 84, width: 400, height: 480 },
+        focusKey: detail.seq,
+        render: () => <DetailPanel />,
+        onClose: () => useWorkspace.getState().closeDetail(),
       });
     }
     if (members) {
