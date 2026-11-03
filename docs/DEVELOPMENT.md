@@ -21,7 +21,7 @@
 - 3D のパネルを操作しづらくなったときの逃げ道として、画面左下に「空間のパネル」の一覧（画面に戻す）を出している。
 - 確かめるときは `document.elementFromPoint()` で、ボタンの中心が本当にそのボタンに当たるかを調べる。
 - **空間に入っている（ポインターロック中）ときは、クリックが DOM に届かない。** 照準の先の要素へイベントを合成して渡している（ADR 0009）。合成したイベントは document に返ってくるので、`isTrusted` でないものは扱わない（扱うと無限に繰り返して落ちる）。
-- E2E ではポインターロックできないので、`controller.locked` を `Object.defineProperty` で true にして確かめる（`e2e/interaction.spec.ts`）。
+- ヘッドレスのブラウザではポインターロックできないので、確かめるときは `controller.locked` を `Object.defineProperty` で true にして真似る。
 - 3D パネルを動かしたら、置き場所を PanelLayer の状態に保存する（`PanelSpace.onMoved`）。保存しないと、次の描画で元の場所に戻る。
 
 ## スクリプト（QuickJS）
@@ -56,4 +56,5 @@
 
 ## GitHub・CI
 
-- `.github/workflows/ci.yml` で、lint・型・単体テスト・ビルド・E2E を流す。CI がない間は、手元で全部流してからマージしていた。
+- `.github/workflows/ci.yml` で、lint・型・単体テスト・ビルド（`check`）と E2E を流す。合否は `check` で決め、E2E は落ちてもマージを止めない（`continue-on-error`）。
+- E2E はプロトタイプの間、背骨の 4 本だけにした。細かい E2E は、画面を作り替えるたびに直す手間と、CI の遅い描画に合わせる手間が大きかった（CLAUDE.md「テストの方針」）。

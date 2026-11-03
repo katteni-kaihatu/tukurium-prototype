@@ -13,15 +13,12 @@ pnpm format && pnpm lint && pnpm typecheck && pnpm test
 
 `pnpm lint` は Biome に加えて、Dockerfile がすべての package.json を COPY しているかも検査する。
 
-## 2. E2E
+## 2. E2E（背骨の 4 本だけ）
 
-- 変えた所に近い spec だけ流す：`pnpm e2e e2e/<name>.spec.ts`
-- PR の前には全部流す：`pnpm e2e`（4 分ほど）。開発サーバーが動いていればそれを使う。
-- 新しく書くときの約束：
-  - `test` は `e2e/helpers.ts` から import する
-  - 2 人目以降の参加者は `newPerson(browser, name)` で開く
-  - 長い手順の spec は `test.describe.configure({ timeout: 150_000 })`
-- 落ちたら、まず `test-results/<テスト名>/error-context.md`（失敗時の画面の構造）を読む。1 本ずつなら通るのに通しで落ちるときは、負荷による時間切れを疑う（docs/DEVELOPMENT.md）。
+- `pnpm e2e`（2 分ほど）。背骨の流れ（作る・一緒に編集・セッションに出して適用・公開）に触れたときに流す。
+- 機能ごとの細かい E2E は足さない。新しい画面や操作は 3 の方法で確かめる。
+- 背骨の流れを変えて E2E が落ちたら、直すのは E2E の方でよいかをまず考える。
+- 落ちたら、まず `test-results/<テスト名>/error-context.md`（失敗時の画面の構造）を読む。
 
 ## 3. 画面を見て確かめる（UI・3D パネル・見た目の変更）
 

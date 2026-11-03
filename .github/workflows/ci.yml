@@ -21,9 +21,11 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # E2E は背骨の流れだけ。結果は見るが、落ちてもマージは止めない（プロトタイプの間の方針。CLAUDE.md）
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
