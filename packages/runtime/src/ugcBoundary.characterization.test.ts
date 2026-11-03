@@ -99,7 +99,9 @@ describe("U2：別の配置へは opaque handle と公開 Contract だけ（ADR 
     const s = await session(logs);
     s.input(input("poke"));
     s.step(1 / 60);
-    expect(s.world.get("victim/ent_target2", "repoVictim:ks_target")?.f_hp).toBe(3);
+    expect(s.world.get("victim/ent_target2", s.stateIdOf("victim", "ks_target") ?? "")?.f_hp).toBe(
+      3,
+    );
   });
 });
 

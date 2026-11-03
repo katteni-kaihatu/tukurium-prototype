@@ -39,8 +39,9 @@ async function session(logs: LogEntry[] = []) {
 }
 
 const hp = (s: Simulation, target: string) =>
-  s.world.get(`r1/${target}`, "repoRange:ks_target")?.f_hp;
-const ammo = (s: Simulation) => s.world.get("g1/ent_gun", "repoGun:ks_gun")?.f_ammo;
+  s.world.get(`r1/${target}`, s.stateIdOf("r1", "ks_target") ?? "")?.f_hp;
+const ammo = (s: Simulation) =>
+  s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_ammo;
 
 describe("セッションの世界（複数の配置）", () => {
   it("別のリポジトリの銃で、別のリポジトリの的を撃てる。配置の位置が反映される", async () => {
@@ -57,8 +58,11 @@ describe("セッションの世界（複数の配置）", () => {
         .materials()
         .map((m) => m.id)
         .sort(),
-    ).toEqual(["repoGun:mat_gun", "repoRange:mat_wood"]);
-    expect(s.world.get("g1/ent_gun", BUILTIN.Mesh)?.material).toBe("repoGun:mat_gun");
+    ).toEqual([s.stateIdOf("g1", "mat_gun"), s.stateIdOf("r1", "mat_wood")]);
+    // マテリアルの ID も、版付きの realm ごとに付け替わる
+    expect(s.world.get("g1/ent_gun", BUILTIN.Mesh)?.material).toMatch(
+      /^repoGun@[0-9a-f]{8}:mat_gun$/,
+    );
     expect(logs.filter((l) => l.level === "error")).toEqual([]);
   });
 
@@ -75,7 +79,7 @@ describe("セッションの世界（複数の配置）", () => {
     expect(s.systemStatus().filter((x) => x.name === "TargetHit")).toHaveLength(1);
     s.input(fire([5, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
-    expect(s.world.get("r2/ent_target2", "repoRange:ks_target")?.f_hp).toBe(2);
+    expect(s.world.get("r2/ent_target2", s.stateIdOf("r2", "ks_target") ?? "")?.f_hp).toBe(2);
     expect(hp(s, "ent_target2")).toBe(3);
   });
 
@@ -97,7 +101,7 @@ describe("セッションの世界（複数の配置）", () => {
     const report = s.applyPart("repoGun", "out_gun", next);
     expect(report).toEqual({ instances: 1, kept: 1, dropped: 0 });
     expect(ammo(s)).toBe(11); // マークあり：実行値を保つ
-    expect(s.world.get("g1/ent_gun", "repoGun:ks_gun")?.f_damage).toBe(3); // マークなし：新しい値
+    expect(s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_damage).toBe(3); // マークなし：新しい値
 
     for (let i = 0; i < 15; i++) s.step(1 / 60);
     s.input(fire([0, 1.5, 0], [0, 0, -1]));
@@ -183,9 +187,9 @@ describe("セッションの世界（複数の配置）", () => {
       yaw: 0,
     });
     s.step(1 / 60);
-    expect(s.world.get("x1/e", "repoX:ks_gun")?.f_x).toBe(8);
+    expect(s.world.get("x1/e", s.stateIdOf("x1", "ks_gun") ?? "")?.f_x).toBe(8);
     // 銃のリポジトリの Gun には触れていない
-    expect(s.world.get("g1/ent_gun", "repoGun:ks_gun")?.f_ammo).toBe(12);
+    expect(s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_ammo).toBe(12);
     expect(s.systemStatus().every((x) => x.error === null)).toBe(true);
   });
 
@@ -222,5 +226,71 @@ describe("音", () => {
     const sounds = sim.drainSounds();
     expect(sounds).toEqual([{ asset: clip, position: [0, 1.1, -1.5], volume: 0.5 }]);
     expect(sim.drainSounds()).toEqual([]);
+  });
+});
+
+describe("版ごとの realm（ADR 0010 §4）", () => {
+  it("同じワークスペースの一つの出力だけを適用しても、ほかの出力は古い版のまま動く（版が混ざらない）", async () => {
+    const { gunAndTargetSample } = await import("@tukurium/repo-model");
+    const v1 = gunAndTargetSample();
+    v1.outputs = [
+      {
+        id: "out_gun",
+        name: "銃",
+        kind: "item",
+        systems: [{ id: "sys_shoot", enabled: true }],
+        keep: [],
+      },
+      {
+        id: "out_range",
+        name: "射撃場",
+        kind: "item",
+        systems: [{ id: "sys_target", enabled: true }],
+        keep: [],
+      },
+    ];
+    v1.entities = v1.entities.map((e) => ({
+      ...e,
+      output: e.name === "銃" ? "out_gun" : "out_range",
+    }));
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "g",
+      realm: "ws",
+      outputId: "out_gun",
+      snapshot: v1,
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    sim.addPart({
+      id: "r",
+      realm: "ws",
+      outputId: "out_range",
+      snapshot: v1,
+      position: [0, 0, -2],
+      yaw: 0,
+    });
+
+    // v2：的の hp フィールドの名前を変える（射撃場はまだ v1 のコード e.Target.hp のまま）
+    const v2 = structuredClone(v1);
+    v2.kokostates = v2.kokostates.map((k) =>
+      k.id === "ks_target"
+        ? { ...k, fields: k.fields.map((f) => (f.id === "f_hp" ? { ...f, name: "health" } : f)) }
+        : k,
+    );
+    sim.applyPart("ws", "out_gun", v2);
+
+    // 射撃場の的は v1 のまま：撃たれると hp が減る（v2 の定義が混ざると e.Target.hp が無くなる）
+    sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+    sim.step(1 / 60);
+    const status = sim.systemStatus().find((x) => x.name === "TargetHit");
+    expect(status?.error).toBeNull();
+    const target = sim.world
+      .entityIds()
+      .find((id) => id.startsWith("r/") && sim?.nameOf(id) === "的2");
+    const koko = target
+      ? sim.world.statesOf(target).find((k) => k.endsWith(":ks_target"))
+      : undefined;
+    expect(target && koko ? sim.world.get(target, koko)?.f_hp : null).toBe(2);
   });
 });

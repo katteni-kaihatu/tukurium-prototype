@@ -83,7 +83,8 @@ async function session(logs: LogEntry[], exposure?: "private" | "collision" | "i
   return sim;
 }
 
-const hp = (s: Simulation) => s.world.get("range/ent_target2", "repoRange:ks_target")?.f_hp;
+const hp = (s: Simulation) =>
+  s.world.get("range/ent_target2", s.stateIdOf("range", "ks_target") ?? "")?.f_hp;
 const said = (logs: LogEntry[], prefix: string) =>
   logs.filter((l) => l.level === "log" && l.message.startsWith(`${prefix} `)).map((l) => l.message);
 

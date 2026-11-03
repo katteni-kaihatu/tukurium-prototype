@@ -78,4 +78,5 @@ export default system({
 - `packages/repo-model` に、論理パスの索引（`ResourcePathIndex`）、汎用の `Diagnostic`、構造の検査（`ProjectStructureValidator`）を置く。どれも UI に依存しない。
 - コンパイラ（`compileSystem`）は import 文の範囲だけを `const Gun = __koko("<ID>", "<名前>");` に書き換え、行の数を保つ（source map を使わずに、実行時のエラーの行番号をそのまま使える）。`entity.get(Gun)` で値を取る。
 - Phase 5 で runtime を ID ベースにした。`__koko` が返す値は文字列としては KokoState の ID になり、System に渡す状態も「領域の中の KokoState ID」をキーにする。名前が一つに決まる KokoState だけ、移行の間の書き方（`e.Gun`・`with: ["Gun"]`）でも引ける。Registry は同じ名前を許し、名前で引くと曖昧なものは見つからない。別の領域の KokoState は System に見せない。Built-in と同じ名前の KokoState は、移行の間の書き方が曖昧になるので作れない。
-- System の書き方と runtime の移行（§3・§4）、Snapshot の版上げは、計画の Phase 4〜7 で行う。それまでは今の表示名での参照が動き続ける。同じ名前の KokoState は、Phase 5 から別のフォルダに作れる。
+- §4 は Phase 5 で入れた。セッションでは配置の realm を「リポジトリ@版」にする（版は制作データの JSON から決まる 8 桁の hash。同じ中身ならどのホストでも同じ値なので、ホストが替わっても同じ ID で状態を引き継げる）。適用では、対象の配置だけを新しい版の realm へまとめて移し（状態維持のマークは古い版の ID から新しい版の ID へ写す）、どの配置も使わなくなった古い版の定義・System・スクリプトの領域を片付ける。同じリポジトリのほかの出力は、適用するまで古い版のまま動く。実行時の KokoState・マテリアルの ID は「リポジトリ@版:ID」になる（`Simulation.stateIdOf` で引ける）。
+- Snapshot の版上げは、計画の Phase 7 で行う。それまでは今の表示名での参照が動き続ける。同じ名前の KokoState は、Phase 5 から別のフォルダに作れる。

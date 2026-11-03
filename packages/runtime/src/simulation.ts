@@ -136,7 +136,20 @@ export interface ApplyReport {
 }
 
 interface Part extends PartSpec {
+  /** 置いたときのリポジトリ（ワークスペース）。realm は、セッションではこれに版を付けたもの */
+  source: string;
   entities: Set<EntityId>;
+}
+
+/** 制作データの版（同じ中身なら、どのホストでも同じ値。FNV-1a） */
+function revisionOf(snapshot: ProjectSnapshot): string {
+  const text = JSON.stringify(snapshot);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }
 
 interface LoadedSystem {
@@ -294,7 +307,12 @@ export class Simulation {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     if (this.parts.has(spec.id)) this.removePart(spec.id);
-    const part: Part = { ...spec, entities: new Set() };
+    const part: Part = {
+      ...spec,
+      realm: this.realmOf(spec.realm, spec.snapshot),
+      source: spec.realm,
+      entities: new Set(),
+    };
     this.parts.set(part.id, part);
     this.registerRealm(part.realm, part.snapshot);
     this.instantiate(part);
@@ -312,18 +330,38 @@ export class Simulation {
       sys.users.delete(id);
       if (sys.users.size === 0) this.dropSystem(sys);
     }
-    if (![...this.parts.values()].some((p) => p.realm === part.realm)) {
-      for (const k of this.realmDefs.get(part.realm) ?? []) this.registry.unregister(k);
-      this.realmDefs.delete(part.realm);
-      this.realmMaterials.delete(part.realm);
-      this.realmAssets.delete(part.realm);
-    }
+    this.dropUnusedRealm(part.realm);
+  }
+
+  /**
+   * セッションでは、配置の realm を「リポジトリ@版」にする（ADR 0010 §4）。同じ realm に
+   * 違う版の定義と System を混ぜないため。同じ中身なら同じ版なので、ホストが替わっても同じ realm になる。
+   */
+  private realmOf(source: string, snapshot: ProjectSnapshot): string {
+    return this.multi ? `${source}@${revisionOf(snapshot)}` : source;
+  }
+
+  /** どの配置も使わなくなった realm の定義・マテリアル・素材・スクリプトの領域を片付ける */
+  private dropUnusedRealm(realm: string): void {
+    if ([...this.parts.values()].some((p) => p.realm === realm)) return;
+    for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
+    this.realmDefs.delete(realm);
+    this.realmMaterials.delete(realm);
+    this.realmAssets.delete(realm);
+    for (const sys of [...this.systems]) if (sys.realm === realm) this.dropSystem(sys);
+    this.sandbox.disposeRealm(realm);
+  }
+
+  /** 配置と、制作データの中の KokoState ID から、実行時の KokoState ID を求める（版付きの realm を含む） */
+  stateIdOf(partId: string, kokoId: KokoStateId): KokoStateId | undefined {
+    const part = this.parts.get(partId);
+    return part ? this.kid(part.realm, kokoId) : undefined;
   }
 
   partList(): { id: string; realm: string; outputId: string; position: Vec3; yaw: number }[] {
     return [...this.parts.values()].map((p) => ({
       id: p.id,
-      realm: p.realm,
+      realm: p.source,
       outputId: p.outputId,
       position: p.position,
       yaw: p.yaw,
@@ -335,14 +373,16 @@ export class Simulation {
    * 状態維持のマークがあり、型が変わっていないフィールドだけ、現在の実行値を引き継ぐ。
    * それ以外の値は新しい制作データの値になる。System のコードも読み直す。
    */
-  applyPart(realm: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
+  applyPart(source: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     const targets = [...this.parts.values()].filter(
-      (p) => p.realm === realm && p.outputId === outputId,
+      (p) => p.source === source && p.outputId === outputId,
     );
     const report: ApplyReport = { instances: targets.length, kept: 0, dropped: 0 };
     if (targets.length === 0) return report;
+    // 適用した配置だけを、新しい版の realm へまとめて移す（ほかの出力は古い版のまま。ADR 0010 §4）
+    const realm = this.realmOf(source, snapshot);
     const marks = snapshot.outputs.find((o) => o.id === outputId)?.keep ?? [];
     const newDefs = new Map(snapshot.kokostates.map((d) => [d.id, d]));
 
@@ -355,13 +395,18 @@ export class Simulation {
       const list: { entity: EntityId; koko: KokoStateId; field: string; value: FieldValue }[] = [];
       for (const m of marks) {
         const entity = this.eid(part, m.entity);
-        const koko = this.kid(realm, m.koko);
-        const oldField = this.registry.get(koko)?.fields.find((f) => f.id === m.field);
-        const newDef = isBuiltin(m.koko) ? this.registry.get(koko) : newDefs.get(m.koko);
+        const oldKoko = this.kid(part.realm, m.koko);
+        const oldField = this.registry.get(oldKoko)?.fields.find((f) => f.id === m.field);
+        const newDef = isBuiltin(m.koko) ? this.registry.get(m.koko) : newDefs.get(m.koko);
         const newField = newDef?.fields.find((f) => f.id === m.field);
-        const current = this.world.get(entity, koko)?.[m.field];
+        const current = this.world.get(entity, oldKoko)?.[m.field];
         if (oldField && newField && oldField.type === newField.type && current !== undefined) {
-          list.push({ entity, koko, field: m.field, value: structuredClone(current) });
+          list.push({
+            entity,
+            koko: this.kid(realm, m.koko),
+            field: m.field,
+            value: structuredClone(current),
+          });
           report.kept++;
         } else {
           report.dropped++;
@@ -370,10 +415,17 @@ export class Simulation {
       kept.set(part.id, list);
     }
 
-    // 2. 定義・マテリアルを入れ替えて、配置を作り直す
+    // 2. System を外し、配置を新しい版で作り直す
+    const ids = new Set(targets.map((p) => p.id));
+    for (const sys of [...this.systems]) {
+      for (const id of ids) sys.users.delete(id);
+      if (sys.users.size === 0) this.dropSystem(sys);
+    }
+    const oldRealms = new Set(targets.map((p) => p.realm));
     for (const part of targets) {
       this.clearEntities(part);
       part.snapshot = snapshot;
+      part.realm = realm;
     }
     this.registerRealm(realm, snapshot);
     for (const part of targets) {
@@ -384,14 +436,9 @@ export class Simulation {
       }
     }
 
-    // 3. System を読み直す
-    const ids = new Set(targets.map((p) => p.id));
-    for (const sys of [...this.systems]) {
-      if (sys.realm !== realm) continue;
-      for (const id of ids) sys.users.delete(id);
-      if (sys.users.size === 0) this.dropSystem(sys);
-    }
+    // 3. System を読み直し、使われなくなった古い版を片付ける
     for (const part of targets) this.loadSystems(part, true);
+    for (const old of oldRealms) if (old !== realm) this.dropUnusedRealm(old);
     return report;
   }
 
@@ -851,7 +898,7 @@ export class Simulation {
     const base = this.baseWorld();
     if (!base || callers.length === 0) return "interactive";
     const guest = (p: Part) =>
-      p.realm !== base.realm &&
+      p.source !== base.source &&
       p.snapshot.outputs.find((o) => o.id === p.outputId)?.kind !== "world";
     if (!callers.every(guest)) return "interactive";
     return base.snapshot.outputs.find((o) => o.id === base.outputId)?.guestPolicy ?? "interactive";
