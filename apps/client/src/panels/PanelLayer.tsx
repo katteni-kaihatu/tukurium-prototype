@@ -21,6 +21,8 @@ export interface PanelSpec {
   initial: PanelPlacement;
   /** タイトルバーに並べる操作 */
   actions?: ReactNode;
+  /** この値が変わったらパネルを最前面に出す（コードを開いたときのエディタなど） */
+  focusKey?: string | number | null;
   onClose?: () => void;
 }
 
@@ -75,6 +77,7 @@ export function PanelLayer({
   };
 
   const stateOf = (spec: PanelSpec): PanelState => states[spec.id] ?? initialState(spec);
+  const focusKeys = useRef(new Map<string, PanelSpec["focusKey"]>());
 
   // 状態に合わせて要素を 2D の層か空間に置く
   useLayoutEffect(() => {
@@ -91,6 +94,10 @@ export function PanelLayer({
     for (const p of panels) {
       const st = stateOf(p);
       const el = elementFor(p.id);
+      if (p.focusKey !== undefined && focusKeys.current.get(p.id) !== p.focusKey) {
+        focusKeys.current.set(p.id, p.focusKey);
+        el.style.zIndex = String(++front.current);
+      }
       el.style.width = `${p.initial.width}px`;
       el.style.display = hidden ? "none" : "";
       if (st.pinned || !st.transform) {
@@ -108,12 +115,18 @@ export function PanelLayer({
     }
   });
 
-  useLayoutEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    // 右ドラッグで動かした置き場所を覚える（覚えないと、次の描画で元の場所に戻る）
+    engine.panels.onMoved = (id, transform) =>
+      setStates((prev) => {
+        const st = prev[id];
+        return st ? { ...prev, [id]: { ...st, transform } } : prev;
+      });
+    return () => {
+      engine.panels.onMoved = null;
       for (const id of elements.current.keys()) engine.panels.remove(id);
-    },
-    [engine],
-  );
+    };
+  }, [engine]);
 
   const togglePin = useCallback(
     (spec: PanelSpec) => {

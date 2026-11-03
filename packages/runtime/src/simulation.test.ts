@@ -240,3 +240,44 @@ describe("Simulation：System の扱い", () => {
     expect(sim.world.get("ball", "ks_c")?.n).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("Simulation：右クリックで持つ（Grabbable）", () => {
+  it("Grabbable を持ち、視点に合わせて動かし、もう一度で放す。持っている間は落ちない", async () => {
+    const p = project(`export default system({ query: { with: ["Counter"] }, onUpdate() {} });`);
+    p.entities.push({
+      id: "box",
+      name: "箱",
+      parent: null,
+      output: "out",
+      order: 1,
+      states: {
+        [BUILTIN.Transform]: { position: [0, 1.5, -3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [BUILTIN.Mesh]: { shape: "box", size: [0.5, 0.5, 0.5] },
+        [BUILTIN.Collider]: {},
+        [BUILTIN.RigidBody]: { type: "dynamic" },
+        [BUILTIN.Grabbable]: { distance: 1 },
+      },
+    });
+    sim = await Simulation.create(p, "out", { realm: "r" });
+    sim.step(1 / 60);
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
+    // 持っている間は、視点の先へ動き、落ちない
+    sim.input({ ...fire([1, 0, 0], "hold") });
+    for (let i = 0; i < 30; i++) sim.step(1 / 60);
+    const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(pos[0]).toBeCloseTo(1, 1);
+    expect(pos[1]).toBeCloseTo(1.35, 1);
+    // ほかの人は、持たれている物を取れない
+    sim.input({ ...fire([1, 0, 0], "grab"), player: "p2" });
+    sim.step(1 / 60);
+    expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
+    // もう一度で放す → 落ちる
+    sim.input(fire([1, 0, 0], "grab"));
+    for (let i = 0; i < 30; i++) sim.step(1 / 60);
+    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    const after = sim.world.get("box", BUILTIN.Transform)?.position as Vec3 | undefined;
+    expect(after?.[1]).toBeLessThan(1.3);
+  });
+});

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
+import { holdsSomething } from "../workspace/WorkspaceController";
 import type { SessionEngine } from "./SessionEngine";
 import { queueSessionSounds, sendSessionFrame, useSessionWorld } from "./sessionWorld";
 
@@ -21,6 +22,7 @@ export class SessionWorldController {
   private accumulator = 0;
   private frameTimer = 0;
   private uiTimer = 0;
+  private holdTimer = 0;
   private readonly disposers: (() => void)[] = [];
 
   constructor(private readonly engine: SessionEngine) {
@@ -29,6 +31,8 @@ export class SessionWorldController {
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => {
         if (button === 0 && this.routesHere()) this.input("fire", phase);
+        // 右クリック：Grabbable を持つ・放す（ワークスペースを再生していなければ、編集中でも持てる）
+        if (button === 2 && useWorkspace.getState().mode === "edit") this.input("grab", phase);
       }),
     );
     const onKey = (e: KeyboardEvent) => {
@@ -105,6 +109,17 @@ export class SessionWorldController {
     this.view.root.visible = true;
     // ワークスペースを再生中は、手に持つ物はワークスペースの方を優先する
     const holdCamera = useWorkspace.getState().mode === "edit" ? this.engine.camera : null;
-    this.view.sync(view.world, { materials: view.materials, holdCamera });
+    this.view.sync(view.world, {
+      materials: view.materials,
+      holdCamera,
+      player: useApp.getState().me?.id,
+    });
+    // 持っている物があれば、視点を間隔をあけて送る
+    this.holdTimer += dt;
+    if (this.holdTimer > 0.1) {
+      this.holdTimer = 0;
+      const me = useApp.getState().me?.id;
+      if (me && holdsSomething(view.world, me)) this.input("hold", "down");
+    }
   }
 }

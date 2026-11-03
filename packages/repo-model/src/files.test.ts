@@ -113,4 +113,16 @@ describe("抽出", () => {
     expect(out.outputs).toHaveLength(2); // アウトプットは新しい ID で増える
     expect(new Set(out.entities.map((e) => e.id)).size).toBe(2);
   });
+
+  it("フォルダと割り当ても、ファイルとの行き来で保たれる", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const f = p.addFolder("しくみ", null);
+    const sys = p.systems()[0];
+    if (!sys) throw new Error("System がありません");
+    p.moveResource(sys.id, f);
+    const back = fromFiles(toFiles(p.snapshot()));
+    expect(back.folders).toEqual(p.snapshot().folders);
+    expect(back.placement).toEqual({ [sys.id]: f });
+  });
 });

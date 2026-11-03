@@ -20,6 +20,8 @@ export interface SyncOptions {
   materials: MaterialDef[];
   /** Play 中：Held を持つ Entity をこのカメラに付ける */
   holdCamera?: THREE.Camera | null;
+  /** 自分の ID。Held の player が自分（か空）のものだけカメラに付ける。ほかの人が持つ物はその位置に出す */
+  player?: string;
 }
 
 /**
@@ -60,7 +62,9 @@ export class EntityView {
     for (const id of ids) {
       const node = this.nodes.get(id);
       if (!node) continue;
-      const heldState = opts.holdCamera ? world.get(id, BUILTIN.Held) : undefined;
+      const held = opts.holdCamera ? world.get(id, BUILTIN.Held) : undefined;
+      const holder = (held?.player as string | undefined) ?? "";
+      const heldState = held && (holder === "" || holder === opts.player) ? held : undefined;
       let parent: THREE.Object3D = this.root;
       if (heldState && opts.holdCamera) {
         parent = opts.holdCamera;

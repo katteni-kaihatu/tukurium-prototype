@@ -10,6 +10,7 @@ export const BUILTIN = {
   Collider: "builtin.Collider",
   RigidBody: "builtin.RigidBody",
   Held: "builtin.Held",
+  Grabbable: "builtin.Grabbable",
   AudioSource: "builtin.AudioSource",
 } as const;
 
@@ -71,6 +72,17 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     fields: [
       /** Play 中、自分の視点に対してこの位置に持つ（m） */
       { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
+      /** 持っている人の ID。空なら、見ている人みんなが自分の手に持つ（銃のサンプルなど） */
+      { id: "player", name: "player", type: "string", default: "" },
+    ],
+  },
+  {
+    id: BUILTIN.Grabbable,
+    name: "Grabbable",
+    builtin: true,
+    fields: [
+      /** 右クリックで持ったとき、目の前のこの距離（m）に持つ */
+      { id: "distance", name: "distance", type: "number", default: 1.2 },
     ],
   },
   {

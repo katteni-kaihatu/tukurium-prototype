@@ -112,4 +112,24 @@ describe("ProjectDoc", () => {
     a.code("sys_shoot")?.insert(0, "// edited\n");
     expect(b.snapshot()).toEqual(a.snapshot());
   });
+
+  it("フォルダを作り、リソースを入れ・移し、フォルダを消すと中身はひとつ上へ移る", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const gun = p.kokostates().find((k) => k.name === "Gun");
+    if (!gun) throw new Error("Gun がありません");
+    const a = p.addFolder("銃", null);
+    const b = p.addFolder("部品", a);
+    p.moveResource(gun.id, b);
+    expect(p.folderOf(gun.id)).toBe(b);
+    // 自分の中へは移せない
+    p.moveFolder(a, b);
+    expect(p.folders().find((f) => f.id === a)?.parent).toBeNull();
+    p.removeFolder(b);
+    expect(p.folderOf(gun.id)).toBe(a);
+    expect(p.snapshot().placement).toEqual({ [gun.id]: a });
+    // リソースを消すと、割り当ても残らない
+    p.removeKokoState(gun.id);
+    expect(p.snapshot().placement).toEqual({});
+  });
 });

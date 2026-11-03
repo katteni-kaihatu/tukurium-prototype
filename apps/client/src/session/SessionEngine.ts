@@ -60,6 +60,9 @@ export class SessionEngine {
     container.addEventListener("click", this.onContainerClick);
     document.addEventListener("mousedown", this.onMouseDown);
     document.addEventListener("mouseup", this.onMouseUp);
+    document.addEventListener("mousemove", this.onMouseMove);
+    document.addEventListener("contextmenu", this.onContextMenu);
+    document.addEventListener("wheel", this.onWheel, { passive: false });
     this.avatars = new Avatars(this.scene);
     this.remotePanels = new RemotePanels(this.scene, this.avatars);
     this.audio = new AudioPlayer(this.scene, this.camera);
@@ -110,6 +113,9 @@ export class SessionEngine {
     this.container.removeEventListener("click", this.onContainerClick);
     document.removeEventListener("mousedown", this.onMouseDown);
     document.removeEventListener("mouseup", this.onMouseUp);
+    document.removeEventListener("mousemove", this.onMouseMove);
+    document.removeEventListener("contextmenu", this.onContextMenu);
+    document.removeEventListener("wheel", this.onWheel);
     this.frameListeners.clear();
     this.pointerListeners.clear();
     this.panels.dispose();
@@ -135,6 +141,9 @@ export class SessionEngine {
     this.frame = requestAnimationFrame(this.loop);
     const dt = Math.min(this.clock.getDelta(), 0.1);
     this.controller.update(dt);
+    // 照準が 3D のパネルに乗っていたら、照準の見た目を変える（クリックがパネルに届く合図）
+    const aim = this.controller.locked && this.aimedPanelElement() ? "panel" : "";
+    if ((this.container.dataset.aim ?? "") !== aim) this.container.dataset.aim = aim;
     this.avatars.update(dt);
     this.remotePanels.update();
     this.panels.update(this.camera);
@@ -143,14 +152,116 @@ export class SessionEngine {
     this.cssRenderer.render(this.scene, this.camera);
   };
 
+  // ---------------------------------------------------------------------------
+  // マウス：空間に入っている（ポインターロック中）ときは照準（画面の中央）で操作する。
+  // - 照準の先が 3D のパネルなら、左クリックはパネルへ渡し、右ドラッグでパネルを動かす
+  // - それ以外は、左右のボタンを空間の入力として渡す（左：撃つ・選ぶ、右：持つ）
+  // 空間に入っていないときは、パネルを直接クリックでき、右ドラッグで動かせる。
+
+  /** ポインターの位置（ロック中は画面の中央） */
+  private mouse = { x: 0, y: 0 };
+  /** 照準でクリックを渡している要素（mousedown の相手） */
+  private pressed: Element | null = null;
+
+  private ndc = (): THREE.Vector2 => {
+    if (this.controller.locked) return new THREE.Vector2(0, 0);
+    const r = this.container.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((this.mouse.x - r.left) / r.width) * 2 - 1,
+      -(((this.mouse.y - r.top) / r.height) * 2 - 1),
+    );
+  };
+
+  private center(): { x: number; y: number } {
+    const r = this.container.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  /** 照準の先にある、3D のパネルの中の要素 */
+  aimedPanelElement(): Element | null {
+    const c = this.center();
+    const el = document.elementFromPoint(c.x, c.y);
+    return this.panels.idOf(el) ? el : null;
+  }
+
   private onMouseDown = (e: MouseEvent): void => {
-    if (!this.controller.locked) return;
+    // パネルへ渡すために自分で出したイベントは扱わない（自分に返ってきて繰り返さないように）
+    if (!e.isTrusted) return;
+    if (!this.controller.locked) {
+      // 3D のパネルを右ドラッグで動かす
+      if (e.button === 2) {
+        const id = this.panels.idOf(e.target as Element);
+        if (id) {
+          this.mouse = { x: e.clientX, y: e.clientY };
+          this.panels.startMove(id, this.camera, this.ndc);
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+    const el = this.aimedPanelElement();
+    if (el) {
+      if (e.button === 2) {
+        const id = this.panels.idOf(el);
+        if (id) this.panels.startMove(id, this.camera, this.ndc);
+      } else if (e.button === 0) {
+        this.pressed = el;
+        const c = this.center();
+        const init = { bubbles: true, cancelable: true, clientX: c.x, clientY: c.y, button: 0 };
+        el.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1 }));
+        el.dispatchEvent(new MouseEvent("mousedown", init));
+        const focusable = el.closest<HTMLElement>(
+          "input, textarea, select, button, a[href], [contenteditable='true'], [tabindex]",
+        );
+        focusable?.focus();
+      }
+      return;
+    }
     for (const fn of this.pointerListeners) fn(e.button, "down");
   };
 
   private onMouseUp = (e: MouseEvent): void => {
+    if (!e.isTrusted) return;
+    if (e.button === 2 && this.panels.isMoving) {
+      this.panels.endMove();
+      return;
+    }
     if (!this.controller.locked) return;
+    if (e.button === 0 && this.pressed) {
+      const el = this.aimedPanelElement() ?? this.pressed;
+      const c = this.center();
+      const init = { bubbles: true, cancelable: true, clientX: c.x, clientY: c.y, button: 0 };
+      el.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerId: 1 }));
+      el.dispatchEvent(new MouseEvent("mouseup", init));
+      if (el === this.pressed || this.pressed.contains(el) || el.contains(this.pressed))
+        (el as HTMLElement).click?.();
+      this.pressed = null;
+      return;
+    }
     for (const fn of this.pointerListeners) fn(e.button, "up");
+  };
+
+  private onMouseMove = (e: MouseEvent): void => {
+    if (!this.controller.locked) this.mouse = { x: e.clientX, y: e.clientY };
+  };
+
+  /** 空間の中の右クリック（持つ・パネルを動かす）でメニューを出さない */
+  private onContextMenu = (e: MouseEvent): void => {
+    if (this.controller.locked || this.container.contains(e.target as Node)) e.preventDefault();
+  };
+
+  /** 照準の先の 3D パネルをホイールでスクロールする */
+  private onWheel = (e: WheelEvent): void => {
+    if (!this.controller.locked) return;
+    for (let el = this.aimedPanelElement(); el; el = el.parentElement) {
+      const h = el as HTMLElement;
+      const style = getComputedStyle(h);
+      if (/(auto|scroll)/.test(style.overflowY) && h.scrollHeight > h.clientHeight) {
+        h.scrollTop += e.deltaY;
+        e.preventDefault();
+        return;
+      }
+    }
   };
 
   private onContainerClick = (e: MouseEvent): void => {

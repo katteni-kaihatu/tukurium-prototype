@@ -130,3 +130,15 @@
   color: var(--c-brand);
   font-weight: 700;
 }
+
+/* 照準が 3D のパネルに乗っているとき：クリックがパネルに届く */
+.root:has(.canvas[data-aim="panel"]) .chV,
+.root:has(.canvas[data-aim="panel"]) .chH {
+  opacity: 0;
+}
+
+.root:has(.canvas[data-aim="panel"]) .chDot {
+  width: 12px;
+  height: 12px;
+  background: #603d56;
+}

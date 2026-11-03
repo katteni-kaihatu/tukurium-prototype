@@ -20,6 +20,9 @@
 - **カメラの後ろにある CSS3D 要素は、画面いっぱいに広がってクリックを奪うことがある。** 毎フレーム後ろのパネルを隠す（`PanelSpace.update`）。裏から見たときも `backface-visibility: hidden` で隠す。
 - 3D のパネルを操作しづらくなったときの逃げ道として、画面左下に「空間のパネル」の一覧（画面に戻す）を出している。
 - 確かめるときは `document.elementFromPoint()` で、ボタンの中心が本当にそのボタンに当たるかを調べる。
+- **空間に入っている（ポインターロック中）ときは、クリックが DOM に届かない。** 照準の先の要素へイベントを合成して渡している（ADR 0009）。合成したイベントは document に返ってくるので、`isTrusted` でないものは扱わない（扱うと無限に繰り返して落ちる）。
+- E2E ではポインターロックできないので、`controller.locked` を `Object.defineProperty` で true にして確かめる（`e2e/interaction.spec.ts`）。
+- 3D パネルを動かしたら、置き場所を PanelLayer の状態に保存する（`PanelSpace.onMoved`）。保存しないと、次の描画で元の場所に戻る。
 
 ## スクリプト（QuickJS）
 
@@ -44,6 +47,9 @@
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
 ## React・UI
+
+- 入れ子のドロップ先（フォルダのタイルと、その外側の中身の欄）では、`dragover` と `drop` で `stopPropagation()` する。しないと、外側が受け取り直して元に戻る。
+- パネルが重なると、後から触ったパネルが前に出る。コードを開いたときなどは `PanelSpec.focusKey` を変えて前に出す。
 
 - フックを早期 return の後で呼ぶと、表示が切り替わったときに落ちる。Biome の `useHookAtTopLevel` で検出する。
 - パネルを重ねたとき、触ったパネルを前に出す（pointerdown で z-index を上げる）。
