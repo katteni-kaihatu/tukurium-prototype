@@ -62,10 +62,11 @@ describe("World", () => {
     expect(w2.spawn()).not.toBe(e);
   });
 
-  it("同じ名前の別定義は登録できない", () => {
+  it("同じ名前の別定義も登録できる（同一性は ID。名前で引くと曖昧なので見つからない。ADR 0010）", () => {
     const r = new KokoStateRegistry();
     r.register(Gun);
-    expect(() => r.register({ ...Gun, id: "other" })).toThrow();
+    r.register({ ...Gun, id: "other" });
+    expect(r.idOf(Gun.name)).toBeUndefined();
   });
 });
 
@@ -116,9 +117,11 @@ describe("KokoStateRegistry のスコープ", () => {
     expect(r.idOf("Gun", "b")).toBe("b:gun");
     expect(r.idOf("Gun")).toBeUndefined();
     expect(r.idOf("Transform", "a")).toBe("builtin.T");
-    expect(() => r.register({ id: "a:gun2", name: "Gun", fields: [] }, "a")).toThrow();
-    r.unregister("a:gun");
+    // 同じスコープに同じ名前を足すと、名前では一つに決まらない
+    r.register({ id: "a:gun2", name: "Gun", fields: [] }, "a");
     expect(r.idOf("Gun", "a")).toBeUndefined();
+    r.unregister("a:gun");
+    expect(r.idOf("Gun", "a")).toBe("a:gun2");
     expect(r.scopeOf("b:gun")).toBe("b");
   });
 });

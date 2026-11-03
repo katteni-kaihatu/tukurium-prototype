@@ -414,3 +414,61 @@ export default system({
     });
   });
 });
+
+describe("Simulation：同じ名前の KokoState を別名で使う（ADR 0010 Phase 5）", () => {
+  it("別のフォルダの同じ名前の KokoState を、import の別名で区別して読み書きできる", async () => {
+    const snap = emptyProject("p");
+    snap.kokostates = [
+      {
+        id: "ks_pg",
+        name: "Gun",
+        fields: [{ id: "f_a", name: "ammo", type: "number", default: 5 }],
+      },
+      {
+        id: "ks_eg",
+        name: "Gun",
+        fields: [{ id: "f_a", name: "ammo", type: "number", default: 9 }],
+      },
+    ];
+    snap.folders = [
+      { id: "f_player", name: "Player", parent: null },
+      { id: "f_enemy", name: "Enemy", parent: null },
+    ];
+    snap.placement = { ks_pg: "f_player", ks_eg: "f_enemy" };
+    snap.entities = [
+      {
+        id: "e",
+        name: "e",
+        parent: null,
+        output: "out_main",
+        order: 0,
+        states: { ks_pg: { f_a: 5 }, ks_eg: { f_a: 9 } },
+      },
+    ];
+    snap.systems = [
+      {
+        id: "sys",
+        name: "Both",
+        code: `import PlayerGun from "/Player/Gun.koko";
+import EnemyGun from "/Enemy/Gun.koko";
+export default system({
+  query: { with: [PlayerGun, EnemyGun] },
+  onUpdate(e) {
+    e.get(PlayerGun).ammo -= 1;
+    e.get(EnemyGun).ammo += 1;
+    log("legacy", typeof e.Gun);
+  },
+});`,
+      },
+    ];
+    snap.outputs = snap.outputs.map((o) => ({ ...o, systems: [{ id: "sys", enabled: true }] }));
+    const logs: LogEntry[] = [];
+    sim = await Simulation.create(snap, "out_main", { realm: "r", onLog: (l) => logs.push(l) });
+    expect(sim.systemStatus()[0]).toMatchObject({ error: null });
+    sim.step(1 / 60);
+    expect(sim.world.get("e", "ks_pg")?.f_a).toBe(4);
+    expect(sim.world.get("e", "ks_eg")?.f_a).toBe(10);
+    // 名前が一つに決まらないので、名前での入口（e.Gun）はない
+    expect(logs.map((l) => l.message)).toContain("legacy undefined");
+  });
+});

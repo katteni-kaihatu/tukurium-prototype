@@ -178,12 +178,8 @@ export function ResourcesPanel() {
         setSel(id);
         setRenaming(id);
       } else if (kind === "koko") {
-        // KokoState の名前は、いまはプロジェクト全体でも一つ（Registry の決まり）
-        let n = 1;
-        const taken = (name: string) =>
-          project.registry().idOf(name) !== undefined || project.siblingNameTaken(name, target);
-        while (taken(`NewKokoState${n}`)) n++;
-        const id = project.addKokoState(`NewKokoState${n}`);
+        // 名前は同じ場所の中で一つ（別のフォルダなら同じ名前でよい。ADR 0010）
+        const id = project.addKokoState(project.freeName("NewKokoState", target, numbered));
         placeHere(id);
         pick({ id, kind: "koko", name: "", parent: here });
       } else if (kind === "script") {

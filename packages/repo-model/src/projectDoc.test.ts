@@ -67,11 +67,11 @@ describe("ProjectDoc", () => {
     expect(p.entity(e)?.states[ks]).toEqual({ a: 5, c: 0 });
   });
 
-  it("名前の重複・不正な名前・Built-in の変更を拒む", () => {
+  it("Built-in と同じ名前・不正な名前・Built-in の変更を拒む（同じ名前は別の場所なら使える。ADR 0010）", () => {
     const p = new ProjectDoc();
     p.load(emptyProject("test"));
     p.addKokoState("Gun");
-    expect(() => p.addKokoState("Gun")).toThrow();
+    expect(() => p.addKokoState("Gun")).not.toThrow();
     expect(() => p.addKokoState("Transform")).toThrow();
     expect(() => p.addKokoState("1abc")).toThrow();
     expect(() =>
@@ -193,5 +193,19 @@ describe("ProjectDoc", () => {
     expect(line()).toBe('import Gun from "./Parts/Systems/Rifle.koko";');
     p.removeFolder(systems);
     expect(line()).toBe('import Gun from "./Parts/Rifle.koko";');
+  });
+  it("別のフォルダなら、同じ名前の KokoState を作れる（同じ場所では名前を変えるときに拒む）", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const gun = p.kokostates().find((k) => k.name === "Gun");
+    if (!gun) throw new Error("Gun がありません");
+    const enemy = p.addFolder("Enemy", null);
+    const other = p.addKokoState("Gun");
+    p.moveResource(other, enemy);
+    expect(p.kokostates().filter((k) => k.name === "Gun")).toHaveLength(2);
+    const target = p.kokostates().find((k) => k.name === "Target");
+    if (!target) throw new Error("Target がありません");
+    // いちばん上で Gun と同じ場所にある Target を Gun にはできない
+    expect(() => p.updateKokoState({ ...target, name: "Gun" })).toThrow("同じ場所");
   });
 });

@@ -6,7 +6,7 @@ import type {
   KokoStateValues,
 } from "@tukurium/eks";
 import * as Y from "yjs";
-import { buildRegistry, isBuiltin } from "./builtins";
+import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -157,8 +157,10 @@ export class ProjectDoc {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
       throw new Error("KokoState の名前は英字で始まる英数字と _ にしてください");
     }
-    const taken = this.registry().idOf(name);
-    if (taken !== undefined && taken !== self) throw new Error(`名前「${name}」は使われています`);
+    // Built-in と同じ名前は、移行の間の名前での書き方（with: ["Transform"]）が曖昧になるので拒む
+    if (BUILTIN_KOKOSTATES.some((b) => b.name === name))
+      throw new Error(`名前「${name}」は Built-in の KokoState が使っています`);
+    // 名前はプロジェクト全体で一つでなくてよい（同一性は ID。ADR 0010）。同じ場所の中だけで一つにする
     if (self !== null && this.kokoMap.get(self)?.name !== name) this.assertSiblingName(name, self);
   }
 
