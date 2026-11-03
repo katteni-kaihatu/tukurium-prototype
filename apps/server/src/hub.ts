@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ProjectDoc } from "@tukurium/repo-model";
+import { type PackageResolution, ProjectDoc, type ProjectSnapshot } from "@tukurium/repo-model";
 import {
   ClientMessage,
   type HostPart,
@@ -121,6 +121,13 @@ export class Hub {
   private readonly workspaces = new Map<string, Workspace>();
   private readonly opts: Required<Omit<HubOptions, "repos">>;
   private readonly repos: RepoService | null;
+  /**
+   * 制作データ（オブジェクト）→ その依存の中身。ホストへ配置を渡すときに添える（ADR 0015）。
+   * 制作データを捨てれば一緒に消える
+   */
+  private readonly packages = new WeakMap<object, PackageResolution[]>();
+  /** 適用の通し番号（依存の取り出しを待つ間に、次の適用が来たら古い方を捨てる） */
+  private readonly applySeq = new Map<string, number>();
 
   constructor(
     private readonly store: Store,
@@ -245,13 +252,21 @@ export class Hub {
         );
         if (links.length === 0)
           return this.deny(conn, "このアウトプットはセッションに出ていません");
-        s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
+        const key = buildKey(msg.workspaceId, msg.outputId);
+        const seq = (this.applySeq.get(key) ?? 0) + 1;
+        this.applySeq.set(key, seq);
+        if (hasDependencies(msg.snapshot))
+          await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
+        if (this.applySeq.get(key) !== seq) return;
+        s.builds.set(key, msg.snapshot);
         if (s.host) {
+          const packages = this.packagesOf(msg.snapshot);
           this.send(s.host, {
             t: "host.apply",
             realm: msg.workspaceId,
             outputId: msg.outputId,
             snapshot: msg.snapshot,
+            ...(packages ? { packages } : {}),
             by: user.name,
           });
         }
@@ -610,7 +625,7 @@ export class Hub {
   // ---------------------------------------------------------------------------
   // セッションの世界（配置された実体）
 
-  private place(conn: Conn, msg: Extract<ClientMessage, { t: "place" }>): void {
+  private async place(conn: Conn, msg: Extract<ClientMessage, { t: "place" }>): Promise<void> {
     const s = conn.session;
     const user = conn.user;
     const w = this.workspaceFor(conn, msg.workspaceId);
@@ -626,6 +641,8 @@ export class Hub {
       this.deny(conn, "非公開の作業はセッションに出せません（独立した空間で表示・実行します）");
       return;
     }
+    if (hasDependencies(msg.snapshot))
+      await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
     s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
     const p: Placement = {
       id: shortId("pl"),
@@ -643,12 +660,15 @@ export class Hub {
   }
 
   private hostPart(s: Session, p: Placement): HostPart {
+    const snapshot = p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot;
+    const packages = this.packagesOf(snapshot);
     return {
       id: p.id,
       // リリースから置いたものは、ワークスペースとは別の領域（KokoState の名前の範囲）にする
       realm: p.workspaceId ?? `rel_${p.releaseId}`,
       outputId: p.outputId,
-      snapshot: p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot,
+      snapshot,
+      ...(packages ? { packages } : {}),
       position: p.position,
       yaw: p.yaw,
       grants: p.grants,
@@ -846,7 +866,30 @@ export class Hub {
     const work = release ? await this.store.work(release.workId) : null;
     if (!release || !work) return null;
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
+    // リリースの依存は、作品の持ち主の許可で取り出す
+    if (hasDependencies(snapshot)) await this.attachPackages(snapshot, work.owner);
     return { release, work, snapshot };
+  }
+
+  /** 制作データの依存の中身を、持ち主の許可で取り出して覚える（ADR 0015） */
+  private async attachPackages(snapshot: unknown, ownerId: string | null): Promise<void> {
+    if (!this.repos || typeof snapshot !== "object" || snapshot === null) return;
+    const resolved = await this.repos.resolveDependencies(
+      snapshot as Pick<ProjectSnapshot, "dependencies">,
+      ownerId ? { id: ownerId } : null,
+    );
+    this.packages.set(snapshot, resolved);
+  }
+
+  private packagesOf(snapshot: unknown): PackageResolution[] | undefined {
+    return typeof snapshot === "object" && snapshot !== null
+      ? this.packages.get(snapshot)
+      : undefined;
+  }
+
+  /** ワークスペースのリポジトリの持ち主（依存の中身を取り出す許可に使う） */
+  private async workspaceOwner(w: Workspace): Promise<string | null> {
+    return w.meta.repoId ? ((await this.store.repo(w.meta.repoId))?.owner ?? null) : null;
   }
 
   private addReleasePlacement(
@@ -1163,4 +1206,10 @@ export class Hub {
   private denyWs(conn: Conn, workspaceId: string, reason: string): void {
     this.send(conn, { t: "ws.denied", workspaceId, reason });
   }
+}
+
+/** 制作データに依存があるか（なければ、今までどおり待たずに進める） */
+function hasDependencies(snapshot: unknown): boolean {
+  const deps = (snapshot as { dependencies?: unknown } | null)?.dependencies;
+  return Array.isArray(deps) && deps.length > 0;
 }

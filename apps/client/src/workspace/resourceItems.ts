@@ -1,4 +1,4 @@
-import { BUILTIN, type ProjectDoc } from "@tukurium/repo-model";
+import { BUILTIN, isPackageResourceId, type ProjectDoc } from "@tukurium/repo-model";
 
 /** Resources に並ぶものの種類 */
 export type ResKind =
@@ -43,6 +43,7 @@ export function resourceItems(project: ProjectDoc): ResItem[] {
     items.push({ id: f.id, kind: "folder", name: f.name, parent: f.parent });
   items.push({ id: BUILTIN_FOLDER, kind: "folder", name: "Built-in", parent: null });
   for (const d of project.registry().all()) {
+    if (isPackageResourceId(d.id)) continue;
     if (d.builtin) items.push({ id: d.id, kind: "builtin", name: d.name, parent: BUILTIN_FOLDER });
     else items.push({ id: d.id, kind: "koko", name: d.name, parent: project.folderOf(d.id) });
   }

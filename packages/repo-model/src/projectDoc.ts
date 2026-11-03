@@ -41,6 +41,11 @@ const clone = <T>(v: T): T => structuredClone(v);
  */
 export class ProjectDoc {
   readonly doc: Y.Doc;
+  /**
+   * 依存から取り込んだ KokoState の定義（ADR 0015）。各クライアントが依存の中身から作る派生データで、
+   * Y.Doc には入れない（同期も保存もしない）。Entity に付けたり、Inspector で値を入れたりするために使う。
+   */
+  private packageDefs: KokoStateDef[] = [];
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
@@ -114,7 +119,14 @@ export class ProjectDoc {
     return d ? clone(d) : undefined;
   }
   registry() {
-    return buildRegistry(this.kokostates());
+    return buildRegistry([...this.kokostates(), ...this.packageDefs]);
+  }
+  /** 依存から取り込んだ KokoState の定義を入れ替える（packageKokoStates の結果） */
+  setPackageKokoStates(defs: readonly KokoStateDef[]): void {
+    this.packageDefs = defs.map(clone);
+  }
+  packageKokoStates(): KokoStateDef[] {
+    return this.packageDefs.map(clone);
   }
   addKokoState(name: string): KokoStateId {
     this.assertKokoName(name, null);

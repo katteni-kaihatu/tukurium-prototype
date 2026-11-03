@@ -4,6 +4,7 @@ import {
   extractInto,
   fromFiles,
   type PackageManifest,
+  type PackageResolution,
   type ProjectSnapshot,
   packageManifest,
   stableStringify,
@@ -34,6 +35,8 @@ export class HttpError extends Error {
  */
 export class RepoService {
   readonly git: GitStore;
+  /** リリース ID → その版の中身（版は書き換えないので覚えておける。許可は毎回確かめる） */
+  private readonly manifests = new Map<string, PackageManifest>();
 
   constructor(
     private readonly store: Store,
@@ -241,7 +244,7 @@ export class RepoService {
    * （持ち主はいつでも）。hash はリリースのときに残したものを返し、取り出すたびに確かめる。
    */
   async packageVersion(
-    user: User | null,
+    user: Pick<User, "id"> | null,
     workId: string,
     version: number,
   ): Promise<{
@@ -256,9 +259,40 @@ export class RepoService {
       throw new HttpError(403, "このライブラリを使う許可がありません");
     const rel = (await this.store.releases(workId)).find((r) => r.version === version);
     if (!rel?.contentHash) throw new HttpError(404, "ライブラリの版が見つかりません");
-    const manifest = packageManifest(await this.snapshot(work.repoId, rel.commit));
-    if (contentHashOf(manifest) !== rel.contentHash)
-      throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
+    let manifest = this.manifests.get(rel.id);
+    if (!manifest) {
+      manifest = packageManifest(await this.snapshot(work.repoId, rel.commit));
+      if (contentHashOf(manifest) !== rel.contentHash)
+        throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
+      this.manifests.set(rel.id, manifest);
+    }
     return { packageId: work.id, version, contentHash: rel.contentHash, manifest };
+  }
+
+  /**
+   * 制作データの依存の中身を、viewer（リポジトリの持ち主）の許可で取り出す（ADR 0015）。
+   * セッションのホストへ配置と一緒に渡す。取り出せない依存・lock と hash が違う依存は、理由つきで使えないものにする。
+   */
+  async resolveDependencies(
+    snap: Pick<ProjectSnapshot, "dependencies">,
+    viewer: Pick<User, "id"> | null,
+  ): Promise<PackageResolution[]> {
+    return Promise.all(
+      (snap.dependencies ?? []).map(async (dependency): Promise<PackageResolution> => {
+        try {
+          const got = await this.packageVersion(viewer, dependency.packageId, dependency.version);
+          if (got.contentHash !== dependency.contentHash)
+            return {
+              status: "unavailable",
+              dependency,
+              message: `v${dependency.version} の中身が、足したときと違います`,
+            };
+          return { status: "ready", dependency, manifest: got.manifest };
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          return { status: "unavailable", dependency, message };
+        }
+      }),
+    );
   }
 }

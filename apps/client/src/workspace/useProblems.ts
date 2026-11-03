@@ -1,10 +1,13 @@
 import {
+  belongsToDependency,
   checkProjectReferences,
   checkProjectStructure,
   countCurrent,
   type Diagnostic,
   type DiagnosticSummary,
   type DiagnosticView,
+  type ProjectDoc,
+  packageKokoStates,
   type QueryItem,
   ResourcePathIndex,
   readSystemQuery,
@@ -13,6 +16,7 @@ import {
 } from "@tukurium/repo-model";
 import { useEffect, useMemo, useRef } from "react";
 import { IncrementalCheck } from "./incrementalCheck";
+import { resolvePackages } from "./packages";
 import { checkScripts, type Problem, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
 
@@ -119,9 +123,48 @@ export function useSystemQuery(): (systemId: string) => {
   without: QueryItem[];
 } {
   const project = useWorkspace((s) => s.project);
+  const packages = useWorkspace((s) => s.packages);
   const { index } = useProjectDiagnostics();
   return (systemId) =>
     project && index
-      ? readSystemQuery(systemId, project.code(systemId)?.toString() ?? "", index)
+      ? readSystemQuery(systemId, project.code(systemId)?.toString() ?? "", index, packages)
       : { with: [], without: [] };
+}
+
+/**
+ * 依存の中身を取り出し、その KokoState の定義を制作データ（ProjectDoc）に入れる（ADR 0015）。
+ * Entity に付ける・Inspector で値を入れる・Query を読むのに使う。定義は同期も保存もしない。
+ */
+export function usePackageDefinitions(): void {
+  const project = useWorkspace((s) => s.project);
+  const ready = useWorkspace((s) => s.ready);
+  useEffect(() => {
+    if (!project || !ready) return;
+    let last = "";
+    let cancelled = false;
+    const refresh = () => {
+      // 依存が変わったときだけ取り出し直す
+      const deps = project.dependencies();
+      const key = JSON.stringify(deps);
+      if (key === last) return;
+      last = key;
+      void resolvePackages(deps).then((map) => {
+        if (cancelled || last !== key || useWorkspace.getState().project !== project) return;
+        project.setPackageKokoStates(packageKokoStates(map.values()));
+        // 定義は Y.Doc の外なので、変わったことを rev で知らせる
+        useWorkspace.setState((s) => ({ packages: map, rev: s.rev + 1 }));
+      });
+    };
+    refresh();
+    const unobserve = project.observe(refresh);
+    return () => {
+      cancelled = true;
+      unobserve();
+    };
+  }, [project, ready]);
+}
+
+/** 依存から取り込んだ KokoState なら、その別名（`@別名` の表示用） */
+export function packageAliasOf(project: ProjectDoc, kokoId: string): string | null {
+  return project.dependencies().find((d) => belongsToDependency(kokoId, d))?.alias ?? null;
 }

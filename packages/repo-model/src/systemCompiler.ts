@@ -50,8 +50,8 @@ export interface CompiledSystem {
 const KOKO_EXT = ".koko";
 
 /**
- * `packages` は依存の中身を取り出した結果（別名ごと）。渡さないとき（再生）は、
- * ライブラリからの import をまだ使えない問題にする（実行時の取り込みは次の段階。ADR 0015）。
+ * `packages` は依存の中身を取り出した結果（別名ごと。resolutionMap）。渡さないときは、
+ * ライブラリからの import を解決できない問題にする（依存グラフなど、中身を持たない呼び出し。ADR 0015）。
  */
 export function compileSystem(
   systemId: string,
@@ -118,7 +118,7 @@ export function compileSystem(
           "import-package-unavailable",
           line,
           spelling,
-          `ライブラリ（@${alias}）からの import は、まだ再生では使えません`,
+          `ライブラリ（@${alias}）の中身を渡されていないため、import を解決できません`,
         );
       } else if (!resolution) {
         problem(
@@ -218,6 +218,7 @@ export function readSystemQuery(
   systemId: string,
   source: string,
   index: ResourcePathIndex,
+  packages?: ReadonlyMap<string, PackageResolution>,
 ): { with: QueryItem[]; without: QueryItem[] } {
   const empty = { with: [], without: [] };
   let ast: ReturnType<typeof parse>;
@@ -251,7 +252,7 @@ export function readSystemQuery(
   const query = prop(def, "query");
   if (!query) return empty;
   const aliases = new Map(
-    compileSystem(systemId, source, index).bindings.map((b) => [b.alias, b] as const),
+    compileSystem(systemId, source, index, packages).bindings.map((b) => [b.alias, b] as const),
   );
   const list = (key: string): QueryItem[] => {
     const arr = prop(query, key);

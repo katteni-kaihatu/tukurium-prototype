@@ -113,7 +113,7 @@ export function LibraryPanel() {
               </ul>
               <p className={ui.muted}>
                 書き方：import Health from "@{deps[0]?.alias}/States/Health.koko";
-                （公開の印を付けた KokoState だけ。再生で動くのは次の段階）
+                （公開の印を付けた KokoState だけ。Inspector で Entity に付けられます）
               </p>
             </>
           )}

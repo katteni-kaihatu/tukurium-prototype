@@ -1,3 +1,4 @@
+import type { KokoStateDef } from "@tukurium/eks";
 import type { PackageExport, PackageManifest } from "./packageManifest";
 import { BUILTIN_PREFIX, normalizeName, validateName } from "./resourcePath";
 import type { PackageDependency } from "./schema";
@@ -54,4 +55,60 @@ export function findPackageExport(
 ): PackageExport | undefined {
   const key = pathKey(path);
   return manifest.exports.find((e) => pathKey(e.path) === key);
+}
+
+/** 依存から取り込んだリソースの ID か（`pkg:` で始まる） */
+export function isPackageResourceId(id: string): boolean {
+  return id.startsWith("pkg:");
+}
+
+/** 取り込んだ ID が、この依存（Package と版）のものか */
+export function belongsToDependency(id: string, dep: PackageDependency): boolean {
+  return id.startsWith(`pkg:${dep.packageId}@${dep.version}/`);
+}
+
+/**
+ * 依存から取り込む KokoState の定義（ID は Package と版で区切ったもの）。
+ * 同じ Package・同じ版なら、どのプロジェクトから使っても同じ ID になる（置いた物どうしで共有する）。
+ */
+export function packageKokoStates(resolutions: Iterable<PackageResolution>): KokoStateDef[] {
+  const out: KokoStateDef[] = [];
+  for (const r of resolutions) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as Partial<KokoStateDef> | null;
+      if (e.kind !== "kokostate" || typeof def?.name !== "string" || !Array.isArray(def.fields))
+        continue;
+      out.push({
+        id: packageResourceId(r.dependency, e.id),
+        name: def.name,
+        fields: structuredClone(def.fields),
+      });
+    }
+  }
+  return out;
+}
+
+const sameLock = (a: PackageDependency, b: PackageDependency) =>
+  a.packageId === b.packageId && a.version === b.version && a.contentHash === b.contentHash;
+
+/**
+ * 制作データの依存ごとの解決（別名 → 結果）。実行するときに使う。
+ * 届いた結果が lock と違う（別の版・別の hash）か、届いていなければ、使えないものにする。
+ */
+export function resolutionMap(
+  deps: readonly PackageDependency[] | undefined,
+  resolutions: readonly PackageResolution[] | undefined,
+): Map<string, PackageResolution> {
+  const out = new Map<string, PackageResolution>();
+  for (const dep of deps ?? []) {
+    const r = resolutions?.find((x) => x.dependency.alias === dep.alias);
+    out.set(
+      dep.alias,
+      r && sameLock(r.dependency, dep)
+        ? r
+        : { status: "unavailable", dependency: dep, message: "ライブラリの中身が届いていません" },
+    );
+  }
+  return out;
 }

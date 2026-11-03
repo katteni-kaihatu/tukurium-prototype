@@ -67,7 +67,7 @@ describe("resolvePackages（依存の中身を取り出す。ADR 0015）", () =>
 });
 
 describe("checkScripts と依存", () => {
-  it("@別名 の import を解決し、まだ再生で動かないことを注意にする（Query の誤検出はしない）", async () => {
+  it("@別名 の import を解決し、Query の KokoState を見つからないとは言わない", async () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());
     p.addDependency({ ...dep("w_check"), alias: "combat" });
@@ -78,9 +78,7 @@ describe("checkScripts と依存", () => {
     const problems = await checkScripts(p, [id], async (deps) =>
       resolvePackages(deps, async (pid, v) => version(pid, v)),
     );
-    expect(problems.map((d) => [d.code, d.severity])).toEqual([
-      ["import-package-runtime-pending", "warning"],
-    ]);
+    expect(problems).toEqual([]);
   });
 
   it("依存にない別名はエラーにする", async () => {

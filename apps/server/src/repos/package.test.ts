@@ -66,4 +66,31 @@ describe("Library Package（ADR 0015）", () => {
     await expect(repos.packageVersion(alice, work.id, 1)).rejects.toMatchObject({ status: 404 });
     await expect(repos.packageVersion(alice, "nope", 1)).rejects.toMatchObject({ status: 404 });
   });
+
+  it("依存の中身を、持ち主の許可で取り出す（セッションのホストへ添える）", async () => {
+    const { store, repos, work } = await setup();
+    const rel = await repos.release(alice, work.id);
+    const dep = {
+      alias: "arms",
+      packageId: work.id,
+      version: 1,
+      contentHash: rel.contentHash ?? "",
+    };
+    const ok = await repos.resolveDependencies({ dependencies: [dep] }, bob);
+    expect(ok).toMatchObject([{ status: "ready", dependency: dep }]);
+    // lock の hash と違えば使わない
+    const wrong = await repos.resolveDependencies(
+      { dependencies: [{ ...dep, contentHash: "x" }] },
+      bob,
+    );
+    expect(wrong[0]).toMatchObject({ status: "unavailable" });
+    // 中身を覚えていても、許可は毎回確かめる
+    await store.saveWork({ ...work, perms: { ...work.perms, use: false } });
+    const denied = await repos.resolveDependencies({ dependencies: [dep] }, bob);
+    expect(denied[0]).toMatchObject({
+      status: "unavailable",
+      message: expect.stringMatching(/許可/),
+    });
+    expect(await repos.resolveDependencies({}, bob)).toEqual([]);
+  });
 });

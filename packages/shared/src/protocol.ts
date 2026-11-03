@@ -184,6 +184,8 @@ export const HostPart = z.object({
   realm: id,
   outputId: z.string(),
   snapshot: z.unknown(),
+  /** 依存の中身（サーバーが持ち主の許可で取り出したもの。依存がなければない。ADR 0015） */
+  packages: z.array(z.unknown()).optional(),
   position: vec3,
   yaw: z.number(),
   grants: PlacementGrants,
@@ -362,6 +364,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
     realm: id,
     outputId: z.string(),
     snapshot: z.unknown(),
+    packages: z.array(z.unknown()).optional(),
     by: z.string(),
   }),
   z.object({ t: z.literal("host.removePart"), id }),
