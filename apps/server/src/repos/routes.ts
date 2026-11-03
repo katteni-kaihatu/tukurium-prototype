@@ -288,6 +288,14 @@ export function registerRepoRoutes(
   );
 
   app.get(
+    "/api/works/:id/releases/:version/package",
+    handle<{ id: string; version: string }>(async (req) => {
+      const version = z.coerce.number().int().positive().parse(req.params.version);
+      return repos.packageVersion(await userOf(req), req.params.id, version);
+    }),
+  );
+
+  app.get(
     "/api/users/:id",
     handle<{ id: string }>(async (req) => {
       const viewer = await userOf(req);

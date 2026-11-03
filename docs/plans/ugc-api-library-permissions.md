@@ -284,6 +284,15 @@ Placement grant の保存形式と effective permission の計算も U1 の runt
 
 最初は同梱された公式 package とローカル dependency だけを扱い、検索 marketplace は作らない。
 
+進み具合（[ADR 0015](../adr/0015-library-package-minimal.md)）：
+
+- [x] Output の Kind「ライブラリ」、公開の印（`exports`）、manifest（`packageManifest`・`stableStringify`）
+- [x] リリースのときにサーバーが content hash を計算して残す。同じ版の違う hash を拒む。版の中身を取り出す API
+- [ ] プロジェクトの依存（別名・Package ID・版・hash の lock）と `@別名/...` の import
+- [ ] 依存の診断（見つからない・公開されていない・輪・hash の不一致）と依存グラフの辺
+- [ ] 実行時の取り込み（Package の定義を realm に登録し、PackageExecutionContext を付ける）
+- [ ] 抽出／フォークで出所と結び付けを保つ
+
 ### U4: 公式 Platform Primitive / Library と reference UGC
 
 UGC の種類を増やすため、Runtime Built-in、Host Capability、公式 Library を段階的に拡張する。API の網羅的な一覧を先に固定せず、reference UGC を end-to-end で実装し、共通性または Host 境界としての必要性が確認できた機能だけを、設計レビュー後に適切な層へ昇格させる。

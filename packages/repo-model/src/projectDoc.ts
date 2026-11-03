@@ -69,6 +69,10 @@ export class ProjectDoc {
   private get placementMap() {
     return this.doc.getMap<string>("placement");
   }
+  /** 公開の印（リソース ID → true。ADR 0015） */
+  private get exportMap() {
+    return this.doc.getMap<boolean>("exports");
+  }
   private get outputMap() {
     return this.doc.getMap<OutputDef>("outputs");
   }
@@ -383,6 +387,7 @@ export class ProjectDoc {
       ),
       folders,
       placement,
+      exports: [...this.exportMap.keys()].filter((r) => resources.has(r)).sort(),
     };
   }
 
@@ -399,11 +404,13 @@ export class ProjectDoc {
         this.entityMap,
         this.folderMap,
         this.placementMap,
+        this.exportMap,
       ]) {
         m.clear();
       }
       for (const f of snap.folders ?? []) this.folderMap.set(f.id, clone(f));
       for (const [r, f] of Object.entries(snap.placement ?? {})) this.placementMap.set(r, f);
+      for (const r of snap.exports ?? []) this.exportMap.set(r, true);
       this.meta.set("name", snap.name);
       this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
       for (const k of snap.kokostates) this.kokoMap.set(k.id, clone(k));
@@ -542,6 +549,16 @@ export class ProjectDoc {
     if (!f) return;
     for (let p = parent; p; p = this.folderMap.get(p)?.parent ?? null) if (p === id) return;
     this.refactoring(() => this.folderMap.set(id, { ...f, parent }));
+  }
+
+  /** 公開の印を付ける・外す（ライブラリとして、ほかのプロジェクトから import できる。ADR 0015） */
+  setExported(resourceId: string, exported: boolean): void {
+    if (exported) this.exportMap.set(resourceId, true);
+    else this.exportMap.delete(resourceId);
+  }
+
+  isExported(resourceId: string): boolean {
+    return this.exportMap.get(resourceId) === true;
   }
 
   /** リソースが入っているフォルダ（null はいちばん上） */

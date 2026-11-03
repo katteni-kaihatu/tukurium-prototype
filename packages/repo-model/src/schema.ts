@@ -1,6 +1,6 @@
 import type { EntityId, FieldId, KokoStateDef, KokoStateId, KokoStateValues } from "@tukurium/eks";
 
-export type OutputKind = "item" | "world";
+export type OutputKind = "item" | "world" | "library";
 
 /** 状態維持のマーク：アウトプットごと・フィールド単位（要件 §7） */
 export interface KeepMark {
@@ -102,6 +102,8 @@ export interface ProjectSnapshot {
   folders?: FolderDef[];
   /** リソース（KokoState・System・マテリアル・素材）の ID → 入っているフォルダの ID。ないものはいちばん上 */
   placement?: Record<string, string>;
+  /** 公開の印を付けたリソースの ID（ライブラリとして、ほかのプロジェクトから import できる。ADR 0015） */
+  exports?: string[];
 }
 
 export interface Provenance {

@@ -233,7 +233,8 @@ export class WorkspaceController {
 
   private anchorOf(): WorkspaceAnchor {
     const ws = useWorkspace.getState();
-    const kind = ws.project?.output(ws.outputId)?.kind ?? "item";
+    // ライブラリの出力は、編集空間での置き方を Item と同じにする
+    const kind = ws.project?.output(ws.outputId)?.kind === "world" ? "world" : "item";
     return workspaceAnchor(useApp.getState().session?.workspaces ?? [], ws.workspaceId ?? "", kind);
   }
 
@@ -256,7 +257,7 @@ export class WorkspaceController {
       preview: {
         anchor: anchor.position,
         isolated: anchor.isolated,
-        outputKind: ws.project.output(ws.outputId)?.kind ?? "item",
+        outputKind: ws.project.output(ws.outputId)?.kind === "world" ? "world" : "item",
         bounds: box
           ? {
               center: box.getCenter(new THREE.Vector3()).toArray(),

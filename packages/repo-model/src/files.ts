@@ -38,6 +38,8 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
   if (snap.provenance?.length) files["provenance.json"] = json(snap.provenance);
   if (snap.folders?.length)
     files["folders.json"] = json({ folders: snap.folders, placement: snap.placement ?? {} });
+  if (snap.exports && snap.exports.length > 0)
+    files["exports.json"] = json({ exports: snap.exports });
   return files;
 }
 
@@ -73,6 +75,8 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
     }
   }
   if (files["provenance.json"]) snap.provenance = parse<Provenance[]>("provenance.json");
+  if (files["exports.json"])
+    snap.exports = parse<{ exports?: string[] }>("exports.json").exports ?? [];
   if (files["folders.json"]) {
     const f = parse<{ folders?: FolderDef[]; placement?: Record<string, string> }>("folders.json");
     snap.folders = f.folders ?? [];

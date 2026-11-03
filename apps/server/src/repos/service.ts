@@ -1,13 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   type ExtractSelection,
   extractInto,
   fromFiles,
+  type PackageManifest,
   type ProjectSnapshot,
+  packageManifest,
+  stableStringify,
   toFiles,
 } from "@tukurium/repo-model";
 import type { Release, RepoMeta, Store, User, Work, WorkPerms } from "../store/store";
 import { type Author, GitStore } from "./gitStore";
+
+/** 公開したものの content hash。並べ方を決めた JSON の sha256（ADR 0013 §2） */
+export const contentHashOf = (manifest: PackageManifest) =>
+  createHash("sha256").update(stableStringify(manifest)).digest("hex");
 
 const shortId = (p: string) => `${p}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
 
@@ -208,15 +215,50 @@ export class RepoService {
     if (!snap.outputs.some((o) => o.id === work.outputId)) {
       throw new HttpError(409, "このコミットには作品のアウトプットがありません");
     }
+    const output = snap.outputs.find((o) => o.id === work.outputId);
     const prev = await this.store.releases(workId);
+    const version = (prev[0]?.version ?? 0) + 1;
+    const contentHash =
+      output?.kind === "library" ? contentHashOf(packageManifest(snap)) : undefined;
+    // 版は書き換えない：同じ版がもう違う中身で出ていたら拒む（同時に出したとき）
+    const same = prev.find((p) => p.version === version);
+    if (same && same.contentHash !== contentHash)
+      throw new HttpError(409, `版 ${version} はもう別の中身で出ています`);
     const r: Release = {
       id: shortId("rel"),
       workId,
-      version: (prev[0]?.version ?? 0) + 1,
+      version,
       commit: at,
       createdAt: new Date().toISOString(),
+      ...(contentHash ? { contentHash } : {}),
     };
     await this.store.saveRelease(r);
     return r;
+  }
+
+  /**
+   * ライブラリの版の中身（公開したものだけ）。作品の「利用」が許されていれば誰でも取り出せる
+   * （持ち主はいつでも）。hash はリリースのときに残したものを返し、取り出すたびに確かめる。
+   */
+  async packageVersion(
+    user: User | null,
+    workId: string,
+    version: number,
+  ): Promise<{
+    packageId: string;
+    version: number;
+    contentHash: string;
+    manifest: PackageManifest;
+  }> {
+    const work = await this.store.work(workId);
+    if (!work) throw new HttpError(404, "作品が見つかりません");
+    if (!work.perms.use && work.owner !== user?.id)
+      throw new HttpError(403, "このライブラリを使う許可がありません");
+    const rel = (await this.store.releases(workId)).find((r) => r.version === version);
+    if (!rel?.contentHash) throw new HttpError(404, "ライブラリの版が見つかりません");
+    const manifest = packageManifest(await this.snapshot(work.repoId, rel.commit));
+    if (contentHashOf(manifest) !== rel.contentHash)
+      throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
+    return { packageId: work.id, version, contentHash: rel.contentHash, manifest };
   }
 }
