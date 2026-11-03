@@ -2,8 +2,7 @@ import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN, type MaterialDef } from "@tukurium/repo-model";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-
-const assetUrl = (id: string) => `/api/assets/${id}`;
+import { assetUrl } from "../net/api";
 
 const DEG = THREE.MathUtils.DEG2RAD;
 

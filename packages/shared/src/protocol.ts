@@ -135,6 +135,20 @@ export const SessionFrame = z.object({
 });
 export type SessionFrame = z.infer<typeof SessionFrame>;
 
+/**
+ * ワークスペースの編集中の見た目（開いていない参加者向け）。実物と境界（要件 §6）。
+ * isolated：独立した空間（ワールドの編集空間・非公開の作業）に置かれている。
+ */
+export const WorkspacePreview = z.object({
+  anchor: vec3,
+  isolated: z.boolean(),
+  outputKind: z.enum(["item", "world"]),
+  bounds: z.object({ center: vec3, size: vec3 }).nullable(),
+  world: z.unknown(),
+  materials: z.array(z.unknown()),
+});
+export type WorkspacePreview = z.infer<typeof WorkspacePreview>;
+
 /** ホストに渡す配置（制作データ込み） */
 export const HostPart = z.object({
   id,
@@ -222,6 +236,8 @@ export const ClientMessage = z.discriminatedUnion("t", [
     position: vec3,
     yaw: z.number(),
   }),
+  /** ホストだけが送る：編集中の見た目 */
+  z.object({ t: z.literal("ws.preview"), workspaceId: id, preview: WorkspacePreview }),
   /** リポジトリをこのセッションのワークスペースとして開く（1 リポジトリ 1 ワークスペース） */
   z.object({ t: z.literal("ws.openRepo"), repoId: id }),
   /** コミット（意図的な保存）。メッセージ付き */
@@ -262,6 +278,14 @@ export const ServerMessage = z.discriminatedUnion("t", [
   }),
 
   z.object({ t: z.literal("ws.created"), workspaceId: id }),
+  /** 開いていないワークスペースの見た目。閲覧権限がなければ restricted（境界だけ・中身なし） */
+  z.object({
+    t: z.literal("ws.preview"),
+    workspaceId: id,
+    name: z.string(),
+    restricted: z.boolean(),
+    preview: WorkspacePreview,
+  }),
   z.object({
     t: z.literal("ws.committed"),
     workspaceId: id,

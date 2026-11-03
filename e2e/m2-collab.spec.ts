@@ -1,14 +1,21 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { aimAt, createSessionAndWorkspace, fire, runtimeState } from "./helpers";
+import {
+  aimAt,
+  closePeople,
+  createSessionAndWorkspace,
+  fire,
+  newPerson,
+  runtimeState,
+} from "./helpers";
 
 // M2 の完了条件：2 人が同じワークスペースを編集・再生し、相手のパネルが空間に見える（シナリオ 1, 5）
+
+test.afterEach(closePeople);
 
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 
 async function join(browser: Browser, path: string, name: string) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await ctx.newPage();
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  const page = await newPerson(browser, name);
   await page.goto(path);
   return page;
 }

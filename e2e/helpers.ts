@@ -1,4 +1,23 @@
-import type { Page } from "@playwright/test";
+import type { Browser, BrowserContext, Page } from "@playwright/test";
+
+const extraContexts: BrowserContext[] = [];
+
+/** 2 人目以降の参加者（別のブラウザコンテキスト）。テストの終わりに closePeople で閉じる */
+export async function newPerson(browser: Browser, name: string): Promise<Page> {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  extraContexts.push(ctx);
+  const page = await ctx.newPage();
+  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  return page;
+}
+
+/**
+ * 2 人目以降のコンテキストを閉じる（test.afterEach で呼ぶ）。
+ * 閉じないとブラウザはワーカーの間ずっと共有されるので、前のテストの画面が描画を続けて重くなる。
+ */
+export async function closePeople(): Promise<void> {
+  await Promise.all(extraContexts.splice(0).map((c) => c.close()));
+}
 
 /** 開発時に window に出しているストアとエンジンを使う（apps/client の DEV 専用フック） */
 export async function aimAt(page: Page, target: [number, number, number]): Promise<void> {

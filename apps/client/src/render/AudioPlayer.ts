@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { assetUrl } from "../net/api";
 
 /**
  * 素材の音を鳴らす。位置があれば立体音響（PositionalAudio）、なければ聞いている人の位置で鳴らす。
@@ -22,7 +23,7 @@ export class AudioPlayer {
     if (this.listener.context.state === "suspended") void this.listener.context.resume();
     let buffer = this.buffers.get(asset);
     if (!buffer) {
-      buffer = this.loader.loadAsync(`/api/assets/${asset}`);
+      buffer = this.loader.loadAsync(assetUrl(asset));
       this.buffers.set(asset, buffer);
     }
     buffer

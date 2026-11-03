@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import type { SessionEngine } from "../session/SessionEngine";
+import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
 import { queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
@@ -13,6 +14,13 @@ const UI_REFRESH_SEC = 0.2;
 /** ホストが実行状態を配る間隔 */
 const FRAME_SEC = 1 / 15;
 const EMPTY_WORLD = new World(new KokoStateRegistry());
+/** 編集中の見た目をほかの人へ送る間隔の下限 */
+const PREVIEW_SEC = 0.4;
+
+/** その場所の手前（+Z 側 6m）に、そこを向いて立つ */
+export function enterSpace(engine: SessionEngine, at: [number, number, number]): void {
+  engine.teleport([at[0], 0, at[2] + 6], 0);
+}
 
 /** キー → 入力の動作名（スクリプトの onInput で受け取る） */
 const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF: "alt" };
@@ -38,6 +46,9 @@ export class WorkspaceController {
   private materialsRev = -1;
   private accumulator = 0;
   private uiTimer = 0;
+  private anchorKey = "";
+  private previewKey = "";
+  private previewTimer = 0;
   private readonly disposers: (() => void)[] = [];
 
   constructor(private readonly engine: SessionEngine) {
@@ -67,7 +78,15 @@ export class WorkspaceController {
         };
       },
     });
-    this.disposers.push(() => useWorkspace.setState({ viewPoint: null, placePoint: null }));
+    useWorkspace.setState({
+      teleport: (to) => {
+        const anchor = useWorkspace.getState().anchor;
+        if (anchor) enterSpace(this.engine, to === "space" ? anchor.position : anchor.slot);
+      },
+    });
+    this.disposers.push(() =>
+      useWorkspace.setState({ viewPoint: null, placePoint: null, teleport: null, anchor: null }),
+    );
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
@@ -87,10 +106,19 @@ export class WorkspaceController {
 
   private update(dt: number): void {
     const ws = useWorkspace.getState();
-    // ワークスペースの編集空間の位置：セッションの中の何番目かで横にずらす（重ならないように）
-    const index =
-      useApp.getState().session?.workspaces.findIndex((w) => w.id === ws.workspaceId) ?? 0;
-    this.view.root.position.set(Math.max(index, 0) * 12, 0, 0);
+    // ワークスペースの編集空間の位置（重ならないように横にずらす。非公開・ワールドは独立した空間）
+    const anchor = this.anchorOf();
+    this.view.root.position.set(...anchor.position);
+    const anchorKey = JSON.stringify(anchor);
+    if (anchorKey !== this.anchorKey) {
+      this.anchorKey = anchorKey;
+      const prev = useWorkspace.getState().anchor;
+      const next = ws.workspaceId ? anchor : null;
+      useWorkspace.setState({ anchor: next });
+      // 独立した空間に切り替わったら移動し、終わったらセッションへ戻す
+      if (next?.isolated && !prev?.isolated) enterSpace(this.engine, next.position);
+      else if (!next?.isolated && prev?.isolated) enterSpace(this.engine, prev.slot);
+    }
     if (!ws.project || !ws.ready) {
       this.view.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
       this.bounds.visible = false;
@@ -141,6 +169,7 @@ export class WorkspaceController {
         this.editWorld = buildWorld(ws.project.snapshot(), ws.outputId).world;
       }
       this.view.sync(this.editWorld, { materials, holdCamera: null });
+      this.publishPreview(dt, anchor, anchorKey);
     }
 
     // 編集空間の境界（Edit のときだけ）
@@ -158,6 +187,44 @@ export class WorkspaceController {
     if (sel && ws.mode === "edit") {
       this.selectionBox.setFromObject(sel);
     }
+  }
+
+  private anchorOf(): WorkspaceAnchor {
+    const ws = useWorkspace.getState();
+    const kind = ws.project?.output(ws.outputId)?.kind ?? "item";
+    return workspaceAnchor(useApp.getState().session?.workspaces ?? [], ws.workspaceId ?? "", kind);
+  }
+
+  /**
+   * ホストだけ：編集中の見た目を、開いていない参加者へ送る（サーバーが権限で見せ分ける）。
+   * 制作データが変わったときだけ、間隔をあけて送る。
+   */
+  private publishPreview(dt: number, anchor: WorkspaceAnchor, anchorKey: string): void {
+    const ws = useWorkspace.getState();
+    this.previewTimer += dt;
+    if (!ws.isHost || !ws.workspaceId || !this.editWorld || !ws.project) return;
+    const key = `${ws.workspaceId}:${this.editKey}:${anchorKey}`;
+    if (key === this.previewKey || this.previewTimer < PREVIEW_SEC) return;
+    this.previewKey = key;
+    this.previewTimer = 0;
+    const box = this.view.bounds();
+    useApp.getState().client.send({
+      t: "ws.preview",
+      workspaceId: ws.workspaceId,
+      preview: {
+        anchor: anchor.position,
+        isolated: anchor.isolated,
+        outputKind: ws.project.output(ws.outputId)?.kind ?? "item",
+        bounds: box
+          ? {
+              center: box.getCenter(new THREE.Vector3()).toArray(),
+              size: box.getSize(new THREE.Vector3()).toArray(),
+            }
+          : null,
+        world: this.editWorld.snapshot(),
+        materials: this.materials,
+      },
+    });
   }
 
   /** 編集空間の座標の音を、セッションの座標に直して鳴らす */

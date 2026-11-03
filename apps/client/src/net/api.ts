@@ -71,6 +71,9 @@ function token(): string {
   }
 }
 
+/** 素材の URL（素材にも権限があるので、本人確認のトークンを付ける） */
+export const assetUrl = (id: string) => `/api/assets/${id}?t=${encodeURIComponent(token())}`;
+
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,

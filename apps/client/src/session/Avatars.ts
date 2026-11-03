@@ -131,7 +131,7 @@ function shortestAngle(from: number, to: number): number {
   return d;
 }
 
-function makeLabel(text: string, color: string): THREE.Sprite {
+export function makeLabel(text: string, color: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   const font = '700 40px "Zen Kaku Gothic New", system-ui, sans-serif';

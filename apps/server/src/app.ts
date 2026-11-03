@@ -14,7 +14,7 @@ import { Hub, type HubOptions } from "./hub";
 import { registerRepoRoutes } from "./repos/routes";
 import { RepoService } from "./repos/service";
 import { PostgresStore } from "./store/postgres";
-import { MemoryStore, type Store } from "./store/store";
+import { MemoryStore, type Store, type User } from "./store/store";
 
 export async function buildApp(
   config: Config,
@@ -63,17 +63,45 @@ export async function buildApp(
         .send({ error: "GLB・PNG・JPEG・WebP・MP3・OGG・WAV のみ受け付けます" });
     }
     const id = await assets.put(req.body, contentType);
+    const set = uploaders.get(id) ?? new Set<string>();
+    set.add(user.id);
+    uploaders.set(id, set);
     return { id, kind, contentType, size: req.body.length };
   });
-  app.get<{ Params: { id: string } }>("/api/assets/:id", async (req, reply) => {
-    const asset = await assets.get(req.params.id);
-    if (!asset) return reply.code(404).send({ error: "not found" });
-    // 中身から決まる ID なので、ずっとキャッシュしてよい
-    return reply
-      .header("content-type", asset.contentType)
-      .header("cache-control", "public, max-age=31536000, immutable")
-      .send(asset.data);
-  });
+  // 素材を上げた人（再起動で消える。消えてもワークスペース・リポジトリの閲覧権限で見られる）
+  const uploaders = new Map<string, Set<string>>();
+  // リポジトリを読む判定は重いので、見られると分かった組を少しの間覚えておく
+  const seen = new Map<string, number>();
+  const SEEN_MS = 60_000;
+  const canSee = async (user: User, id: string): Promise<boolean> => {
+    if (uploaders.get(id)?.has(user.id) || hub.canSeeAssetLive(user, id)) return true;
+    const key = `${user.id}:${id}`;
+    const until = seen.get(key);
+    if (until && until > Date.now()) return true;
+    if (!(await hub.canSeeAssetInRepos(user, id))) return false;
+    if (seen.size > 10_000) seen.clear();
+    seen.set(key, Date.now() + SEEN_MS);
+    return true;
+  };
+  app.get<{ Params: { id: string }; Querystring: { t?: string } }>(
+    "/api/assets/:id",
+    async (req, reply) => {
+      // 素材の取得にも権限をかける（要件 §8）：本人確認（クエリの t か、ヘッダー）と閲覧権限
+      const token = req.query.t ?? req.headers["x-tukurium-token"];
+      const user = typeof token === "string" ? await store.userByToken(token) : null;
+      const allowed = user !== null && (await canSee(user, req.params.id));
+      if (!allowed) return reply.code(404).send({ error: "not found" });
+      const asset = await assets.get(req.params.id);
+      if (!asset) return reply.code(404).send({ error: "not found" });
+      return (
+        reply
+          .header("content-type", asset.contentType)
+          // 権限で見せ分けるので、共有キャッシュには置かない
+          .header("cache-control", "private, max-age=3600")
+          .send(asset.data)
+      );
+    },
+  );
 
   app.get("/ws", { websocket: true }, (socket) => {
     const conn = hub.connect({

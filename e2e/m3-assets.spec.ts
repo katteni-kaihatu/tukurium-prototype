@@ -68,10 +68,12 @@ test("画像・音声・GLB を取り込み、マテリアル・AudioSource・Me
     };
   });
   expect(snap.assets).toEqual(["audio", "image", "model"]);
+  // 素材にも権限がある：本人確認のトークンがなければ取り出せない
+  const token = await page.evaluate(() => localStorage.getItem("tukurium.token") ?? "");
   for (const id of [snap.model, snap.clip, snap.map]) {
     expect(id).toMatch(/^[0-9a-f]{64}$/);
-    const r = await page.request.get(`/api/assets/${id}`);
-    expect(r.status()).toBe(200);
+    expect((await page.request.get(`/api/assets/${id}?t=${token}`)).status()).toBe(200);
+    expect((await page.request.get(`/api/assets/${id}`)).status()).toBe(404);
   }
 
   // 画面に GLB のモデルが出ている（銃の Entity の下に読み込まれる）
