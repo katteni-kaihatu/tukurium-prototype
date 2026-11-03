@@ -36,9 +36,9 @@ test("遊んでいる人の横で改造して適用すると、残弾は保っ�
   const path = await createSessionAndWorkspace(a, "れにうむ", "sample");
   const main = panel(a, "ワークスペース");
   await standAt(a, [0, 0, 6], 0);
-  // セッションに出す・適用・リンク先は、メインパネルのボタンで開くセッションパネルにある
-  await main.getByRole("button", { name: "セッション" }).click();
-  const sessionPanel = panel(a, "セッション");
+  // セッションに出す・適用・リンク先は、再生の横の「セッション同期」から開く
+  await main.getByRole("button", { name: "セッション同期" }).click();
+  const sessionPanel = panel(a, "セッション同期");
   await sessionPanel.getByRole("button", { name: "セッションに出す" }).click();
   await expect(sessionPanel.getByLabel("リンク先一覧").locator("li")).toHaveCount(1);
 

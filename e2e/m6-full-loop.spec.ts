@@ -37,11 +37,11 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   await binsp.getByLabel("Name").press("Enter");
   await expect(panel(a, "Inspector").getByRole("button", { name: "赤い的" })).toBeVisible();
 
-  // 2. セッションに出す（メインパネルのボタンで開くセッションパネルから）
+  // 2. セッションに出す（再生の横の「セッション同期」から）
   const main = panel(a, "ワークスペース");
   await standAt(a, [0, 0, 6], 0);
-  await main.getByRole("button", { name: "セッション" }).click();
-  const sessionPanel = panel(a, "セッション");
+  await main.getByRole("button", { name: "セッション同期" }).click();
+  const sessionPanel = panel(a, "セッション同期");
   await sessionPanel.getByRole("button", { name: "セッションに出す" }).click();
   await expect(sessionPanel.getByLabel("リンク先一覧").locator("li")).toHaveCount(1);
 
@@ -58,8 +58,8 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   await binsp.getByLabel("damage", { exact: true }).fill("5");
   await binsp.getByLabel("damage", { exact: true }).press("Enter");
   const bmain = panel(b, "ワークスペース");
-  await bmain.getByRole("button", { name: "セッション" }).click();
-  await panel(b, "セッション").getByRole("button", { name: "適用" }).click();
+  await bmain.getByRole("button", { name: "セッション同期" }).click();
+  await panel(b, "セッション同期").getByRole("button", { name: "適用" }).click();
   await expect.poll(async () => (await sessionState(a, "銃", "Gun"))?.damage).toBe(5);
   expect((await sessionState(a, "銃", "Gun"))?.ammo).toBe(11);
   await fireInSession(c);

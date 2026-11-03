@@ -68,13 +68,13 @@ export function ProblemsPanel() {
   if (items.length === 0)
     return (
       <div className={ui.section}>
-        <p className={ui.muted}>問題はありません。</p>
+        <p className={ui.muted}>エラーはありません。</p>
       </div>
     );
   return (
-    <section className={ui.section} aria-label="問題">
+    <section className={ui.section} aria-label="エラー">
       <div className={ui.sectionHead}>
-        <h3 className={ui.sectionTitle}>問題</h3>
+        <h3 className={ui.sectionTitle}>エラー</h3>
         {count.errors + count.warnings > 0 ? (
           <span
             className={ui.badgeError}

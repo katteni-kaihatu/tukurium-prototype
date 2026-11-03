@@ -40,7 +40,7 @@ export function summarize(panelId: string): string[] {
     case "ws-problems": {
       // 要約は定期的に作り直すので、ここでは軽く数えられるスクリプト・実行の問題だけにする
       const count = countCurrent(viewDiagnostics([ws.runProblems, ...ws.checkProblems], ws.rev));
-      if (count.errors + count.warnings === 0 && count.stale === 0) return ["問題はありません"];
+      if (count.errors + count.warnings === 0 && count.stale === 0) return ["エラーはありません"];
       return [
         `エラー・注意 ${count.errors + count.warnings}${count.stale ? `（編集前の結果 ${count.stale}）` : ""}`,
       ];

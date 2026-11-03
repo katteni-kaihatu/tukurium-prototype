@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
-import { api } from "../net/api";
 import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
 import { useWorkspace } from "./store";
@@ -12,8 +10,8 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
 /**
  * ワークスペースのメインパネル：いま選んでいるアウトプットと、再生の状態だけを出す。
  * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
- * セッションに出す・適用・リンク先一覧はセッションパネル、問題は問題パネル、
- * ログと保存はログ・保存パネルに分け、下のボタンから開く。
+ * セッションに出す・適用・リンク先一覧は、再生の横の「セッション同期」から開く。
+ * Inspector・Resources・エラー・ログと保存は、下のボタンから開く。
  */
 export function MainPanel() {
   const ws = useWorkspace();
@@ -28,6 +26,8 @@ export function MainPanel() {
     historyOpen,
     saveOpen,
     sessionOpen,
+    inspectorOpen,
+    resourcesOpen,
     problemsOpen,
     logOpen,
   } = ws;
@@ -45,7 +45,7 @@ export function MainPanel() {
   return (
     <>
       <div className={styles.head}>
-        <RepoName repoId={info?.repoId ?? null} name={info?.name ?? project.name} />
+        <ProjectName repoId={info?.repoId ?? null} name={info?.name ?? project.name} />
         <span className={styles.branch}>main</span>
         {role && (
           <span className={role === "viewer" ? ui.badgeWarn : ui.badgeBrand}>
@@ -53,11 +53,6 @@ export function MainPanel() {
           </span>
         )}
         <span style={{ flex: 1 }} />
-        {info?.repoId && (
-          <a className={ui.btn} href={`/p/${info.repoId}`} target="_blank" rel="noreferrer">
-            Project
-          </a>
-        )}
         <button
           type="button"
           className={ui.btn}
@@ -77,17 +72,6 @@ export function MainPanel() {
         >
           履歴
         </button>
-        {info?.repoId && (
-          <a
-            className={ui.btn}
-            href={`/p/${info.repoId}`}
-            target="_blank"
-            rel="noreferrer"
-            title="作品の公開とリリースはプロジェクトのページで"
-          >
-            Releases
-          </a>
-        )}
       </div>
 
       <div className={styles.bar}>
@@ -155,6 +139,15 @@ export function MainPanel() {
           >
             ■ Stop
           </button>
+          <button
+            type="button"
+            className={ui.btn}
+            aria-pressed={sessionOpen}
+            onClick={() => useWorkspace.setState({ sessionOpen: !sessionOpen })}
+          >
+            セッション同期
+            {links.length > 0 && <span className={ui.badge}>リンク先 {links.length}</span>}
+          </button>
         </div>
 
         <span className={mode === "edit" ? ui.badge : ui.badgeWarn} aria-live="polite">
@@ -171,11 +164,18 @@ export function MainPanel() {
         <button
           type="button"
           className={ui.btn}
-          aria-pressed={sessionOpen}
-          onClick={() => useWorkspace.setState({ sessionOpen: !sessionOpen })}
+          aria-pressed={inspectorOpen}
+          onClick={() => useWorkspace.setState({ inspectorOpen: !inspectorOpen })}
         >
-          セッション
-          {links.length > 0 && <span className={ui.badge}>リンク先 {links.length}</span>}
+          Inspector
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={resourcesOpen}
+          onClick={() => useWorkspace.setState({ resourcesOpen: !resourcesOpen })}
+        >
+          Resources
         </button>
         <button
           type="button"
@@ -183,7 +183,7 @@ export function MainPanel() {
           aria-pressed={problemsOpen}
           onClick={() => useWorkspace.setState({ problemsOpen: !problemsOpen })}
         >
-          問題
+          エラー
           {problemCount.errors + problemCount.warnings > 0 ? (
             <span
               className={ui.badgeError}
@@ -217,65 +217,23 @@ export function MainPanel() {
   );
 }
 
-/** プロジェクト名。持ち主はその場で変えられる（Enter で決定、Esc でやめる） */
-function RepoName({ repoId, name }: { repoId: string | null; name: string }) {
-  const me = useApp((s) => s.me);
-  const [owner, setOwner] = useState<string | null>(null);
-  const [draft, setDraft] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setOwner(null);
-    if (!repoId) return;
-    api.repo(repoId).then(
-      (r) => setOwner(r.owner),
-      () => setOwner(null),
-    );
-  }, [repoId]);
-  const canRename = repoId !== null && owner !== null && owner === me?.id;
-
-  const commit = () => {
-    const next = draft?.trim() ?? "";
-    setDraft(null);
-    if (!repoId || !next || next === name) return;
-    api.updateRepo(repoId, { name: next }).then(
-      () => setError(null),
-      (e: Error) => setError(e.message),
-    );
-  };
-
-  if (draft !== null) {
+/** プロジェクト名。プロジェクトがあるときは、そのページへのリンク（名前の変更は Settings） */
+function ProjectName({ repoId, name }: { repoId: string | null; name: string }) {
+  if (!repoId) {
     return (
-      <input
-        className={ui.input}
-        aria-label="プロジェクト名"
-        value={draft}
-        maxLength={64}
-        // biome-ignore lint/a11y/noAutofocus: 名前の編集を始めた直後に入力できるように
-        autoFocus
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-          if (e.key === "Escape") setDraft(null);
-        }}
-        style={{ width: 200 }}
-      />
+      <span className={styles.repo}>
+        <b>{name}</b>
+      </span>
     );
   }
   return (
-    <span className={styles.repo}>
-      <b title={error ?? undefined}>{name}</b>
-      {canRename && (
-        <button
-          type="button"
-          className={ui.iconBtn}
-          aria-label="プロジェクト名を変える"
-          title="プロジェクト名を変える"
-          onClick={() => setDraft(name)}
-        >
-          ✎
-        </button>
-      )}
-    </span>
+    <a
+      className={`${styles.repo} ${styles.repoLink}`}
+      href={`/p/${repoId}`}
+      target="_blank"
+      rel="noreferrer"
+    >
+      {name}
+    </a>
   );
 }
