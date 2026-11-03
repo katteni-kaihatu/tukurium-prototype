@@ -2,8 +2,8 @@
 
 ブラウザの 3D 空間で交流しながら、複数人でアイテムやワールドを制作する環境のプロトタイプ。
 
-- 要件：[docs/requirements-v0.1.md](docs/requirements-v0.1.md)
-- 実装計画・ロードマップ：[docs/PLAN.md](docs/PLAN.md)
+- 文書の案内：[docs/README.md](docs/README.md)
+- 現在のロードマップ：[docs/ROADMAP.md](docs/ROADMAP.md)
 - 決定記録：[docs/adr/](docs/adr/)
 - 開発メモ（詰まりやすい点）：[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。開発の約束は [CLAUDE.md](CLAUDE.md)
 
