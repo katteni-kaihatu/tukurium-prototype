@@ -4,6 +4,7 @@ import { CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import { PanelSpace } from "../panels/PanelSpace";
 import { RemotePanels } from "../panels/RemotePanels";
 import { AudioPlayer } from "../render/AudioPlayer";
+import { EffectPlayer } from "../render/EffectPlayer";
 import { Avatars } from "./Avatars";
 import { FpsController } from "./FpsController";
 
@@ -26,6 +27,7 @@ export class SessionEngine {
   readonly panels: PanelSpace;
   readonly remotePanels: RemotePanels;
   readonly audio: AudioPlayer;
+  readonly effects: EffectPlayer;
   private readonly cssRenderer = new CSS3DRenderer();
 
   private readonly clock = new THREE.Clock();
@@ -71,6 +73,7 @@ export class SessionEngine {
     this.avatars = new Avatars(this.scene);
     this.remotePanels = new RemotePanels(this.scene, this.avatars);
     this.audio = new AudioPlayer(this.scene, this.camera);
+    this.effects = new EffectPlayer(this.scene);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -139,6 +142,7 @@ export class SessionEngine {
     this.avatars.clear();
     this.remotePanels.dispose();
     this.audio.dispose();
+    this.effects.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
@@ -158,6 +162,7 @@ export class SessionEngine {
     const aim = this.controller.locked && this.aimedPanelElement() ? "panel" : "";
     if ((this.container.dataset.aim ?? "") !== aim) this.container.dataset.aim = aim;
     this.avatars.update(dt);
+    this.effects.update(dt);
     this.remotePanels.update();
     this.panels.update(this.camera);
     for (const fn of this.frameListeners) fn(dt);

@@ -33,6 +33,10 @@ const PROBE = `export default system({
     if (ev.action === "reuse2" && e.id.startsWith("gun2/")) log("reuse2", globalThis.kept.send("Damage", { amount: 1 }));
     if (ev.action === "forge") log("forge", contract.send("tk_forged", "Damage", { amount: 1 }));
     if (ev.action === "copy") log("copy", contract.send(JSON.parse(JSON.stringify(hit)).token + "x", "Damage", { amount: 1 }));
+    if (ev.action === "spark") {
+      log("fx1", hit.effect("spark", { color: "#ffaa00", size: 5, life: 10 }));
+      log("fx2", hit.effect("spark"));
+    }
     if (ev.action === "bad") hit.send("Damage", { amount: "lots" });
     if (ev.action === "heal") hit.send("Heal", { amount: 1 });
   },
@@ -174,6 +178,21 @@ describe("公開 Contract と opaque handle", () => {
     s.input(input("bad"));
     s.step(1 / 60);
     expect(s.systemStatus().find((x) => x.name === "Shoot")?.error).toContain("amount");
+    expect(hp(s)).toBe(3);
+  });
+
+  it("hit.effect で、当たった点に一時的な effect を出せる（一つの handle で一つ。大きさと寿命には上限）", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs, "collision");
+    s.input(input("spark"));
+    s.step(1 / 60);
+    expect([...said(logs, "fx1"), ...said(logs, "fx2")]).toEqual(["fx1 true", "fx2 false"]);
+    const fx = s.drainEffects();
+    expect(fx).toHaveLength(1);
+    expect(fx[0]).toMatchObject({ kind: "spark", color: "#ffaa00", size: 1, life: 2 });
+    expect(fx[0]?.position[2]).toBeCloseTo(-6.96, 1);
+    expect(s.drainEffects()).toEqual([]);
+    // effect は World の状態にも、的の hp にも影響しない
     expect(hp(s)).toBe(3);
   });
 });

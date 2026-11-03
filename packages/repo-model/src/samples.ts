@@ -49,8 +49,10 @@ export default system({
     gun.ammo -= 1;
     gun.cooldown = gun.interval;
     const hit = world.raycast(ev.origin, ev.direction, 100);
-    // 当たった相手が公開している Damage を送る（別の作者の的にも届く。ADR 0012）
-    if (hit) hit.send("Damage", { amount: gun.damage });
+    if (!hit) return;
+    // 当たった点に火花を出し、相手が公開している Damage を送る（別の作者の的にも届く。ADR 0012）
+    hit.effect("spark", { color: "#ffd166" });
+    hit.send("Damage", { amount: gun.damage });
   },
 });
 `;

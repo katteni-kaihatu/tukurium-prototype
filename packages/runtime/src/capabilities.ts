@@ -133,6 +133,13 @@ export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = {
     authority: "server-revalidate",
     note: "親は自分の配置の Entity だけ（U1）。作った Entity は呼んだ System の配置のものになる。一時的な effect（effects.spawn）とは分ける",
   },
+  "effects.spawn": {
+    capability: "effects.spawn",
+    currentReach: "any-placement",
+    crossPlacement: "target-policy",
+    authority: "runtime-host",
+    note: "U2：Raycast の opaque handle の当たった点にだけ出せる（handle 一つにつき一つ・大きさ 1m・寿命 2 秒・1 フレーム 32 個まで）。保存も物理もしない。別の参加者へ配る分は将来サーバーで quota を検証",
+  },
   "contract.send": {
     capability: "interaction.send",
     currentReach: "any-placement",

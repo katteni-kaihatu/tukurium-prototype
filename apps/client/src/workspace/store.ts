@@ -7,6 +7,7 @@ import {
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
 import {
+  type EffectEvent,
   type InputEvent,
   type LogEntry,
   Simulation,
@@ -78,6 +79,8 @@ interface WorkspaceState {
   viewPoint: (() => [number, number, number]) | null;
   /** ホストから届いた、まだ鳴らしていない音（ホスト以外） */
   incomingSounds: SoundEvent[];
+  /** ホストから届いた、まだ出していない一時的な effect（ホスト以外） */
+  incomingEffects: EffectEvent[];
   /** セッションに出すときの置き場所：視線の先の床（セッションの座標）と、自分の向き */
   placePoint: (() => { position: [number, number, number]; yaw: number }) | null;
   /** 編集空間の置き場所（WorkspaceController が更新する） */
@@ -189,6 +192,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     panelsHidden: false,
     viewPoint: null,
     incomingSounds: [],
+    incomingEffects: [],
     placePoint: null,
     anchor: null,
     teleport: null,
@@ -489,6 +493,12 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
   sendFrame();
 }
 
+let outgoingEffects: EffectEvent[] = [];
+/** ホストが出した一時的な effect を、次に配る状態に入れる */
+export function queueOutgoingEffects(effects: EffectEvent[]): void {
+  outgoingEffects = [...outgoingEffects, ...effects].slice(-32);
+}
+
 let outgoingSounds: SoundEvent[] = [];
 /** ホストが鳴らした音を、次に配る状態に入れる */
 export function queueOutgoingSounds(sounds: SoundEvent[]): void {
@@ -503,9 +513,12 @@ export function sendFrame(): void {
   const sim = s.sim;
   const sounds = outgoingSounds;
   outgoingSounds = [];
+  const effects = outgoingEffects;
+  outgoingEffects = [];
   const frame: PlayFrame = sim
     ? {
         sounds,
+        effects,
         mode: s.mode,
         outputId: s.outputId,
         time: sim.time,
@@ -527,6 +540,7 @@ function applyFrame(frame: PlayFrame) {
   world.restore(frame.world as Parameters<World["restore"]>[0]);
   set((st) => ({
     incomingSounds: [...st.incomingSounds, ...(frame.sounds ?? [])].slice(-32),
+    incomingEffects: [...st.incomingEffects, ...(frame.effects ?? [])].slice(-32),
     mode: frame.mode,
     outputId: frame.outputId || st.outputId,
     remote: { world, names: frame.names },

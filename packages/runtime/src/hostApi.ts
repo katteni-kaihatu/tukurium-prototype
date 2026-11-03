@@ -53,6 +53,19 @@ export const HOST_API_ARGS = {
     ])
     .rest(z.unknown()),
   "world.destroy": z.tuple([lenient(z.string())]).rest(z.unknown()),
+  "effects.spawn": z
+    .tuple([
+      z.string({ error: "Raycast の結果（hit）から出してください" }),
+      z.string({ error: "effect の種類（文字列）を渡してください" }),
+      lenient(
+        z.object({
+          color: lenient(z.string()),
+          size: lenient(z.number()),
+          life: lenient(z.number()),
+        }),
+      ),
+    ])
+    .rest(z.unknown()),
   "contract.send": z
     .tuple([
       z.string({ error: "Raycast の結果（hit）から送ってください" }),

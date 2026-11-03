@@ -4,7 +4,12 @@ import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
 import { holdsSomething } from "../workspace/WorkspaceController";
 import type { SessionEngine } from "./SessionEngine";
-import { queueSessionSounds, sendSessionFrame, useSessionWorld } from "./sessionWorld";
+import {
+  queueSessionEffects,
+  queueSessionSounds,
+  sendSessionFrame,
+  useSessionWorld,
+} from "./sessionWorld";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -129,6 +134,9 @@ export class SessionWorldController {
       const sounds = s.sim.drainSounds();
       for (const snd of sounds) this.engine.audio.play(snd.asset, snd.position, snd.volume);
       if (sounds.length > 0) queueSessionSounds(sounds);
+      const effects = s.sim.drainEffects();
+      for (const fx of effects) this.engine.effects.spawn(fx);
+      if (effects.length > 0) queueSessionEffects(effects);
       this.frameTimer += dt;
       if (this.frameTimer > FRAME_SEC) {
         this.frameTimer = 0;
@@ -144,6 +152,10 @@ export class SessionWorldController {
       for (const snd of s.incomingSounds)
         this.engine.audio.play(snd.asset, snd.position, snd.volume);
       useSessionWorld.setState({ incomingSounds: [] });
+    }
+    if (!s.isHost && s.incomingEffects.length > 0) {
+      for (const fx of s.incomingEffects) this.engine.effects.spawn(fx);
+      useSessionWorld.setState({ incomingEffects: [] });
     }
     if (this.turning && !this.holding()) this.endTurn();
     const view = s.view();
