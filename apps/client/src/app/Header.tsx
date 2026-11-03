@@ -5,7 +5,7 @@ import {
   targetRangeSample,
 } from "@tukurium/repo-model";
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useWorkspace } from "../workspace/store";
 import styles from "./Header.module.css";
 import { useApp } from "./store";
@@ -78,6 +78,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
             </li>
           ))}
       </ul>
+      {inSession && session && <SessionExit />}
       <span className={styles.status} data-status={status} title="サーバーとの接続">
         {status === "online"
           ? "接続中"
@@ -86,6 +87,42 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
             : "オフライン"}
       </span>
     </header>
+  );
+}
+
+/** セッションの終わり方。持ち主はセッションごと閉じ、ほかの人は自分だけ出る */
+function SessionExit() {
+  const { client, session, me } = useApp();
+  const navigate = useNavigate();
+  const owner = session?.owner === me?.id;
+  if (owner) {
+    return (
+      <button
+        type="button"
+        className={styles.leave}
+        onClick={() => {
+          if (
+            confirm(
+              "セッションを閉じますか？中にいる人の画面も終わり、このセッションはなくなります。作ったプロジェクトは残ります。",
+            )
+          ) {
+            client.send({ t: "session.close" });
+          }
+        }}
+      >
+        セッションを閉じる
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={styles.leave}
+      title="セッションは続きます。自分だけ出ます"
+      onClick={() => navigate("/")}
+    >
+      セッションを出る
+    </button>
   );
 }
 
