@@ -713,7 +713,7 @@ export class Simulation {
   private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Json> {
     const out: Record<string, Json> = {};
     for (const f of this.registry.require(koko).fields)
-      out[f.name] = structuredClone(values[f.id]) as Json;
+      out[f.name] = cloneJson(values[f.id] as Json);
     return out;
   }
 
@@ -730,7 +730,7 @@ export class Simulation {
       if (!(f.name in values)) continue;
       const v = values[f.name] as Json;
       if (before && JSON.stringify(before[f.name]) === JSON.stringify(v)) continue;
-      if (accepts(f, v)) target[f.id] = structuredClone(v) as FieldValue;
+      if (accepts(f, v)) target[f.id] = cloneJson(v) as FieldValue;
     }
   }
 
@@ -743,6 +743,18 @@ export class Simulation {
   private log(systemId: string | null, message: string, level: LogEntry["level"]): void {
     this.options.onLog?.({ time: this.time, systemId, message, level });
   }
+}
+
+/**
+ * フィールドの値（JSON で表せる値）の複製。毎ステップ全 Entity 分呼ばれるので、
+ * structuredClone（数値 1 つでも重い）を避け、数値・文字列などはそのまま返す。
+ */
+function cloneJson<T extends Json>(v: T): T {
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => cloneJson(x)) as T;
+  const out: Record<string, Json> = {};
+  for (const [k, x] of Object.entries(v)) out[k] = cloneJson(x as Json);
+  return out as T;
 }
 
 function accepts(f: FieldDef, v: Json): boolean {
