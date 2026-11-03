@@ -93,6 +93,21 @@ export interface PartSpec {
   yaw: number;
 }
 
+/** 一時的な effect（ホストが手元で出し、状態と一緒にほかの人にも配る。保存しない） */
+export interface EffectEvent {
+  kind: EffectKind;
+  position: Vec3;
+  color: string;
+  /** 大きさ（m） */
+  size: number;
+  /** 寿命（秒） */
+  life: number;
+}
+
+export const EFFECT_KINDS = ["spark"] as const;
+export type EffectKind = (typeof EFFECT_KINDS)[number];
+const MAX_EFFECTS = 32;
+
 /** 鳴らす音（ホストが手元で鳴らし、状態と一緒にほかの人にも配る） */
 export interface SoundEvent {
   /** 音声の素材 ID */
@@ -141,6 +156,11 @@ interface PendingEvent {
 /** Raycast の結果の opaque handle（ADR 0012）。token は推測しにくい文字列で、表を引く鍵 */
 interface HitHandle {
   target: EntityId;
+  /** 当たった点（effect を出す場所） */
+  point: Vec3;
+  /** Contract を送ったか・effect を出したか（それぞれ一度だけ） */
+  contractUsed: boolean;
+  effectUsed: boolean;
   /** 発行したときの呼び出しの主体の配置 */
   parts: Set<string>;
   /** この時刻を過ぎたら使えない */
@@ -164,6 +184,7 @@ export const HOST_API = [
   "time.now",
   "audio.play",
   "contract.send",
+  "effects.spawn",
 ] as const;
 export type HostName = (typeof HOST_API)[number];
 
@@ -196,6 +217,7 @@ export class Simulation {
   private readonly realmMaterials = new Map<string, MaterialDef[]>();
   private readonly realmAssets = new Map<string, AssetDef[]>();
   private sounds: SoundEvent[] = [];
+  private effects: EffectEvent[] = [];
   private inputs: InputEvent[] = [];
   private pending: PendingEvent[] = [];
   private readonly handles = new Map<string, HitHandle>();
@@ -374,6 +396,13 @@ export class Simulation {
   }
 
   /** この間に鳴らされた音を取り出す */
+  /** 出した一時的な effect を取り出す（描画と配信用） */
+  drainEffects(): EffectEvent[] {
+    const out = this.effects;
+    this.effects = [];
+    return out;
+  }
+
   drainSounds(): SoundEvent[] {
     const out = this.sounds;
     this.sounds = [];
@@ -757,7 +786,7 @@ export class Simulation {
   }
 
   /** opaque handle を発行する（推測しにくい token） */
-  private issueHandle(target: EntityId, callers: Part[]): string {
+  private issueHandle(target: EntityId, point: Vec3, callers: Part[]): string {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     const token = `tk_${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
@@ -766,6 +795,9 @@ export class Simulation {
       for (const [k, h] of this.handles) if (h.expires < this.time) this.handles.delete(k);
     this.handles.set(token, {
       target,
+      point,
+      contractUsed: false,
+      effectUsed: false,
       parts: new Set(callers.map((p) => p.id)),
       expires: this.time + HANDLE_TTL,
     });
@@ -793,7 +825,7 @@ export class Simulation {
           ...hidden,
         ]);
         if (!hit) return null;
-        const token = this.issueHandle(hit.entity, callers);
+        const token = this.issueHandle(hit.entity, hit.point, callers);
         // 自分の配置の Entity のときだけ、生の ID を渡す
         return {
           token,
@@ -818,8 +850,8 @@ export class Simulation {
           this.handles.delete(token);
           return false;
         }
-        if (!callers.some((p) => handle.parts.has(p.id))) return false;
-        this.handles.delete(token);
+        if (!callers.some((p) => handle.parts.has(p.id)) || handle.contractUsed) return false;
+        handle.contractUsed = true;
         const target = handle.target;
         if (!this.world.has(target)) return false;
         const targetPart = this.partOf(target);
@@ -834,6 +866,27 @@ export class Simulation {
         const handler = `contract:${name}`;
         if (!this.active(handler).some((sys) => this.entityMatches(sys, target))) return false;
         this.pending.push({ kind: "contract", target, name, data });
+        return true;
+      },
+      "effects.spawn": ([token, kind, opts]) => {
+        if (!(EFFECT_KINDS as readonly string[]).includes(kind))
+          throw new TypeError(
+            `effect「${kind}」はありません（使えるもの：${EFFECT_KINDS.join("・")}）`,
+          );
+        const handle = this.handles.get(token);
+        if (!handle || handle.expires < this.time) return false;
+        if (!callers.some((p) => handle.parts.has(p.id)) || handle.effectUsed) return false;
+        if (this.effects.length >= MAX_EFFECTS) return false;
+        handle.effectUsed = true;
+        const clamp = (v: number | undefined, lo: number, hi: number, d: number) =>
+          v === undefined ? d : Math.min(hi, Math.max(lo, v));
+        this.effects.push({
+          kind: kind as EffectKind,
+          position: handle.point,
+          color: opts?.color && /^#[0-9a-fA-F]{6}$/.test(opts.color) ? opts.color : "#ffffff",
+          size: clamp(opts?.size, 0.01, 1, 0.15),
+          life: clamp(opts?.life, 0.05, 2, 0.4),
+        });
         return true;
       },
       "world.get": ([id, kokoName]) => {

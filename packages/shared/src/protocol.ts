@@ -102,6 +102,15 @@ export const SoundEvent = z.object({
   volume: z.number(),
 });
 
+/** 一時的な effect（保存しない。ADR 0012） */
+export const EffectEvent = z.object({
+  kind: z.enum(["spark"]),
+  position: vec3,
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  size: z.number().min(0).max(1),
+  life: z.number().min(0).max(2),
+});
+
 /** System の状態（止まった理由と行） */
 export const SystemStatusInfo = z.object({
   id: z.string(),
@@ -114,6 +123,7 @@ export const SystemStatusInfo = z.object({
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
 export const PlayFrame = z.object({
   sounds: z.array(SoundEvent).max(32).optional(),
+  effects: z.array(EffectEvent).max(32).optional(),
   mode: PlayMode,
   outputId: z.string(),
   time: z.number(),
@@ -126,6 +136,7 @@ export type PlayFrame = z.infer<typeof PlayFrame>;
 /** セッションのホストが配る、セッションの世界の状態 */
 export const SessionFrame = z.object({
   sounds: z.array(SoundEvent).max(32).optional(),
+  effects: z.array(EffectEvent).max(32).optional(),
   time: z.number(),
   world: z.unknown(),
   names: z.record(z.string(), z.string()),

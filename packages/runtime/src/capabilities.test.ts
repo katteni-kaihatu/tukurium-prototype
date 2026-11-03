@@ -11,9 +11,10 @@ describe("Host API の棚卸し（ADR 0012）", () => {
     const reaching = Object.entries(HOST_API_POLICY)
       .filter(([, p]) => p.currentReach === "any-placement")
       .map(([name, p]) => [name, p.crossPlacement]);
-    // 別の配置へ届くのは、opaque handle を返す Raycast と、公開 Contract を呼ぶ contract.send だけ（U2）
+    // 別の配置へ届くのは、opaque handle を返す Raycast と、handle を使う contract.send・effects.spawn だけ（U2）
     expect(reaching.sort()).toEqual([
       ["contract.send", "public-contract"],
+      ["effects.spawn", "target-policy"],
       ["world.raycast", "target-policy"],
     ]);
   });

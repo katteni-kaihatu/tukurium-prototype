@@ -96,11 +96,14 @@ for (const full of ${JSON.stringify(hostNames)}) {
 if (__ns.world && __ns.world.raycast && __ns.contract && __ns.contract.send) {
   const raw = __ns.world.raycast;
   const send = __ns.contract.send;
+  const effect = __ns.effects && __ns.effects.spawn;
   __ns.world.raycast = (...a) => {
     const hit = raw(...a);
     if (hit && typeof hit.token === "string") {
       const token = hit.token;
       Object.defineProperty(hit, "send", { value: (name, payload) => send(token, name, payload), enumerable: false });
+      // hit.effect(種類, { color, size, life })：当たった点に一時的な effect を出す
+      if (effect) Object.defineProperty(hit, "effect", { value: (kind, opts) => effect(token, kind, opts), enumerable: false });
     }
     return hit;
   };

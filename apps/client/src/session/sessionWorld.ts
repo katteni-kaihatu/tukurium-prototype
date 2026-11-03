@@ -1,6 +1,12 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
 import type { MaterialDef, ProjectSnapshot } from "@tukurium/repo-model";
-import { type InputEvent, Simulation, type SoundEvent, type SystemStatus } from "@tukurium/runtime";
+import {
+  type EffectEvent,
+  type InputEvent,
+  Simulation,
+  type SoundEvent,
+  type SystemStatus,
+} from "@tukurium/runtime";
 import type { HostPart, SessionFrame } from "@tukurium/shared";
 import { create } from "zustand";
 import { useApp } from "../app/store";
@@ -18,6 +24,8 @@ interface SessionWorldState {
   status: SystemStatus[];
   /** ホストから届いた、まだ鳴らしていない音（ホスト以外） */
   incomingSounds: SoundEvent[];
+  /** ホストから届いた、まだ出していない一時的な effect（ホスト以外） */
+  incomingEffects: EffectEvent[];
   input(ev: InputEvent): void;
   /** 表示する World とマテリアル */
   view(): { world: World; materials: MaterialDef[] } | null;
@@ -31,6 +39,7 @@ export const useSessionWorld = create<SessionWorldState>((_set, get) => ({
   remote: null,
   status: [],
   incomingSounds: [],
+  incomingEffects: [],
   input: (ev) => {
     const { isHost, sim } = get();
     if (isHost && sim) sim.input(ev);
@@ -146,6 +155,9 @@ function applyFrame(frame: SessionFrame): void {
   world.restore(frame.world as WorldSnapshot);
   set({
     remote: { world, names: frame.names, materials: frame.materials as MaterialDef[] },
+    // 届いた音と effect を、ホスト以外が手元で鳴らす・出す
+    incomingSounds: [...st().incomingSounds, ...(frame.sounds ?? [])].slice(-32),
+    incomingEffects: [...st().incomingEffects, ...(frame.effects ?? [])].slice(-32),
     status: frame.status,
   });
 }
@@ -155,16 +167,24 @@ export function queueSessionSounds(sounds: SoundEvent[]): void {
   outgoingSounds = [...outgoingSounds, ...sounds].slice(-32);
 }
 
+let outgoingEffects: EffectEvent[] = [];
+export function queueSessionEffects(effects: EffectEvent[]): void {
+  outgoingEffects = [...outgoingEffects, ...effects].slice(-32);
+}
+
 /** ホストが世界の状態を配る（SessionWorldController が間隔を見て呼ぶ） */
 export function sendSessionFrame(): void {
   const sim = st().sim;
   if (!st().isHost || !sim) return;
   const sounds = outgoingSounds;
   outgoingSounds = [];
+  const effects = outgoingEffects;
+  outgoingEffects = [];
   client().send({
     t: "session.frame",
     frame: {
       sounds,
+      effects,
       time: sim.time,
       world: sim.world.snapshot(),
       names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),

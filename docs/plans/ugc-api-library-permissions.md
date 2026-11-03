@@ -2,7 +2,7 @@
 
 - 状態: **Active**
 - 対象: ResourcePathIndex / Diagnostic core 後、System binding と Runtime Host API を固定する前から段階的に着手
-- 実装状況: U0 完了（ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`）。U1 完了（`HOST_API_ARGS`、呼び出しの主体の配置、別の配置は「見つからない」）。U2 は最初の縦の一本まで（Raycast の opaque handle、`hit.send`、System の `contracts`、Built-in の Damage v1、出力の `exposure`。書き方と初期値は利用者と決めた）
+- 実装状況: U0 完了（ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`）。U1 完了（`HOST_API_ARGS`、呼び出しの主体の配置、別の配置は「見つからない」）。U2 は最初の縦の一本まで（Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`。書き方と初期値は利用者と決めた）
 - U0 で利用者と決めたこと: 権限は置いた物（Placement）に与える／今は協調セッションに限り、サーバーの判定は U2 以降／境界はセッションに置いた World ごと／非公開の対象は「見つからない」
 - 関連 ADR: [0001](../adr/0001-script-runtime-quickjs.md)、[0006](../adr/0006-session-world-apply-assets.md)、[0008](../adr/0008-private-work-world-editing.md)、[0010](../adr/0010-resource-identity-paths-diagnostics.md)
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)

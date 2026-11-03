@@ -1,13 +1,13 @@
 import { KokoStateRegistry, World } from "@tukurium/eks";
 import { BUILTIN, type MaterialDef, type ProjectDoc } from "@tukurium/repo-model";
-import { buildWorld, type Simulation } from "@tukurium/runtime";
+import { buildWorld, type EffectEvent, type Simulation } from "@tukurium/runtime";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
-import { queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
+import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -177,6 +177,11 @@ export class WorkspaceController {
         this.playSounds(sounds);
         queueOutgoingSounds(sounds);
       }
+      const effects = ws.sim.drainEffects();
+      if (effects.length > 0) {
+        this.showEffects(effects);
+        queueOutgoingEffects(effects);
+      }
       this.frameTimer += dt;
       if (this.frameTimer > FRAME_SEC) {
         this.frameTimer = 0;
@@ -193,6 +198,10 @@ export class WorkspaceController {
       if (ws.incomingSounds.length > 0) {
         this.playSounds(ws.incomingSounds);
         useWorkspace.setState({ incomingSounds: [] });
+      }
+      if (ws.incomingEffects.length > 0) {
+        this.showEffects(ws.incomingEffects);
+        useWorkspace.setState({ incomingEffects: [] });
       }
     } else {
       const key = `${ws.rev}:${ws.outputId}`;
@@ -258,6 +267,14 @@ export class WorkspaceController {
         materials: this.materials,
       },
     });
+  }
+
+  /** 編集空間の座標の effect を、セッションの座標に直して出す */
+  private showEffects(effects: EffectEvent[]) {
+    for (const fx of effects) {
+      const p = this.view.root.localToWorld(new THREE.Vector3(...fx.position)).toArray();
+      this.engine.effects.spawn({ ...fx, position: p });
+    }
   }
 
   /** 編集空間の座標の音を、セッションの座標に直して鳴らす */
