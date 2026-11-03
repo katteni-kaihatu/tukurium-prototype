@@ -91,19 +91,38 @@ for (const full of ${JSON.stringify(hostNames)}) {
     return r === undefined ? undefined : JSON.parse(r);
   };
 }
+// Raycast の結果に hit.send(Contract名, payload) を付ける（ADR 0012）。token は閉じ込めた値を使い、
+// 結果の token を書き換えても、別の handle にはならない
+if (__ns.world && __ns.world.raycast && __ns.contract && __ns.contract.send) {
+  const raw = __ns.world.raycast;
+  const send = __ns.contract.send;
+  __ns.world.raycast = (...a) => {
+    const hit = raw(...a);
+    if (hit && typeof hit.token === "string") {
+      const token = hit.token;
+      Object.defineProperty(hit, "send", { value: (name, payload) => send(token, name, payload), enumerable: false });
+    }
+    return hit;
+  };
+}
 for (const [ns, obj] of Object.entries(__ns)) globalThis[ns] = Object.freeze(obj);
 
 globalThis.__define = (id, def) => {
   const q = def.query ?? {};
   const asList = (v) => Array.isArray(v) ? v.map(String) : [];
   const handlers = Object.keys(def).filter((k) => k.startsWith("on") && typeof def[k] === "function");
+  // 公開 Contract：contracts: { Damage(e, payload) {...} }（ADR 0012）
+  const contracts = def.contracts !== null && typeof def.contracts === "object" ? def.contracts : {};
+  for (const k of Object.keys(contracts)) if (typeof contracts[k] === "function") handlers.push("contract:" + k);
   __systems[id] = def;
   return JSON.stringify({ query: { with: asList(q.with), without: asList(q.without) }, handlers });
 };
 globalThis.__undefine = (id) => { delete __systems[id]; };
 globalThis.__run = (id, handler, entitiesJson, argsJson) => {
   const def = __systems[id];
-  const fn = def && def[handler];
+  const fn = def && (handler.startsWith("contract:")
+    ? (def.contracts && def.contracts[handler.slice("contract:".length)])
+    : def[handler]);
   if (typeof fn !== "function") return entitiesJson;
   const entities = JSON.parse(entitiesJson);
   const args = JSON.parse(argsJson);
@@ -114,7 +133,7 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
       const view = { id: e.id, ...e.states };
       // entity.get(Gun)：import した KokoState（または名前）でその値を取る
       Object.defineProperty(view, "get", { value: (k) => view[__kokoName(k)], enumerable: false });
-      fn.call(def, view, ...args);
+      fn.call(handler.startsWith("contract:") ? def.contracts : def, view, ...args);
       for (const k of Object.keys(e.states)) e.states[k] = view[k];
     }
   } finally {

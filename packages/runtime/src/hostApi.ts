@@ -53,6 +53,13 @@ export const HOST_API_ARGS = {
     ])
     .rest(z.unknown()),
   "world.destroy": z.tuple([lenient(z.string())]).rest(z.unknown()),
+  "contract.send": z
+    .tuple([
+      z.string({ error: "Raycast の結果（hit）から送ってください" }),
+      z.string({ error: "Contract の名前（文字列）を渡してください" }),
+      z.unknown(),
+    ])
+    .rest(z.unknown()),
 } satisfies Record<HostName, z.ZodType>;
 
 export type HostArgs<N extends HostName> = z.infer<(typeof HOST_API_ARGS)[N]>;

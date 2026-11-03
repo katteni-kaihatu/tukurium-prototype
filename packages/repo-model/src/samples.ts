@@ -49,27 +49,31 @@ export default system({
     gun.ammo -= 1;
     gun.cooldown = gun.interval;
     const hit = world.raycast(ev.origin, ev.direction, 100);
-    if (hit) world.emit(hit.entity, "hit", { damage: gun.damage });
+    // 当たった相手が公開している Damage を送る（別の作者の的にも届く。ADR 0012）
+    if (hit) hit.send("Damage", { amount: gun.damage });
   },
 });
 `;
 
-const TARGET = `// 的：hit を受けると hp が減り、0 になると倒れて、しばらくすると戻る
+const TARGET = `// 的：Damage を受けると hp が減り、0 になると倒れて、しばらくすると戻る
 export default system({
   query: { with: ["Target", "Transform", "Mesh"] },
 
-  onEvent(e, ev) {
-    if (ev.name !== "hit" || e.Target.hp <= 0) return;
-    e.Target.hp -= ev.data.damage;
-    if (e.Target.hp <= 0) {
-      e.Target.downTime = e.Target.respawn;
-      e.Transform.rotation = [0, 0, 0];
-      e.Mesh.color = "#8a8792";
-      log(e.id, "命中！倒れた");
-    } else {
-      e.Mesh.color = "#fdd046";
-      log(e.id, "命中 残り", e.Target.hp);
-    }
+  // 外に公開する操作（ほかの作者の銃からも呼べる）
+  contracts: {
+    Damage(e, damage) {
+      if (e.Target.hp <= 0) return;
+      e.Target.hp -= damage.amount;
+      if (e.Target.hp <= 0) {
+        e.Target.downTime = e.Target.respawn;
+        e.Transform.rotation = [0, 0, 0];
+        e.Mesh.color = "#8a8792";
+        log(e.id, "命中！倒れた");
+      } else {
+        e.Mesh.color = "#fdd046";
+        log(e.id, "命中 残り", e.Target.hp);
+      }
+    },
   },
 
   onUpdate(e, dt) {

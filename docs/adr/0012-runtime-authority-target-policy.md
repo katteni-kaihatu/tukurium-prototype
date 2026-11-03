@@ -52,8 +52,9 @@
 | --- | --- | --- | --- | --- |
 | `time.now` | time.read | 自分の領域 | 対象を取らない | ホスト |
 | `audio.play` | audio.play | 自分の領域 | 拒む | ホスト（配る分の quota は将来サーバー） |
-| `world.raycast` | physics.raycast | **全配置** | 対象が公開した Collider だけ。結果は opaque handle | ホスト |
-| `world.emit` | interaction.send | **全配置** | 対象が公開した Contract だけ | サーバーの再検証が必要（未実装） |
+| `world.raycast` | physics.raycast | 全配置（U2：別の配置は opaque handle だけ。private には当たらない） | 対象が公開した Collider だけ。結果は opaque handle | ホスト |
+| `world.emit` | interaction.send | 自分の配置（U2） | 拒む。別の配置へは contract.send | サーバーの再検証が必要（未実装） |
+| `contract.send`（`hit.send`） | interaction.send | 全配置（U2：相手が interactive のときだけ） | 対象が公開した Contract だけ | サーバーの再検証が必要（未実装） |
 | `world.find` | entity.discover | 自分の配置（U1） | 拒む（自分の配置の中だけ） | ホスト |
 | `world.get` | state.read | 自分の配置（U1） | 対象の policy で公開した state だけ | ホスト |
 | `world.set` | state.write | 自分の配置（U1） | 対象の policy で許した state だけ | サーバーの再検証が必要（未実装） |
@@ -76,6 +77,22 @@
 - 呼び出しの主体の配置は、呼んだときに処理していた Entity から決める（サンドボックスが渡す）。ハンドラの外では、その System を使っている配置すべてとする。
 - `world.find` / `get` / `set` / `destroy` と `spawn` の親、`audio.play` の音源の Entity は、呼んだ System の配置の中だけにした。別の配置は「見つからない」と同じ結果になる。`world.spawn` で作った Entity は、呼んだ System の配置のものになる。
 - `world.raycast` と `world.emit` は、別の配置への正当な使い道（別のリポジトリの銃で的を撃つ）の代わりができるまで、まだ別の配置に届く。U2 で opaque handle と公開 Contract に置き換える。この 2 つが残る間は、U1 を完了とはしない。
+
+### U2 の最初の縦の一本でしたこと
+
+利用者と相談して、書き方と初期設定を次のように決めた。
+
+- 受ける側は、System に `contracts: { Damage(e, damage) { ... } }` と書く。書いた Contract だけが外に公開される。受ける Entity は Query で決まる。
+- 送る側は、`const hit = world.raycast(...); if (hit) hit.send("Damage", { amount })` と書く。`hit` は opaque handle で、別の配置に当たったときは位置・距離・token だけが見え、`hit.entity` は null になる。自分の配置に当たったときだけ、生の Entity ID が入る。
+- Contract は、Package（U3）ができるまでは公式の Built-in として持つ。最初は Damage v1（`amount`：0〜1,000,000 の数、`type`：32 文字までの文字列。ほかのキーは拒む）。
+- アウトプットの「外からの見え方」（`exposure`）の初期値は「インタラクション可能」。今ある作品は、受ける側を `contracts` の書き方に直せば、別の作者の銃で撃てる。
+  - `interactive`：公開した Contract を受け付ける
+  - `collision`：Raycast は当たるが、Contract は受け付けない（権限がない）
+  - `private`：別の配置からは Raycast も当たらない（見つからない）
+
+handle は、発行した配置からだけ・一度だけ・1 秒の間だけ使える。配置の追加・削除・リセット・適用・復元（ホストの引き継ぎ）で、発行済みの handle はすべて無効になる。一度だけ使えることで、同じ要求の二重配送を防いでいる。
+
+まだ残っているもの：衝突点に出す一時的な effect（effects.spawn）、拒否の構造化された Runtime Diagnostic、サーバーでの判定、World の上限 policy と置いた物への付与（今は出力ごとの exposure だけ）。
 
 ### この先
 
