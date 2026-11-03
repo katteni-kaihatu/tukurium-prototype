@@ -83,7 +83,8 @@ async function session(logs: LogEntry[], exposure?: "private" | "collision" | "i
   return sim;
 }
 
-const hp = (s: Simulation) => s.world.get("range/ent_target2", "repoRange:ks_target")?.f_hp;
+const hp = (s: Simulation) =>
+  s.world.get("range/ent_target2", s.stateIdOf("range", "ks_target") ?? "")?.f_hp;
 const said = (logs: LogEntry[], prefix: string) =>
   logs.filter((l) => l.level === "log" && l.message.startsWith(`${prefix} `)).map((l) => l.message);
 
@@ -274,5 +275,29 @@ describe("World の上限（外から来た Item に許すこと。ADR 0012）",
     s.input(input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent true"]);
+  });
+});
+
+describe("拒否の知らせ（Runtime Diagnostic。ADR 0012）", () => {
+  const warningsOf = (s: Simulation) => s.systemStatus().find((x) => x.name === "Shoot")?.warnings;
+
+  it("公開された相手に拒まれたら、送った System に注意を残す（同じ注意は回数を数える）", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs, "collision");
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(warningsOf(s)).toEqual([
+      { code: "contract-denied", message: expect.stringContaining("Damage"), count: 2 },
+    ]);
+  });
+
+  it("非公開の相手は「見つからない」ので、注意も出さない（存在を漏らさない）", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs, "private");
+    s.input(input("shoot"));
+    s.step(1 / 60);
+    expect(warningsOf(s)).toEqual([]);
   });
 });

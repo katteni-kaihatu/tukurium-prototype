@@ -17,7 +17,7 @@
 - [x] 汎用 Diagnostic model と最小 Provider（構造・リソース参照・スクリプト・実行の問題を一つの形にした。編集前の結果は stale、非同期の確認は世代で古い結果を捨てる）
 - [x] ProjectDependencyGraph と増分無効化（スクリプトの確認は影響を受ける System だけ。System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。`usageOf()`・抽出への統合は残り）
 - [x] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。古い結び付けの診断は、結び付けを覚えておく仕組みと合わせて後で）
-- [ ] runtime を alias / stable ID ベースへ移行
+- [x] runtime を alias / stable ID ベースへ移行（状態の受け渡し・Query・world.get/set/spawn を ID ベースにし、別のフォルダの同じ名前の KokoState を使えるようにした。セッションの realm は「リポジトリ@版」で、適用は対象の配置だけを新しい版へまとめて移す）
 - [ ] 独立した Problems パネル、全 resource / folder / hierarchy の集計表示
 - [ ] Snapshot v2、migration、extract / fork の更新
 - [ ] 型付き JavaScript。その必要性を確認後に TypeScript 対応
@@ -27,7 +27,7 @@
 上の計画と同じ土台で進める。
 
 - [ ] QuickJS との全境界を `unknown` から検証する
-- [ ] Host API の型・validator・利用者向け宣言を一つの定義から生成する
+- [x] Host API の型・validator・利用者向け宣言を一つの定義から生成する（`HOST_API_SPEC`。`hostApiDeclarations` と `hostApiCompletions`）
 - [ ] 構造化された ScriptDiagnostic を Runtime・通信・Problems UI まで保つ
 - [ ] メモリ超過時の復旧動作と ADR 0001 を一致させる
 
@@ -38,11 +38,13 @@
 現在の dependency graph の次から設計判断を始め、System binding と Runtime Host API を固定する前に権限境界を組み込む。Library の検索・共有 UI より、実行時に強制できる安全な API と最小 package model を先に作る。
 
 - [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
-- [x] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る（引数の検証を一つの定義に集め、別の配置へは opaque handle と公開 Contract だけで届くようにした。利用者向けの型の生成は「2. スクリプト境界の堅牢化」で）
-- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。土台の World の上限（guestPolicy のプリセット）も済み。拒否の Diagnostic・置いた物ごとの付与・サーバーでの判定が残り）
+- [x] schema-first の Host API 引数検証と既定の配置境界を作る（引数を一つの定義で検証し、別の配置へは opaque handle と公開 Contract だけで届くようにした）
+- [x] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する（要る Capability はコードから読み取り、セッションでは「宣言 ∩ 付与」で全 Host API に強制。ワークスペースの再生では強制しない（利用者と決めた）。付与はサーバーの配置の台帳に保存し、setGrants で変えられる。`HOST_API_SPEC` から検証・権限の分類・拒んだときの値・利用者向けの型の宣言・エディタの入力補完を作る）
+- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。土台の World の上限（guestPolicy のプリセット）も済み、拒否の知らせ（contract-denied）も済み。呼び出し側 grant の強制は上の gateway 項目、対象側はサーバーでの判定が残り。設定 UI は U5）
 - [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する
-- [ ] 公式 Library を通して入力・Raycast・Damage・一時 effect を提供し、銃サンプルを最初の移行例にする
-- [ ] Dependencies / 権限プリセット / Problems の UI を追加する
+- [ ] 公式 Platform Primitive / Library カタログを整備する。銃と的、扉とスイッチ、収集物と Inventory を reference UGC として縦に実装し、複数用途で共通する機能、Host 境界でしか安全に提供できない機能、Package 間相互運用に必要な機能だけを Runtime Built-in・Host Capability・公式 Library へ段階的に昇格させる
+- [ ] 昇格する公式 API ごとに stable identity、schema、version、権限、authority、quota、lifecycle、Diagnostic、利用者向け型、unit / conformance test を揃え、experimental → preview → stable → deprecated の互換性規則を運用する
+- [ ] Dependencies / Placement grant・World / Item 権限プリセット / Problems の UI を追加する（実効権限の runtime model と強制は U1 の gateway で先に完成させる）
 - [ ] 基盤の実測後、ユーザー間の公開・検索・install・fork・更新へ広げる
 
 ## 後で判断するもの

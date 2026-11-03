@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
@@ -46,6 +46,16 @@ export const WorkspaceInfo = z.object({
 });
 export type WorkspaceInfo = z.infer<typeof WorkspaceInfo>;
 
+/**
+ * 置いた物への付与（ADR 0012）。Capability の ID の一覧。null は「コードから読み取った宣言どおり」。
+ * 古いサーバー・ホストからは届かないので、ないときは null
+ */
+export const PlacementGrants = z
+  .array(z.string().regex(/^[a-z]+\.[a-z]+$/))
+  .max(32)
+  .nullable()
+  .default(null);
+
 /** セッションに配置された実体（ワークスペースのアウトプット 1 回分） */
 export const PlacementInfo = z.object({
   id,
@@ -60,6 +70,7 @@ export const PlacementInfo = z.object({
   position: vec3,
   yaw: z.number(),
   placedBy: id,
+  grants: PlacementGrants,
 });
 export type PlacementInfo = z.infer<typeof PlacementInfo>;
 
@@ -120,6 +131,11 @@ export const SystemStatusInfo = z.object({
   enabled: z.boolean(),
   error: z.string().nullable(),
   line: z.number().int().nullable().default(null),
+  /** 止まるほどではない注意（拒否など）。古いホストからは届かないので、ないときは空 */
+  warnings: z
+    .array(z.object({ code: z.string(), message: z.string(), count: z.number().int() }))
+    .max(16)
+    .default([]),
 });
 
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
@@ -170,6 +186,7 @@ export const HostPart = z.object({
   snapshot: z.unknown(),
   position: vec3,
   yaw: z.number(),
+  grants: PlacementGrants,
 });
 export type HostPart = z.infer<typeof HostPart>;
 
@@ -265,6 +282,8 @@ export const ClientMessage = z.discriminatedUnion("t", [
   /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */
   z.object({ t: z.literal("apply"), workspaceId: id, outputId: z.string(), snapshot: z.unknown() }),
   z.object({ t: z.literal("unplace"), placementId: id }),
+  /** 置いた物への付与を変える（セッションの持ち主・置いた人・そのワークスペースの共同編集以上。null で宣言どおり） */
+  z.object({ t: z.literal("setGrants"), placementId: id, grants: PlacementGrants }),
   z.object({ t: z.literal("resetPart"), placementId: id }),
   z.object({ t: z.literal("session.input"), input: PlayInput }),
   /** セッションのホストだけが送る */
@@ -347,6 +366,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("host.removePart"), id }),
   z.object({ t: z.literal("host.resetPart"), id }),
+  z.object({ t: z.literal("host.setGrants"), id, grants: PlacementGrants }),
   z.object({ t: z.literal("host.input"), input: PlayInput }),
   /** 自分がセッションのホストになった。parts はいまの配置すべて、resume は最後の状態 */
   z.object({

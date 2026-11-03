@@ -23,6 +23,7 @@
 ## テストの方針（プロトタイプの間）
 
 - PR の合否を決めるのは lint・型・単体テスト・ビルド（CI の `check`）だけ。ロジック（制作データ・ランタイム・サーバー）は単体テストで守る。
+- Markdown、`docs/`、`.claude/`だけの変更では通常CIを実行しない。`main`のE2Eも、これらと通常CI設定だけの変更では実行しない。コード、依存関係、ビルド・実行・E2E設定に触れた場合は省略しない。
 - E2E は「背骨」の 4 本だけ：一人で作って撃つ（m1）、2 人で編集・再生（m2）、セッションに出して適用（m3）、3 人で一周（m6）。PR では実行せず、`main` へのマージ後・毎日の定期実行・手動実行で状態と失敗ログを確認する。
 - `main` の E2E が落ちても、後続 PR の作成・マージは止めない。テスト名と失敗箇所を残課題に記録し、E2E の確認・修正を別の作業として行う。
 - 機能ごとの細かい E2E は足さない。画面の変更は、`verify-change` スキルの手順（使い捨てのスクリプトでスクリーンショット）で確かめる。
@@ -30,7 +31,7 @@
 
 ## 守ること（破ると壊れる・検査で落ちる）
 
-- **Host API（`world.*` など）を足したら**、`packages/runtime/src/capabilities.ts` の `HOST_API_POLICY` に Capability と判定の場所の分類を足す（テストが検査する。ADR 0012）。
+- **Host API（`world.*` など）を足したら**、`packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` に一件足す（引数・Capability・判定の場所・拒んだときの値・利用者向けの型と説明）。repo-model の `HOST_CAPABILITIES` にも同じ Capability を足す（テストが一致を検査する。ADR 0012）。
 - **通信の形**は `packages/shared/src/protocol.ts` の zod で決める。互換性がなくなる変更では `PROTOCOL_VERSION` を上げる。
 - **パッケージを足したら**、`docker/Dockerfile` に、その package.json の COPY を足す（`pnpm lint` が検査する）。
 - **サーバーが実行時に使う npm パッケージ**は `apps/server/package.json` の dependencies に書く。バンドルでは外部扱いになり、本番では node_modules から読む。

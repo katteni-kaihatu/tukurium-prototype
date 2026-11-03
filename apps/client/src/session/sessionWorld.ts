@@ -1,6 +1,7 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
 import type { MaterialDef, ProjectSnapshot } from "@tukurium/repo-model";
 import {
+  type CapabilityId,
   type EffectEvent,
   type InputEvent,
   Simulation,
@@ -75,6 +76,8 @@ function addPart(sim: Simulation, part: HostPart): void {
       snapshot: part.snapshot as ProjectSnapshot,
       position: part.position,
       yaw: part.yaw,
+      // 置いた物への付与（null は宣言どおり。ADR 0012）
+      ...(part.grants ? { grants: part.grants as CapabilityId[] } : {}),
     });
   } catch (e) {
     log(`配置を読み込めませんでした：${e instanceof Error ? e.message : e}`, "error");
@@ -116,6 +119,11 @@ client().on((msg) => {
       return;
     case "host.removePart":
       queue(() => st().sim?.removePart(msg.id));
+      return;
+    case "host.setGrants":
+      queue(() => {
+        st().sim?.setGrants(msg.id, msg.grants as CapabilityId[] | null);
+      });
       return;
     case "host.resetPart":
       queue(() => {

@@ -1,4 +1,5 @@
-import { z } from "zod";
+import type { z } from "zod";
+import { HOST_API_SPEC } from "./hostApiSpec";
 import type { HostName } from "./simulation";
 
 /**
@@ -12,68 +13,10 @@ import type { HostName } from "./simulation";
 /** Host API の版。引数や結果の形を互換性なく変えるときに上げる */
 export const HOST_API_VERSION = 1;
 
-const vec3 = z.tuple([z.number(), z.number(), z.number()], {
-  error: "[x, y, z] の形の数値の配列を渡してください",
-});
-const entityId = z.string({ error: "Entity の ID（文字列）を渡してください" });
-/** 無効なら「無いもの」として扱う */
-const lenient = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
-const record = z.record(z.string(), z.unknown());
-
-export const HOST_API_ARGS = {
-  "time.now": z.tuple([]).rest(z.unknown()),
-  "audio.play": z
-    .tuple([lenient(z.string()), lenient(z.string()), lenient(z.number())])
-    .rest(z.unknown()),
-  "world.raycast": z
-    .tuple([
-      vec3,
-      vec3,
-      lenient(z.number()),
-      lenient(z.object({ exclude: lenient(z.array(z.string())) })),
-    ])
-    .rest(z.unknown()),
-  "world.emit": z
-    .tuple([entityId, z.string({ error: "イベント名（文字列）を渡してください" }), z.unknown()])
-    .rest(z.unknown()),
-  "world.find": z.tuple([lenient(z.string())]).rest(z.unknown()),
-  "world.get": z.tuple([lenient(z.string()), lenient(z.string())]).rest(z.unknown()),
-  "world.set": z
-    .tuple([lenient(z.string()), lenient(z.string()), lenient(record)])
-    .rest(z.unknown()),
-  "world.spawn": z
-    .tuple([
-      lenient(
-        z.object({
-          name: lenient(z.string()),
-          parent: lenient(z.string()),
-          states: lenient(record),
-        }),
-      ),
-    ])
-    .rest(z.unknown()),
-  "world.destroy": z.tuple([lenient(z.string())]).rest(z.unknown()),
-  "effects.spawn": z
-    .tuple([
-      z.string({ error: "Raycast の結果（hit）から出してください" }),
-      z.string({ error: "effect の種類（文字列）を渡してください" }),
-      lenient(
-        z.object({
-          color: lenient(z.string()),
-          size: lenient(z.number()),
-          life: lenient(z.number()),
-        }),
-      ),
-    ])
-    .rest(z.unknown()),
-  "contract.send": z
-    .tuple([
-      z.string({ error: "Raycast の結果（hit）から送ってください" }),
-      z.string({ error: "Contract の名前（文字列）を渡してください" }),
-      z.unknown(),
-    ])
-    .rest(z.unknown()),
-} satisfies Record<HostName, z.ZodType>;
+/** 引数の定義（HOST_API_SPEC から作る） */
+export const HOST_API_ARGS = Object.fromEntries(
+  Object.entries(HOST_API_SPEC).map(([name, spec]) => [name, spec.args]),
+) as { [N in HostName]: (typeof HOST_API_SPEC)[N]["args"] };
 
 export type HostArgs<N extends HostName> = z.infer<(typeof HOST_API_ARGS)[N]>;
 

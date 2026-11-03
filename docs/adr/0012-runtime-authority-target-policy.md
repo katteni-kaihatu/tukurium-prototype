@@ -76,7 +76,19 @@
 - Host API の引数は、一つの定義（`packages/runtime/src/hostApi.ts` の `HOST_API_ARGS`。zod）で `unknown` から検証する。今まで黙って無視していた引数は「無いもの」として扱い、例外にしていた引数（座標・Entity の ID・イベント名）は例外にする。
 - 呼び出しの主体の配置は、呼んだときに処理していた Entity から決める（サンドボックスが渡す）。ハンドラの外では、その System を使っている配置すべてとする。
 - `world.find` / `get` / `set` / `destroy` と `spawn` の親、`audio.play` の音源の Entity は、呼んだ System の配置の中だけにした。別の配置は「見つからない」と同じ結果になる。`world.spawn` で作った Entity は、呼んだ System の配置のものになる。
-- `world.raycast` と `world.emit` は、別の配置への正当な使い道（別のリポジトリの銃で的を撃つ）の代わりができるまで、まだ別の配置に届く。U2 で opaque handle と公開 Contract に置き換える。この 2 つが残る間は、U1 を完了とはしない。
+- U1 の最初の slice では、`world.raycast` と `world.emit` に別の配置への正当な使い道が残っていた。U2 の最初の縦切りで、Raycast は別の配置の生 Entity ID を返さない opaque handle に、別の配置への通知は公開 Contract に置き換えた。要求 Capability と effective grant の強制が未実装なので、U1 全体はまだ途中である。
+
+### U1 の続き：実効権限（宣言 ∩ 付与）
+
+利用者と相談して、次のように決めた。
+
+- 要る Capability は、利用者が書くのではなく、System のコードから AST で読み取る（`inferCapabilities`）。`world.raycast` → physics.raycast、`hit.send` → interaction.send、`hit.effect` → effects.spawn のように対応させる。対応表（`HOST_CAPABILITIES`）は `HOST_API_POLICY` と一致することをテストで検査する。`world[name]()` や `const w = world` のように読み取れない使い方は、その行の注意にする。
+- 置いた物への付与（`PartSpec.grants`）は、指定がなければ宣言をそのまま付与する。付与はサーバーの配置の台帳（`Placement.grants`、null は宣言どおり）に持ち、セッションの持ち主・置いた人・そのワークスペースの共同編集以上が `setGrants` で変えられる。ホストには `host.setGrants` で届く（PROTOCOL_VERSION 3）。細かく取り消す画面は U5 で作る。
+- 強制はセッションだけにかけ、ワークスペースの再生ではかけない。
+- セッションでは、Host API を呼ぶたびに「その System の宣言にあり、呼び出しの主体の配置すべてに付与されている」かを判定する。外れたら、見つからない・できなかったのと同じ値を返し、その System に注意（`capability-denied`）を残す。System は止めない。別の配置への届き方（World の上限・相手の公開範囲）は、これまでどおりそれぞれの Host API の中で判定する。
+- 実行の主体（`PackageExecutionContext`）は、Package の仕組みができるまで、ワークスペースの出力を暗黙の Package（`workspace:<リポジトリ>`）とし、版は realm の版、置いた物は配置、World は土台の World（ないときは `session`）で組み立てる（`Simulation.executionContext`）。
+
+- Host API の定義は `packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` 一つにまとめた。引数の検証（`HOST_API_ARGS`）、権限の分類（`HOST_API_POLICY`）、拒んだときの値、利用者向けの型の宣言（`hostApiDeclarations`）、エディタの入力補完（`hostApiCompletions`）は、ここから作る。
 
 ### U2 の最初の縦の一本でしたこと
 
@@ -100,12 +112,13 @@ World の上限：利用者と相談して、プリセットだけを作った�
 - `collision`（衝突のみ）：Raycast と一時的な effect まで。Contract は送れない
 - `interactive`（インタラクション可能）：相手が公開した Contract も送れる
 
-実際に届くかは「外から来た Item への上限 ∩ 相手の公開範囲（exposure）」で決まる。土台の World と同じ作者の Item、World 自身には上限をかけない。あとから置いた World の上限は、外から来た Item にかからない（World が複数あるときの扱いは後で決める）。置いた物ごとの細かい付与は U5（権限の画面）で作る。
+実際に届くかは「外から来た Item への上限 ∩ 相手の公開範囲（exposure）」で決まる。土台の World と同じ作者の Item、World 自身には上限をかけない。あとから置いた World の上限は、外から来た Item にかからない（World が複数あるときの扱いは後で決める）。Placement grant の runtime model と強制は U1 の Capability gateway で作り、細かな設定 UI は U5 で追加する。
 
-まだ残っているもの：拒否の構造化された Runtime Diagnostic、サーバーでの判定、置いた物ごとの付与。
+拒否の知らせ：公開されている相手（Raycast が当たった相手）に Contract を拒まれたとき（相手が「衝突のみ」、または土台の World が許していないとき）は、送った System に注意（`contract-denied`）を残す。同じ注意は回数を数え、System の状態（`SystemStatus.warnings`）としてほかの人にも配る。ワークスペースの「問題」とセッションのパネル（このワークスペースの System の分だけ）に出す。非公開の相手・偽の handle などは「見つからない」と同じなので、注意も出さない（存在を漏らさない）。
+
+まだ残っているもの：要求 Capability と Placement grant の runtime model / 強制、サーバーでの判定。細かな設定 UI は U5。
 
 ### この先
 
-- U1 で、全 Host API を一つの Capability gateway に通す。`HOST_API_POLICY` で「全配置」に届いている 4 つ（raycast・emit・find・destroy）は、U1 / U2 で上の表のとおりに直す。そのとき characterization test を意図して書き換える。
-- 最初の縦の一本（U2）：外部の銃が、保護された World の公開 Collider を Raycast し、内部の Entity / KokoState を取らずに、当たった点へ一時的な effect を出し、公開された Damage Contract だけを呼ぶ。
-- U1 で満たすことの一つ（「Raycast の結果に別の配置の生の Entity ID が含まれない」）を、`it.fails` のテストとして置いてある。満たしたら `it` に変える。
+- U1 の残りとして、要求 Capability と Placement grant の runtime model / 強制を実装する。U2 の残りとして、別所有者に影響する操作の Server authority を実装する。U5 には設定 UI だけを残す。
+- U3 で Package identity / dependency lock を実装した後、U4 の reference UGC から必要性を確認した公式 Platform Primitive / Library を段階的に昇格させる。

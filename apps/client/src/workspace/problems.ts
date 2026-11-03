@@ -2,6 +2,7 @@ import {
   compileSystem,
   type Diagnostic,
   type DiagnosticView,
+  inferCapabilities,
   makeDiagnostic,
   type ProjectDoc,
   ResourcePathIndex,
@@ -100,21 +101,26 @@ export async function checkScripts(
       problems.push(...compiled.diagnostics);
       continue;
     }
+    // 要る権限を読み取れない使い方（world[name]() など）は注意にする（セッションでは拒まれる。ADR 0012）
+    problems.push(...inferCapabilities(def.id, code).diagnostics);
     try {
       const meta = sb.loadSystem(def.id, compiled.javascript, CHECK_REALM);
       for (const name of [...meta.query.with, ...meta.query.without]) {
-        if (!registry.idOf(name)) {
-          problems.push(
-            scriptDiagnostic(
-              def.id,
-              "query-kokostate-missing",
-              `Query の KokoState「${name}」が見つかりません`,
-              lineOf(code, name),
-              "authoring",
-              name,
-            ),
-          );
-        }
+        // import した KokoState は ID で届く。移行の間の書き方は名前で届く（ADR 0010）
+        if (registry.get(name) || registry.idOf(name)) continue;
+        const ambiguous = registry.isAmbiguous(name);
+        problems.push(
+          scriptDiagnostic(
+            def.id,
+            ambiguous ? "query-kokostate-ambiguous" : "query-kokostate-missing",
+            ambiguous
+              ? `Query の KokoState「${name}」は同じ名前が複数あります（import で読み込んでください）`
+              : `Query の KokoState「${name}」が見つかりません`,
+            lineOf(code, name),
+            "authoring",
+            name,
+          ),
+        );
       }
     } catch (e) {
       problems.push(
@@ -140,9 +146,25 @@ export async function checkScripts(
 
 /** 実行中の System の状態から、止まった System を問題にする */
 export function runDiagnostics(status: readonly SystemStatus[]): Diagnostic[] {
-  return status
+  const stopped = status
     .filter((s) => s.error)
     .map((s) => scriptDiagnostic(s.id, "script-stopped", s.error ?? "", s.line, "runtime"));
+  // 止まるほどではない注意（拒否など）。回数があれば添える
+  const warnings = status.flatMap((s) =>
+    (s.warnings ?? []).map((w) =>
+      makeDiagnostic({
+        code: w.code,
+        severity: "warning",
+        phase: "runtime",
+        provider: RUNTIME_PROVIDER,
+        subject: { kind: "system", id: s.id },
+        location: { kind: "script", line: null, symbol: w.code },
+        related: [],
+        message: w.count > 1 ? `${w.message}（${w.count} 回）` : w.message,
+      }),
+    ),
+  );
+  return [...stopped, ...warnings];
 }
 
 /** 実行の問題を足し合わせる（同じ問題は新しいほうに差し替える） */

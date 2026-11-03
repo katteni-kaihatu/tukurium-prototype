@@ -1,6 +1,8 @@
-import { javascript } from "@codemirror/lang-javascript";
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { javascript, javascriptLanguage } from "@codemirror/lang-javascript";
 import { Compartment, EditorSelection, EditorState, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, EditorView } from "@codemirror/view";
+import { hostApiCompletions } from "@tukurium/runtime";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
@@ -88,6 +90,19 @@ export function EditorPanel() {
   );
 }
 
+/**
+ * Host API の入力補完：`world.` `audio.` などのあとに、使える関数と説明・要る権限を出す。
+ * `hit.` は Raycast の結果のメソッド。候補は runtime の HOST_API_SPEC から作る（一つの定義）
+ */
+function hostApiCompletionSource(context: CompletionContext): CompletionResult | null {
+  const m = context.matchBefore(/\b(world|time|audio|contract|effects|hit)\.\w*$/);
+  if (!m) return null;
+  const dot = m.text.indexOf(".");
+  const options = hostApiCompletions(m.text.slice(0, dot));
+  if (options.length === 0) return null;
+  return { from: m.from + dot + 1, options, validFor: /^\w*$/ };
+}
+
 const errorLine = Decoration.line({ class: "cm-tk-errorLine" });
 
 /** 問題のある行に印を付ける（編集で行がずれても、いまの行番号で付け直す） */
@@ -129,6 +144,7 @@ function CodeView({ systemId }: { systemId: string }) {
         extensions: [
           basicSetup,
           javascript(),
+          javascriptLanguage.data.of({ autocomplete: hostApiCompletionSource }),
           // カーソル・選択の共有（awareness は閲覧権限のある人にだけ中継される）
           yCollab(text, awareness),
           EditorState.readOnly.of(readOnly),

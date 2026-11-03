@@ -12,6 +12,7 @@ const placed = (over: Partial<PlacementInfo> & Pick<PlacementInfo, "id">): Place
   position: [0, 0, 0],
   yaw: 0,
   placedBy: "u",
+  grants: null,
   ...over,
 });
 

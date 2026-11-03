@@ -2,7 +2,7 @@
 
 - 状態: **Active**
 - 対象: ResourcePathIndex / Diagnostic core 後、System binding と Runtime Host API を固定する前から段階的に着手
-- 実装状況: U0 完了（ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`）。U1 完了（`HOST_API_ARGS`、呼び出しの主体の配置、別の配置は「見つからない」）。U2 は最初の縦の一本まで（Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`。書き方・初期値・Item の所属（最初の World）は利用者と決めた）
+- 実装状況: U0 完了（ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`）。U1 は途中（`HOST_API_ARGS`、呼び出し主体の配置、別の配置を「見つからない」にする既定境界は完了。PackageExecutionContext、要求 Capability、effective grant の強制は未実装）。U2 は最初の縦の一本まで（Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`、拒否の知らせ（`SystemStatus.warnings`）。書き方・初期値・Item の所属（最初の World）は利用者と決めた）
 - U0 で利用者と決めたこと: 権限は置いた物（Placement）に与える／今は協調セッションに限り、サーバーの判定は U2 以降／境界はセッションに置いた World ごと／非公開の対象は「見つからない」
 - 関連 ADR: [0001](../adr/0001-script-runtime-quickjs.md)、[0006](../adr/0006-session-world-apply-assets.md)、[0008](../adr/0008-private-work-world-editing.md)、[0010](../adr/0010-resource-identity-paths-diagnostics.md)
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
@@ -258,6 +258,8 @@ U0 は現在の `ProjectDependencyGraph` の次に始め、System binding / Runt
 
 最初の slice で、既存の `world.get / set / find / spawn / destroy / emit / raycast / playSound` を含む全 Host API を棚卸しし、同じ gateway の deny-by-default な Capability 分類へ置く。移行中に残す legacy API は同じ PackageExecutionContext の内側だけに制限し、cross-Item / cross-World target を受け取れないようにする。旧 API の迂回路が残った状態を U1 完了としない。
 
+Placement grant の保存形式と effective permission の計算も U1 の runtime model として実装し、PackageExecutionContext、要求 Capability、World policy と合わせて全 Host API で強制する。細かな設定 UI は U5 へ分離する。
+
 ### U2: target policy / Contract / opaque handle
 
 最初の end-to-end behavior:
@@ -282,17 +284,96 @@ U0 は現在の `ProjectDependencyGraph` の次に始め、System binding / Runt
 
 最初は同梱された公式 package とローカル dependency だけを扱い、検索 marketplace は作らない。
 
-### U4: 公式 Library と銃の移行
+### U4: 公式 Platform Primitive / Library と reference UGC
 
-候補:
+UGC の種類を増やすため、Runtime Built-in、Host Capability、公式 Library を段階的に拡張する。API の網羅的な一覧を先に固定せず、reference UGC を end-to-end で実装し、共通性または Host 境界としての必要性が確認できた機能だけを、設計レビュー後に適切な層へ昇格させる。
+
+#### U4 の開始条件
+
+公開 API の横展開は次を満たしてから始める。開始条件を満たす前でも、reference UGC 内の experimental API として必要性を検証してよいが、stable API として公開しない。
+
+- 全 Host API が共通の schema-first gateway を通る。
+- PackageExecutionContext と effective Placement grant / World policy を実行時に評価できる。細かな設定 UI は U5 で追加してよい。
+- U3 の最小 Library Package、immutable version、dependency lock が利用できる。
+- Capability の schema、権限、authority、quota、Diagnostic を一つの正本から定義できる。
+- API version、互換性、deprecated API、Package / snapshot migration の規則が決まっている。
+
+#### 層の使い分け
+
+- **Runtime Built-in**: 保存、同期、identity、物理、描画、authority のため、Runtime が直接理解する必要がある最小のデータ。Snapshot / migration の対象になる。
+- **Host Capability**: QuickJS の外側にある物理、入力デバイス、音声、描画、Player、World / Server 機能へ、schema・権限・quota 付きで到達する境界。
+- **公式 Library**: Built-in、Capability、Contract、KokoState を組み合わせる version 付き Package。セキュリティ境界にはせず、Runtime gateway を迂回できる特権も持たせない。
+- **reference UGC**: API の必要性、使いやすさ、権限、lifecycle を実測する作品。利用例と end-to-end の検証対象にはするが、unit / conformance test の代わりにはしない。
+
+Health、Inventory、Equipment のようなドメインモデルは、Runtime が直接理解する理由がなければ Built-in にせず公式 Library を優先する。Three.js、Rapier、DOM、ブラウザ API を UGC へ直接公開しない。
+
+#### 最初の縦切り
+
+1. **銃と的**: Input Action、Equipment、Raycast、Damage、Effect、Audio。銃自身には ammo / damage / cooldown / reload のドメインロジックを残す。
+2. **扉とスイッチ**: Interact Contract、継続状態、Animation、外部操作の権限。
+3. **収集物と Inventory**: Player、Pickup Contract、所有権、Entity lifecycle。
+
+移動床、乗り物、NPC、HUD は、最初の三本で基盤を実測した後の候補とする。特に UI、外部物体への impulse、joint、Server-authoritative な操作は、権限・同期・ownership を別途判断してから追加する。
+
+入力は一つの責務にまとめず、デバイスと action mapping は Host Capability、System へ届く `fire` / `jump` / `interact` は Event / Action、割り当ては保存される設定、操作した Player の identity は Server authority として分ける。
+
+#### 初期候補ドメイン
+
+- Core: identity、Transform、hierarchy、time、lifecycle
+- Input: action mapping、pointer、keyboard、gamepad
+- Spatial / Physics: raycast、overlap、trigger、surface。書き込み操作は自分の Placement から始める
+- Player: Player reference、role、avatar、equipment、camera
+- Interaction: Interact、Damage、Use、Pickup などの公開 Contract
+- Effects / Audio: particle、decal、trail、spatial audio、一時 effect
+- UI: 権限制限された宣言的 HUD / prompt の調査。DOM は公開せず、別 ADR を実装条件とする
+
+この一覧は実装の約束ではなく候補 backlog とする。実際の reference UGC で必要性を確認し、昇格条件を満たしたものだけを公開 API として固定する。
+
+公式 Library の候補:
 
 - `@tukurium/core`
 - `@tukurium/input`
 - `@tukurium/interaction`
 - `@tukurium/effects`
-- 必要性を確認後に `@tukurium/equipment` / `@tukurium/combat-contracts`
+- 必要性を確認後に `@tukurium/equipment` / `@tukurium/combat-contracts` / `@tukurium/inventory`
 
-銃自身には ammo / damage / cooldown / reload のドメインロジックを残し、入力変換、ViewModel / 装備、Raycast、Damage、effect、権限判定を公式 API / Library へ移す。
+#### 公式 API への昇格条件
+
+次のいずれかを満たす機能を昇格候補とする。
+
+- 独立した二つ以上の UGC で共通して必要になった。
+- Runtime / Host 境界でしか安全に提供できない。
+- Package 間相互運用のため、共通の identity または Contract が必要になった。
+
+候補を昇格する前に次を定義し、設計レビューする。
+
+- stable identity、version、入力 / 出力 schema
+- Runtime Built-in / Host Capability / 公式 Library のどの層かと、その理由
+- caller、target、World、Player の権限と hidden / denied の扱い
+- Runtime Host / Server の authority、ネットワーク配送、再送 / 重複時の意味
+- 保存、同期、reset、host migration、Package / snapshot migration 後の lifecycle
+- quota、失敗時の挙動、構造化 Diagnostic、partial failure の封じ込め
+- 利用者向け型・ドキュメント、unit test、conformance test、必要な end-to-end test
+
+#### 安定性
+
+公式 API は `experimental`、`preview`、`stable`、`deprecated` の状態を持つ。reference UGC で最初に使う API は experimental とし、互換性と権限モデルを実測してから段階的に昇格する。
+
+- `experimental`: API identity に実験 revision を含め、Package は exact revision を固定する。互換性なく変更できるが、共有する stable Package からは依存できず、利用箇所へ Diagnostic を出す。
+- `preview`: stable 候補の identity と major version を持つ。昇格条件、authority、schema、quota、conformance test が揃った段階で入り、既知のブロッカーを解消して reference UGC で実測する。Runtime が実行を保証するのは各 API identity の最新 preview major だけとする。破壊的変更は preview major を上げ、旧 preview major の利用箇所に migration と Diagnostic を用意してから置き換える。
+- `stable`: Capability / Contract は exact major、公式 Library は解決済みの exact semver と content hash を Package lock に固定する。同じ major の schema と意味は後方互換にする。Runtime は API identity ごとに最新と直前の stable major を同時にサポートする。
+- `deprecated`: stable major `N` は、後継の `N+1` を stable にした時点で代替 API と migration を示して deprecated にできる。`N` は直前の stable major として実行を保ち、さらに `N+2` を stable にするときにだけサポート対象から外せる。
+- Runtime は未対応 version / revision を構造化 Diagnostic にし、暗黙に近い版へ読み替えない。
+- `server-revalidate` / `server-execute` が必要な API は、Server authority を実装するまで協調セッション向けの experimental とし、保護済みの stable API として公開しない。
+
+#### U4 の完了条件
+
+- 最初の三つの reference UGC が公開 API だけで実装できる。
+- 非公開 Entity ID、内部 KokoState、DOM、Three.js、Rapier、無制限な `world.*` に直接依存しない。
+- 共通機能が複数の UGC から再利用されるか、Host 境界に置く理由がテストで実証される。
+- すべての Host Capability に schema、version、権限、authority、quota、Diagnostic、unit / conformance test がある。
+- 公式 Library を使わなくても Runtime gateway を迂回できない。
+- reference UGC の不足を万能な KokoState や権限制限のない API で回避していない。
 
 ### U5: Dependencies / Permissions / Problems UI
 

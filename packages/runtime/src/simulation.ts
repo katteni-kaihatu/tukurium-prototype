@@ -11,8 +11,11 @@ import {
   type AssetDef,
   BUILTIN,
   buildRegistry,
+  type CapabilityId,
   compileSystem,
   type GuestPolicy,
+  HOST_CAPABILITIES,
+  inferCapabilities,
   isBuiltin,
   type MaterialDef,
   type OutputExposure,
@@ -27,8 +30,10 @@ import {
   ScriptSandbox,
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
+import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { isContractName, parseContractPayload } from "./contracts";
 import { type HostArgs, parseHostArgs } from "./hostApi";
+import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
   moveAlongView,
@@ -66,6 +71,14 @@ export interface SystemStatus {
   error: string | null;
   /** 止まった場所（スクリプトの行。分かるときだけ） */
   line: number | null;
+  /** 止まるほどではない注意（拒否など。同じものは回数を数える。ADR 0012） */
+  warnings: RuntimeWarning[];
+}
+
+export interface RuntimeWarning {
+  code: string;
+  message: string;
+  count: number;
 }
 
 export interface LogEntry {
@@ -92,6 +105,11 @@ export interface PartSpec {
   /** 配置の位置と向き（ルートの Entity に足す） */
   position: Vec3;
   yaw: number;
+  /**
+   * 置いた物への付与（ADR 0012）。ないときは、その物の System がコードから読み取った宣言をそのまま付与する。
+   * 細かく取り消す画面は U5 で作る
+   */
+  grants?: CapabilityId[];
 }
 
 /** 一時的な effect（ホストが手元で出し、状態と一緒にほかの人にも配る。保存しない） */
@@ -128,7 +146,20 @@ export interface ApplyReport {
 }
 
 interface Part extends PartSpec {
+  /** 置いたときのリポジトリ（ワークスペース）。realm は、セッションではこれに版を付けたもの */
+  source: string;
   entities: Set<EntityId>;
+}
+
+/** 制作データの版（同じ中身なら、どのホストでも同じ値。FNV-1a） */
+function revisionOf(snapshot: ProjectSnapshot): string {
+  const text = JSON.stringify(snapshot);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }
 
 interface LoadedSystem {
@@ -144,6 +175,9 @@ interface LoadedSystem {
   enabled: boolean;
   error: string | null;
   line: number | null;
+  warnings: Map<string, RuntimeWarning>;
+  /** コードから読み取った、要る Capability（宣言） */
+  capabilities: Set<CapabilityId>;
 }
 
 interface PendingEvent {
@@ -167,6 +201,11 @@ interface HitHandle {
   /** この時刻を過ぎたら使えない */
   expires: number;
 }
+
+/** 実効権限で拒んだときに Host API が返す値（HOST_API_SPEC から作る） */
+const DENIED_RESULT = Object.fromEntries(
+  Object.entries(HOST_API_SPEC).map(([name, spec]) => [name, spec.denied]),
+) as Record<HostName, Json | undefined>;
 
 /** handle の寿命（秒） */
 const HANDLE_TTL = 1;
@@ -285,7 +324,12 @@ export class Simulation {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     if (this.parts.has(spec.id)) this.removePart(spec.id);
-    const part: Part = { ...spec, entities: new Set() };
+    const part: Part = {
+      ...spec,
+      realm: this.realmOf(spec.realm, spec.snapshot),
+      source: spec.realm,
+      entities: new Set(),
+    };
     this.parts.set(part.id, part);
     this.registerRealm(part.realm, part.snapshot);
     this.instantiate(part);
@@ -303,18 +347,70 @@ export class Simulation {
       sys.users.delete(id);
       if (sys.users.size === 0) this.dropSystem(sys);
     }
-    if (![...this.parts.values()].some((p) => p.realm === part.realm)) {
-      for (const k of this.realmDefs.get(part.realm) ?? []) this.registry.unregister(k);
-      this.realmDefs.delete(part.realm);
-      this.realmMaterials.delete(part.realm);
-      this.realmAssets.delete(part.realm);
-    }
+    this.dropUnusedRealm(part.realm);
+  }
+
+  /**
+   * セッションでは、配置の realm を「リポジトリ@版」にする（ADR 0010 §4）。同じ realm に
+   * 違う版の定義と System を混ぜないため。同じ中身なら同じ版なので、ホストが替わっても同じ realm になる。
+   */
+  private realmOf(source: string, snapshot: ProjectSnapshot): string {
+    return this.multi ? `${source}@${revisionOf(snapshot)}` : source;
+  }
+
+  /** どの配置も使わなくなった realm の定義・マテリアル・素材・スクリプトの領域を片付ける */
+  private dropUnusedRealm(realm: string): void {
+    if ([...this.parts.values()].some((p) => p.realm === realm)) return;
+    for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
+    this.realmDefs.delete(realm);
+    this.realmMaterials.delete(realm);
+    this.realmAssets.delete(realm);
+    for (const sys of [...this.systems]) if (sys.realm === realm) this.dropSystem(sys);
+    this.sandbox.disposeRealm(realm);
+  }
+
+  /** 置いた物への付与を変える（null は宣言どおり。ADR 0012） */
+  setGrants(partId: string, grants: CapabilityId[] | null): void {
+    const part = this.parts.get(partId);
+    if (!part) return;
+    if (grants === null) delete part.grants;
+    else part.grants = [...grants];
+  }
+
+  /** 置いた物の System が、コードから読み取った要る Capability（宣言）の和 */
+  declaredCapabilities(partId: string): CapabilityId[] {
+    const caps = new Set<CapabilityId>();
+    for (const sys of this.systems)
+      if (sys.users.has(partId)) for (const c of sys.capabilities) caps.add(c);
+    return [...caps].sort();
+  }
+
+  /** 実行の主体（ADR 0012・0013）。Package の仕組みができるまでは、ワークスペースの出力を暗黙の Package とする */
+  executionContext(partId: string, systemId: string): PackageExecutionContext | undefined {
+    const part = this.parts.get(partId);
+    if (!part) return undefined;
+    const revision = part.realm.includes("@") ? part.realm.slice(part.realm.indexOf("@") + 1) : "";
+    return {
+      packageInstanceId: part.id,
+      packageId: `workspace:${part.source}` as PackageId,
+      resolvedVersion: revision,
+      contentHash: revision,
+      systemId,
+      placementId: part.id,
+      worldInstanceId: this.baseWorld()?.id ?? "session",
+    };
+  }
+
+  /** 配置と、制作データの中の KokoState ID から、実行時の KokoState ID を求める（版付きの realm を含む） */
+  stateIdOf(partId: string, kokoId: KokoStateId): KokoStateId | undefined {
+    const part = this.parts.get(partId);
+    return part ? this.kid(part.realm, kokoId) : undefined;
   }
 
   partList(): { id: string; realm: string; outputId: string; position: Vec3; yaw: number }[] {
     return [...this.parts.values()].map((p) => ({
       id: p.id,
-      realm: p.realm,
+      realm: p.source,
       outputId: p.outputId,
       position: p.position,
       yaw: p.yaw,
@@ -326,14 +422,16 @@ export class Simulation {
    * 状態維持のマークがあり、型が変わっていないフィールドだけ、現在の実行値を引き継ぐ。
    * それ以外の値は新しい制作データの値になる。System のコードも読み直す。
    */
-  applyPart(realm: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
+  applyPart(source: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     const targets = [...this.parts.values()].filter(
-      (p) => p.realm === realm && p.outputId === outputId,
+      (p) => p.source === source && p.outputId === outputId,
     );
     const report: ApplyReport = { instances: targets.length, kept: 0, dropped: 0 };
     if (targets.length === 0) return report;
+    // 適用した配置だけを、新しい版の realm へまとめて移す（ほかの出力は古い版のまま。ADR 0010 §4）
+    const realm = this.realmOf(source, snapshot);
     const marks = snapshot.outputs.find((o) => o.id === outputId)?.keep ?? [];
     const newDefs = new Map(snapshot.kokostates.map((d) => [d.id, d]));
 
@@ -346,13 +444,18 @@ export class Simulation {
       const list: { entity: EntityId; koko: KokoStateId; field: string; value: FieldValue }[] = [];
       for (const m of marks) {
         const entity = this.eid(part, m.entity);
-        const koko = this.kid(realm, m.koko);
-        const oldField = this.registry.get(koko)?.fields.find((f) => f.id === m.field);
-        const newDef = isBuiltin(m.koko) ? this.registry.get(koko) : newDefs.get(m.koko);
+        const oldKoko = this.kid(part.realm, m.koko);
+        const oldField = this.registry.get(oldKoko)?.fields.find((f) => f.id === m.field);
+        const newDef = isBuiltin(m.koko) ? this.registry.get(m.koko) : newDefs.get(m.koko);
         const newField = newDef?.fields.find((f) => f.id === m.field);
-        const current = this.world.get(entity, koko)?.[m.field];
+        const current = this.world.get(entity, oldKoko)?.[m.field];
         if (oldField && newField && oldField.type === newField.type && current !== undefined) {
-          list.push({ entity, koko, field: m.field, value: structuredClone(current) });
+          list.push({
+            entity,
+            koko: this.kid(realm, m.koko),
+            field: m.field,
+            value: structuredClone(current),
+          });
           report.kept++;
         } else {
           report.dropped++;
@@ -361,10 +464,17 @@ export class Simulation {
       kept.set(part.id, list);
     }
 
-    // 2. 定義・マテリアルを入れ替えて、配置を作り直す
+    // 2. System を外し、配置を新しい版で作り直す
+    const ids = new Set(targets.map((p) => p.id));
+    for (const sys of [...this.systems]) {
+      for (const id of ids) sys.users.delete(id);
+      if (sys.users.size === 0) this.dropSystem(sys);
+    }
+    const oldRealms = new Set(targets.map((p) => p.realm));
     for (const part of targets) {
       this.clearEntities(part);
       part.snapshot = snapshot;
+      part.realm = realm;
     }
     this.registerRealm(realm, snapshot);
     for (const part of targets) {
@@ -375,14 +485,9 @@ export class Simulation {
       }
     }
 
-    // 3. System を読み直す
-    const ids = new Set(targets.map((p) => p.id));
-    for (const sys of [...this.systems]) {
-      if (sys.realm !== realm) continue;
-      for (const id of ids) sys.users.delete(id);
-      if (sys.users.size === 0) this.dropSystem(sys);
-    }
+    // 3. System を読み直し、使われなくなった古い版を片付ける
     for (const part of targets) this.loadSystems(part, true);
+    for (const old of oldRealms) if (old !== realm) this.dropUnusedRealm(old);
     return report;
   }
 
@@ -423,7 +528,19 @@ export class Simulation {
       enabled: s.enabled,
       error: s.error,
       line: s.line,
+      warnings: [...s.warnings.values()].map((w) => ({ ...w })),
     }));
+  }
+
+  /** System に注意を残す（同じ code は回数を数える） */
+  private warn(systemId: string | null, code: string, message: string): void {
+    const sys = this.systems.find((x) => x.id === systemId);
+    if (!sys) return;
+    const w = sys.warnings.get(code);
+    if (w) {
+      w.count += 1;
+      w.message = message;
+    } else sys.warnings.set(code, { code, message, count: 1 });
   }
 
   nameOf(id: EntityId): string {
@@ -512,6 +629,28 @@ export class Simulation {
 
   private scopeOfRealm(realm: string): string {
     return this.multi ? realm : "";
+  }
+
+  /** 実行時の KokoState の ID を、その領域のスクリプトに見せるキー（領域の中の ID）にする */
+  private localKey(koko: KokoStateId, realm: string): string {
+    const prefix = `${realm}:`;
+    return this.multi && !isBuiltin(koko) && koko.startsWith(prefix)
+      ? koko.slice(prefix.length)
+      : koko;
+  }
+
+  /**
+   * スクリプトが指した KokoState（import した ID・Built-in の ID・移行の間の名前）を、実行時の ID にする。
+   * 名前が同じ領域の中で一つに決まらないときは undefined（ADR 0010）。
+   */
+  private resolveKoko(ref: string, realm: string): KokoStateId | undefined {
+    const scoped = this.kid(realm, ref);
+    if (
+      this.registry.get(scoped) &&
+      (isBuiltin(scoped) || this.registry.scopeOf(scoped) === this.scopeOfRealm(realm))
+    )
+      return scoped;
+    return this.registry.idOf(ref, this.scopeOfRealm(realm));
   }
 
   /** リポジトリの KokoState 定義とマテリアルを登録し直す */
@@ -730,6 +869,8 @@ export class Simulation {
         enabled: ref.enabled,
         error: null,
         line: null,
+        warnings: new Map(),
+        capabilities: new Set(inferCapabilities(def.id, def.code).capabilities),
       };
       this.systems.push(sys);
       if (!ref.enabled) continue;
@@ -747,11 +888,17 @@ export class Simulation {
           );
         const meta = this.sandbox.loadSystem(id, compiled.javascript, part.realm);
         const scope = this.scopeOfRealm(part.realm);
-        const resolve = (names: string[]) =>
-          names.map((n) => {
-            const k = this.registry.idOf(n, scope);
-            if (!k) throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, id, "load");
-            return k;
+        const resolve = (refs: string[]) =>
+          refs.map((n) => {
+            const k = this.resolveKoko(n, part.realm);
+            if (k) return k;
+            if (this.registry.isAmbiguous(n, scope))
+              throw new ScriptError(
+                `Query の KokoState「${n}」は同じ名前が複数あります（import で読み込んでください）`,
+                id,
+                "load",
+              );
+            throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, id, "load");
           });
         sys.with = resolve(meta.query.with);
         sys.without = resolve(meta.query.without);
@@ -774,6 +921,27 @@ export class Simulation {
     }
     const sys = this.systems.find((x) => x.id === ctx.systemId);
     return sys ? [...sys.users].flatMap((id) => this.parts.get(id) ?? []) : [];
+  }
+
+  /**
+   * 実効権限の判定（ADR 0012）：その System の宣言（コードから読み取り）にあり、呼び出しの主体の配置すべてに
+   * 付与されている Capability だけを許す。拒んだときは、その System に注意を残す。
+   * 別の配置への届き方（World の上限・相手の公開範囲）は、それぞれの Host API の中で判定する。
+   */
+  private permits(name: HostName, ctx: HostCallContext, callers: Part[]): boolean {
+    const cap = HOST_CAPABILITIES[name];
+    const sys = this.systems.find((x) => x.id === ctx.systemId);
+    const declared = cap !== undefined && sys?.capabilities.has(cap) === true;
+    const granted = callers.every(
+      (p) => cap !== undefined && (p.grants === undefined || p.grants.includes(cap)),
+    );
+    if (declared && granted) return true;
+    this.warn(
+      ctx.systemId,
+      "capability-denied",
+      `権限「${cap ?? name}」がないため、${name} は使えませんでした${declared ? "（置いた物に付与されていません）" : "（コードから読み取れない使い方です）"}`,
+    );
+    return false;
   }
 
   /** Entity が入っている配置 */
@@ -801,7 +969,7 @@ export class Simulation {
     const base = this.baseWorld();
     if (!base || callers.length === 0) return "interactive";
     const guest = (p: Part) =>
-      p.realm !== base.realm &&
+      p.source !== base.source &&
       p.snapshot.outputs.find((o) => o.id === p.outputId)?.kind !== "world";
     if (!callers.every(guest)) return "interactive";
     return base.snapshot.outputs.find((o) => o.id === base.outputId)?.guestPolicy ?? "interactive";
@@ -832,8 +1000,9 @@ export class Simulation {
    * 別の配置へは、Raycast の opaque handle と公開 Contract（contract.send）だけで届く（U2）。
    */
   private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
-    const scope = this.scopeOfRealm(ctx.realm);
     const callers = this.callerParts(ctx);
+    // セッションでは、実効権限（宣言 ∩ 置いた物への付与）に無い Capability を拒む（deny-by-default）
+    if (this.multi && !this.permits(name, ctx, callers)) return DENIED_RESULT[name];
     const own = (id: string | undefined): id is EntityId =>
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
     const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
@@ -886,11 +1055,10 @@ export class Simulation {
           this.exposureOf(targetPart) === "interactive" &&
           this.guestLimit(callers) === "interactive";
         if (!own(target) && !allowed) {
-          this.log(
-            ctx.systemId,
-            `${name} は受け付けられませんでした（相手が受け付けていません）`,
-            "log",
-          );
+          // 相手は公開されている（当たっている）ので、拒まれたことを知らせてよい
+          const message = `${name} は受け付けられませんでした（相手が受け付けていないか、World が許していません）`;
+          this.log(ctx.systemId, message, "log");
+          this.warn(ctx.systemId, "contract-denied", message);
           return false;
         }
         const handler = `contract:${name}`;
@@ -920,12 +1088,12 @@ export class Simulation {
         return true;
       },
       "world.get": ([id, kokoName]) => {
-        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko)) return null;
         return this.toNamed(koko, this.world.get(id, koko) ?? {});
       },
       "world.set": ([id, kokoName, values]) => {
-        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
         this.writeNamed(id, koko, values as Record<string, Json>, null);
         return true;
@@ -941,7 +1109,7 @@ export class Simulation {
         // 作った Entity は、呼んだ System の配置のものにする
         callers[0]?.entities.add(id);
         for (const [kokoName, values] of Object.entries(desc?.states ?? {})) {
-          const koko = this.registry.idOf(kokoName, scope);
+          const koko = this.resolveKoko(kokoName, ctx.realm);
           if (!koko) continue;
           this.world.add(id, koko);
           if (values && typeof values === "object" && !Array.isArray(values)) {
@@ -1008,24 +1176,17 @@ export class Simulation {
 
   private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Json[]): void {
     if (ids.length === 0 || !sys.enabled) return;
-    const before = ids.map((id) => this.toScriptEntity(id));
+    const before = ids.map((id) => this.toScriptEntity(id, sys.realm));
     try {
       const after = this.sandbox.run(sys.id, handler, before, args);
       after.forEach((e, i) => {
         const prev = before[i];
         if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
-        for (const [kokoName, values] of Object.entries(e.states)) {
-          // 名前は、その Entity が持っている KokoState の中から引く（別リポジトリの Entity でも正しく書ける）
-          const koko = this.world
-            .statesOf(e.id)
-            .find((k) => this.registry.get(k)?.name === kokoName);
-          if (!koko || !values || typeof values !== "object") continue;
-          this.writeNamed(
-            e.id,
-            koko,
-            values as Record<string, Json>,
-            prev.states[kokoName] ?? null,
-          );
+        for (const [key, values] of Object.entries(e.states)) {
+          // キーは領域の中の ID（ADR 0010）。その Entity が持っている KokoState だけに書く
+          const koko = isBuiltin(key) ? key : this.kid(sys.realm, key);
+          if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
+          this.writeNamed(e.id, koko, values as Record<string, Json>, prev.states[key] ?? null);
         }
       });
     } catch (e) {
@@ -1034,13 +1195,29 @@ export class Simulation {
     }
   }
 
-  private toScriptEntity(id: EntityId): ScriptEntity {
+  /**
+   * スクリプトに渡す Entity。状態は領域の中の KokoState ID をキーにし、名前が一つに決まるものだけ
+   * 名前でも引けるようにする（移行の間の e.Gun）。別の領域の KokoState は見せない（ADR 0012）。
+   */
+  private toScriptEntity(id: EntityId, realm: string): ScriptEntity {
     const states: ScriptEntity["states"] = {};
+    const byName = new Map<string, string[]>();
+    const scope = this.scopeOfRealm(realm);
     for (const koko of this.world.statesOf(id)) {
       const def = this.registry.get(koko);
-      if (def) states[def.name] = this.toNamed(koko, this.world.get(id, koko) ?? {});
+      if (!def) continue;
+      if (this.multi && !isBuiltin(koko) && this.registry.scopeOf(koko) !== scope) continue;
+      const key = this.localKey(koko, realm);
+      states[key] = this.toNamed(koko, this.world.get(id, koko) ?? {});
+      byName.set(def.name, [...(byName.get(def.name) ?? []), koko]);
     }
-    return { id, states };
+    const names: Record<string, string> = {};
+    for (const [name, kokos] of byName) {
+      const only = kokos.length === 1 ? kokos[0] : undefined;
+      if (only && this.registry.idOf(name, scope) === only)
+        names[name] = this.localKey(only, realm);
+    }
+    return { id, states, names };
   }
 
   private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Json> {
