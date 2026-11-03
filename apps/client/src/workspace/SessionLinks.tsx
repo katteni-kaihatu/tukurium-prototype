@@ -19,7 +19,8 @@ export function SessionLinks() {
   // セッションでの、このワークスペースの System への注意（拒否など。ADR 0012）
   const sessionStatus = useSessionWorld((s) => s.status);
   const warnings = sessionStatus
-    .filter((x) => workspaceId && x.id.startsWith(`${workspaceId}:`))
+    // System の ID は「ワークスペース@版:System」（版ごとの realm。ADR 0010 §4）
+    .filter((x) => workspaceId && x.id.startsWith(`${workspaceId}@`))
     .flatMap((x) => (x.warnings ?? []).map((w) => ({ system: x.name, ...w })));
   const hostReady = useSessionWorld(
     (s) => s.isHost || s.remote !== null || (session?.placements.length ?? 0) === 0,
