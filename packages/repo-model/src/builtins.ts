@@ -14,7 +14,7 @@ export const BUILTIN = {
   AudioSource: "builtin.AudioSource",
 } as const;
 
-/** プロシージャルメッシュの形状。size の意味は形状ごとに異なる（docs/PLAN.md §6 参照）。 */
+/** プロシージャルメッシュの形状。size の意味は各 KokoState 定義のコメントを参照。 */
 export const MESH_SHAPES = ["box", "sphere", "cylinder", "capsule", "plane"] as const;
 export type MeshShape = (typeof MESH_SHAPES)[number];
 

@@ -1,0 +1,677 @@
+# リソースパス・System参照・全体診断 計画案
+
+- 状態: **Active**
+- 対象: M0〜M6 完了後のリソース参照・型・診断の再設計
+- 実装状況: Phase 0 未着手
+- 関連 ADR: 未作成。Phase 0 で決定案を正式化する
+- ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
+
+対象: `tukurium-prototype` main (`af08920c9b79d4063264c4bb36fe664c1d4e3fae`)
+
+## 1. 目的
+
+次の問題を一つの設計として解く。
+
+1. 同名の KokoState を別フォルダに置き、System から曖昧なく参照できるようにする。
+2. System からリソースを絶対パスまたは System 基準の相対パスで記述できるようにする。
+3. KokoState、System、Material、Asset、Output、Entity などの変更で発生した問題を、Play 前からプロジェクト全体で確認できるようにする。
+4. Unity Console のような時系列ログの山ではなく、「現在の制作データに残っている問題」を原因単位で整理して表示する。
+5. 将来の JavaScript 型チェック、TypeScript、抽出、フォーク、外部パッケージに耐える依存モデルを作る。
+
+## 2. 自己レビュー後の設計判断
+
+### 2.1 パスは識別子ではなく、人間向けの参照表記にする
+
+KokoState の恒久的な同一性は、現在の安定 ID (`KokoStateId`) のまま維持する。リソースパスは locator として扱う。
+
+理由:
+
+- フォルダ移動や名前変更で Entity の状態や KeepMark の同一性を失わせないため。
+- セッション実行中の状態引き継ぎを壊さないため。
+- fork、extract、realm 合成で「同じ名前・同じパスだが別物」を区別するため。
+- 現行計画の「Entity・KokoState・field は安定 ID で識別する」という方針を維持するため。
+
+したがって、System の参照は次の三層にする。
+
+```text
+ソース上の表記:  ../States/Gun.koko
+解決結果:        KokoStateId = ks_abc123
+実行時:          realm + KokoStateId
+```
+
+### 2.2 System は名前ではなく、解決済みリソース参照を使う
+
+現行の `query.with: ["Gun"]` と `e.Gun` は、KokoState の表示名を実行 API に直接露出しているため、同名状態を一つの System で扱えない。
+
+最終形の候補は、仮想リソース import とする。
+
+```js
+import Gun from "../States/Gun.koko";
+import TargetGun from "../Targets/Gun.koko";
+import Transform from "@builtin/Transform.koko";
+
+export default system({
+  query: { with: [Gun, Transform] },
+
+  onUpdate(entity, dt) {
+    const gun = entity.get(Gun);
+    gun.cooldown = Math.max(0, gun.cooldown - dt);
+  },
+});
+```
+
+- import のローカル名が System 内の alias になる。
+- 同じ leaf name の KokoState も、異なる alias で同時に利用できる。
+- analyzer/compiler が import を安定 ID に解決し、QuickJS に渡す前に実行用 JS と binding table へ変換する。
+- QuickJS がリソースパスを毎フレーム検索することはない。
+- 正規表現による import・Query・rename 処理は禁止し、AST または TypeScript Language Service を使う。
+
+仮想 import の実装負荷が大きい場合は、先に `koko("../States/Gun")` 形式で resolver と binding table を検証してよい。ただし、正式構文を二重に残さず、スパイク後に ADR で一つへ決める。
+
+### 2.3 authored data と derived data を分ける
+
+正本:
+
+- System source
+- folder tree / placement
+- stable resource ID
+
+派生データ:
+
+- canonical path index
+- System binding table
+- dependency graph
+- compiled JavaScript
+- source map
+- diagnostics
+
+派生データは制作データの正本にしない。必要なら commit hash / source hash をキーにキャッシュする。
+
+`SystemDef` に binding を保存する場合も、それはコンパイラ生成物として source hash と組にし、手編集可能な別の正本にしない。
+
+### 2.4 「問題」と「ログ」を分離する
+
+- **Problems / 問題**: 現在の制作データまたは直前の実行に対する、重複排除された状態ベースの診断。
+- **Logs / ログ**: `log()`、実行イベント、時系列の観測情報。
+
+Unity Console のように同じエラーを毎フレーム積み上げない。同一 fingerprint は一行にまとめ、必要なら発生回数だけ表示する。
+
+## 3. リソースパス仕様
+
+### 3.1 パス形式
+
+| 表記 | 意味 |
+| --- | --- |
+| `/Combat/States/Gun.koko` | プロジェクトルートからの絶対パス |
+| `./Gun.koko` | System と同じフォルダ |
+| `../States/Gun.koko` | System の親フォルダから相対参照 |
+| `@builtin/Transform.koko` | Built-in 名前空間 |
+
+Git 内の実ファイルパスとは別の「論理リソースパス」とする。Git ファイル名は引き続き安定 ID ベースでよい。
+
+### 3.2 命名・重複規則
+
+- 異なるフォルダなら同名を許可する。
+  - `/Player/Gun.koko`
+  - `/Enemy/Gun.koko`
+- 同じ親の直下では、folder と全 resource kind を通して名前を一意にする。
+- `/`、NUL、`.`、`..`、予約 prefix `@builtin` は名前に使えない。
+- Unicode は NFC に正規化する。
+- Windows・Git・URL での混乱を避けるため、同一親で case-fold 後に衝突する名前も拒否する。
+- 拡張子は kind から決める (`.koko`, `.system`, `.material` など)。表示 UI では省略してもよい。
+
+### 3.3 resolver の規則
+
+1. System の stable ID から placement を引き、System が入っているフォルダを相対パスの基準にする。
+2. `@builtin/`、絶対 `/`、相対 `./` / `../` を判定する。
+3. segment を正規化し、ルート外へ出る `..` をエラーにする。
+4. 最終 segment の kind と名前が一件だけ一致した場合に解決成功とする。
+5. 解決結果として stable resource ID を返す。
+6. source hash、spelling、target ID を binding table に記録する。
+7. spelling が後に別 ID を指しても、自動で retarget しない。`stale binding` 診断を出す。
+8. ユーザーが import を編集した場合だけ、新しい対象へ明示的に再束縛する。
+
+### 3.4 rename / move
+
+通常の UI 操作では stable ID を基準に refactor する。
+
+- target resource / ancestor folder の rename・move:
+  - 依存グラフから参照 System を列挙する。
+  - 各 System からの新しい相対パスを算出する。
+  - import の AST range だけを一つの Yjs transaction で更新する。
+  - Entity state、KeepMark、stable ID は変更しない。
+- System 自体の move:
+  - その System の全相対 import を再計算する。
+- Git merge、旧クライアント、外部編集で refactor が行われなかった場合:
+  - 勝手に修復・retarget せず、全体診断へ unresolved / stale binding を出す。
+  - target ID が分かる場合は「現在の場所へ参照を更新」の safe quick fix を提示する。
+
+## 4. System と runtime の変更方針
+
+### 4.1 compile artifact
+
+```ts
+interface CompiledSystem {
+  systemId: string;
+  sourceHash: string;
+  apiVersion: number;
+  javascript: string;
+  sourceMap: string | null;
+  bindings: Array<{
+    alias: string;
+    kind: "kokostate";
+    spelling: string;
+    resourceId: string;
+  }>;
+  query: {
+    with: string[];    // stable resource IDs
+    without: string[];
+  };
+  capabilities: string[];
+}
+```
+
+### 4.2 runtime
+
+- `KokoStateRegistry.idOf(name)` を System 実行の依存解決に使わない。
+- System ごとに `alias -> runtime KokoState ID` の binding table を持つ。
+- Entity を QuickJS へ渡す際、表示名ではなく binding alias / typed accessor を使う。
+- `world.get/set/spawn` も生の KokoState 名ではなく ResourceRef を受ける。
+- Built-in は `@builtin/*` から固定 ID へ解決する。
+
+### 4.3 realm の不変条件
+
+同じ realm に異なる ProjectSnapshot revision を混在させない。
+
+現状は同じ realm の定義を再登録しながら既存 System が残り得るため、次のどちらかへ統一する。
+
+推奨:
+
+- realm identity に build revision を含める。
+- apply は同じ workspace/release revision に属する Part と System を原子的に更新する。
+
+```text
+workspace:<workspaceId>:<buildRevision>
+release:<releaseId>:<commit>
+```
+
+## 5. 全体診断モデル
+
+### 5.1 中核型
+
+```ts
+type ResourceKind =
+  | "project"
+  | "folder"
+  | "output"
+  | "entity"
+  | "kokostate"
+  | "system"
+  | "material"
+  | "asset";
+
+interface ResourceRef {
+  kind: ResourceKind;
+  id: string;
+}
+
+interface Diagnostic {
+  id: string;
+  fingerprint: string;
+  code: string;
+  severity: "error" | "warning" | "info";
+  phase: "authoring" | "runtime";
+  provider: string;
+
+  subject: ResourceRef;
+  location: DiagnosticLocation | null;
+  related: ResourceRef[];
+
+  message: string;
+  detail?: string;
+  freshness: "checking" | "current" | "stale";
+  observedVersion: string;
+
+  run?: {
+    runId: string;
+    outputId: string;
+    snapshotVersion: string;
+    time?: number;
+  };
+
+  fixes: DiagnosticFix[];
+}
+```
+
+`DiagnosticLocation` は script span、definition property、Entity field、resource、Output/System 行などの discriminated union とする。
+
+### 5.2 fingerprint
+
+次を正規化して fingerprint を作る。
+
+```text
+provider + code + subject(kind,id) + stable location + related IDs
+```
+
+message や行番号だけをキーにしない。前の行への追記や表示名変更で別問題にならないようにする。
+
+### 5.3 原因と影響を分ける
+
+- `subject`: 実際に直すべきリソース。
+- `related`: 原因、参照先、影響先。
+- direct problem と affected by dependency を別集計にする。
+
+例:
+
+```text
+Wood.material       ● Missing texture asset       直接問題
+Enemy entity        ◯ affected by Wood            影響あり
+Textures folder     ● 1                           子孫集計
+```
+
+同じ根本原因を依存元すべてへ赤エラーとして複製しない。詳細で dependency chain を示す。
+
+## 6. dependency graph
+
+### 6.1 node
+
+- Project / Folder / Output / Entity
+- KokoState / System / Material / Asset
+- unresolved resource reference を表す synthetic node
+
+### 6.2 edge
+
+- Output -> System
+- Output -> Entity
+- Entity -> parent Entity
+- Entity -> attached KokoState
+- Entity field -> Entity / Material / Asset / resource
+- Material -> texture Asset
+- System -> imported KokoState
+- KeepMark -> Entity / KokoState / field
+- Folder -> child folder / resource（UI 集計用。実行依存とは分ける）
+
+抽出、usage 表示、診断で別々の依存走査を作らず、共通の `ProjectDependencyGraph` を使う。
+
+### 6.3 増分無効化
+
+初版は安全性優先で、前回と今回の ProjectSnapshot を resource 単位の hash で比較する。
+
+1. changed / deleted resource を求める。
+2. changed node の edge を再抽出する。
+3. reverse graph から依存元をたどる。
+4. 対象 provider だけを再実行する。
+5. 非同期検査には generation token と input version を付ける。
+6. 古い結果が後着しても採用しない。
+
+後から `ProjectDoc.afterTransaction` を `ProjectChangeSet` に正規化して最適化する。UI や analyzer が Y.Map へ直接依存しないようにする。
+
+## 7. Diagnostic Provider
+
+巨大な `validateProject()` 一つにはせず、provider 単位に分ける。
+
+1. **ProjectStructureValidator**
+   - folder cycle / sibling path collision
+   - Entity parent cycle / 別 Output parent
+   - 欠落 Output / System / KokoState / field
+   - 不正 KeepMark
+2. **ResourceReferenceValidator**
+   - Material -> image
+   - Mesh -> material/model
+   - AudioSource -> audio
+   - resource/entity field の欠落参照
+3. **ScriptAnalyzer**
+   - syntax / type / invalid export
+   - unresolved import / stale binding
+   - Query / capability / API version
+4. **AssetValidator**
+   - kind / contentType / metadata
+   - 後段でサーバー実体の存在確認
+5. **RuntimeDiagnosticAdapter**
+   - timeout / memory / host API / user exception
+   - runId と snapshotVersion を保持
+
+## 8. Problems パネル UX
+
+### 8.1 基本方針
+
+MainPanel 内の小さな一覧ではなく、独立した `Problems` パネルを追加する。MainPanel には件数付きの開閉ボタンだけを置く。
+
+ログとは別パネルにする。
+
+### 8.2 上部フィルター
+
+- Error / Warning / Info
+- Authoring / Runtime
+- Current / Stale
+- 現在の Output のみ
+- 検索
+- Group by: 原因 / Resource / Folder / Output / Provider / code
+- 再検査ボタンと `checking` 表示
+
+### 8.3 一覧
+
+```text
+● Missing texture asset
+  Wood · Material > map                         Authoring
+
+△ Shoot stopped: time limit exceeded
+  Combat/Shoot.system:18 · Gun output           Previous run
+```
+
+- 同 fingerprint は一行にまとめる。
+- 繰り返しは件数表示にする。
+- stale は薄く表示し「現在の編集内容より前」と明示する。
+- 編集直後に古い診断を消さず stale にし、再検査後に差し替える。バッジの点滅を避ける。
+- stale error は Play ブロック判定と current error 件数には含めない。
+
+### 8.4 詳細
+
+- message / code / provider
+- resource breadcrumb
+- direct problem / affected の区別
+- dependency chain
+- source span または property path
+- related resources
+- input version / runId / snapshotVersion
+- available quick fixes
+
+### 8.5 Navigation
+
+`showProblem(systemId, line)` を汎用 `navigateToDiagnostic()` へ置き換える。
+
+- script: Editor を開き range へ移動
+- resource: Resources の folder を展開して選択
+- definition: Inspector で property を選択
+- hierarchy: Output を切り替え、Entity を展開・選択
+- field: Entity / KokoState / field をフォーカス
+- outputSystem: Output Properties の System 行へ移動
+
+### 8.6 Resources / Hierarchy badges
+
+- 塗りつぶし赤: 自分自身の current error
+- 赤い輪郭: 子孫または依存に問題
+- 黄: warning
+- 灰色点線: stale / checking
+- 数字: 件数
+
+色だけで表現せず、アイコン・数値・aria-label を付ける。
+
+Resources の System 専用 `hasError()` は廃止し、全 resource が共通 `diagnosticSummary(ref)` を使う。Folder は子孫集計、Hierarchy は Output / Entity の集計を表示する。
+
+## 9. Quick Fix
+
+```ts
+interface DiagnosticFix {
+  id: string;
+  title: string;
+  kind: "safe" | "review" | "destructive";
+  appliesToVersion: string;
+  apply(ctx: FixContext): void | Promise<void>;
+}
+```
+
+規則:
+
+- viewer は実行不可。
+- stale 診断へは実行不可。先に再検査する。
+- `appliesToVersion` が現在と違えば拒否する。
+- safe 以外は preview / confirmation を出す。
+- 一つの修正は一つの ProjectDoc/Yjs transaction にする。
+- Fix all は同一 code、safe、相互に競合しない場合だけ。
+
+初期 quick fix:
+
+- stable target ID から import path を現在位置へ更新
+- 欠落 Material / Asset 参照を null にする
+- Output から欠落 System を外す
+- 無効 KeepMark を外す
+- 一意な候補がある unresolved path を修正
+
+## 10. 共同編集と永続化
+
+### 永続化しない
+
+- diagnostics 本体
+- current / stale / checking
+- dependency graph/cache
+- runtime error 履歴
+- panel selection / grouping
+
+Authoring diagnostics は各クライアントが同じ Y.Doc から決定的に再計算する。
+
+Runtime diagnostics は host の結果を正とし、`runId / outputId / snapshotVersion` と一緒に配信する。
+
+### localStorage のみ
+
+- filter
+- grouping
+- stale 表示
+- panel layout
+
+将来 suppression が必要になった場合は診断結果ではなく、理由付き policy を制作データとして追加する。初版では suppression を実装しない。
+
+## 11. 段階的実装計画
+
+すべて縦の小さなスライスで TDD (`RED -> GREEN -> REFACTOR`) を行う。production code より先に、その振る舞いを示す failing test を作り、実際に期待理由で失敗することを確認する。
+
+### Phase 0: ADR と現行挙動の固定
+
+成果物:
+
+- resource identity / logical path / binding / diagnostics の ADR
+- 現行 Problems と runtime error 生命周期の characterization tests
+
+決定すること:
+
+- 正式な System resource syntax（仮想 import 推奨）
+- 同一親の名前衝突規則
+- apply 時の realm revision 単位
+- authoring error が Play を block する範囲
+
+完了条件:
+
+- ADR が identity と path を混同していない。
+- 現行テストが全て通る。
+
+### Phase 1: ResourcePathIndex と snapshot validation
+
+対象候補:
+
+- `packages/repo-model/src/resourcePath.ts`
+- `packages/repo-model/src/resourcePath.test.ts`
+- `packages/repo-model/src/projectValidation.ts`
+
+縦スライス:
+
+1. `/A/Gun.koko` と `/B/Gun.koko` を別 ID へ解決できる。
+2. System 基準で `../States/Gun.koko` を解決できる。
+3. `@builtin/Transform.koko` を固定 ID へ解決できる。
+4. 同一親 collision、root escape、folder cycle を診断できる。
+5. rename/move 後も resource ID は変わらない。
+
+### Phase 2: 汎用 Diagnostic core と最初の Provider
+
+対象候補:
+
+- `packages/repo-model/src/diagnostics/*` または UI 非依存の新 package
+- `apps/client/src/workspace/diagnostics/store.ts`
+
+最初の end-to-end behavior:
+
+> Material が存在しない画像を参照すると、一件の current authoring error が生成され、Material と祖先 folder の summary が更新される。
+
+続けて:
+
+- fingerprint dedupe
+- generation token
+- stale -> current
+- deleted resource の診断除去
+- direct / affected 集計
+
+### Phase 3: dependency graph
+
+対象候補:
+
+- `packages/repo-model/src/dependencyGraph.ts`
+- `packages/repo-model/src/dependencyGraph.test.ts`
+
+縦スライス:
+
+1. Material -> Asset
+2. Entity -> Material
+3. Output -> System
+4. System -> KokoState binding
+5. Asset 削除で関係する Material / Entity だけ dirty
+6. 無関係 System を再検査しない
+
+`extract.ts` と `usageOf()` の依存走査を段階的に graph へ統合する。
+
+### Phase 4: System binding と compile pipeline
+
+対象候補:
+
+- `packages/repo-model/src/systemBindings.ts`
+- `packages/script/src/compiler/*`
+- `packages/script/src/diagnostics.ts`
+
+縦スライス:
+
+1. 一つの relative KokoState import を stable ID に解決する。
+2. 二つの同名 KokoState を別 alias で扱う。
+3. unresolved / ambiguous / stale binding を構造化診断にする。
+4. query を stable ID の manifest にする。
+5. source map 付き JS を QuickJS へ渡す。
+6. rename/move refactor が import range だけを書き換える。
+
+この Phase で現行 `parseQuery()` と `extract.ts` の文字列 `replaceAll()` を依存解決・refactor の正本から外す。
+
+### Phase 5: runtime を alias / ID ベースへ移行
+
+対象候補:
+
+- `packages/script/src/ScriptEngine.ts`
+- `packages/script/src/QuickJsScriptEngine.ts`
+- `packages/runtime/src/scripting/ScriptScheduler.ts`
+- `packages/runtime/src/scripting/EntityScriptCodec.ts`
+- `packages/runtime/src/scripting/RuntimeHostApi.ts`
+
+縦スライス:
+
+1. query の stable ID で Entity を選ぶ。
+2. alias / ResourceRef でフィールドへアクセスする。
+3. `world.get/set/spawn` が binding ID を使う。
+4. 二つの repo に同名 KokoState があっても交差しない。
+5. Built-in は全 realm で固定 ID。
+6. sandbox failure 後も正常 System / physics を継続または明示 fatal にする。
+7. realm revision を原子的に apply する。
+
+### Phase 6: Problems panel と navigation
+
+対象候補:
+
+- `apps/client/src/workspace/DiagnosticsPanel.tsx`
+- `apps/client/src/workspace/diagnostics/selectors.ts`
+- `apps/client/src/workspace/diagnostics/navigation.ts`
+
+順序:
+
+1. filter / grouping / current-stale selectors を pure function でテスト。
+2. MainPanel に件数付き open button。
+3. 独立 panel と詳細表示。
+4. Resources の全 resource badge。
+5. Folder ancestor aggregate。
+6. Hierarchy の Output / Entity badge。
+7. script/resource/definition/hierarchy navigation。
+8. quick fixes。
+
+### Phase 7: Snapshot v2、migration、extract/fork
+
+- `ProjectSnapshot.version = 2`
+- resource bindings / language / apiVersion を serializable にする。
+- v1 の裸 KokoState 名を現行 registry 規則で一度だけ解決する。
+- 解決不能・動的 Query は migration diagnostic とし、勝手に別対象へ結び付けない。
+- extract は dependency graph で closure を求める。
+- ID remap 後に bindings を更新し、新配置から relative path を再生成する。
+- provenance に名前だけでなく origin repo/resource ID/commit を保存する。
+
+### Phase 8: 型付き JS、その後 TypeScript
+
+1. Host API schema と KokoState 定義から `.d.ts` を生成。
+2. JS に TypeScript Language Service / checkJs を適用。
+3. Diagnostics panel に型エラーを統合。
+4. 必要性を確認してから `.ts` source と TS -> JS を有効化。
+5. source map で QuickJS runtime error を元の TS range に戻す。
+
+## 12. 必須 acceptance criteria
+
+### Path / identity
+
+- 別 folder の同名 KokoState を作成できる。
+- 同一親の path collision は作成・rename・move・load の全経路で拒否または診断される。
+- resource / folder / System の rename・move 後も stable ID、Entity state、KeepMark が不変。
+- System move 後、relative import が同じ target ID を指すよう更新される。
+- stale spelling が別 ID を指しても自動 retarget しない。
+- Built-in は `@builtin/*` でのみ明示解決される。
+
+### System / runtime
+
+- 二つの同名 KokoState を異なる alias で一つの System から使える。
+- Query、Entity codec、Host API が表示名 lookup に依存しない。
+- 異なる repo/realm の同名 KokoState を誤操作しない。
+- 同じ realm に異なる snapshot revision が混在しない。
+
+### Diagnostics
+
+- Asset、Material、KokoState、System、Output、Entity の問題を Play 前に一覧できる。
+- 外部リソース変更で依存 System だけが再検査される。
+- 古い async 検査結果が新しい結果を上書きしない。
+- editing 中は既存診断を stale と表示し、current error と混同しない。
+- 同じ問題は一行に集約される。
+- direct problem と affected resource が区別される。
+- Resources folder と Hierarchy ancestor に集計 badge が出る。
+- 診断を選ぶと適切な Editor / Inspector / Resources / Hierarchy 位置へ移動できる。
+- runtime 診断は runId / snapshotVersion と結び付き、現在の編集内容より古い場合は stale になる。
+- diagnostics 自体は ProjectSnapshot / Y.Doc / Git に保存されない。
+
+### Verification
+
+各 Phase で最低限:
+
+```bash
+pnpm test
+pnpm typecheck
+pnpm lint
+```
+
+UIを変更する Phase 6 以降:
+
+```bash
+pnpm e2e
+```
+
+## 13. 実装エージェントへの指示
+
+- いきなり全 Phase を実装しない。Phase 0 から順に、小さな end-to-end slice で進める。
+- 各 production change は TDD。先に failing test を追加し、期待理由で RED になることを確認する。
+- パスを stable identity にしない。
+- logical resource path と Git file path を混同しない。
+- rename/refactor に正規表現や一般文字列 `replaceAll()` を使わない。
+- source と editable manifest の二重正本を作らない。
+- diagnostics を Y.Doc や ProjectSnapshot に保存しない。
+- Runtime diagnostics と authoring diagnostics を同じ寿命で扱わない。
+- 新しい UI を作る前に、UI 非依存の model / graph / selectors をテスト可能な形で実装する。
+- 各 Phase 終了時に、変更ファイル、RED/GREEN の実行結果、残課題を報告する。
+- 破壊的な snapshot version 変更は、migration と旧版拒否テストなしで入れない。
+
+## 14. 最初の実装単位
+
+最初の PR / 作業単位は、次に限定するのが安全。
+
+1. ADR を追加する。
+2. `ResourcePathIndex` と sibling collision validation を TDD で実装する。
+3. 汎用 `Diagnostic` model と `ProjectStructureValidator` の最小版を実装する。
+4. 「同名 KokoState を別フォルダに置ける」「同一親の衝突を診断する」を通す。
+5. まだ runtime API と snapshot version は変更しない。
+
+これにより、パスと診断の土台を先に検証し、System 構文や migration の大きな変更を独立してレビューできる。
