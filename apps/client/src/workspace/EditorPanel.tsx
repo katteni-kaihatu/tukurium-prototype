@@ -22,7 +22,9 @@ export function EditorPanel() {
   const problems = allProblems.filter((p) => p.systemId === activeSystem);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, height: "100%" }}
+    >
       <div className={ui.section} style={{ paddingTop: 6, paddingBottom: 6 }}>
         <div className={ui.tabs} role="tablist" aria-label="開いているコード">
           {openSystems.map((id) => (
@@ -166,7 +168,9 @@ function CodeView({ systemId }: { systemId: string }) {
     <div
       ref={host}
       style={{
+        flex: "1 1 auto",
         height: 420,
+        minHeight: 160,
         overflow: "hidden",
         borderTop: "1px solid rgba(38,38,46,.08)",
         background: "#fff",

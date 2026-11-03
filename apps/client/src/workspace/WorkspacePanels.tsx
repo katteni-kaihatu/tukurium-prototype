@@ -32,7 +32,8 @@ const MAIN: PanelSpec = {
 const INSPECTOR: PanelSpec = {
   id: "ws-inspector",
   title: "Inspector",
-  initial: { x: 16, y: 470, width: 600 },
+  // 高さはここで固定する。選んだ Entity の項目の数では変えない（中でスクロールする）
+  initial: { x: 16, y: 470, width: 600, height: 400 },
   render: () => <InspectorPanel />,
 };
 
