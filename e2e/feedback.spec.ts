@@ -24,9 +24,9 @@ test("3D にしたパネルは重ならずに操作でき、画面に戻せる",
     await mouseClick(page, pinOf(page, name));
     await expect(pinOf(page, name)).toHaveAttribute("aria-pressed", "false");
   }
-  await mouseClick(page, panel(page, "Resources").getByRole("tab", { name: "System" }));
-  await expect(panel(page, "Resources").getByRole("tab", { name: "System" })).toHaveAttribute(
-    "aria-selected",
+  await mouseClick(page, panel(page, "Resources").getByRole("button", { name: "一覧" }));
+  await expect(panel(page, "Resources").getByRole("button", { name: "一覧" })).toHaveAttribute(
+    "aria-pressed",
     "true",
   );
   for (const name of names) {
@@ -47,8 +47,7 @@ test("スクリプトの問題が、Play 前にも実行後にも行番号つき
   await createSessionAndWorkspace(page, "れにうむ", "sample");
   const main = panel(page, "ワークスペース");
   const res = panel(page, "Resources");
-  await res.getByRole("tab", { name: "System" }).click();
-  await res.getByRole("button", { name: /^Shoot/ }).click();
+  await res.getByRole("button", { name: "Shoot（Script）" }).click();
   await panel(page, "Inspector").getByRole("button", { name: "コードを開く" }).click();
   const editor = panel(page, "コード").locator(".cm-content");
 
@@ -61,7 +60,7 @@ test("スクリプトの問題が、Play 前にも実行後にも行番号つき
   const problems = main.getByRole("region", { name: "問題" });
   await expect(problems).toContainText("Shoot.js 3 行目");
   await expect(problems).toContainText("SyntaxError");
-  await expect(res.getByText("エラー")).toBeVisible();
+  await expect(res.getByRole("button", { name: "Shoot（Script）" })).toContainText("エラー");
   await expect(panel(page, "コード").locator(".cm-tk-errorLine")).toHaveCount(1);
 
   // 直すと消える

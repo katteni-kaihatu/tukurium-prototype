@@ -34,8 +34,8 @@ async function commitInput(input: Locator, value: string) {
 
 async function newKokoState(page: Page, name: string, field: string, def: string) {
   const res = panel(page, "Resources");
-  await res.getByRole("button", { name: "＋ New" }).click();
-  await res.getByRole("button", { name: /^KokoState/ }).click();
+  await res.getByRole("button", { name: "New", exact: true }).click();
+  await res.getByRole("menuitem", { name: /^KokoState/ }).click();
   const insp = panel(page, "Inspector");
   await commitInput(insp.getByLabel("Name"), name);
   await insp.getByRole("button", { name: "＋ Add field" }).click();
@@ -45,8 +45,8 @@ async function newKokoState(page: Page, name: string, field: string, def: string
 
 async function newScript(page: Page, code: string) {
   const res = panel(page, "Resources");
-  await res.getByRole("button", { name: "＋ New" }).click();
-  await res.getByRole("button", { name: /^Script/ }).click();
+  await res.getByRole("button", { name: "New", exact: true }).click();
+  await res.getByRole("menuitem", { name: /^Script/ }).click();
   const editor = panel(page, "コード").locator(".cm-content");
   await editor.click();
   await page.keyboard.press("ControlOrMeta+a");

@@ -25,6 +25,11 @@ interface Placed {
  */
 export class PanelSpace {
   private readonly placed = new Map<string, Placed>();
+  /** 右ドラッグで動かしているパネル */
+  private moving: { id: string; distance: number; pointer: () => THREE.Vector2 } | null = null;
+  private readonly raycaster = new THREE.Raycaster();
+  /** 動かし終えたときに呼ぶ（置き場所を保存する側へ知らせる） */
+  onMoved: ((id: string, transform: PanelTransform) => void) | null = null;
   private readonly occluderMaterial = new THREE.MeshBasicMaterial({
     color: 0x000000,
     opacity: 0,
@@ -66,8 +71,39 @@ export class PanelSpace {
     this.fitOccluder(id);
   }
 
+  /** 要素が入っている 3D パネルの ID（3D に置いたパネルの中でなければ null） */
+  idOf(el: Element | null): string | null {
+    if (!el) return null;
+    for (const [id, p] of this.placed) if (p.wrapper.contains(el)) return id;
+    return null;
+  }
+
+  /**
+   * 右ドラッグでパネルを動かし始める。距離は今のまま、ポインターの先（照準なら画面の中央）へ動かす。
+   * pointer は画面上の位置（-1〜1 の正規化座標）を返す。
+   */
+  startMove(id: string, camera: THREE.Camera, pointer: () => THREE.Vector2): void {
+    const p = this.placed.get(id);
+    if (!p) return;
+    const eye = camera.getWorldPosition(new THREE.Vector3());
+    this.moving = { id, distance: eye.distanceTo(p.object.position), pointer };
+  }
+
+  endMove(): void {
+    const m = this.moving;
+    this.moving = null;
+    if (!m) return;
+    const t = this.transformOf(m.id);
+    if (t) this.onMoved?.(m.id, t);
+  }
+
+  get isMoving(): boolean {
+    return this.moving !== null;
+  }
+
   /** 空間から取り除く（要素は呼び出し側が別の場所へ移す）。 */
   remove(id: string): void {
+    if (this.moving?.id === id) this.moving = null;
     const p = this.placed.get(id);
     if (!p) return;
     p.observer.disconnect();
@@ -83,6 +119,17 @@ export class PanelSpace {
    */
   update(camera: THREE.Camera): void {
     if (this.placed.size === 0) return;
+    const m = this.moving ? this.placed.get(this.moving.id) : undefined;
+    if (this.moving && m) {
+      this.raycaster.setFromCamera(this.moving.pointer(), camera);
+      const pos = this.raycaster.ray.at(this.moving.distance, new THREE.Vector3());
+      const forward = camera.getWorldDirection(new THREE.Vector3());
+      m.object.position.copy(pos);
+      // こちらを向ける（カメラの向きの水平成分）
+      m.object.rotation.set(0, Math.atan2(-forward.x, -forward.z), 0);
+      m.occluder.position.copy(m.object.position);
+      m.occluder.rotation.copy(m.object.rotation);
+    }
     const eye = camera.getWorldPosition(new THREE.Vector3());
     const forward = camera.getWorldDirection(new THREE.Vector3());
     const to = new THREE.Vector3();

@@ -57,7 +57,10 @@ export class Physics {
       const mesh = world.get(id, BUILTIN.Mesh);
       const rb = world.get(id, BUILTIN.RigidBody);
       const collider = world.get(id, BUILTIN.Collider);
-      const type = (rb?.type as BodyRecord["type"] | undefined) ?? "fixed";
+      // 手に持っている間は、重力で落ちないよう、Transform に合わせて動かす
+      const type: BodyRecord["type"] = world.hasState(id, BUILTIN.Held)
+        ? "kinematic"
+        : ((rb?.type as BodyRecord["type"] | undefined) ?? "fixed");
       const shape = (mesh?.shape as string | undefined) ?? "box";
       const size = (mesh?.size as Vec3 | undefined) ?? [1, 1, 1];
       const s = wt.scale;

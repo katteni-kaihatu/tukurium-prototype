@@ -9,7 +9,6 @@ const panel = (page: Page, name: string) => page.locator(`section[aria-label="${
 test("画像・音声・GLB を取り込み、マテリアル・AudioSource・Mesh で使う", async ({ page }) => {
   await createSessionAndWorkspace(page, "れにうむ", "sample");
   const res = panel(page, "Resources");
-  await res.getByRole("tab", { name: "素材" }).click();
 
   // GLB はページの中で three.js の書き出し機能を使って作る
   const glb = await page.evaluate(async () => {
@@ -36,15 +35,12 @@ test("画像・音声・GLB を取り込み、マテリアル・AudioSource・Me
     { name: "beep.wav", mimeType: "audio/wav", buffer: readFileSync("e2e/fixtures/beep.wav") },
     { name: "ring.glb", mimeType: "model/gltf-binary", buffer: Buffer.from(glb) },
   ]);
-  const list = res.getByLabel("素材", { exact: true });
-  await expect(list.locator("li")).toHaveCount(3);
-  await expect(list).toContainText("checker");
-  await expect(list).toContainText("beep");
-  await expect(list).toContainText("ring");
+  await expect(res.getByRole("button", { name: "checker（Texture）" })).toBeVisible();
+  await expect(res.getByRole("button", { name: "beep（Audio）" })).toBeVisible();
+  await expect(res.getByRole("button", { name: "ring（Model）" })).toBeVisible();
 
   // 画像をマテリアルに
-  await res.getByRole("tab", { name: "Material" }).click();
-  await res.getByRole("button", { name: /Wood/ }).click();
+  await res.getByRole("button", { name: "Wood（Material）" }).click();
   const insp = panel(page, "Inspector");
   await insp.getByLabel("画像").selectOption({ label: "checker" });
 

@@ -59,6 +59,14 @@ export interface EntityDef {
 }
 
 /** リポジトリ（制作データ）の中身をそのまま JSON にしたもの。 */
+/** Resources のフォルダ（並べ方だけの情報。実行には関わらない） */
+export interface FolderDef {
+  id: string;
+  name: string;
+  /** 親のフォルダ。null はいちばん上（プロジェクト） */
+  parent: string | null;
+}
+
 export interface ProjectSnapshot {
   version: 1;
   name: string;
@@ -71,6 +79,10 @@ export interface ProjectSnapshot {
   entities: EntityDef[];
   /** フォーク・抽出の由来（元のリポジトリやコミットを後から追える） */
   provenance?: Provenance[];
+  /** Resources のフォルダ（古いデータにはない） */
+  folders?: FolderDef[];
+  /** リソース（KokoState・System・マテリアル・素材）の ID → 入っているフォルダの ID。ないものはいちばん上 */
+  placement?: Record<string, string>;
 }
 
 export interface Provenance {

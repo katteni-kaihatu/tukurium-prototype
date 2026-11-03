@@ -2,6 +2,7 @@ import type { KokoStateDef } from "@tukurium/eks";
 import type {
   AssetDef,
   EntityDef,
+  FolderDef,
   MaterialDef,
   OutputDef,
   ProjectSnapshot,
@@ -35,6 +36,8 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
     files[`outputs/${safe(output)}/entities/${safe(e.id)}.json`] = json(rest);
   }
   if (snap.provenance?.length) files["provenance.json"] = json(snap.provenance);
+  if (snap.folders?.length)
+    files["folders.json"] = json({ folders: snap.folders, placement: snap.placement ?? {} });
   return files;
 }
 
@@ -70,6 +73,11 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
     }
   }
   if (files["provenance.json"]) snap.provenance = parse<Provenance[]>("provenance.json");
+  if (files["folders.json"]) {
+    const f = parse<{ folders?: FolderDef[]; placement?: Record<string, string> }>("folders.json");
+    snap.folders = f.folders ?? [];
+    snap.placement = f.placement ?? {};
+  }
   return snap;
 }
 

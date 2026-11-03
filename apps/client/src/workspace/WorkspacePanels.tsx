@@ -39,7 +39,7 @@ const INSPECTOR: PanelSpec = {
 const RESOURCES: PanelSpec = {
   id: "ws-resources",
   title: "Resources",
-  initial: { right: 16, y: 84, width: 380 },
+  initial: { right: 16, y: 84, width: 600 },
   render: () => <ResourcesPanel />,
 };
 
@@ -54,6 +54,8 @@ const START: PanelSpec = {
 export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const ready = useWorkspace((s) => s.ready && s.project !== null);
   const hasEditor = useWorkspace((s) => s.openSystems.length > 0);
+  // コードを開いた・問題の行へ移ったときは、エディタを前に出す
+  const editorFocus = useWorkspace((s) => `${s.activeSystem}:${s.jumpTo?.seq ?? 0}`);
   const hidden = useWorkspace((s) => s.panelsHidden);
   useScriptCheck();
   const [members, setMembers] = useState(false);
@@ -105,6 +107,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
         id: "ws-editor",
         title: "コード",
         initial: { x: 640, y: 160, width: 640 },
+        focusKey: editorFocus,
         render: () => <EditorPanel />,
         onClose: () => {
           const ws = useWorkspace.getState();

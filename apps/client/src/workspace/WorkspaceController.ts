@@ -1,5 +1,5 @@
 import { KokoStateRegistry, World } from "@tukurium/eks";
-import type { MaterialDef, ProjectDoc } from "@tukurium/repo-model";
+import { BUILTIN, type MaterialDef, type ProjectDoc } from "@tukurium/repo-model";
 import { buildWorld, type Simulation } from "@tukurium/runtime";
 import * as THREE from "three";
 import { useApp } from "../app/store";
@@ -14,6 +14,16 @@ const UI_REFRESH_SEC = 0.2;
 /** ホストが実行状態を配る間隔 */
 const FRAME_SEC = 1 / 15;
 const EMPTY_WORLD = new World(new KokoStateRegistry());
+/** 持っている物の位置（視点）を送る間隔 */
+const HOLD_SEC = 0.1;
+
+/** この人が右クリックで持っている物があるか */
+export function holdsSomething(world: World, player: string): boolean {
+  return world
+    .query({ with: [BUILTIN.Grabbable, BUILTIN.Held] })
+    .some((id) => world.get(id, BUILTIN.Held)?.player === player);
+}
+
 /** 編集中の見た目をほかの人へ送る間隔の下限 */
 const PREVIEW_SEC = 0.4;
 
@@ -47,6 +57,7 @@ export class WorkspaceController {
   private accumulator = 0;
   private uiTimer = 0;
   private anchorKey = "";
+  private holdTimer = 0;
   private previewKey = "";
   private previewTimer = 0;
   private readonly disposers: (() => void)[] = [];
@@ -133,6 +144,7 @@ export class WorkspaceController {
     }
     const materials = this.materials;
 
+    this.sendHold(dt);
     if (ws.mode !== "edit" && ws.sim) {
       // ホスト：実行して、状態を配る
       if (ws.mode === "play") {
@@ -142,7 +154,11 @@ export class WorkspaceController {
           this.accumulator -= STEP;
         }
       }
-      this.view.sync(ws.sim.world, { materials, holdCamera: this.engine.camera });
+      this.view.sync(ws.sim.world, {
+        materials,
+        holdCamera: this.engine.camera,
+        player: this.me(),
+      });
       const sounds = ws.sim.drainSounds();
       if (sounds.length > 0) {
         this.playSounds(sounds);
@@ -156,7 +172,11 @@ export class WorkspaceController {
       this.refreshUi(dt, ws.sim.systemStatus());
     } else if (ws.mode !== "edit" && ws.remote) {
       // ホスト以外：ホストから届いた状態を表示する
-      this.view.sync(ws.remote.world, { materials, holdCamera: this.engine.camera });
+      this.view.sync(ws.remote.world, {
+        materials,
+        holdCamera: this.engine.camera,
+        player: this.me(),
+      });
       if (ws.incomingSounds.length > 0) {
         this.playSounds(ws.incomingSounds);
         useWorkspace.setState({ incomingSounds: [] });
@@ -239,6 +259,17 @@ export class WorkspaceController {
     }
   }
 
+  /** 持っている物があれば、視点を間隔をあけて送る（ほかの人にも持っている位置が見える） */
+  private sendHold(dt: number): void {
+    const ws = useWorkspace.getState();
+    this.holdTimer += dt;
+    if (ws.mode !== "play" || this.holdTimer < HOLD_SEC) return;
+    this.holdTimer = 0;
+    const world = ws.runtime()?.world;
+    if (!world || !holdsSomething(world, this.me())) return;
+    ws.input({ action: "hold", phase: "down", player: this.me(), ...this.viewRay() });
+  }
+
   private refreshUi(dt: number, status: ReturnType<Simulation["systemStatus"]>): void {
     this.uiTimer += dt;
     if (this.uiTimer <= UI_REFRESH_SEC) return;
@@ -275,6 +306,11 @@ export class WorkspaceController {
     const ws = useWorkspace.getState();
     if (ws.mode === "play" && button === 0) {
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
+      return;
+    }
+    // 右クリック：Grabbable を持つ・放す
+    if (ws.mode === "play" && button === 2) {
+      ws.input({ action: "grab", phase, player: this.me(), ...this.viewRay() });
       return;
     }
     if (ws.mode === "edit" && !ws.panelsHidden && button === 0 && phase === "down") {

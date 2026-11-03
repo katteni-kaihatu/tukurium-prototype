@@ -10,6 +10,7 @@ import { buildRegistry, isBuiltin } from "./builtins";
 import {
   type AssetDef,
   type EntityDef,
+  type FolderDef,
   type MaterialDef,
   newId,
   type OutputDef,
@@ -58,6 +59,13 @@ export class ProjectDoc {
   }
   private get assetMap() {
     return this.doc.getMap<AssetDef>("assets");
+  }
+  private get folderMap() {
+    return this.doc.getMap<FolderDef>("folders");
+  }
+  /** リソース ID → フォルダ ID */
+  private get placementMap() {
+    return this.doc.getMap<string>("placement");
   }
   private get outputMap() {
     return this.doc.getMap<OutputDef>("outputs");
@@ -335,6 +343,18 @@ export class ProjectDoc {
 
   // ---------- 丸ごと ----------
   snapshot(): ProjectSnapshot {
+    const resources = new Set([
+      ...this.kokostates().map((k) => k.id),
+      ...this.systems().map((x) => x.id),
+      ...this.materials().map((m) => m.id),
+      ...this.assets().map((a) => a.id),
+    ]);
+    const folders = this.folders();
+    const folderIds = new Set(folders.map((f) => f.id));
+    // 消えたリソース・消えたフォルダへの割り当ては残さない
+    const placement = Object.fromEntries(
+      [...this.placementMap.entries()].filter(([r, f]) => resources.has(r) && folderIds.has(f)),
+    );
     return {
       version: 1,
       name: this.name,
@@ -347,6 +367,8 @@ export class ProjectDoc {
       provenance: clone(
         (this.meta.get("provenance") as unknown as ProjectSnapshot["provenance"]) ?? [],
       ),
+      folders,
+      placement,
     };
   }
 
@@ -361,9 +383,13 @@ export class ProjectDoc {
         this.assetMap,
         this.outputMap,
         this.entityMap,
+        this.folderMap,
+        this.placementMap,
       ]) {
         m.clear();
       }
+      for (const f of snap.folders ?? []) this.folderMap.set(f.id, clone(f));
+      for (const [r, f] of Object.entries(snap.placement ?? {})) this.placementMap.set(r, f);
       this.meta.set("name", snap.name);
       this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
       for (const k of snap.kokostates) this.kokoMap.set(k.id, clone(k));
@@ -389,6 +415,59 @@ export class ProjectDoc {
         this.entityMap.set(e.id, map);
       }
     });
+  }
+
+  // ---------- Resources のフォルダ ----------
+
+  folders(): FolderDef[] {
+    return [...this.folderMap.values()].map(clone).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  addFolder(name: string, parent: string | null): string {
+    const id = newId("fld");
+    this.folderMap.set(id, { id, name: name.trim() || "新しいフォルダ", parent });
+    return id;
+  }
+
+  renameFolder(id: string, name: string): void {
+    const f = this.folderMap.get(id);
+    if (f && name.trim()) this.folderMap.set(id, { ...f, name: name.trim() });
+  }
+
+  /** フォルダを消す。中のフォルダとリソースは、ひとつ上へ移す */
+  removeFolder(id: string): void {
+    const f = this.folderMap.get(id);
+    if (!f) return;
+    this.transact(() => {
+      for (const c of this.folderMap.values())
+        if (c.parent === id) this.folderMap.set(c.id, { ...c, parent: f.parent });
+      for (const [r, fid] of this.placementMap.entries()) {
+        if (fid !== id) continue;
+        if (f.parent) this.placementMap.set(r, f.parent);
+        else this.placementMap.delete(r);
+      }
+      this.folderMap.delete(id);
+    });
+  }
+
+  /** フォルダを別のフォルダへ移す（自分の中へは移せない） */
+  moveFolder(id: string, parent: string | null): void {
+    const f = this.folderMap.get(id);
+    if (!f) return;
+    for (let p = parent; p; p = this.folderMap.get(p)?.parent ?? null) if (p === id) return;
+    this.folderMap.set(id, { ...f, parent });
+  }
+
+  /** リソースが入っているフォルダ（null はいちばん上） */
+  folderOf(resourceId: string): string | null {
+    const f = this.placementMap.get(resourceId);
+    return f && this.folderMap.has(f) ? f : null;
+  }
+
+  /** リソースをフォルダへ移す（null はいちばん上） */
+  moveResource(resourceId: string, folder: string | null): void {
+    if (folder && this.folderMap.has(folder)) this.placementMap.set(resourceId, folder);
+    else this.placementMap.delete(resourceId);
   }
 
   private descendants(id: EntityId): EntityId[] {
