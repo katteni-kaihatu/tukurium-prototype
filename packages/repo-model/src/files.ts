@@ -5,6 +5,7 @@ import type {
   FolderDef,
   MaterialDef,
   OutputDef,
+  PackageDependency,
   ProjectSnapshot,
   Provenance,
   SystemDef,
@@ -22,7 +23,11 @@ const safe = (id: string) => id.replace(/[^A-Za-z0-9_.-]/g, "_");
  */
 export function toFiles(snap: ProjectSnapshot): FileMap {
   const files: FileMap = {};
-  files["tukurium.json"] = json({ format: 1, name: snap.name, dependencies: [] });
+  files["tukurium.json"] = json({
+    format: 1,
+    name: snap.name,
+    dependencies: snap.dependencies ?? [],
+  });
   for (const k of snap.kokostates) files[`kokostates/${safe(k.id)}.json`] = json(k);
   for (const s of snap.systems) {
     files[`systems/${safe(s.id)}.json`] = json({ id: s.id, name: s.name } satisfies SystemDef);
@@ -46,7 +51,7 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
 /** ファイルの集まりから制作データに戻す（toFiles の逆） */
 export function fromFiles(files: FileMap): ProjectSnapshot {
   const parse = <T>(path: string): T => JSON.parse(files[path] ?? "null") as T;
-  const meta = parse<{ name?: string } | null>("tukurium.json");
+  const meta = parse<{ name?: string; dependencies?: PackageDependency[] } | null>("tukurium.json");
   const snap: ProjectSnapshot = {
     version: 1,
     name: meta?.name ?? "untitled",
@@ -57,6 +62,7 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
     outputs: [],
     entities: [],
   };
+  if (meta?.dependencies?.length) snap.dependencies = meta.dependencies;
   const paths = Object.keys(files).sort();
   for (const p of paths) {
     if (p.startsWith("kokostates/")) snap.kokostates.push(parse<KokoStateDef>(p));

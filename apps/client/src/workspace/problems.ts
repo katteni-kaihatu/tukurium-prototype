@@ -4,11 +4,14 @@ import {
   type DiagnosticView,
   inferCapabilities,
   makeDiagnostic,
+  type PackageDependency,
+  type PackageResolution,
   type ProjectDoc,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import type { SystemStatus } from "@tukurium/runtime";
 import { ScriptError, ScriptSandbox } from "@tukurium/script";
+import { resolvePackages } from "./packages";
 
 /**
  * スクリプトの問題（「問題」の欄・エディタ・Resources に出す）。
@@ -80,9 +83,15 @@ let sandbox: Promise<ScriptSandbox> | null = null;
 export async function checkScripts(
   project: ProjectDoc,
   systemIds?: readonly string[],
+  loadPackages: (
+    deps: readonly PackageDependency[],
+  ) => Promise<Map<string, PackageResolution>> = resolvePackages,
 ): Promise<Diagnostic[]> {
   sandbox ??= ScriptSandbox.create({ loadTimeLimitMs: 1000 });
   const sb = await sandbox;
+  // 依存の中身（`@別名/...` の import の解決に使う。ADR 0015）
+  const deps = project.dependencies();
+  const packages = deps.length > 0 ? await loadPackages(deps) : new Map();
   const registry = project.registry();
   const problems: Diagnostic[] = [];
   const only = systemIds ? new Set(systemIds) : null;
@@ -95,19 +104,37 @@ export async function checkScripts(
       index ??= ResourcePathIndex.fromSnapshot(project.snapshot());
     }
     const compiled = index
-      ? compileSystem(def.id, code, index)
-      : { ok: true, javascript: code, diagnostics: [] };
+      ? compileSystem(def.id, code, index, packages)
+      : { ok: true, javascript: code, diagnostics: [], bindings: [] };
     if (!compiled.ok) {
       problems.push(...compiled.diagnostics);
       continue;
     }
+    // ライブラリから取り込んだ KokoState は、まだ再生で使えない（実行時の取り込みは次の段階）
+    const fromPackages = new Set(
+      compiled.bindings.filter((b) => b.package !== undefined).map((b) => b.resourceId),
+    );
+    const firstPackage = compiled.bindings.find((b) => b.package !== undefined);
+    if (firstPackage)
+      problems.push(
+        makeDiagnostic({
+          code: "import-package-runtime-pending",
+          severity: "warning",
+          phase: "authoring",
+          provider: SCRIPT_PROVIDER,
+          subject: { kind: "system", id: def.id },
+          location: { kind: "script", line: firstPackage.line, symbol: firstPackage.spelling },
+          related: [],
+          message: `ライブラリ（@${firstPackage.package}）から import した System は、まだ再生では動きません`,
+        }),
+      );
     // 要る権限を読み取れない使い方（world[name]() など）は注意にする（セッションでは拒まれる。ADR 0012）
     problems.push(...inferCapabilities(def.id, code).diagnostics);
     try {
       const meta = sb.loadSystem(def.id, compiled.javascript, CHECK_REALM);
       for (const name of [...meta.query.with, ...meta.query.without]) {
         // import した KokoState は ID で届く。移行の間の書き方は名前で届く（ADR 0010）
-        if (registry.get(name) || registry.idOf(name)) continue;
+        if (fromPackages.has(name) || registry.get(name) || registry.idOf(name)) continue;
         const ambiguous = registry.isAmbiguous(name);
         problems.push(
           scriptDiagnostic(

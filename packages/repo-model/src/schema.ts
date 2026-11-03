@@ -104,6 +104,23 @@ export interface ProjectSnapshot {
   placement?: Record<string, string>;
   /** 公開の印を付けたリソースの ID（ライブラリとして、ほかのプロジェクトから import できる。ADR 0015） */
   exports?: string[];
+  /** 使うライブラリ（別名の順。古いデータにはない。ADR 0015） */
+  dependencies?: PackageDependency[];
+}
+
+/**
+ * プロジェクトが使うライブラリ（ADR 0015）。版と content hash を固定（lock）し、
+ * 自動で新しい版へは切り替えない。
+ */
+export interface PackageDependency {
+  /** import で書く別名（`@別名/States/Health.koko`） */
+  alias: string;
+  /** Package ID（ライブラリの作品の ID） */
+  packageId: string;
+  /** リリースの番号 */
+  version: number;
+  /** その版の content hash（取り出した中身がこれと違えば使わない） */
+  contentHash: string;
 }
 
 export interface Provenance {

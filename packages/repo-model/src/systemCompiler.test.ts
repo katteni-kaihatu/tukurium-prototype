@@ -104,7 +104,13 @@ describe("compileSystem", () => {
 
   it("import がなければそのまま。構文の誤りは QuickJS に任せる（そのまま返す）", () => {
     const plain = `export default system({ query: { with: ["Gun"] } });`;
-    expect(compile(plain)).toEqual({ ok: true, javascript: plain, bindings: [], diagnostics: [] });
+    expect(compile(plain)).toEqual({
+      ok: true,
+      javascript: plain,
+      bindings: [],
+      diagnostics: [],
+      packageImports: [],
+    });
     const broken = `let = ;\nexport default system({});`;
     expect(compile(broken)).toMatchObject({ ok: true, javascript: broken });
   });

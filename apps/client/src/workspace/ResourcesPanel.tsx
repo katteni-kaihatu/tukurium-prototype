@@ -115,10 +115,12 @@ export function ResourcesPanel() {
    */
   const badgeOf = (it: ResItem): Badge | null => {
     const s = summary.get(it.id);
-    const script = it.kind === "system" ? problems.filter((p) => p.subject.id === it.id).length : 0;
-    const errors = (s?.errors ?? 0) + script;
+    const script = it.kind === "system" ? problems.filter((p) => p.subject.id === it.id) : [];
+    const count = (severity: string) => script.filter((p) => p.severity === severity).length;
+    const errors = (s?.errors ?? 0) + count("error");
+    const warnings = (s?.warnings ?? 0) + count("warning");
     if (errors > 0) return { tone: "error", label: `エラー ${errors} 件` };
-    if (s?.warnings) return { tone: "warning", label: `注意 ${s.warnings} 件` };
+    if (warnings > 0) return { tone: "warning", label: `注意 ${warnings} 件` };
     if (s?.nestedErrors)
       return { tone: "nestedError", label: `中や関係するものにエラー ${s.nestedErrors} 件` };
     if (s?.nestedWarnings)

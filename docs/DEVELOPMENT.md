@@ -54,6 +54,7 @@
 | Docker ビルドで pnpm install が失敗する | 新しいパッケージの package.json を COPY していない | Dockerfile に COPY を足す（`pnpm lint` が検査する） |
 | `CLIENT_DIR` を相対パスで渡すと起動しない | @fastify/static は絶対パスしか受け付けない | `config.ts` で絶対パスに直すようにした |
 | Coolify でイメージを取得できない | MinIO の公式イメージの配布が止まった・Docker Hub の取得制限 | 本番の compose には S3 互換ストレージを含めない（外部を使う）。ベースイメージは `NODE_IMAGE` で差し替えられる |
+| Windows で開発サーバーが白い画面になり、`DiffTree` が export されていないと出る（型・ビルドも同じ） | `DiffTree.tsx` と `diffTree.ts` が大文字・小文字だけ違う。大文字・小文字を区別しないファイルシステムでは、`./DiffTree` が `.ts` の方に当たる | 一方の名前を変えるまでは、確かめるときだけ import を `./DiffTree.tsx` にする（コミットしない）。Linux の CI では起きない |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
 ## React・UI

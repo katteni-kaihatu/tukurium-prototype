@@ -1,4 +1,9 @@
-import type { FileChange, ProjectSnapshot, Provenance } from "@tukurium/repo-model";
+import type {
+  FileChange,
+  PackageManifest,
+  ProjectSnapshot,
+  Provenance,
+} from "@tukurium/repo-model";
 
 export interface RepoMeta {
   id: string;
@@ -24,6 +29,16 @@ export interface Release {
   version: number;
   commit: string;
   createdAt: string;
+  /** ライブラリの版の content hash（サーバーがリリースのときに計算する。ADR 0015） */
+  contentHash?: string;
+}
+
+/** ライブラリの版の中身（公開したものだけ） */
+export interface PackageVersion {
+  packageId: string;
+  version: number;
+  contentHash: string;
+  manifest: PackageManifest;
 }
 
 export interface Work {
@@ -133,6 +148,8 @@ export const api = {
   updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms> }) =>
     call<Work>("PATCH", `/api/works/${id}`, body),
   release: (workId: string) => call<Release>("POST", `/api/works/${workId}/releases`, {}),
+  packageVersion: (workId: string, version: number) =>
+    call<PackageVersion>("GET", `/api/works/${workId}/releases/${version}/package`),
   user: (id: string) =>
     call<{ id: string; name: string; repos: RepoMeta[]; works: Work[] }>("GET", `/api/users/${id}`),
 };
