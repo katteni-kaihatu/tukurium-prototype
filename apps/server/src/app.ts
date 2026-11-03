@@ -34,7 +34,9 @@ export async function buildApp(
   // Yjs の更新を運ぶので大きめにする（初期内容の送信など）
   await app.register(fastifyWebsocket, { options: { maxPayload: 8 * 1024 * 1024 } });
 
-  registerRepoRoutes(app, store, repos);
+  registerRepoRoutes(app, store, repos, {
+    onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
+  });
 
   app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
 

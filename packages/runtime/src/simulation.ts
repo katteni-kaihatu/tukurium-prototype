@@ -42,6 +42,8 @@ export interface SystemStatus {
   enabled: boolean;
   /** 読み込みや実行で止まった理由 */
   error: string | null;
+  /** 止まった場所（スクリプトの行。分かるときだけ） */
+  line: number | null;
 }
 
 export interface LogEntry {
@@ -104,6 +106,7 @@ interface LoadedSystem {
   handlers: Set<string>;
   enabled: boolean;
   error: string | null;
+  line: number | null;
 }
 
 interface PendingEvent {
@@ -344,6 +347,7 @@ export class Simulation {
       name: s.name,
       enabled: s.enabled,
       error: s.error,
+      line: s.line,
     }));
   }
 
@@ -523,6 +527,7 @@ export class Simulation {
         handlers: new Set(),
         enabled: ref.enabled,
         error: null,
+        line: null,
       };
       this.systems.push(sys);
       if (!ref.enabled) continue;
@@ -737,7 +742,9 @@ export class Simulation {
   private fail(sys: LoadedSystem, e: unknown): void {
     sys.enabled = false;
     sys.error = e instanceof Error ? e.message : String(e);
-    this.log(sys.id, `${sys.name} を停止しました：${sys.error}`, "error");
+    sys.line = e instanceof ScriptError ? e.line : null;
+    const at = sys.line ? `（${sys.line} 行目）` : "";
+    this.log(sys.id, `${sys.name} を停止しました${at}：${sys.error}`, "error");
   }
 
   private log(systemId: string | null, message: string, level: LogEntry["level"]): void {

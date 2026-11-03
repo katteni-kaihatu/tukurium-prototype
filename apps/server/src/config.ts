@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 export interface Config {
   host: string;
   port: number;
@@ -24,7 +26,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     host: env.HOST ?? "0.0.0.0",
     port: Number(env.PORT ?? 8787),
-    clientDir: env.CLIENT_DIR || undefined,
+    // @fastify/static は絶対パスしか受け付けないので、相対パスはここで直す
+    clientDir: env.CLIENT_DIR ? resolve(env.CLIENT_DIR) : undefined,
     databaseUrl: env.DATABASE_URL || undefined,
     s3: env.S3_ENDPOINT
       ? {

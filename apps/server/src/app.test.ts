@@ -655,6 +655,27 @@ describe("リポジトリ・コミット・作品", () => {
     expect(commits[0].message).toContain("Co-authored-by: ここあ");
   });
 
+  it("持ち主はプロジェクト名を変えられ、開いているワークスペースの名前と制作データにも反映される", async () => {
+    const { app, url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    const repoId = workspaceId.replace(/^w_/, "");
+    expect((await api(app, b.token).patch(`/api/repos/${repoId}`, { name: "x" })).statusCode).toBe(
+      403,
+    );
+    expect((await api(app, a.token).patch(`/api/repos/${repoId}`, { name: "  " })).statusCode).toBe(
+      400,
+    );
+    const res = await api(app, a.token).patch(`/api/repos/${repoId}`, { name: " 新しい射撃場 " });
+    expect(res.json()).toMatchObject({ name: "新しい射撃場" });
+    const s = await b.next("session", (m) => m.session.workspaces[0]?.name === "新しい射撃場");
+    expect(s.session.workspaces[0]?.repoId).toBe(repoId);
+    // 制作データの名前も変わる（次のコミットに入る）
+    a.send({ t: "ws.commit", workspaceId, message: "名前を変えた" });
+    await a.next("ws.committed");
+    const files = (await api(app, a.token).get(`/api/repos/${repoId}/files`)).json();
+    expect(JSON.stringify(files)).toContain("新しい射撃場");
+  });
+
   it("1 リポジトリ 1 ワークスペース：別のセッションで開かれていたら断る。同じセッションなら参加する", async () => {
     const { app, url } = await start();
     const { a, workspaceId } = await sessionWithWorkspace(url);

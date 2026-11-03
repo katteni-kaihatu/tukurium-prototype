@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import * as THREE from "three";
 import type { SessionEngine } from "../session/SessionEngine";
-import type { PanelTransform } from "./PanelSpace";
+import { PANEL_METERS_PER_PX, type PanelTransform } from "./PanelSpace";
 import styles from "./Panels.module.css";
 
 export interface PanelPlacement {
@@ -117,21 +118,16 @@ export function PanelLayer({
   const togglePin = useCallback(
     (spec: PanelSpec) => {
       const id = spec.id;
+      // 画面上でいまパネルがある位置の先に置く（どのパネルも正面の同じ場所に重なると、
+      // 後ろのパネルがクリックを受け取れなくなるため）
+      const rect = elements.current.get(id)?.getBoundingClientRect();
       setStates((prev) => {
         const st = prev[id] ?? initialState(spec);
         if (st.pinned) {
-          // 自分の前、目の高さより少し下に、こちらを向けて置く
-          const pose = engine.pose();
-          const d = 1.4;
-          const x = pose.position[0] - Math.sin(pose.yaw) * d;
-          const z = pose.position[2] - Math.cos(pose.yaw) * d;
+          const others = Object.values(prev).filter((p) => !p.pinned).length;
           return {
             ...prev,
-            [id]: {
-              ...st,
-              pinned: false,
-              transform: { position: [x, pose.position[1] + 1.45, z], yaw: pose.yaw },
-            },
+            [id]: { ...st, pinned: false, transform: placeInFront(engine, rect, others) },
           };
         }
         return { ...prev, [id]: { ...st, pinned: true } };
@@ -140,6 +136,15 @@ export function PanelLayer({
     [engine],
   );
 
+  /** 空間に置いたパネルをすべて画面に戻す（3D のパネルが操作しづらいときの逃げ道） */
+  const pinAll = useCallback(() => {
+    setStates((prev) => {
+      const next: Record<string, PanelState> = {};
+      for (const [id, st] of Object.entries(prev)) next[id] = { ...st, pinned: true };
+      return next;
+    });
+  }, []);
+
   const moveTo = useCallback((spec: PanelSpec, x: number, y: number) => {
     setStates((prev) => {
       const st = prev[spec.id] ?? initialState(spec);
@@ -147,8 +152,29 @@ export function PanelLayer({
     });
   }, []);
 
+  const placed = panels.filter((p) => !stateOf(p).pinned);
+
   return (
     <div ref={overlayRef} className={styles.overlay}>
+      {placed.length > 0 && !hidden && (
+        <div className={`glass ${styles.tray}`} role="toolbar" aria-label="空間に置いたパネル">
+          <span className={styles.trayLabel}>空間のパネル</span>
+          {placed.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={styles.trayBtn}
+              title={`${p.title} を画面に戻す`}
+              onClick={() => togglePin(p)}
+            >
+              {p.title}
+            </button>
+          ))}
+          <button type="button" className={styles.trayBtn} onClick={pinAll}>
+            すべて画面に戻す
+          </button>
+        </div>
+      )}
       {panels.map((p) => {
         const st = stateOf(p);
         return createPortal(
@@ -169,6 +195,42 @@ export function PanelLayer({
       })}
     </div>
   );
+}
+
+/**
+ * 画面上でパネルがいまある矩形と、ほぼ同じ位置・大きさに見える所へ、こちらを向けて置く。
+ * 奥行きは「1px = PANEL_METERS_PER_PX」の大きさで見える距離にする。
+ * 重ねて置いても同じ面に並ばないよう、置いてある枚数だけ少し手前にずらす。
+ */
+function placeInFront(
+  engine: SessionEngine,
+  rect: DOMRect | undefined,
+  others: number,
+): PanelTransform {
+  const cam = engine.camera;
+  cam.updateMatrixWorld();
+  const canvas = engine.renderer.domElement.getBoundingClientRect();
+  const fov = THREE.MathUtils.degToRad(cam.fov);
+  const depth =
+    THREE.MathUtils.clamp(
+      (canvas.height * PANEL_METERS_PER_PX) / (2 * Math.tan(fov / 2)),
+      1.2,
+      2.5,
+    ) -
+    others * 0.03;
+  const ndc = rect
+    ? new THREE.Vector2(
+        ((rect.left + rect.width / 2 - canvas.left) / canvas.width) * 2 - 1,
+        -(((rect.top + rect.height / 2 - canvas.top) / canvas.height) * 2 - 1),
+      )
+    : new THREE.Vector2(0, 0);
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(ndc, cam);
+  const forward = cam.getWorldDirection(new THREE.Vector3());
+  // 光線の長さではなく、カメラの向きに沿った奥行きで揃える（端のパネルが近づきすぎないように）
+  const t = depth / Math.max(ray.ray.direction.dot(forward), 0.2);
+  const p = ray.ray.at(t, new THREE.Vector3());
+  return { position: [p.x, p.y, p.z], yaw: engine.pose().yaw };
 }
 
 function PanelWindow(props: {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { expect, type Page, test } from "@playwright/test";
-import { createSessionAndWorkspace } from "./helpers";
+import { expect, type Page } from "@playwright/test";
+import { createSessionAndWorkspace, test } from "./helpers";
 
 // シナリオ 3：基本図形のパラメータ・マテリアルを編集し、GLB・画像・音声を利用できる
 

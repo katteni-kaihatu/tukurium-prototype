@@ -1,20 +1,18 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
+import { type Browser, expect, type Page } from "@playwright/test";
 import {
   aimAt,
-  closePeople,
   createSessionAndWorkspace,
   fireInSession,
   newPerson,
   sessionState,
   standAt,
+  test,
 } from "./helpers";
 
 // M6：「銃と的のミニゲーム」を 3 人で一周する
 // 作る → 一緒に編集 → セッションに出して遊ぶ → 遊んでいる横で改造して適用 → コミット → 作品として公開 → ライブラリから置く
 
 test.describe.configure({ timeout: 240_000 });
-test.afterEach(closePeople);
-
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 
 async function join(browser: Browser, path: string, name: string) {

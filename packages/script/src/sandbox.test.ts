@@ -129,6 +129,20 @@ describe("ScriptSandbox", () => {
     );
   });
 
+  it("エラーにスクリプトの行番号を付ける（構文エラー・実行時の例外）", async () => {
+    sandbox = await ScriptSandbox.create();
+    const bad =
+      "export default system({\n  query: { with: [] },\n  onUpdate() {\n    const x = ;\n  },\n});";
+    expect(() => sandbox?.loadSystem("s1", bad)).toThrowError(expect.objectContaining({ line: 4 }));
+    sandbox.loadSystem(
+      "s2",
+      "export default system({\n  query: { with: [] },\n  onUpdate() {\n\n    foo.bar();\n  },\n});",
+    );
+    expect(() => sandbox?.run("s2", "onUpdate", [{ id: "e", states: {} }], [0])).toThrowError(
+      expect.objectContaining({ kind: "runtime", line: 5 }),
+    );
+  });
+
   it("log を受け取れる", async () => {
     const logs: [string | null, string][] = [];
     sandbox = await ScriptSandbox.create({ onLog: (m, ctx) => logs.push([ctx.systemId, m]) });

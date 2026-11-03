@@ -1,12 +1,12 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
+import { type Browser, expect, type Page } from "@playwright/test";
 import {
   aimAt,
-  closePeople,
   createSessionAndWorkspace,
   fireInSession,
   newPerson,
   sessionState,
   standAt,
+  test,
 } from "./helpers";
 
 // M3 の完了条件：遊んでいる人がいる横で銃を改造し、適用すると残弾だけ保ったまま新しい挙動になる
@@ -14,8 +14,6 @@ import {
 
 // 2 つのブラウザでソフトウェア描画するため、手順の長いこのファイルは上限を延ばす
 test.describe.configure({ timeout: 150_000 });
-
-test.afterEach(closePeople);
 
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 

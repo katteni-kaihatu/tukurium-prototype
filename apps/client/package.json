@@ -16,6 +16,7 @@
     "@tukurium/eks": "workspace:*",
     "@tukurium/repo-model": "workspace:*",
     "@tukurium/runtime": "workspace:*",
+    "@tukurium/script": "workspace:*",
     "@tukurium/shared": "workspace:*",
     "codemirror": "6.0.2",
     "react": "19.3.1",

@@ -713,12 +713,29 @@ export class Hub {
       if (!(await this.store.loadDoc(wid))) {
         const pd = new ProjectDoc();
         pd.load(await this.repos.snapshot(repo.id));
+        pd.setName(repo.name);
         doc = pd.doc;
       }
       await this.load(meta, s, doc);
     }
     this.send(conn, { t: "ws.created", workspaceId: wid });
     await this.openWorkspace(conn, wid);
+  }
+
+  /**
+   * プロジェクト（リポジトリ）の名前が変わった：開いているワークスペースの名前と、
+   * 制作データの名前（次のコミットに入る）を揃え、参加者に知らせる。
+   */
+  async renameRepo(repoId: string, name: string): Promise<void> {
+    for (const w of this.workspaces.values()) {
+      if (w.meta.repoId !== repoId) continue;
+      w.meta.name = name;
+      await this.store.saveWorkspace(w.meta);
+      const pd = new ProjectDoc(w.room.doc);
+      pd.transact(() => pd.setName(name), "server");
+      this.scheduleSave(w);
+      this.broadcastSession(w.session);
+    }
   }
 
   /** コミット：いまの制作データを、メッセージ付きで履歴に保存する。一緒に編集した人は Co-author */

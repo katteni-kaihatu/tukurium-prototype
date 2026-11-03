@@ -3,9 +3,11 @@ import { newId, type OutputDef } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
+import { problemPlace } from "./ProblemsList";
 import { parseQuery } from "./queryInfo";
 import { type Selection, useWorkspace } from "./store";
 import ui from "./ui.module.css";
+import { useProblems } from "./useProblems";
 
 const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
   { type: "number", label: "Number", default: 0 },
@@ -410,7 +412,8 @@ function KokoDefProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function SystemProperties({ id }: { id: string }) {
-  const { openSystem, select, systemStatus } = useWorkspace();
+  const { openSystem, select, showProblem } = useWorkspace();
+  const problems = useProblems().filter((p) => p.systemId === id);
   const project = useProject();
   const canEdit = useCanEdit();
   const def = project.system(id);
@@ -418,7 +421,6 @@ function SystemProperties({ id }: { id: string }) {
   const editing = canEdit;
   const q = parseQuery(project.code(id)?.toString() ?? "");
   const usedBy = project.outputs().filter((o) => o.systems.some((s) => s.id === id));
-  const status = systemStatus.find((s) => s.id === id);
 
   return (
     <>
@@ -433,7 +435,17 @@ function SystemProperties({ id }: { id: string }) {
           disabled={!editing}
           onCommit={(name) => project.renameSystem(id, name)}
         />
-        {status?.error && <p className={ui.error}>{status.error}</p>}
+        {problems.map((p) => (
+          <button
+            key={p.message}
+            type="button"
+            className={ui.problem}
+            onClick={() => showProblem(p)}
+          >
+            <span className={ui.problemPlace}>{problemPlace(def.name, p)}</span>
+            <span>{p.message}</span>
+          </button>
+        ))}
         <div className={ui.toolbar}>
           <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
             コードを開く

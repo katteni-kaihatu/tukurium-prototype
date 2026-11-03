@@ -41,6 +41,9 @@ importers:
       '@tukurium/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
+      '@tukurium/script':
+        specifier: workspace:*
+        version: link:../../packages/script
       '@tukurium/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -175,6 +178,9 @@ importers:
       '@types/three':
         specifier: 0.187.0
         version: 0.187.0
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
 
   packages/script:
     dependencies:

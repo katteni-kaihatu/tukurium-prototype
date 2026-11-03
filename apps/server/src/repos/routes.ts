@@ -26,7 +26,17 @@ const Selection = z.object({
 });
 
 /** リポジトリ・作品・プロフィールの API（ADR 0007） */
-export function registerRepoRoutes(app: FastifyInstance, store: Store, repos: RepoService) {
+export interface RepoRouteHooks {
+  /** プロジェクト名が変わった（開いているワークスペースへ反映する） */
+  onRenamed?: (repoId: string, name: string) => Promise<void>;
+}
+
+export function registerRepoRoutes(
+  app: FastifyInstance,
+  store: Store,
+  repos: RepoService,
+  hooks: RepoRouteHooks = {},
+) {
   const userOf = async (req: FastifyRequest): Promise<User | null> => {
     const token = req.headers["x-tukurium-token"];
     return typeof token === "string" ? store.userByToken(token) : null;
@@ -115,12 +125,15 @@ export function registerRepoRoutes(app: FastifyInstance, store: Store, repos: Re
       if (repo.owner !== user.id) throw new HttpError(403, "設定を変えられるのは持ち主です");
       const body = z
         .object({
+          name: z.string().trim().min(1, "名前を入れてください").max(64).optional(),
           description: z.string().max(300).optional(),
           visibility: z.enum(["public", "private"]).optional(),
         })
         .parse(req.body);
       const next = { ...repo, ...body };
       await store.saveRepo(next);
+      if (body.name !== undefined && body.name !== repo.name)
+        await hooks.onRenamed?.(repo.id, body.name);
       return next;
     }),
   );

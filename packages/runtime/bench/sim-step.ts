@@ -1,5 +1,5 @@
 // 実行（EKS + Rapier + QuickJS）の 1 ステップの重さを、Entity の数を変えて測る。
-//   pnpm tsx scripts/bench/sim-step.ts
+//   pnpm bench:sim
 // 的（Collider・Target）を N 個並べ、半分は落ちる物体（RigidBody）にし、
 // 全部の的を毎ステップ触る System（onUpdate）を足す。
 import { gunAndTargetSample, ProjectDoc } from "@tukurium/repo-model";

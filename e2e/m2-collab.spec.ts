@@ -1,16 +1,7 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
-import {
-  aimAt,
-  closePeople,
-  createSessionAndWorkspace,
-  fire,
-  newPerson,
-  runtimeState,
-} from "./helpers";
+import { type Browser, expect, type Page } from "@playwright/test";
+import { aimAt, createSessionAndWorkspace, fire, newPerson, runtimeState, test } from "./helpers";
 
 // M2 の完了条件：2 人が同じワークスペースを編集・再生し、相手のパネルが空間に見える（シナリオ 1, 5）
-
-test.afterEach(closePeople);
 
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 

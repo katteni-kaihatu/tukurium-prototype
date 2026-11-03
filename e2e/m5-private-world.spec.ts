@@ -1,5 +1,5 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
-import { closePeople, createSessionAndWorkspace, newPerson, standAt } from "./helpers";
+import { type Browser, expect, type Page } from "@playwright/test";
+import { createSessionAndWorkspace, newPerson, standAt, test } from "./helpers";
 
 // M5 の完了条件：
 // - シナリオ 9：権限のない人にはプライベート作業の内容が表示・配信されず、専用空間にも入れない
@@ -7,8 +7,6 @@ import { closePeople, createSessionAndWorkspace, newPerson, standAt } from "./he
 
 // 2 人分のブラウザで動かすので、全体を流すと重くなる
 test.describe.configure({ timeout: 150_000 });
-
-test.afterEach(closePeople);
 
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 

@@ -1,11 +1,9 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
-import { closePeople, createSessionAndWorkspace, newPerson } from "./helpers";
+import { type Browser, expect, type Page } from "@playwright/test";
+import { createSessionAndWorkspace, newPerson, test } from "./helpers";
 
 // M4 の完了条件：作品を公開し、別の人がフォーク・抽出して作り始められる（シナリオ 10・11）
 
 test.describe.configure({ timeout: 150_000 });
-
-test.afterEach(closePeople);
 
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 

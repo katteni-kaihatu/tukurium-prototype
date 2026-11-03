@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Page } from "@playwright/test";
+import { type Browser, type BrowserContext, test as base, type Page } from "@playwright/test";
 
 const extraContexts: BrowserContext[] = [];
 
@@ -12,12 +12,20 @@ export async function newPerson(browser: Browser, name: string): Promise<Page> {
 }
 
 /**
- * 2 人目以降のコンテキストを閉じる（test.afterEach で呼ぶ）。
- * 閉じないとブラウザはワーカーの間ずっと共有されるので、前のテストの画面が描画を続けて重くなる。
+ * E2E ではこの test を使う（@playwright/test の test を直接使わない。biome で禁止している）。
+ * newPerson で開いた 2 人目以降のコンテキストを、テストの終わりに必ず閉じる。
+ * 閉じないとブラウザはワーカーの間ずっと共有されるので、前のテストの画面が描画を続けて重くなり、
+ * 後のテストが時間切れで落ちる（M5 で実際に起きた）。
  */
-export async function closePeople(): Promise<void> {
-  await Promise.all(extraContexts.splice(0).map((c) => c.close()));
-}
+export const test = base.extend<{ closePeople: undefined }>({
+  closePeople: [
+    async ({ browser: _ }, use) => {
+      await use(undefined);
+      await Promise.all(extraContexts.splice(0).map((c) => c.close()));
+    },
+    { auto: true },
+  ],
+});
 
 /** 開発時に window に出しているストアとエンジンを使う（apps/client の DEV 専用フック） */
 export async function aimAt(page: Page, target: [number, number, number]): Promise<void> {

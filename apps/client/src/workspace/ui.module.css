@@ -350,3 +350,40 @@
   font-size: 11px;
   color: var(--c-ink-4);
 }
+
+/* スクリプトの問題（クリックでコードのその行へ） */
+.problem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #f6e3e3;
+  color: #8a2a2a;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.problem:hover {
+  background: #f0d4d4;
+}
+
+.problemPlace {
+  display: flex;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.problemKind {
+  font-family: inherit;
+  font-weight: 400;
+  opacity: 0.75;
+}

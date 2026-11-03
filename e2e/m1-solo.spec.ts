@@ -1,5 +1,5 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
-import { aimAt, createSessionAndWorkspace, fire, runtimeState } from "./helpers";
+import { expect, type Locator, type Page } from "@playwright/test";
+import { aimAt, createSessionAndWorkspace, fire, runtimeState, test } from "./helpers";
 
 // M1 の完了条件：一人で、独自の KokoState と System を作り、Play で撃って当てられる（シナリオ 4）
 
