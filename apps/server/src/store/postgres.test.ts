@@ -29,6 +29,42 @@ describe.skipIf(!url)("PostgresStore", () => {
     expect(await store.loadDoc(meta.id)).toBeNull();
     await store.saveDoc(meta.id, new Uint8Array([1, 2, 3]));
     expect(Array.from((await store.loadDoc(meta.id)) ?? [])).toEqual([1, 2, 3]);
+    expect(await store.user(user.id)).toMatchObject({ id: user.id });
+
+    const repo = {
+      id: `r_test_${Date.now()}`,
+      owner: user.id,
+      name: "銃",
+      description: "",
+      visibility: "public" as const,
+      kind: "item",
+      forkedFrom: null,
+      createdAt: new Date().toISOString(),
+    };
+    await store.saveRepo(repo);
+    expect(await store.repo(repo.id)).toEqual(repo);
+    expect((await store.repos({ owner: user.id })).map((r) => r.id)).toContain(repo.id);
+    const work = {
+      id: `w_test_${Date.now()}`,
+      repoId: repo.id,
+      outputId: "out",
+      name: "銃",
+      owner: user.id,
+      perms: { use: true, view: true, fork: true },
+      createdAt: new Date().toISOString(),
+    };
+    await store.saveWork(work);
+    expect(await store.works({ repoId: repo.id })).toEqual([work]);
+    const rel = {
+      id: `rel_test_${Date.now()}`,
+      workId: work.id,
+      version: 1,
+      commit: "abc",
+      createdAt: work.createdAt,
+    };
+    await store.saveRelease(rel);
+    expect(await store.releases(work.id)).toEqual([rel]);
+    expect(await store.release(rel.id)).toEqual(rel);
     await store.close();
   });
 });

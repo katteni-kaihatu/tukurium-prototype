@@ -1,0 +1,280 @@
+import {
+  diffFiles,
+  emptyProject,
+  gunAndTargetSample,
+  gunSample,
+  targetRangeSample,
+} from "@tukurium/repo-model";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import type { Store, User } from "../store/store";
+import { HttpError, type RepoService } from "./service";
+
+const TEMPLATES = {
+  empty: (name: string) => emptyProject(name),
+  sample: () => gunAndTargetSample(),
+  gun: () => gunSample(),
+  range: () => targetRangeSample(),
+} as const;
+
+const Selection = z.object({
+  outputs: z.array(z.string()).default([]),
+  kokostates: z.array(z.string()).default([]),
+  systems: z.array(z.string()).default([]),
+  materials: z.array(z.string()).default([]),
+  assets: z.array(z.string()).default([]),
+});
+
+/** リポジトリ・作品・プロフィールの API（ADR 0007） */
+export function registerRepoRoutes(app: FastifyInstance, store: Store, repos: RepoService) {
+  const userOf = async (req: FastifyRequest): Promise<User | null> => {
+    const token = req.headers["x-tukurium-token"];
+    return typeof token === "string" ? store.userByToken(token) : null;
+  };
+  const needUser = async (req: FastifyRequest) => {
+    const u = await userOf(req);
+    if (!u) throw new HttpError(401, "本人確認ができません（接続し直してください）");
+    return u;
+  };
+  const handle =
+    <P>(fn: (req: FastifyRequest<{ Params: P }>, reply: FastifyReply) => Promise<unknown>) =>
+    async (req: FastifyRequest<{ Params: P }>, reply: FastifyReply) => {
+      try {
+        return await fn(req, reply);
+      } catch (e) {
+        if (e instanceof HttpError) return reply.code(e.status).send({ error: e.message });
+        if (e instanceof z.ZodError)
+          return reply.code(400).send({ error: "入力が正しくありません" });
+        throw e;
+      }
+    };
+  const ownerName = async (id: string) => (await store.user(id))?.name ?? "?";
+  const withOwner = async <T extends { owner: string }>(x: T) => ({
+    ...x,
+    ownerName: await ownerName(x.owner),
+  });
+
+  app.post(
+    "/api/repos",
+    handle(async (req) => {
+      const user = await needUser(req);
+      const body = z
+        .object({
+          name: z.string().min(1).max(64),
+          description: z.string().max(300).optional(),
+          kind: z.enum(["item", "world"]).default("item"),
+          visibility: z.enum(["public", "private"]).default("public"),
+          template: z.enum(["empty", "sample", "gun", "range"]).default("empty"),
+        })
+        .parse(req.body);
+      const snapshot = TEMPLATES[body.template](body.name);
+      if (body.template === "empty") for (const o of snapshot.outputs) o.kind = body.kind;
+      return withOwner(await repos.create(user, { ...body, snapshot }));
+    }),
+  );
+
+  app.get(
+    "/api/repos",
+    handle(async (req) => {
+      const user = await userOf(req);
+      const q = z.object({ owner: z.string().optional() }).parse(req.query);
+      const list = await store.repos(q);
+      const visible = [];
+      for (const r of list) if (await repos.canRead(user, r)) visible.push(await withOwner(r));
+      return visible;
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id",
+    handle<{ id: string }>(async (req) => {
+      const user = await userOf(req);
+      const repo = await repos.readable(user, req.params.id);
+      const head = await repos.git.head(repo.id);
+      const snap = await repos.snapshot(repo.id);
+      const works = await store.works({ repoId: repo.id });
+      return {
+        ...(await withOwner(repo)),
+        head,
+        outputs: snap.outputs.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
+        provenance: snap.provenance ?? [],
+        works: await Promise.all(
+          works.map(async (w) => ({ ...w, releases: await store.releases(w.id) })),
+        ),
+        canFork: await repos.canFork(user, repo),
+        isOwner: user?.id === repo.owner,
+      };
+    }),
+  );
+
+  app.patch(
+    "/api/repos/:id",
+    handle<{ id: string }>(async (req) => {
+      const user = await needUser(req);
+      const repo = await repos.require(req.params.id);
+      if (repo.owner !== user.id) throw new HttpError(403, "設定を変えられるのは持ち主です");
+      const body = z
+        .object({
+          description: z.string().max(300).optional(),
+          visibility: z.enum(["public", "private"]).optional(),
+        })
+        .parse(req.body);
+      const next = { ...repo, ...body };
+      await store.saveRepo(next);
+      return next;
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id/commits",
+    handle<{ id: string }>(async (req) => {
+      const repo = await repos.readable(await userOf(req), req.params.id);
+      return repos.git.log(repo.id);
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id/files",
+    handle<{ id: string }>(async (req) => {
+      const repo = await repos.readable(await userOf(req), req.params.id);
+      const { commit } = z.object({ commit: z.string().optional() }).parse(req.query);
+      return repos.git.files(repo.id, commit);
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id/snapshot",
+    handle<{ id: string }>(async (req) => {
+      const repo = await repos.readable(await userOf(req), req.params.id);
+      const { commit } = z.object({ commit: z.string().optional() }).parse(req.query);
+      return repos.snapshot(repo.id, commit);
+    }),
+  );
+
+  /** コミットの差分（ひとつ前のコミットとの） */
+  app.get(
+    "/api/repos/:id/commits/:oid/diff",
+    handle<{ id: string; oid: string }>(async (req) => {
+      const repo = await repos.readable(await userOf(req), req.params.id);
+      const log = await repos.git.log(repo.id);
+      const c = log.find((x) => x.oid === req.params.oid);
+      if (!c) throw new HttpError(404, "コミットが見つかりません");
+      const before = c.parents[0] ? await repos.git.files(repo.id, c.parents[0]) : {};
+      return diffFiles(before, await repos.git.files(repo.id, c.oid));
+    }),
+  );
+
+  app.post(
+    "/api/repos/:id/fork",
+    handle<{ id: string }>(async (req) => {
+      const user = await needUser(req);
+      const { name } = z
+        .object({ name: z.string().min(1).max(64).optional() })
+        .parse(req.body ?? {});
+      return withOwner(await repos.fork(user, req.params.id, name));
+    }),
+  );
+
+  app.post(
+    "/api/repos/:id/extract",
+    handle<{ id: string }>(async (req) => {
+      const user = await needUser(req);
+      const body = z
+        .object({
+          selection: Selection,
+          target: z.union([
+            z.object({ name: z.string().min(1).max(64) }),
+            z.object({ repoId: z.string() }),
+          ]),
+          commit: z.string().optional(),
+        })
+        .parse(req.body);
+      const out = await repos.extract(
+        user,
+        req.params.id,
+        body.selection,
+        body.target,
+        body.commit,
+      );
+      return { repo: await withOwner(out.repo), commit: out.commit };
+    }),
+  );
+
+  app.post(
+    "/api/works",
+    handle(async (req) => {
+      const user = await needUser(req);
+      const body = z
+        .object({
+          repoId: z.string(),
+          outputId: z.string(),
+          name: z.string().min(1).max(64).optional(),
+        })
+        .parse(req.body);
+      return repos.publish(user, body.repoId, body.outputId, body.name);
+    }),
+  );
+
+  app.get(
+    "/api/works",
+    handle(async (req) => {
+      const q = z.object({ owner: z.string().optional() }).parse(req.query);
+      const works = await store.works(q);
+      return Promise.all(
+        works.map(async (w) => ({
+          ...(await withOwner(w)),
+          repoName: (await store.repo(w.repoId))?.name ?? "?",
+          latest: (await store.releases(w.id))[0] ?? null,
+        })),
+      );
+    }),
+  );
+
+  app.patch(
+    "/api/works/:id",
+    handle<{ id: string }>(async (req) => {
+      const user = await needUser(req);
+      const work = await store.work(req.params.id);
+      if (!work) throw new HttpError(404, "作品が見つかりません");
+      if (work.owner !== user.id) throw new HttpError(403, "権限を変えられるのは作品の持ち主です");
+      const body = z
+        .object({
+          name: z.string().min(1).max(64).optional(),
+          perms: z
+            .object({ use: z.boolean(), view: z.boolean(), fork: z.boolean() })
+            .partial()
+            .optional(),
+        })
+        .parse(req.body);
+      const next = {
+        ...work,
+        name: body.name ?? work.name,
+        perms: { ...work.perms, ...body.perms },
+      };
+      await store.saveWork(next);
+      return next;
+    }),
+  );
+
+  app.post(
+    "/api/works/:id/releases",
+    handle<{ id: string }>(async (req) => {
+      const user = await needUser(req);
+      const { commit } = z.object({ commit: z.string().optional() }).parse(req.body ?? {});
+      return repos.release(user, req.params.id, commit);
+    }),
+  );
+
+  app.get(
+    "/api/users/:id",
+    handle<{ id: string }>(async (req) => {
+      const viewer = await userOf(req);
+      const u = await store.user(req.params.id);
+      if (!u) throw new HttpError(404, "ユーザーが見つかりません");
+      const list = [];
+      for (const r of await store.repos({ owner: u.id }))
+        if (await repos.canRead(viewer, r)) list.push(r);
+      return { ...u, repos: list, works: await store.works({ owner: u.id }) };
+    }),
+  );
+}

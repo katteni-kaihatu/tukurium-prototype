@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ProjectDoc } from "@tukurium/repo-model";
 import {
   ClientMessage,
   type HostPart,
@@ -13,6 +14,7 @@ import {
   type WorkspaceRole,
 } from "@tukurium/shared";
 import * as Y from "yjs";
+import type { RepoService } from "./repos/service";
 import type { Store, User, WorkspaceMeta } from "./store/store";
 import { canRead, canWrite, DocRoom } from "./workspaces/docRoom";
 
@@ -27,6 +29,8 @@ export interface HubOptions {
   /** 自動保存の間隔 */
   saveDelayMs?: number;
   log?: (msg: string) => void;
+  /** リポジトリ（ワークスペースの元）。テストでは省略できる */
+  repos?: RepoService;
 }
 
 interface Conn {
@@ -41,7 +45,12 @@ interface Conn {
 
 interface Placement {
   id: string;
-  workspaceId: string;
+  /** ワークスペースから出した配置。作品のリリースから置いたものは null */
+  workspaceId: string | null;
+  releaseId: string | null;
+  /** リリースから置いた配置の制作データと表示名 */
+  snapshot?: unknown;
+  label?: string;
   outputId: string;
   position: [number, number, number];
   yaw: number;
@@ -100,13 +109,16 @@ export class Hub {
   private readonly conns = new Map<string, Conn>();
   private readonly sessions = new Map<string, Session>();
   private readonly workspaces = new Map<string, Workspace>();
-  private readonly opts: Required<HubOptions>;
+  private readonly opts: Required<Omit<HubOptions, "repos">>;
+  private readonly repos: RepoService | null;
 
   constructor(
     private readonly store: Store,
     options: HubOptions = {},
   ) {
-    this.opts = { ownerGraceMs: 30_000, saveDelayMs: 1000, log: () => {}, ...options };
+    const { repos, ...rest } = options;
+    this.opts = { ownerGraceMs: 30_000, saveDelayMs: 1000, log: () => {}, ...rest };
+    this.repos = repos ?? null;
   }
 
   get stats() {
@@ -193,6 +205,12 @@ export class Hub {
         return;
       case "place":
         return this.place(conn, msg);
+      case "ws.openRepo":
+        return this.openRepo(conn, msg.repoId);
+      case "ws.commit":
+        return this.commit(conn, msg.workspaceId, msg.message);
+      case "placeRelease":
+        return this.placeRelease(conn, msg);
       case "apply": {
         const s = conn.session;
         const w = this.workspaceFor(conn, msg.workspaceId);
@@ -223,8 +241,9 @@ export class Hub {
         const s = conn.session;
         const p = s?.placements.get(msg.placementId);
         if (!s || !p) return;
-        const w = this.workspaces.get(p.workspaceId);
-        const allowed = s.owner === user.id || (w && canWrite(this.roleOf(w, user.id)));
+        const w = p.workspaceId ? this.workspaces.get(p.workspaceId) : undefined;
+        const allowed =
+          s.owner === user.id || p.placedBy === user.id || (w && canWrite(this.roleOf(w, user.id)));
         if (!allowed) return this.deny(conn, "この配置を操作する権限がありません");
         if (msg.t === "unplace") {
           s.placements.delete(p.id);
@@ -496,13 +515,20 @@ export class Hub {
       owner: s.owner,
       host: s.host?.user?.id ?? null,
       placements: [...s.placements.values()].map((p) => {
-        const snap = s.builds.get(buildKey(p.workspaceId, p.outputId)) as
-          | { outputs?: { id: string; name: string }[] }
-          | undefined;
+        const snap = (
+          p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot
+        ) as { outputs?: { id: string; name: string }[] } | undefined;
         return {
-          ...p,
-          workspaceName:
-            this.workspaces.get(p.workspaceId)?.meta.name ?? "（閉じたワークスペース）",
+          id: p.id,
+          workspaceId: p.workspaceId,
+          releaseId: p.releaseId,
+          position: p.position,
+          yaw: p.yaw,
+          placedBy: p.placedBy,
+          outputId: p.outputId,
+          workspaceName: p.workspaceId
+            ? (this.workspaces.get(p.workspaceId)?.meta.name ?? "（閉じたワークスペース）")
+            : (p.label ?? "作品"),
           outputName: snap?.outputs?.find((o) => o.id === p.outputId)?.name ?? p.outputId,
         };
       }),
@@ -514,6 +540,7 @@ export class Hub {
           {
             id: w.meta.id,
             name: w.meta.name,
+            repoId: w.meta.repoId ?? null,
             host: w.host?.user?.id ?? null,
             defaultRole: w.meta.defaultRole,
             members: Object.entries(w.meta.members).map(([userId, role]) => ({ userId, role })),
@@ -561,6 +588,7 @@ export class Hub {
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: msg.workspaceId,
+      releaseId: null,
       outputId: msg.outputId,
       position: msg.position,
       yaw: msg.yaw,
@@ -574,9 +602,10 @@ export class Hub {
   private hostPart(s: Session, p: Placement): HostPart {
     return {
       id: p.id,
-      realm: p.workspaceId,
+      // リリースから置いたものは、ワークスペースとは別の領域（KokoState の名前の範囲）にする
+      realm: p.workspaceId ?? `rel_${p.releaseId}`,
       outputId: p.outputId,
-      snapshot: s.builds.get(buildKey(p.workspaceId, p.outputId)),
+      snapshot: p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot,
       position: p.position,
       yaw: p.yaw,
     };
@@ -593,24 +622,139 @@ export class Hub {
 
   private async createWorkspace(conn: Conn, name: string, initial: string): Promise<void> {
     if (!conn.user || !conn.session) return this.deny(conn, "セッションに参加していません");
-    const meta: WorkspaceMeta = {
-      id: shortId("ws"),
-      name,
-      createdBy: conn.user.id,
-      defaultRole: "editor",
-      members: { [conn.user.id]: "admin" },
-    };
     const doc = new Y.Doc();
     try {
       Y.applyUpdate(doc, fromB64(initial));
     } catch {
       return this.deny(conn, "初期内容が壊れています");
     }
+    // ワークスペースは必ずリポジトリを持つ（作るとリポジトリと最初のコミットができる）
+    let repoId: string | undefined;
+    if (this.repos) {
+      const repo = await this.repos.create(conn.user, {
+        name,
+        snapshot: new ProjectDoc(doc).snapshot(),
+      });
+      repoId = repo.id;
+    }
+    const meta: WorkspaceMeta = {
+      id: repoId ? `w_${repoId}` : shortId("ws"),
+      name,
+      repoId,
+      createdBy: conn.user.id,
+      defaultRole: "editor",
+      members: { [conn.user.id]: "admin" },
+    };
     await this.store.saveWorkspace(meta);
     await this.store.saveDoc(meta.id, Y.encodeStateAsUpdate(doc));
     this.send(conn, { t: "ws.created", workspaceId: meta.id });
     await this.load(meta, conn.session, doc);
     await this.openWorkspace(conn, meta.id);
+  }
+
+  /** リポジトリを開く。同じリポジトリのワークスペースは同時に 1 つだけ（別のセッションで開かれていたら断る） */
+  private async openRepo(conn: Conn, repoId: string): Promise<void> {
+    const s = conn.session;
+    const user = conn.user;
+    if (!s || !user || !this.repos) return this.deny(conn, "セッションに参加していません");
+    let repo: Awaited<ReturnType<RepoService["readable"]>>;
+    try {
+      repo = await this.repos.readable(user, repoId);
+    } catch {
+      return this.deny(conn, "リポジトリが見つかりません");
+    }
+    const wid = `w_${repo.id}`;
+    const loaded = this.workspaces.get(wid);
+    if (loaded && loaded.session !== s) {
+      return this.denyWs(
+        conn,
+        wid,
+        "このリポジトリは別のセッションで開かれています（1 リポジトリにつき 1 ワークスペース）",
+      );
+    }
+    if (!loaded) {
+      const meta: WorkspaceMeta = (await this.store.workspace(wid)) ?? {
+        id: wid,
+        name: repo.name,
+        repoId: repo.id,
+        createdBy: repo.owner,
+        defaultRole: "editor",
+        members: { [repo.owner]: "admin" },
+      };
+      // 開いた人は、このワークスペースの再生を実行できる（管理）。コミットはリポジトリの持ち主だけ
+      if (!meta.members[user.id]) meta.members[user.id] = "admin";
+      meta.name = repo.name;
+      await this.store.saveWorkspace(meta);
+      let doc: Y.Doc | undefined;
+      if (!(await this.store.loadDoc(wid))) {
+        const pd = new ProjectDoc();
+        pd.load(await this.repos.snapshot(repo.id));
+        doc = pd.doc;
+      }
+      await this.load(meta, s, doc);
+    }
+    this.send(conn, { t: "ws.created", workspaceId: wid });
+    await this.openWorkspace(conn, wid);
+  }
+
+  /** コミット：いまの制作データを、メッセージ付きで履歴に保存する。一緒に編集した人は Co-author */
+  private async commit(conn: Conn, workspaceId: string, message: string): Promise<void> {
+    const w = this.workspaceFor(conn, workspaceId);
+    const user = conn.user;
+    if (!w || !user || !this.repos || !w.meta.repoId) return this.deny(conn, "コミットできません");
+    const repo = await this.repos.require(w.meta.repoId);
+    if (repo.owner !== user.id) return this.deny(conn, "コミットできるのはリポジトリの持ち主です");
+    const coAuthors = new Map<string, User>();
+    for (const c of w.conns) {
+      if (c.user && c.user.id !== user.id && canWrite(this.roleOf(w, c.user.id))) {
+        coAuthors.set(c.user.id, c.user);
+      }
+    }
+    const snap = new ProjectDoc(w.room.doc).snapshot();
+    const oid = await this.repos.commit(repo.id, { ...snap, name: repo.name }, message, user, [
+      ...coAuthors.values(),
+    ]);
+    await this.saveNow(w);
+    for (const c of w.conns) {
+      this.send(c, {
+        t: "ws.committed",
+        workspaceId,
+        commit: oid,
+        message: message || "（メッセージなし）",
+        by: user.name,
+      });
+    }
+  }
+
+  /** 作品のリリースをセッションに置く（作品の「利用」権限、または持ち主） */
+  private async placeRelease(
+    conn: Conn,
+    msg: Extract<ClientMessage, { t: "placeRelease" }>,
+  ): Promise<void> {
+    const s = conn.session;
+    const user = conn.user;
+    if (!s || !user || !this.repos) return;
+    const release = await this.store.release(msg.releaseId);
+    const work = release ? await this.store.work(release.workId) : null;
+    if (!release || !work) return this.deny(conn, "リリースが見つかりません");
+    if (!work.perms.use && work.owner !== user.id) {
+      return this.deny(conn, "この作品を利用する権限がありません");
+    }
+    const snapshot = await this.repos.snapshot(work.repoId, release.commit);
+    const p: Placement = {
+      id: shortId("pl"),
+      workspaceId: null,
+      releaseId: release.id,
+      snapshot,
+      label: `${work.name} v${release.version}`,
+      outputId: work.outputId,
+      position: msg.position,
+      yaw: msg.yaw,
+      placedBy: user.id,
+    };
+    s.placements.set(p.id, p);
+    if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
+    this.broadcastSession(s);
   }
 
   private async load(meta: WorkspaceMeta, session: Session, doc?: Y.Doc): Promise<Workspace> {

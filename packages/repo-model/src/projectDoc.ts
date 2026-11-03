@@ -344,6 +344,9 @@ export class ProjectDoc {
       assets: this.assets(),
       outputs: this.outputs(),
       entities: this.entities(),
+      provenance: clone(
+        (this.meta.get("provenance") as unknown as ProjectSnapshot["provenance"]) ?? [],
+      ),
     };
   }
 
@@ -362,6 +365,7 @@ export class ProjectDoc {
         m.clear();
       }
       this.meta.set("name", snap.name);
+      this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
       for (const k of snap.kokostates) this.kokoMap.set(k.id, clone(k));
       for (const s of snap.systems) {
         this.systemMap.set(s.id, { id: s.id, name: s.name });
