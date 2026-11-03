@@ -8,8 +8,9 @@
 /* パネル 1 枚の入れ物。2D では overlay の中、3D では CSS3DObject の中に置かれる */
 .host {
   width: 340px;
-  max-width: calc(100vw - 16px);
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .host[data-mode="2d"] {
@@ -19,10 +20,29 @@
 .window {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   border-radius: 14px;
   overflow: hidden;
   color: var(--c-ink);
   font-size: 13px;
+  position: relative;
+}
+
+.body {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 高さを固定したとき、枠いっぱいに中身を収め、あふれた分は中でスクロールする */
+.window[data-fixed] {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+.window[data-fixed] .body {
+  flex: 1 1 auto;
 }
 
 .host[data-mode="3d"] .window {
@@ -75,11 +95,30 @@
   background: rgba(96, 61, 86, 0.1);
 }
 
-.body {
-  min-height: 0;
-  overflow: auto;
+/* 右下をドラッグして大きさを変える */
+.resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 14px 0;
+  background: transparent;
+  color: var(--c-ink-3);
   display: flex;
-  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-end;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.resize:hover,
+.resize:focus-visible {
+  color: var(--c-brand);
+  background: rgba(96, 61, 86, 0.08);
 }
 
 /* 空間に置いたパネルの一覧（画面に戻すための逃げ道） */

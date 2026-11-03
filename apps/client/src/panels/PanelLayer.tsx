@@ -12,7 +12,19 @@ export interface PanelPlacement {
   right?: number;
   y: number;
   width: number;
+  /**
+   * 高さ（px）。指定すると、中身の量では変わらない。
+   * 省略したパネルは、中身に合わせて高さが変わる（画面からはみ出さない上限まで）。
+   */
+  height?: number;
 }
+
+/** これより小さくはできない。タイトルと、中身が少し残る大きさ。 */
+const MIN_PANEL_WIDTH = 280;
+const MIN_PANEL_HEIGHT = 160;
+/** ドラッグで際限なく大きくならないようにする上限 */
+const MAX_PANEL_WIDTH = 2000;
+const MAX_PANEL_HEIGHT = 1600;
 
 export interface PanelSpec {
   id: string;
@@ -31,15 +43,46 @@ interface PanelState {
   pinned: boolean;
   x: number;
   y: number;
+  width: number;
+  /** null の間は中身の高さ。一度大きさを変えたら、その高さで固定する */
+  height: number | null;
   transform: PanelTransform | null;
 }
 
 const initialState = (spec: PanelSpec): PanelState => {
-  const { x, right, y, width } = spec.initial;
+  const { x, right, y, width, height } = spec.initial;
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
   const left = right !== undefined ? vw - right - width : (x ?? 16);
-  return { pinned: true, x: Math.max(8, left), y, transform: null };
+  const top = y;
+  return {
+    pinned: true,
+    x: Math.max(8, left),
+    y: top,
+    width,
+    height: height == null ? null : fitOnScreen(width, height, Math.max(8, left), top, true).height,
+    transform: null,
+  };
 };
+
+/** 最小・最大のなかに収める。画面に固定しているときは、右下が画面の中に残るようにする */
+function fitOnScreen(
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  pinned: boolean,
+): { width: number; height: number } {
+  let maxW = MAX_PANEL_WIDTH;
+  let maxH = MAX_PANEL_HEIGHT;
+  if (pinned && typeof window !== "undefined") {
+    maxW = Math.min(maxW, Math.max(MIN_PANEL_WIDTH, window.innerWidth - x - 8));
+    maxH = Math.min(maxH, Math.max(MIN_PANEL_HEIGHT, window.innerHeight - y - 8));
+  }
+  return {
+    width: Math.round(Math.min(maxW, Math.max(MIN_PANEL_WIDTH, width))),
+    height: Math.round(Math.min(maxH, Math.max(MIN_PANEL_HEIGHT, height))),
+  };
+}
 
 /**
  * パネルを 2D（画面に固定）と 3D（空間に置く）で切り替えて表示する。
@@ -98,7 +141,8 @@ export function PanelLayer({
         focusKeys.current.set(p.id, p.focusKey);
         el.style.zIndex = String(++front.current);
       }
-      el.style.width = `${p.initial.width}px`;
+      el.style.width = `${st.width}px`;
+      el.style.height = st.height == null ? "" : `${st.height}px`;
       el.style.display = hidden ? "none" : "";
       if (st.pinned || !st.transform) {
         engine.panels.remove(p.id);
@@ -165,6 +209,14 @@ export function PanelLayer({
     });
   }, []);
 
+  const resizeTo = useCallback((spec: PanelSpec, width: number, height: number) => {
+    setStates((prev) => {
+      const st = prev[spec.id] ?? initialState(spec);
+      const next = fitOnScreen(width, height, st.x, st.y, st.pinned);
+      return { ...prev, [spec.id]: { ...st, width: next.width, height: next.height } };
+    });
+  }, []);
+
   const placed = panels.filter((p) => !stateOf(p).pinned);
 
   return (
@@ -194,11 +246,13 @@ export function PanelLayer({
           <PanelWindow
             title={p.title}
             pinned={st.pinned}
+            fixedHeight={st.height != null}
             maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
             actions={p.actions}
             onClose={p.onClose}
             onTogglePin={() => togglePin(p)}
             onDrag={(dx, dy) => moveTo(p, st.x + dx, st.y + dy)}
+            onResize={(width, height) => resizeTo(p, width, height)}
           >
             {p.render()}
           </PanelWindow>,
@@ -249,20 +303,32 @@ function placeInFront(
 function PanelWindow(props: {
   title: string;
   pinned: boolean;
+  /** 高さを指定済み（中身では変えない） */
+  fixedHeight: boolean;
   maxHeight: string;
   actions?: ReactNode;
   onClose?: () => void;
   onTogglePin: () => void;
   onDrag: (dx: number, dy: number) => void;
+  onResize: (width: number, height: number) => void;
   children: ReactNode;
 }) {
   const drag = useRef<{ x: number; y: number } | null>(null);
+  const resize = useRef<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    sx: number;
+    sy: number;
+  } | null>(null);
 
   return (
     <section
       className={`glass ${styles.window}`}
       aria-label={props.title}
-      style={{ maxHeight: props.maxHeight }}
+      data-fixed={props.fixedHeight || undefined}
+      style={{ maxHeight: props.fixedHeight ? undefined : props.maxHeight }}
     >
       <header
         className={styles.titlebar}
@@ -317,6 +383,67 @@ function PanelWindow(props: {
         )}
       </header>
       <div className={styles.body}>{props.children}</div>
+      <button
+        type="button"
+        className={styles.resize}
+        aria-label="大きさを変える"
+        title="ドラッグして大きさを変える"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          const host = e.currentTarget.parentElement?.parentElement;
+          if (!host || host.offsetWidth === 0 || host.offsetHeight === 0) return;
+          e.preventDefault();
+          const rect = host.getBoundingClientRect();
+          resize.current = {
+            x: e.clientX,
+            y: e.clientY,
+            w: host.offsetWidth,
+            h: host.offsetHeight,
+            sx: rect.width / host.offsetWidth || 1,
+            sy: rect.height / host.offsetHeight || 1,
+          };
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // 照準から渡した合成イベントでは、ポインターを捕まえられない
+          }
+        }}
+        onPointerMove={(e) => {
+          const d = resize.current;
+          if (!d) return;
+          props.onResize(d.w + (e.clientX - d.x) / d.sx, d.h + (e.clientY - d.y) / d.sy);
+        }}
+        onPointerUp={() => {
+          resize.current = null;
+        }}
+        onPointerCancel={() => {
+          resize.current = null;
+        }}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 48 : 16;
+          const delta: [number, number] | null =
+            e.key === "ArrowRight"
+              ? [step, 0]
+              : e.key === "ArrowLeft"
+                ? [-step, 0]
+                : e.key === "ArrowDown"
+                  ? [0, step]
+                  : e.key === "ArrowUp"
+                    ? [0, -step]
+                    : null;
+          if (!delta) return;
+          const host = e.currentTarget.parentElement?.parentElement;
+          if (!host) return;
+          e.preventDefault();
+          const [dx, dy] = delta;
+          props.onResize(host.offsetWidth + dx, host.offsetHeight + dy);
+        }}
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path d="M6 14h8V6" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path d="M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      </button>
     </section>
   );
 }
