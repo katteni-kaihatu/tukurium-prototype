@@ -118,6 +118,11 @@ export const SystemStatusInfo = z.object({
   enabled: z.boolean(),
   error: z.string().nullable(),
   line: z.number().int().nullable().default(null),
+  /** 止まるほどではない注意（拒否など）。古いホストからは届かないので、ないときは空 */
+  warnings: z
+    .array(z.object({ code: z.string(), message: z.string(), count: z.number().int() }))
+    .max(16)
+    .default([]),
 });
 
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */

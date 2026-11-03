@@ -66,6 +66,14 @@ export interface SystemStatus {
   error: string | null;
   /** 止まった場所（スクリプトの行。分かるときだけ） */
   line: number | null;
+  /** 止まるほどではない注意（拒否など。同じものは回数を数える。ADR 0012） */
+  warnings: RuntimeWarning[];
+}
+
+export interface RuntimeWarning {
+  code: string;
+  message: string;
+  count: number;
 }
 
 export interface LogEntry {
@@ -144,6 +152,7 @@ interface LoadedSystem {
   enabled: boolean;
   error: string | null;
   line: number | null;
+  warnings: Map<string, RuntimeWarning>;
 }
 
 interface PendingEvent {
@@ -423,7 +432,19 @@ export class Simulation {
       enabled: s.enabled,
       error: s.error,
       line: s.line,
+      warnings: [...s.warnings.values()].map((w) => ({ ...w })),
     }));
+  }
+
+  /** System に注意を残す（同じ code は回数を数える） */
+  private warn(systemId: string | null, code: string, message: string): void {
+    const sys = this.systems.find((x) => x.id === systemId);
+    if (!sys) return;
+    const w = sys.warnings.get(code);
+    if (w) {
+      w.count += 1;
+      w.message = message;
+    } else sys.warnings.set(code, { code, message, count: 1 });
   }
 
   nameOf(id: EntityId): string {
@@ -730,6 +751,7 @@ export class Simulation {
         enabled: ref.enabled,
         error: null,
         line: null,
+        warnings: new Map(),
       };
       this.systems.push(sys);
       if (!ref.enabled) continue;
@@ -886,11 +908,10 @@ export class Simulation {
           this.exposureOf(targetPart) === "interactive" &&
           this.guestLimit(callers) === "interactive";
         if (!own(target) && !allowed) {
-          this.log(
-            ctx.systemId,
-            `${name} は受け付けられませんでした（相手が受け付けていません）`,
-            "log",
-          );
+          // 相手は公開されている（当たっている）ので、拒まれたことを知らせてよい
+          const message = `${name} は受け付けられませんでした（相手が受け付けていないか、World が許していません）`;
+          this.log(ctx.systemId, message, "log");
+          this.warn(ctx.systemId, "contract-denied", message);
           return false;
         }
         const handler = `contract:${name}`;

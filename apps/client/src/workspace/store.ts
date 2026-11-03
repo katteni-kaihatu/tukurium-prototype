@@ -571,7 +571,10 @@ useWorkspace.subscribe((s, prev) => {
     useWorkspace.setState({
       runProblems: { diagnostics: runDiagnostics(s.systemStatus), observedVersion: s.rev },
     });
-  } else if (s.systemStatus !== prev.systemStatus && s.systemStatus.some((x) => x.error)) {
+  } else if (
+    s.systemStatus !== prev.systemStatus &&
+    s.systemStatus.some((x) => x.error || (x.warnings?.length ?? 0) > 0)
+  ) {
     const next = runDiagnostics(s.systemStatus);
     const prevRun = s.runProblems.diagnostics;
     const changed = next.some(

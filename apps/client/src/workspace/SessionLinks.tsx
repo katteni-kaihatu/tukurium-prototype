@@ -16,6 +16,11 @@ export function SessionLinks() {
   useWorkspace((s) => s.rev);
   const { client, session, me } = useApp();
   const logs = useApp((s) => s.sessionLogs);
+  // セッションでの、このワークスペースの System への注意（拒否など。ADR 0012）
+  const sessionStatus = useSessionWorld((s) => s.status);
+  const warnings = sessionStatus
+    .filter((x) => workspaceId && x.id.startsWith(`${workspaceId}:`))
+    .flatMap((x) => (x.warnings ?? []).map((w) => ({ system: x.name, ...w })));
   const hostReady = useSessionWorld(
     (s) => s.isHost || s.remote !== null || (session?.placements.length ?? 0) === 0,
   );
@@ -133,6 +138,24 @@ export function SessionLinks() {
         </ul>
       )}
       {!hostReady && <p className={ui.muted}>セッションの世界を受け取っています…</p>}
+      {warnings.length > 0 && (
+        <ul className={ui.list} aria-label="セッションでの注意">
+          {warnings.map((w) => (
+            <li key={`${w.system}:${w.code}`}>
+              <div className={ui.problem} data-tone="warning">
+                <span className={ui.problemPlace}>
+                  {w.system}.js
+                  <span className={ui.problemKind}>セッションでの注意</span>
+                </span>
+                <span>
+                  {w.message}
+                  {w.count > 1 ? `（${w.count} 回）` : ""}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
       {logs.length > 0 && (
         <ol
           className={ui.muted}

@@ -140,9 +140,25 @@ export async function checkScripts(
 
 /** 実行中の System の状態から、止まった System を問題にする */
 export function runDiagnostics(status: readonly SystemStatus[]): Diagnostic[] {
-  return status
+  const stopped = status
     .filter((s) => s.error)
     .map((s) => scriptDiagnostic(s.id, "script-stopped", s.error ?? "", s.line, "runtime"));
+  // 止まるほどではない注意（拒否など）。回数があれば添える
+  const warnings = status.flatMap((s) =>
+    (s.warnings ?? []).map((w) =>
+      makeDiagnostic({
+        code: w.code,
+        severity: "warning",
+        phase: "runtime",
+        provider: RUNTIME_PROVIDER,
+        subject: { kind: "system", id: s.id },
+        location: { kind: "script", line: null, symbol: w.code },
+        related: [],
+        message: w.count > 1 ? `${w.message}（${w.count} 回）` : w.message,
+      }),
+    ),
+  );
+  return [...stopped, ...warnings];
 }
 
 /** 実行の問題を足し合わせる（同じ問題は新しいほうに差し替える） */
