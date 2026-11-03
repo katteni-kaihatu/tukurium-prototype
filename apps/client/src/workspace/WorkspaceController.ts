@@ -346,7 +346,7 @@ export class WorkspaceController {
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
       return;
     }
-    // 右クリック：Grabbable を持つ・放す
+    // 右クリック：押している間 Grabbable を持つ。離したら放す
     if (ws.mode === "play" && button === 2) {
       ws.input({ action: "grab", phase, player: this.me(), ...this.viewRay() });
       return;

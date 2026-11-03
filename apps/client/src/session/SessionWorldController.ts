@@ -37,7 +37,7 @@ export class SessionWorldController {
           return;
         }
         if (button === 0 && this.routesHere()) this.input("fire", phase);
-        // 右クリック：Grabbable を持つ・放す（ワークスペースを再生していなければ、編集中でも持てる）
+        // 右クリック：押している間 Grabbable を持つ（ワークスペースを再生していなければ、編集中でも持てる）
         if (button === 2 && useWorkspace.getState().mode === "edit") this.input("grab", phase);
       }),
     );

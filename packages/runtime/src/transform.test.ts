@@ -1,6 +1,6 @@
 import { Euler, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { placeFromView, poseInView, viewQuaternion } from "./transform";
+import { placeFromView, poseInView, straightenRotation, viewQuaternion } from "./transform";
 
 describe("視点の姿勢", () => {
   it("FPS のカメラ（ロール 0）と同じ向きになる", () => {
@@ -49,5 +49,24 @@ describe("視点の姿勢", () => {
       ),
     );
     expect(a.angleTo(b)).toBeLessThan(1e-4);
+  });
+
+  it("上下の軸まわりだけ残しても、同じ視線では位置もヨーも変わらない", () => {
+    const origin: [number, number, number] = [0, 1.6, 0];
+    const cam = new PerspectiveCamera();
+    cam.rotation.set(0.35, -0.8, 0, "YXZ");
+    cam.updateMatrixWorld();
+    const dir = cam.getWorldDirection(new Vector3()).toArray() as [number, number, number];
+    const position: [number, number, number] = [0.4, 1.3, -1.2];
+    const rotation: [number, number, number] = [0, 25, 0];
+    const pose = poseInView(origin, dir, position, rotation);
+    const back = placeFromView(origin, dir, pose.offset, pose.rotation);
+    const upright = straightenRotation(back.rotation);
+    expect(back.position[0]).toBeCloseTo(position[0], 4);
+    expect(back.position[1]).toBeCloseTo(position[1], 4);
+    expect(back.position[2]).toBeCloseTo(position[2], 4);
+    expect(upright[0]).toBeCloseTo(0, 4);
+    expect(upright[1]).toBeCloseTo(25, 4);
+    expect(upright[2]).toBeCloseTo(0, 4);
   });
 });
