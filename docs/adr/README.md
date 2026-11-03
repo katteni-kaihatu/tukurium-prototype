@@ -14,3 +14,6 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0008](0008-private-work-world-editing.md) | 採用 | 権限、プライベート作業、ワールド編集 | M5 |
 | [0009](0009-spatial-input-grab-folders.md) | 採用（一部置き換え） | 空間入力、物を持つ操作、Resources のフォルダ | 「フォルダは並べ方だけ」は 0010 で置き換え |
 | [0010](0010-resource-identity-paths-diagnostics.md) | 採用 | リソースの同一性・論理パス・参照の結び付け・診断 | System 構文と runtime の移行は計画の Phase 4〜7 |
+| [0011](0011-kokostate-event-capability-package.md) | 採用 | KokoState・Event・Contract・Capability・Package の役割 | UGC U0 |
+| [0012](0012-runtime-authority-target-policy.md) | 採用 | 権限の単位（置いた物）・境界（World の配置）・判定の場所・対象の policy | 今は協調セッションに限る。サーバーの判定は U2 以降 |
+| [0013](0013-package-identity-version.md) | 採用 | Package の同一性・書き換えない版・exports・依存 | 型だけ。Registry は U3 |

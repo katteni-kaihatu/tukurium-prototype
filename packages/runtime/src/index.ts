@@ -1,4 +1,5 @@
 export * from "./buildWorld";
+export * from "./capabilities";
 export * from "./physics";
 export * from "./simulation";
 export * from "./transform";
