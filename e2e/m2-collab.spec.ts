@@ -78,31 +78,3 @@ test("2 人で同じワークスペースを編集し、再生を共有し、相
   await panel(a, "ワークスペース").getByRole("button", { name: /Stop/ }).click();
   await expect(panel(b, "ワークスペース").getByText("Edit mode")).toBeVisible();
 });
-
-test("ホストが抜けたら、管理権限を持つ人が再生を引き継ぐ", async ({ page: a, browser }) => {
-  const path = await createSessionAndWorkspace(a, "れにうむ", "sample");
-  const b = await join(browser, path, "ここあ");
-  await panel(b, "ワークスペース")
-    .getByRole("button", { name: /^銃と的/ })
-    .click();
-  await panel(b, "Inspector").waitFor();
-
-  // a が b を管理者にする
-  await panel(a, "ワークスペース").getByRole("button", { name: "Members" }).click();
-  await panel(a, "Members").getByLabel("ここあ の権限").selectOption("admin");
-  await expect(panel(b, "ワークスペース").getByText("管理", { exact: true })).toBeVisible();
-
-  await panel(a, "ワークスペース").getByRole("button", { name: /Play/ }).click();
-  await expect(panel(b, "ワークスペース").getByText("Play mode")).toBeVisible();
-  await aimAt(a, [0, 1.5, -5]);
-  await fire(a);
-  await expect.poll(async () => (await runtimeState(b, "的2", "Target"))?.hp).toBe(2);
-
-  // a がワークスペースを閉じる → b がホストになり、状態（hp 2）を保ったまま続く
-  await a.evaluate(() =>
-    (window as unknown as { __workspace: any }).__workspace.getState().leave(),
-  );
-  await expect(panel(b, "ワークスペース").getByText("再生の実行（ホスト）: あなた")).toBeVisible();
-  await expect(panel(b, "ワークスペース").getByText("Play mode")).toBeVisible();
-  await expect.poll(async () => (await runtimeState(b, "的2", "Target"))?.hp).toBe(2);
-});

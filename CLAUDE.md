@@ -16,9 +16,16 @@
 | 開発サーバー（client :5173 / server :8787） | `pnpm dev` |
 | 整形 → lint（Biome と Dockerfile の検査） | `pnpm format && pnpm lint` |
 | 型・単体テスト | `pnpm typecheck` / `pnpm test` |
-| ブラウザでの通しテスト（開発サーバーを自動で起動） | `pnpm e2e`。1 本だけなら `pnpm e2e e2e/<name>.spec.ts` |
+| ブラウザでの通しテスト（背骨の 4 本、2 分ほど。開発サーバーを自動で起動） | `pnpm e2e` |
 | 本番ビルドの動作確認 | `pnpm build` のあと `CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787` |
 | 計測 | `pnpm bench:sim` / `pnpm bench:server <ws URL>` |
+
+## テストの方針（プロトタイプの間）
+
+- 合否を決めるのは lint・型・単体テスト・ビルド（CI の `check`）。ロジック（制作データ・ランタイム・サーバー）は単体テストで守る。
+- E2E は「背骨」の 4 本だけ：一人で作って撃つ（m1）、2 人で編集・再生（m2）、セッションに出して適用（m3）、3 人で一周（m6）。CI では結果を見るだけで、落ちてもマージを止めない。
+- 機能ごとの細かい E2E は足さない。画面の変更は、`verify-change` スキルの手順（使い捨てのスクリプトでスクリーンショット）で確かめる。
+- 背骨の流れを変えたときだけ、該当する E2E を直す。
 
 ## 守ること（破ると壊れる・検査で落ちる）
 
