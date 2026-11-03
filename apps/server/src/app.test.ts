@@ -402,6 +402,33 @@ describe("セッションの世界（配置・適用）", () => {
     expect(a.inbox.some((m) => m.t === "session.frame")).toBe(false);
   });
 
+  it("置いた物への付与を台帳に持つ（最初は null＝宣言どおり）。置いた人が変えるとホストに届く", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("session.host");
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    b.send({
+      t: "place",
+      workspaceId,
+      outputId: "out",
+      snapshot: snap("v1"),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    const add = await a.next("host.addPart");
+    expect(add.part.grants).toBeNull();
+    const info = await b.next("session", (m) => m.session.placements.length === 1);
+    const pid = info.session.placements[0]?.id ?? "";
+    expect(info.session.placements[0]?.grants).toBeNull();
+
+    b.send({ t: "setGrants", placementId: pid, grants: ["physics.raycast"] });
+    const set = await a.next("host.setGrants");
+    expect(set).toMatchObject({ id: pid, grants: ["physics.raycast"] });
+    const after = await b.next("session", (m) => m.session.placements[0]?.grants?.length === 1);
+    expect(after.session.placements[0]?.grants).toEqual(["physics.raycast"]);
+  });
+
   it("出していないアウトプットは適用できない。壊れた制作データは拒む。閲覧者は出せない", async () => {
     const { url } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);

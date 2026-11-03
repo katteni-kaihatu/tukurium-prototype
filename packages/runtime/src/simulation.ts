@@ -378,6 +378,14 @@ export class Simulation {
     this.sandbox.disposeRealm(realm);
   }
 
+  /** 置いた物への付与を変える（null は宣言どおり。ADR 0012） */
+  setGrants(partId: string, grants: CapabilityId[] | null): void {
+    const part = this.parts.get(partId);
+    if (!part) return;
+    if (grants === null) delete part.grants;
+    else part.grants = [...grants];
+  }
+
   /** 置いた物の System が、コードから読み取った要る Capability（宣言）の和 */
   declaredCapabilities(partId: string): CapabilityId[] {
     const caps = new Set<CapabilityId>();

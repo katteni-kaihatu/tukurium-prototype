@@ -83,7 +83,7 @@
 利用者と相談して、次のように決めた。
 
 - 要る Capability は、利用者が書くのではなく、System のコードから AST で読み取る（`inferCapabilities`）。`world.raycast` → physics.raycast、`hit.send` → interaction.send、`hit.effect` → effects.spawn のように対応させる。対応表（`HOST_CAPABILITIES`）は `HOST_API_POLICY` と一致することをテストで検査する。`world[name]()` や `const w = world` のように読み取れない使い方は、その行の注意にする。
-- 置いた物への付与（`PartSpec.grants`）は、指定がなければ宣言をそのまま付与する。サーバーの配置の台帳への保存と、細かく取り消す画面は U5 で作る。
+- 置いた物への付与（`PartSpec.grants`）は、指定がなければ宣言をそのまま付与する。付与はサーバーの配置の台帳（`Placement.grants`、null は宣言どおり）に持ち、セッションの持ち主・置いた人・そのワークスペースの共同編集以上が `setGrants` で変えられる。ホストには `host.setGrants` で届く（PROTOCOL_VERSION 3）。細かく取り消す画面は U5 で作る。
 - 強制はセッションだけにかけ、ワークスペースの再生ではかけない。
 - セッションでは、Host API を呼ぶたびに「その System の宣言にあり、呼び出しの主体の配置すべてに付与されている」かを判定する。外れたら、見つからない・できなかったのと同じ値を返し、その System に注意（`capability-denied`）を残す。System は止めない。別の配置への届き方（World の上限・相手の公開範囲）は、これまでどおりそれぞれの Host API の中で判定する。
 - 実行の主体（`PackageExecutionContext`）は、Package の仕組みができるまで、ワークスペースの出力を暗黙の Package（`workspace:<リポジトリ>`）とし、版は realm の版、置いた物は配置、World は土台の World（ないときは `session`）で組み立てる（`Simulation.executionContext`）。
