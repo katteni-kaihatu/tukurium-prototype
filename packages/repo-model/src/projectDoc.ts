@@ -7,6 +7,7 @@ import type {
 } from "@tukurium/eks";
 import * as Y from "yjs";
 import { buildRegistry, isBuiltin } from "./builtins";
+import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
   type EntityDef,
@@ -152,6 +153,7 @@ export class ProjectDoc {
     }
     const taken = this.registry().idOf(name);
     if (taken !== undefined && taken !== self) throw new Error(`名前「${name}」は使われています`);
+    if (self !== null && this.kokoMap.get(self)?.name !== name) this.assertSiblingName(name, self);
   }
 
   // ---------- System ----------
@@ -177,7 +179,9 @@ export class ProjectDoc {
   }
   renameSystem(id: string, name: string): void {
     const s = this.systemMap.get(id);
-    if (s) this.systemMap.set(id, { ...s, name });
+    if (!s || s.name === name) return;
+    this.assertSiblingName(name, id);
+    this.systemMap.set(id, { ...s, name });
   }
   removeSystem(id: string): void {
     this.transact(() => {
@@ -205,6 +209,8 @@ export class ProjectDoc {
     return id;
   }
   updateMaterial(m: MaterialDef): void {
+    const prev = this.materialMap.get(m.id);
+    if (prev && prev.name !== m.name) this.assertSiblingName(m.name, m.id);
     this.materialMap.set(m.id, clone(m));
   }
   removeMaterial(id: string): void {
@@ -431,7 +437,61 @@ export class ProjectDoc {
 
   renameFolder(id: string, name: string): void {
     const f = this.folderMap.get(id);
-    if (f && name.trim()) this.folderMap.set(id, { ...f, name: name.trim() });
+    const next = name.trim();
+    if (!f || !next || f.name === next) return;
+    this.assertSiblingName(next, id);
+    this.folderMap.set(id, { ...f, name: next });
+  }
+
+  /** フォルダ・リソースが入っている親（フォルダは親のフォルダ、リソースは置き場所） */
+  private parentOf(id: string): string | null {
+    const f = this.folderMap.get(id);
+    if (f) return f.parent && this.folderMap.has(f.parent) ? f.parent : null;
+    return this.folderOf(id);
+  }
+
+  /** 親の直下にあるフォルダとリソース（Built-in の KokoState は除く） */
+  private siblingsIn(parent: string | null): { id: string; name: string }[] {
+    const out: { id: string; name: string }[] = [];
+    for (const f of this.folderMap.values()) if (this.parentOf(f.id) === parent) out.push(f);
+    const resources: { id: string; name: string }[] = [
+      ...this.kokoMap.values(),
+      ...this.systemMap.values(),
+      ...this.materialMap.values(),
+      ...this.assetMap.values(),
+    ];
+    for (const r of resources) if (this.folderOf(r.id) === parent) out.push(r);
+    return out;
+  }
+
+  /**
+   * 同じ親の直下で、その名前がほかのもの（self 以外）に使われているか。
+   * 種類をまたいで比べ、NFC・大文字小文字の違いは同じとみなす（ADR 0010）。
+   */
+  siblingNameTaken(name: string, parent: string | null, self?: string): boolean {
+    const key = normalizeName(name.trim());
+    return this.siblingsIn(parent).some((s) => s.id !== self && normalizeName(s.name) === key);
+  }
+
+  /** 親の直下で空いている名前（「名前」「名前 2」…）。format で番号の付け方を変えられる */
+  freeName(
+    base: string,
+    parent: string | null,
+    format: (base: string, n: number) => string = (b, n) => (n === 1 ? b : `${b} ${n}`),
+  ): string {
+    const taken = new Set(this.siblingsIn(parent).map((s) => normalizeName(s.name)));
+    for (let n = 1; ; n++) {
+      const name = format(base, n);
+      if (!taken.has(normalizeName(name))) return name;
+    }
+  }
+
+  /** 名前を変えるときの検査：使えない名前・同じ親の直下での衝突を拒む */
+  private assertSiblingName(name: string, self: string): void {
+    const problem = validateName(name);
+    if (problem) throw new Error(`名前「${name}」は使えません`);
+    if (this.siblingNameTaken(name, this.parentOf(self), self))
+      throw new Error(`同じ場所に「${name.trim()}」という名前があります`);
   }
 
   /** フォルダを消す。中のフォルダとリソースは、ひとつ上へ移す */

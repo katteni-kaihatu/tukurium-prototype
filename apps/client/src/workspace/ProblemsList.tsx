@@ -2,7 +2,7 @@ import { useProject } from "./hooks";
 import type { Problem } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems } from "./useProblems";
+import { useProblems, useStructureDiagnostics } from "./useProblems";
 
 /** 問題 1 件の場所の表示（「Shoot.js 4 行目」） */
 export function problemPlace(name: string, p: Problem): string {
@@ -17,12 +17,14 @@ export function ProblemsList() {
   const problems = useProblems();
   const project = useProject();
   const showProblem = useWorkspace((s) => s.showProblem);
-  if (problems.length === 0) return null;
+  const { diagnostics, index } = useStructureDiagnostics();
+  const count = problems.length + diagnostics.length;
+  if (count === 0) return null;
   return (
     <section className={ui.section} aria-label="問題">
       <div className={ui.sectionHead}>
         <h3 className={ui.sectionTitle}>問題</h3>
-        <span className={ui.badgeError}>{problems.length}</span>
+        <span className={ui.badgeError}>{count}</span>
       </div>
       <ul className={ui.list}>
         {problems.map((p) => (
@@ -41,6 +43,21 @@ export function ProblemsList() {
               </span>
               <span>{p.message}</span>
             </button>
+          </li>
+        ))}
+        {diagnostics.map((d) => (
+          <li key={d.id}>
+            <div className={ui.problem} title={d.detail}>
+              <span className={ui.problemPlace}>
+                {d.subject.kind === "project"
+                  ? "/（いちばん上）"
+                  : (index?.pathOf(d.subject.id) ?? d.subject.id)}
+                <span className={ui.problemKind}>
+                  {d.severity === "warning" ? "注意" : "Play 前の確認"}
+                </span>
+              </span>
+              <span>{d.message}</span>
+            </div>
           </li>
         ))}
       </ul>

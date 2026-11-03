@@ -14,7 +14,7 @@ import {
 } from "./resourceItems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems } from "./useProblems";
+import { useProblems, useStructureDiagnostics } from "./useProblems";
 
 type View = "icon" | "list" | "detail";
 const VIEWS: { id: View; label: string }[] = [
@@ -45,6 +45,17 @@ export function ResourcesPanel() {
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
+  const { diagnostics } = useStructureDiagnostics();
+  // 名前の衝突などで直す必要があるフォルダ・リソース
+  const structureErrorIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of diagnostics) {
+      if (d.severity !== "error") continue;
+      if (d.subject.kind !== "project") ids.add(d.subject.id);
+      for (const r of d.related) ids.add(r.id);
+    }
+    return ids;
+  }, [diagnostics]);
   const rev = useWorkspace((s) => s.rev);
   const [cwd, setCwd] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(loadView);
@@ -107,7 +118,8 @@ export function ResourcesPanel() {
   };
 
   const hasError = (it: ResItem) =>
-    it.kind === "system" && problems.some((p) => p.systemId === it.id);
+    (it.kind === "system" && problems.some((p) => p.systemId === it.id)) ||
+    structureErrorIds.has(it.id);
 
   const pick = (it: ResItem) => {
     setSel(it.id);
@@ -138,24 +150,33 @@ export function ResourcesPanel() {
   const create = (kind: "folder" | "koko" | "script" | "material") => {
     setNewOpen(false);
     setError(null);
+    // 作ったものを入れるフォルダ。そこで空いている名前を付ける（同じ場所で名前がぶつからないように）
+    const target = readOnlyHere ? null : here;
+    const numbered = (b: string, n: number) => `${b}${n}`;
     try {
       if (kind === "folder") {
-        const id = project.addFolder("新しいフォルダ", readOnlyHere ? null : here);
+        const id = project.addFolder(project.freeName("新しいフォルダ", target), target);
         setSel(id);
         setRenaming(id);
       } else if (kind === "koko") {
+        // KokoState の名前は、いまはプロジェクト全体でも一つ（Registry の決まり）
         let n = 1;
-        while (project.registry().idOf(`NewKokoState${n}`) !== undefined) n++;
+        const taken = (name: string) =>
+          project.registry().idOf(name) !== undefined || project.siblingNameTaken(name, target);
+        while (taken(`NewKokoState${n}`)) n++;
         const id = project.addKokoState(`NewKokoState${n}`);
         placeHere(id);
         pick({ id, kind: "koko", name: "", parent: here });
       } else if (kind === "script") {
-        const id = project.addSystem(`NewSystem${project.systems().length + 1}`, NEW_SYSTEM_CODE);
+        const id = project.addSystem(
+          project.freeName("NewSystem", target, numbered),
+          NEW_SYSTEM_CODE,
+        );
         placeHere(id);
         pick({ id, kind: "system", name: "", parent: here });
         openCode(id);
       } else {
-        const id = project.addMaterial(`Material${project.materials().length + 1}`);
+        const id = project.addMaterial(project.freeName("Material", target, numbered));
         placeHere(id);
         pick({ id, kind: "material", name: "", parent: here });
       }
@@ -170,7 +191,12 @@ export function ResourcesPanel() {
     setError(null);
     try {
       for (const f of Array.from(files)) {
-        const asset = await uploadAsset(f);
+        const uploaded = await uploadAsset(f);
+        const target = readOnlyHere ? null : here;
+        // 同じ場所に同じ名前があれば、空いている名前にする
+        const asset = project.siblingNameTaken(uploaded.name, target, uploaded.id)
+          ? { ...uploaded, name: project.freeName(uploaded.name, target) }
+          : uploaded;
         project.addAsset(asset);
         placeHere(asset.id);
       }
@@ -187,6 +213,11 @@ export function ResourcesPanel() {
   const moveInto = (id: string, folder: string | null) => {
     const it = byId.get(id);
     if (!it || !canMove(it) || folder === BUILTIN_FOLDER || folder === id) return;
+    if (project.siblingNameTaken(it.name, folder, id)) {
+      setError(`移す先に「${it.name}」という名前があります`);
+      return;
+    }
+    setError(null);
     if (it.kind === "folder") project.moveFolder(id, folder);
     else project.moveResource(id, folder);
   };
@@ -512,7 +543,12 @@ export function ResourcesPanel() {
             autoFocus
             style={{ height: 26, width: 160 }}
             onBlur={(e) => {
-              project.renameFolder(selected.id, e.target.value);
+              try {
+                setError(null);
+                project.renameFolder(selected.id, e.target.value);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
               setRenaming(null);
             }}
             onKeyDown={(e) => {
