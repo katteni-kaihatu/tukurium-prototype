@@ -5,7 +5,7 @@ import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
 /**
- * セッションパネル：アウトプットをセッションに出す、適用する、リンク先（配置）の一覧（要件 §7）。
+ * セッション同期：アウトプットをセッションに出す、適用する、リンク先（配置）の一覧（要件 §7）。
  * 適用は、このワークスペース・アウトプットにリンクしている配置すべてを更新する。
  * メインパネルからはボタンで開く。
  */
@@ -46,7 +46,7 @@ export function SessionLinks() {
   return (
     <div className={ui.section}>
       <div className={ui.sectionHead}>
-        <h3 className={ui.sectionTitle}>セッション</h3>
+        <h3 className={ui.sectionTitle}>セッション同期</h3>
         <span className={ui.badge}>リンク先 {links.length}</span>
       </div>
       {anchor?.isolated && (

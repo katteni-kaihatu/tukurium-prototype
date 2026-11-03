@@ -72,6 +72,8 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const saveSeq = useWorkspace((s) => s.saveSeq);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const sessionOpen = useWorkspace((s) => s.sessionOpen);
+  const inspectorOpen = useWorkspace((s) => s.inspectorOpen);
+  const resourcesOpen = useWorkspace((s) => s.resourcesOpen);
   const problemsOpen = useWorkspace((s) => s.problemsOpen);
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
@@ -108,28 +110,36 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
         onClose: () => useWorkspace.setState({ historyOpen: false }),
       });
     }
-    panels.push(
-      {
-        ...MAIN,
-        actions: (
-          <button
-            type="button"
-            className={ui.btn}
-            style={{ height: 26 }}
-            aria-pressed={members}
-            onClick={() => setMembers((v) => !v)}
-          >
-            Members
-          </button>
-        ),
-      },
-      INSPECTOR,
-      RESOURCES,
-    );
+    panels.push({
+      ...MAIN,
+      actions: (
+        <button
+          type="button"
+          className={ui.btn}
+          style={{ height: 26 }}
+          aria-pressed={members}
+          onClick={() => setMembers((v) => !v)}
+        >
+          Members
+        </button>
+      ),
+    });
+    if (inspectorOpen) {
+      panels.push({
+        ...INSPECTOR,
+        onClose: () => useWorkspace.setState({ inspectorOpen: false }),
+      });
+    }
+    if (resourcesOpen) {
+      panels.push({
+        ...RESOURCES,
+        onClose: () => useWorkspace.setState({ resourcesOpen: false }),
+      });
+    }
     if (sessionOpen) {
       panels.push({
         id: "ws-session",
-        title: "セッション",
+        title: "セッション同期",
         initial: { right: 16, y: 470, width: 460 },
         render: () => <SessionLinks />,
         onClose: () => useWorkspace.setState({ sessionOpen: false }),
@@ -138,7 +148,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
     if (problemsOpen) {
       panels.push({
         id: "ws-problems",
-        title: "問題",
+        title: "エラー",
         initial: { x: 640, y: 84, width: 480 },
         // 新しいエラーが出たときに前に出す
         focusKey: problemsFocus,
