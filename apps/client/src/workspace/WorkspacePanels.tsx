@@ -306,12 +306,24 @@ function WorkspaceStart() {
           className={ui.btn}
           title="的の hp と Damage の受け取りを、公式ライブラリ「combat」に任せた銃と的"
           onClick={() => {
-            void createReferenceSample().catch((e: Error) =>
+            void createReferenceSample("gunAndTarget").catch((e: Error) =>
               useWorkspace.setState({ error: e.message }),
             );
           }}
         >
-          ＋ サンプル「銃と的（公式ライブラリ）」
+          ＋ サンプル「銃と的（公式）」
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          title="E で押すと扉が開くスイッチ。押されて切り替わる仕組みは公式ライブラリ「interaction」"
+          onClick={() => {
+            void createReferenceSample("doorAndSwitch").catch((e: Error) =>
+              useWorkspace.setState({ error: e.message }),
+            );
+          }}
+        >
+          ＋ サンプル「扉とスイッチ」
         </button>
         <button type="button" className={ui.btn} onClick={() => ws.create("銃", gunSample())}>
           ＋ サンプル「銃」
