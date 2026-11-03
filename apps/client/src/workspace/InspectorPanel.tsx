@@ -7,7 +7,7 @@ import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useSystemQuery } from "./useProblems";
+import { packageAliasOf, useSystemQuery } from "./useProblems";
 
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
@@ -318,6 +318,10 @@ function EntityProperties({ id }: { id: EntityId }) {
               <h4 className={ui.kokoTitle}>{def.name}</h4>
               {def.builtin ? (
                 <span className={ui.badge}>Built-in</span>
+              ) : packageAliasOf(project, koko) ? (
+                <span className={ui.badgeBrand} title="依存のライブラリの KokoState">
+                  @{packageAliasOf(project, koko)}
+                </span>
               ) : (
                 <span className={ui.badgeBrand}>KokoState</span>
               )}
@@ -366,6 +370,7 @@ function EntityProperties({ id }: { id: EntityId }) {
           {picker ? (
             <KokoPicker
               defs={registry.all().filter((d) => !attached.includes(d.id))}
+              aliasOf={(d) => packageAliasOf(project, d.id)}
               onPick={(d) => {
                 safely(() => project.addState(id, d.id));
                 setPicker(false);
@@ -403,6 +408,8 @@ function EntityProperties({ id }: { id: EntityId }) {
 
 function KokoPicker(props: {
   defs: KokoStateDef[];
+  /** 依存のライブラリの KokoState なら、その別名 */
+  aliasOf: (d: KokoStateDef) => string | null;
   onPick: (d: KokoStateDef) => void;
   onClose: () => void;
 }) {
@@ -430,6 +437,7 @@ function KokoPicker(props: {
           <li key={d.id}>
             <button type="button" className={ui.item} onClick={() => props.onPick(d)}>
               <span className={ui.itemName}>{d.name}</span>
+              {props.aliasOf(d) && <span className={ui.badgeBrand}>@{props.aliasOf(d)}</span>}
               <span className={d.builtin ? ui.badge : ui.badgeBrand}>
                 {d.builtin ? "Built-in" : `${d.fields.length} fields`}
               </span>

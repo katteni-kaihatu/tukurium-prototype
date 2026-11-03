@@ -17,10 +17,14 @@ import {
   HOST_CAPABILITIES,
   inferCapabilities,
   isBuiltin,
+  isPackageResourceId,
   type MaterialDef,
   type OutputExposure,
+  type PackageResolution,
   type ProjectSnapshot,
+  packageKokoStates,
   ResourcePathIndex,
+  resolutionMap,
 } from "@tukurium/repo-model";
 import {
   type HostCallContext,
@@ -93,6 +97,8 @@ export interface SimulationOptions {
   realm: string;
   onLog?: (entry: LogEntry) => void;
   timeLimitMs?: number;
+  /** 依存の中身（ワークスペースの再生。ADR 0015） */
+  packages?: PackageResolution[];
 }
 
 /** セッションに配置された実体（アウトプットの 1 回分の配置） */
@@ -102,6 +108,8 @@ export interface PartSpec {
   realm: string;
   outputId: string;
   snapshot: ProjectSnapshot;
+  /** 依存の中身（制作データの依存ごとの解決。ないものは使えない依存になる。ADR 0015） */
+  packages?: PackageResolution[];
   /** 配置の位置と向き（ルートの Entity に足す） */
   position: Vec3;
   yaw: number;
@@ -150,6 +158,15 @@ interface Part extends PartSpec {
   source: string;
   entities: Set<EntityId>;
 }
+
+/**
+ * 依存から取り込んだ KokoState を登録する範囲。名前での引き当て（移行の間の書き方）には出てこない。
+ * Built-in と同じく、どの realm からも同じ ID で使う（同じライブラリの同じ版は、置いた物どうしで共有。ADR 0015）
+ */
+const PACKAGE_SCOPE = "\u0000package";
+
+/** realm で区切らない KokoState（Built-in と、依存から取り込んだもの） */
+const isShared = (id: KokoStateId) => isBuiltin(id) || isPackageResourceId(id);
 
 /** 制作データの版（同じ中身なら、どのホストでも同じ値。FNV-1a） */
 function revisionOf(snapshot: ProjectSnapshot): string {
@@ -254,6 +271,8 @@ export class Simulation {
   private readonly names = new Map<EntityId, string>();
   private readonly parts = new Map<string, Part>();
   private readonly realmDefs = new Map<string, Set<KokoStateId>>();
+  /** realm が使う、依存から取り込んだ KokoState（どの realm も使わなくなったら外す） */
+  private readonly realmPackageDefs = new Map<string, Set<KokoStateId>>();
   private readonly realmMaterials = new Map<string, MaterialDef[]>();
   private readonly realmAssets = new Map<string, AssetDef[]>();
   private sounds: SoundEvent[] = [];
@@ -308,6 +327,7 @@ export class Simulation {
       realm: options.realm,
       outputId,
       snapshot,
+      ...(options.packages ? { packages: options.packages } : {}),
       position: [0, 0, 0],
       yaw: 0,
     });
@@ -331,7 +351,7 @@ export class Simulation {
       entities: new Set(),
     };
     this.parts.set(part.id, part);
-    this.registerRealm(part.realm, part.snapshot);
+    this.registerRealm(part.realm, part.snapshot, part.packages);
     this.instantiate(part);
     this.loadSystems(part);
   }
@@ -363,6 +383,7 @@ export class Simulation {
     if ([...this.parts.values()].some((p) => p.realm === realm)) return;
     for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
     this.realmDefs.delete(realm);
+    this.releasePackageDefs(realm, new Set());
     this.realmMaterials.delete(realm);
     this.realmAssets.delete(realm);
     for (const sys of [...this.systems]) if (sys.realm === realm) this.dropSystem(sys);
@@ -422,7 +443,12 @@ export class Simulation {
    * 状態維持のマークがあり、型が変わっていないフィールドだけ、現在の実行値を引き継ぐ。
    * それ以外の値は新しい制作データの値になる。System のコードも読み直す。
    */
-  applyPart(source: string, outputId: string, snapshot: ProjectSnapshot): ApplyReport {
+  applyPart(
+    source: string,
+    outputId: string,
+    snapshot: ProjectSnapshot,
+    packages?: PackageResolution[],
+  ): ApplyReport {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     const targets = [...this.parts.values()].filter(
@@ -433,7 +459,12 @@ export class Simulation {
     // 適用した配置だけを、新しい版の realm へまとめて移す（ほかの出力は古い版のまま。ADR 0010 §4）
     const realm = this.realmOf(source, snapshot);
     const marks = snapshot.outputs.find((o) => o.id === outputId)?.keep ?? [];
-    const newDefs = new Map(snapshot.kokostates.map((d) => [d.id, d]));
+    const newDefs = new Map(
+      [
+        ...snapshot.kokostates,
+        ...packageKokoStates(resolutionMap(snapshot.dependencies, packages).values()),
+      ].map((d) => [d.id, d]),
+    );
 
     // 1. マークされたフィールドの現在値を集める（古い定義と新しい定義で型が同じものだけ）
     const kept = new Map<
@@ -475,8 +506,10 @@ export class Simulation {
       this.clearEntities(part);
       part.snapshot = snapshot;
       part.realm = realm;
+      if (packages) part.packages = packages;
+      else delete part.packages;
     }
-    this.registerRealm(realm, snapshot);
+    this.registerRealm(realm, snapshot, packages);
     for (const part of targets) {
       this.instantiate(part);
       for (const k of kept.get(part.id) ?? []) {
@@ -616,7 +649,7 @@ export class Simulation {
   // ---------------------------------------------------------------------------
 
   private kid(realm: string, id: KokoStateId): KokoStateId {
-    return this.multi && !isBuiltin(id) ? `${realm}:${id}` : id;
+    return this.multi && !isShared(id) ? `${realm}:${id}` : id;
   }
 
   private eid(part: { id: string }, id: EntityId): EntityId {
@@ -634,7 +667,7 @@ export class Simulation {
   /** 実行時の KokoState の ID を、その領域のスクリプトに見せるキー（領域の中の ID）にする */
   private localKey(koko: KokoStateId, realm: string): string {
     const prefix = `${realm}:`;
-    return this.multi && !isBuiltin(koko) && koko.startsWith(prefix)
+    return this.multi && !isShared(koko) && koko.startsWith(prefix)
       ? koko.slice(prefix.length)
       : koko;
   }
@@ -647,14 +680,18 @@ export class Simulation {
     const scoped = this.kid(realm, ref);
     if (
       this.registry.get(scoped) &&
-      (isBuiltin(scoped) || this.registry.scopeOf(scoped) === this.scopeOfRealm(realm))
+      (isShared(scoped) || this.registry.scopeOf(scoped) === this.scopeOfRealm(realm))
     )
       return scoped;
     return this.registry.idOf(ref, this.scopeOfRealm(realm));
   }
 
   /** リポジトリの KokoState 定義とマテリアルを登録し直す */
-  private registerRealm(realm: string, snapshot: ProjectSnapshot): void {
+  private registerRealm(
+    realm: string,
+    snapshot: ProjectSnapshot,
+    packages?: PackageResolution[],
+  ): void {
     const scope = this.scopeOfRealm(realm);
     const next = new Set<KokoStateId>();
     for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
@@ -664,11 +701,27 @@ export class Simulation {
       next.add(id);
     }
     this.realmDefs.set(realm, next);
+    // 依存から取り込んだ KokoState（同じ ID は同じ Package・同じ版なので、中身も同じ）
+    const pkgDefs = packageKokoStates(resolutionMap(snapshot.dependencies, packages).values());
+    for (const def of pkgDefs) this.registry.register(def, PACKAGE_SCOPE);
+    this.releasePackageDefs(realm, new Set(pkgDefs.map((d) => d.id)));
     this.realmMaterials.set(
       realm,
       snapshot.materials.map((m) => ({ ...m, id: this.mid(realm, m.id) })),
     );
     this.realmAssets.set(realm, snapshot.assets ?? []);
+  }
+
+  /** realm が使う依存の KokoState を next にし、どの realm も使わなくなったものを外す */
+  private releasePackageDefs(realm: string, next: Set<KokoStateId>): void {
+    const before = this.realmPackageDefs.get(realm) ?? new Set<KokoStateId>();
+    if (next.size > 0) this.realmPackageDefs.set(realm, next);
+    else this.realmPackageDefs.delete(realm);
+    for (const id of before) {
+      if (next.has(id)) continue;
+      if ([...this.realmPackageDefs.values()].some((ids) => ids.has(id))) continue;
+      this.registry.unregister(id);
+    }
   }
 
   /**
@@ -792,7 +845,10 @@ export class Simulation {
     const { world, names } = buildWorld(
       part.snapshot,
       part.outputId,
-      buildRegistry(part.snapshot.kokostates),
+      buildRegistry([
+        ...part.snapshot.kokostates,
+        ...packageKokoStates(resolutionMap(part.snapshot.dependencies, part.packages).values()),
+      ]),
     );
     const snap = world.snapshot();
     const cos = Math.cos(part.yaw);
@@ -848,6 +904,7 @@ export class Simulation {
     const output = part.snapshot.outputs.find((o) => o.id === part.outputId);
     if (!output) throw new Error(`Unknown output: ${part.outputId}`);
     let index: ResourcePathIndex | null = null;
+    const packages = resolutionMap(part.snapshot.dependencies, part.packages);
     for (const ref of output.systems) {
       const def = part.snapshot.systems.find((s) => s.id === ref.id);
       if (!def) continue;
@@ -877,7 +934,7 @@ export class Simulation {
       try {
         // import した KokoState を安定 ID に結び付けた JS にしてから読み込む（ADR 0010）
         index ??= ResourcePathIndex.fromSnapshot(part.snapshot);
-        const compiled = compileSystem(def.id, def.code, index);
+        const compiled = compileSystem(def.id, def.code, index, packages);
         const first = compiled.diagnostics[0];
         if (!compiled.ok && first)
           throw new ScriptError(
@@ -1150,11 +1207,25 @@ export class Simulation {
   }
 
   private matches(sys: LoadedSystem): EntityId[] {
-    return this.world.query({ with: sys.with, without: sys.without });
+    return this.world
+      .query({ with: sys.with, without: sys.without })
+      .filter((id) => this.withinUsers(sys, id));
+  }
+
+  /**
+   * System が処理してよい Entity か。セッションでは、その System を使う配置の Entity だけ
+   * （ADR 0012 の既定の境界）。Built-in と依存の KokoState は realm をまたいで同じ ID なので、
+   * Query だけでは別の配置の Entity まで当たってしまう。
+   */
+  private withinUsers(sys: LoadedSystem, id: EntityId): boolean {
+    if (!this.multi) return true;
+    for (const p of sys.users) if (this.parts.get(p)?.entities.has(id)) return true;
+    return false;
   }
 
   private entityMatches(sys: LoadedSystem, id: EntityId): boolean {
     return (
+      this.withinUsers(sys, id) &&
       sys.with.every((k) => this.world.hasState(id, k)) &&
       !sys.without.some((k) => this.world.hasState(id, k))
     );
@@ -1184,7 +1255,7 @@ export class Simulation {
         if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
         for (const [key, values] of Object.entries(e.states)) {
           // キーは領域の中の ID（ADR 0010）。その Entity が持っている KokoState だけに書く
-          const koko = isBuiltin(key) ? key : this.kid(sys.realm, key);
+          const koko = isShared(key) ? key : this.kid(sys.realm, key);
           if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
           this.writeNamed(e.id, koko, values as Record<string, Json>, prev.states[key] ?? null);
         }
@@ -1206,7 +1277,7 @@ export class Simulation {
     for (const koko of this.world.statesOf(id)) {
       const def = this.registry.get(koko);
       if (!def) continue;
-      if (this.multi && !isBuiltin(koko) && this.registry.scopeOf(koko) !== scope) continue;
+      if (this.multi && !isShared(koko) && this.registry.scopeOf(koko) !== scope) continue;
       const key = this.localKey(koko, realm);
       states[key] = this.toNamed(koko, this.world.get(id, koko) ?? {});
       byName.set(def.name, [...(byName.get(def.name) ?? []), koko]);

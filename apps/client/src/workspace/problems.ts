@@ -110,24 +110,10 @@ export async function checkScripts(
       problems.push(...compiled.diagnostics);
       continue;
     }
-    // ライブラリから取り込んだ KokoState は、まだ再生で使えない（実行時の取り込みは次の段階）
+    // ライブラリから取り込んだ KokoState（Query には ID で届く。ADR 0015）
     const fromPackages = new Set(
       compiled.bindings.filter((b) => b.package !== undefined).map((b) => b.resourceId),
     );
-    const firstPackage = compiled.bindings.find((b) => b.package !== undefined);
-    if (firstPackage)
-      problems.push(
-        makeDiagnostic({
-          code: "import-package-runtime-pending",
-          severity: "warning",
-          phase: "authoring",
-          provider: SCRIPT_PROVIDER,
-          subject: { kind: "system", id: def.id },
-          location: { kind: "script", line: firstPackage.line, symbol: firstPackage.spelling },
-          related: [],
-          message: `ライブラリ（@${firstPackage.package}）から import した System は、まだ再生では動きません`,
-        }),
-      );
     // 要る権限を読み取れない使い方（world[name]() など）は注意にする（セッションでは拒まれる。ADR 0012）
     problems.push(...inferCapabilities(def.id, code).diagnostics);
     try {

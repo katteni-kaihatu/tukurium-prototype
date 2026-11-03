@@ -43,11 +43,28 @@ ADR 0013 で Package の考え方（安定 ID・書き換えない版・exports�
   - `import-package-unknown`：依存にない別名
   - `import-package-unavailable`：中身を取り出せない（許可・通信・hash の不一致）。再生（依存の中身を渡さない実行）でも、まだ使えないことをこの形で知らせる
   - `import-package-not-found`：その版に当てはまる公開のものがない。公開していないものと、ないものを区別しない（ライブラリの中身を漏らさない）
-  - `import-package-runtime-pending`（注意）：解決できたが、まだ再生では動かない
 - 依存グラフでは、System → `name:package/<別名>` の辺を持つ。依存の版などを変えると、その別名を import した System だけを調べ直す。
+
+## 実行時の取り込み（2026-11-04 に足した）
+
+利用者と決めたこと：
+
+- 今回は KokoState を再生まで通す。依存の KokoState を Entity に付けて値を入れ、それを import した System が再生で動く。ライブラリの System をアウトプットで使うこと・PackageExecutionContext は次の段階。
+- 同じライブラリの同じ版の KokoState は、セッションに置いた別の物どうしで同じものとして扱う（相互運用の土台）。読み書きできるかは、今までどおり配置の境界と権限で決まる。
+- セッションでは、サーバーがリポジトリ（リリースなら作品）の持ち主の許可で依存の中身を取り出し、配置と一緒にホストへ渡す。ホストが替わっても同じ結果になる。
+
+形：
+
+- 依存の KokoState の定義は、各クライアントが依存の中身から作り、`ProjectDoc` に持たせる（Y.Doc には入れない。同期も保存もしない）。Inspector で Entity に付けられ、値は制作データの Entity に `pkg:<Package ID>@<版>/<元の ID>` の名前で保存する。Resources には並べない（このプロジェクトのリソースではない）。
+- Entity が持つ依存の KokoState が、今の依存（Package と版）のものでなければ注意にする（`package-kokostate-not-in-dependencies`。版を変えた・外したとき）。版を上げたときの値の移し替えは U5 の更新の案内で扱う。
+- Simulation は、依存の KokoState を Built-in と同じく realm で区切らずに登録する（どの realm からも同じ ID）。名前での引き当て（移行の間の書き方）には出さない。どの realm も使わなくなったら外す。
+- 区切らない KokoState は、Query だけでは別の配置の Entity まで当たってしまう。そこで、System が処理する Entity を、その System を使う配置の Entity に限った（ADR 0012 の既定の境界。Built-in だけの Query にも同じ穴があった）。
+- 渡す形は、依存ごとの解決の結果（`PackageResolution`）の配列。ホストへの配置（`HostPart.packages`）と適用（`host.apply` の `packages`）に、依存があるときだけ足す（足すだけなので `PROTOCOL_VERSION` は上げない）。届いた結果が lock（Package・版・hash）と違うか、届いていない依存は、それを import した System が「中身が届いていません」で止まる。
+- サーバーは版の中身をリリースごとに覚える（版は書き換えない）。許可は取り出すたびに確かめる。
+- ワークスペースの再生では、クライアントが自分の許可で取り出した中身を渡す。
 
 ## 結果
 
 - 内部（公開していないもの）だけを変えて出し直しても、hash は変わらない。使う側は hash の違いで中身の違いを知れる。
 - 公開したリソースの論理パスは、その版の時点のものを manifest に残す。名前やフォルダを変えると、次の版では別のパスになる（使う側は lock した版を使い続ける）。
-- 実行時の取り込み（依存の定義を realm に登録し、PackageExecutionContext を付ける）・依存の依存（manifest に依存を入れる）・輪の検出（自分のライブラリへの依存も含む）・抽出／フォークでの出所の保持は、次の段階で入れる。
+- ライブラリの System をアウトプットで使うこと（PackageExecutionContext を付ける）・依存の依存（manifest に依存を入れる）・輪の検出（自分のライブラリへの依存も含む）・抽出／フォークでの出所の保持は、次の段階で入れる。

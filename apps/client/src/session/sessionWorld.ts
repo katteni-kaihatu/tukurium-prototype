@@ -1,5 +1,5 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
-import type { MaterialDef, ProjectSnapshot } from "@tukurium/repo-model";
+import type { MaterialDef, PackageResolution, ProjectSnapshot } from "@tukurium/repo-model";
 import {
   type CapabilityId,
   type EffectEvent,
@@ -74,6 +74,8 @@ function addPart(sim: Simulation, part: HostPart): void {
       realm: part.realm,
       outputId: part.outputId,
       snapshot: part.snapshot as ProjectSnapshot,
+      // 依存の中身（サーバーが持ち主の許可で取り出したもの。ADR 0015）
+      ...(part.packages ? { packages: part.packages as PackageResolution[] } : {}),
       position: part.position,
       yaw: part.yaw,
       // 置いた物への付与（null は宣言どおり。ADR 0012）
@@ -110,7 +112,12 @@ client().on((msg) => {
         const sim = st().sim;
         if (!sim) return;
         const snap = msg.snapshot as ProjectSnapshot;
-        const report = sim.applyPart(msg.realm, msg.outputId, snap);
+        const report = sim.applyPart(
+          msg.realm,
+          msg.outputId,
+          snap,
+          msg.packages as PackageResolution[] | undefined,
+        );
         const name = snap.outputs.find((o) => o.id === msg.outputId)?.name ?? msg.outputId;
         log(
           `${msg.by} が「${name}」を適用しました（${report.instances} 個を更新、引き継ぎ ${report.kept} / 初期値に戻した ${report.dropped}）`,

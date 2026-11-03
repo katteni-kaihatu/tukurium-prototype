@@ -1,5 +1,6 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, RESOURCE_KIND } from "../builtins";
+import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import type { ProjectSnapshot } from "../schema";
 import { type Diagnostic, type DiagnosticInput, makeDiagnostic, type ResourceRef } from "./types";
 
@@ -67,6 +68,20 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
   for (const e of snap.entities) {
     const subject: ResourceRef = { kind: "entity", id: e.id };
     for (const [kokoId, values] of Object.entries(e.states)) {
+      if (isPackageResourceId(kokoId)) {
+        // ライブラリの定義は依存の中身にあるので、ここでは今の依存のものかだけを見る（ADR 0015）
+        if ((snap.dependencies ?? []).some((d) => belongsToDependency(kokoId, d))) continue;
+        push({
+          code: "package-kokostate-not-in-dependencies",
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: [kokoId] },
+          related: [],
+          message: `「${e.name}」が持っているライブラリの KokoState は、今の依存にありません（版を変えたか、外しました）`,
+          detail: `ID: ${kokoId}`,
+        });
+        continue;
+      }
       const def = defs.get(kokoId);
       if (!def) {
         push({

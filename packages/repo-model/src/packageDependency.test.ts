@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { dirtyRefs } from "./dependencyGraph";
+import { checkProjectReferences } from "./diagnostics";
 import { fromFiles, toFiles } from "./files";
-import { type PackageResolution, packageResourceId, validateAlias } from "./packageDependency";
+import {
+  isPackageResourceId,
+  type PackageResolution,
+  packageKokoStates,
+  packageResourceId,
+  resolutionMap,
+  validateAlias,
+} from "./packageDependency";
 import { type PackageManifest, packageManifest } from "./packageManifest";
 import { ProjectDoc } from "./projectDoc";
 import { ResourcePathIndex } from "./resourcePath";
@@ -152,12 +160,12 @@ describe("@別名 の import", () => {
     });
   });
 
-  it("依存の中身を渡さないとき（再生）は、まだ使えないことを問題にする", () => {
+  it("依存の中身を渡さないときは、解決できないことを問題にする", () => {
     const out = compile(src("@combat/States/Health.koko"));
     expect(out.ok).toBe(false);
     expect(out.diagnostics[0]).toMatchObject({
       code: "import-package-unavailable",
-      message: expect.stringContaining("再生"),
+      message: expect.stringContaining("渡されていない"),
     });
     expect(out.packageImports).toEqual(["combat"]);
   });
@@ -180,5 +188,53 @@ describe("依存を変えたときの調べ直し", () => {
     after.dependencies = [{ ...dep, version: 4, contentHash: "h4" }];
     const dirty = dirtyRefs(before, after).filter((r) => r.kind === "system");
     expect(dirty.map((r) => r.id)).toEqual(["sys_lib"]);
+  });
+});
+
+describe("実行時の取り込み（ADR 0015）", () => {
+  it("公開された KokoState の定義を、Package と版で区切った ID で取り出す", () => {
+    const defs = packageKokoStates(ready().values());
+    expect(defs).toEqual([{ id: packageResourceId(dep, "ks_health"), name: "Health", fields: [] }]);
+    expect(isPackageResourceId(defs[0]?.id ?? "")).toBe(true);
+  });
+
+  it("使えない依存からは何も取り出さない", () => {
+    expect(packageKokoStates([{ status: "unavailable", dependency: dep, message: "x" }])).toEqual(
+      [],
+    );
+  });
+
+  it("届いた結果が lock と違う・届いていない依存は、使えないものにする", () => {
+    const other = { ...dep, alias: "other", packageId: "w_other" };
+    const map = resolutionMap(
+      [dep, other],
+      [{ status: "ready", dependency: { ...dep, version: 4 }, manifest: library() }],
+    );
+    expect(map.get("combat")?.status).toBe("unavailable");
+    expect(map.get("other")).toMatchObject({ status: "unavailable" });
+    expect(resolutionMap([dep], [...ready().values()]).get("combat")?.status).toBe("ready");
+  });
+
+  it("制作データには入れずに、Entity に付けられる（Inspector と同じ道）", () => {
+    const p = new ProjectDoc();
+    p.load(project());
+    p.setPackageKokoStates(packageKokoStates(ready().values()));
+    const id = packageResourceId(dep, "ks_health");
+    expect(p.registry().get(id)?.name).toBe("Health");
+    p.addState("ent_gun", id);
+    expect(p.entity("ent_gun")?.states[id]).toEqual({});
+    expect(p.snapshot().kokostates.some((k) => k.id === id)).toBe(false);
+  });
+
+  it("今の依存にない版の KokoState を持つ Entity は注意にする", () => {
+    const s = project();
+    const id = packageResourceId(dep, "ks_health");
+    const gun = s.entities.find((e) => e.id === "ent_gun");
+    if (gun) gun.states[id] = {};
+    expect(checkProjectReferences(s).filter((d) => d.code.includes("kokostate"))).toEqual([]);
+    s.dependencies = [{ ...dep, version: 4, contentHash: "h4" }];
+    expect(checkProjectReferences(s).map((d) => d.code)).toContain(
+      "package-kokostate-not-in-dependencies",
+    );
   });
 });

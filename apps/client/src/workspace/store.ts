@@ -3,6 +3,7 @@ import {
   buildRegistry,
   type Diagnostic,
   type ObservedDiagnostics,
+  type PackageResolution,
   ProjectDoc,
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
@@ -20,6 +21,7 @@ import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
 import type { WorkspaceAnchor } from "./anchor";
+import { resolvePackages } from "./packages";
 import { mergeRun, runDiagnostics, scriptLine } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
@@ -53,6 +55,8 @@ interface WorkspaceState {
   error: string | null;
 
   rev: number;
+  /** 依存の中身（別名 → 取り出した結果。ADR 0015）。usePackageDefinitions が更新する */
+  packages: ReadonlyMap<string, PackageResolution>;
   outputId: string;
   selection: Selection | null;
   /** 開いている詳細（KokoState・マテリアル・スクリプト）。null ならパネルを出さない */
@@ -171,6 +175,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     ready: false,
     error: null,
     rev: 0,
+    packages: new Map(),
     outputId: "",
     selection: null,
     detail: null,
@@ -253,6 +258,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         error: null,
         selection: null,
         detail: null,
+        packages: new Map(),
         mode: "edit",
         remote: null,
         logs: [],
@@ -295,6 +301,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         mode: "edit",
         selection: null,
         detail: null,
+        packages: new Map(),
         checkProblems: [],
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
@@ -481,9 +488,13 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
   if (!s.project || !s.workspaceId) return;
   s.sim?.dispose();
   const workspaceId = s.workspaceId;
-  const sim = await Simulation.create(s.project.snapshot(), outputId, {
+  const snapshot = s.project.snapshot();
+  // 依存の中身（ADR 0015）。取り出せない依存は、それを import した System が理由つきで止まる
+  const packages = [...(await resolvePackages(snapshot.dependencies ?? [])).values()];
+  const sim = await Simulation.create(snapshot, outputId, {
     // 同じワークスペース（＝同じリポジトリ）の System は同じ領域で動かす
     realm: workspaceId,
+    packages,
     onLog: (entry) => {
       pushLog(entry);
       client().send({ t: "ws.log", workspaceId, message: entry.message, level: entry.level });
