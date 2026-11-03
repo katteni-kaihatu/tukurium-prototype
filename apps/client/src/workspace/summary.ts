@@ -17,9 +17,8 @@ const fmt = (v: unknown): string => {
  */
 export function summarize(panelId: string): string[] {
   if (panelId === "session-belongings") {
-    const placements = useApp.getState().session?.placements ?? [];
-    if (placements.length === 0) return ["まだ何も置いてありません"];
-    return [`${placements.length} 個`, ...placements.map((p) => p.outputName)].slice(0, MAX_LINES);
+    const world = useApp.getState().session?.placements.find((p) => p.outputKind === "world");
+    return world ? [`開いているワールド: ${world.outputName}`] : ["ワールドはまだ開いていません"];
   }
   const ws = useWorkspace.getState();
   const project = ws.project;

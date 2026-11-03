@@ -797,4 +797,62 @@ describe("リポジトリ・コミット・作品", () => {
     b.send({ t: "placeRelease", releaseId: rel.id, position: [0, 0, 0], yaw: 0 });
     expect((await b.next("error")).message).toMatch(/利用する権限/);
   });
+
+  it("公開されたワールドを開くと、いまのワールドが入れ替わる", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const A = api(app, a.token);
+    const publish = async (name: string, kind: "item" | "world", template: "empty" | "gun") => {
+      const repo = (await A.post("/api/repos", { name, kind, template })).json() as { id: string };
+      const detail = (await A.get(`/api/repos/${repo.id}`)).json() as {
+        outputs: { id: string }[];
+      };
+      const outputId = detail.outputs[0]?.id;
+      if (!outputId) throw new Error("output がありません");
+      const work = (await A.post("/api/works", { repoId: repo.id, outputId })).json() as {
+        id: string;
+      };
+      const rel = (await A.post(`/api/works/${work.id}/releases`)).json() as { id: string };
+      return { workId: work.id, releaseId: rel.id };
+    };
+    const item = await publish("銃", "item", "gun");
+    const plaza = await publish("広場", "world", "empty");
+    const night = await publish("夜", "world", "empty");
+
+    a.send({ t: "session.create", name: "部屋" });
+    await a.next("session.host");
+    a.send({ t: "placeRelease", releaseId: item.releaseId, position: [1, 0, 1], yaw: 0 });
+    await a.next("session", (m) => m.session.placements.length === 1);
+
+    a.send({ t: "session.openWorld", releaseId: plaza.releaseId });
+    const opened = await a.next("session", (m) =>
+      m.session.placements.some((p) => p.outputKind === "world"),
+    );
+    expect(opened.session.placements).toHaveLength(2);
+    expect(opened.session.placements.find((p) => p.outputKind === "world")).toMatchObject({
+      releaseId: plaza.releaseId,
+      position: [0, 0, 0],
+      outputName: "広場",
+    });
+    expect(opened.session.placements.some((p) => p.releaseId === item.releaseId)).toBe(true);
+
+    a.send({ t: "session.openWorld", releaseId: night.releaseId });
+    const swapped = await a.next("session", (m) =>
+      m.session.placements.some((p) => p.releaseId === night.releaseId),
+    );
+    expect(swapped.session.placements.filter((p) => p.outputKind === "world")).toEqual([
+      expect.objectContaining({ releaseId: night.releaseId, outputName: "夜" }),
+    ]);
+    expect(swapped.session.placements.some((p) => p.releaseId === item.releaseId)).toBe(true);
+
+    a.send({ t: "session.openWorld", releaseId: item.releaseId });
+    expect((await a.next("error")).message).toMatch(/ワールドではありません/);
+
+    const b = await client(url, "b");
+    await A.patch(`/api/works/${night.workId}`, { perms: { use: false } });
+    b.send({ t: "session.join", sessionId: opened.session.id });
+    await b.next("session");
+    b.send({ t: "session.openWorld", releaseId: night.releaseId });
+    expect((await b.next("error")).message).toMatch(/利用する権限/);
+  });
 });

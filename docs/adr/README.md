@@ -17,3 +17,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0011](0011-kokostate-event-capability-package.md) | 採用 | KokoState・Event・Contract・Capability・Package の役割 | UGC U0 |
 | [0012](0012-runtime-authority-target-policy.md) | 採用 | 権限の単位（置いた物）・境界（World の配置）・判定の場所・対象の policy | 今は協調セッションに限る。サーバーの判定は U2 以降 |
 | [0013](0013-package-identity-version.md) | 採用 | Package の同一性・書き換えない版・exports・依存 | 型だけ。Registry は U3 |
+| [0014](0014-session-open-world.md) | 採用 | セッションで開くワールドは公開作品から一つ。開くと入れ替わる | アイテムの配置は残る |

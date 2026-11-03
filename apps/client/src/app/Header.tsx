@@ -60,7 +60,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
             type="button"
             className={belongingsOpen ? styles.navActive : styles.navItem}
             aria-pressed={belongingsOpen}
-            title="セッションに置いてあるものの一覧"
+            title="開くワールドを選ぶ"
             onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
           >
             セッション

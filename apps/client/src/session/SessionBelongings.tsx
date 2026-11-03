@@ -1,66 +1,81 @@
+import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
+import { api, type Work } from "../net/api";
 import ui from "../workspace/ui.module.css";
-import { listBelongings } from "./belongings";
-
-const manageTitle = "外せるのは、出した人、セッションの持ち主、元のワークスペースの共同編集者です";
+import { currentWorld } from "./openWorld";
 
 /**
- * セッションに置いてあるもの（ワークスペースから出したものと、公開された作品）の一覧。
- * 編集中のワークスペースの中身とは別。
+ * セッションで開くワールドを選ぶ（利用者向け）。
+ * 公開されているワールドから一つ選ぶ。開くと、いまのワールドは入れ替わる。
  */
 export function SessionBelongings() {
   const client = useApp((s) => s.client);
   const session = useApp((s) => s.session);
   const me = useApp((s) => s.me);
-  const placements = session?.placements ?? [];
-  const names = new Map((session?.participants ?? []).map((p) => [p.id, p.name]));
-  const rows = session ? listBelongings(placements, session, me?.id ?? null, names) : [];
+  const [works, setWorks] = useState<Work[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.works().then(setWorks, (e: Error) => setError(e.message));
+  }, []);
+
+  const open = currentWorld(session?.placements ?? []);
+  const worlds = works.filter((w) => w.outputKind === "world" && w.latest);
 
   return (
     <div className={ui.section}>
       <div className={ui.sectionHead}>
-        <h3 className={ui.sectionTitle}>置いてあるもの</h3>
-        <span className={ui.badge}>{rows.length}</span>
+        <h3 className={ui.sectionTitle}>開いているワールド</h3>
       </div>
       <p className={ui.muted}>
-        セッションに置いてあるものです。いま開いているワークスペースの中身とは別です。
+        公開されているワールドから選びます。開くと、いまのワールドは入れ替わります。
       </p>
-      {rows.length === 0 ? (
-        <p className={ui.muted}>まだ何も置いてありません。</p>
+      {open ? (
+        <p className={ui.item} style={{ cursor: "default" }}>
+          <span className={ui.itemName}>{open.outputName}</span>
+          <span className={ui.badgeBrand}>開いています</span>
+        </p>
       ) : (
-        <ul className={ui.list} aria-label="置いてあるもの">
-          {rows.map((row) => (
-            <li key={row.id} className={ui.item} style={{ cursor: "default" }}>
-              <span className={ui.itemName}>
-                {row.title}
-                <span className={ui.muted}>
-                  {" "}
-                  · {row.from} · {row.position} · {row.by}
+        <p className={ui.muted}>まだ開いていません。</p>
+      )}
+      <h3 className={ui.sectionTitle}>公開されているワールド</h3>
+      {error && <p className={ui.error}>{error}</p>}
+      {worlds.length === 0 ? (
+        <p className={ui.muted}>公開されたワールドはまだありません。</p>
+      ) : (
+        <ul className={ui.list} aria-label="公開されているワールド">
+          {worlds.map((w) => {
+            const releaseId = w.latest?.id;
+            const opened = releaseId !== undefined && open?.releaseId === releaseId;
+            const canUse = w.perms.use || w.owner === me?.id;
+            return (
+              <li key={w.id} className={ui.item} style={{ cursor: "default" }}>
+                <span className={ui.itemName}>
+                  {w.name}
+                  <span className={ui.muted}>
+                    {" "}
+                    · {w.ownerName} / {w.repoName}
+                  </span>
                 </span>
-              </span>
-              {row.published && <span className={ui.badge}>作品</span>}
-              <button
-                type="button"
-                className={ui.btn}
-                style={{ height: 26 }}
-                disabled={!row.canManage}
-                title={row.canManage ? "いまの制作データの初期値に戻す" : manageTitle}
-                onClick={() => client.send({ t: "resetPart", placementId: row.id })}
-              >
-                リセット
-              </button>
-              <button
-                type="button"
-                className={ui.iconBtn}
-                aria-label={`${row.title} を外す`}
-                title={row.canManage ? "セッションから外す" : manageTitle}
-                disabled={!row.canManage}
-                onClick={() => client.send({ t: "unplace", placementId: row.id })}
-              >
-                ✕
-              </button>
-            </li>
-          ))}
+                {w.latest && <span className={ui.badge}>v{w.latest.version}</span>}
+                {opened ? (
+                  <span className={ui.badgeBrand}>開いています</span>
+                ) : (
+                  <button
+                    type="button"
+                    className={ui.btn}
+                    style={{ height: 26 }}
+                    disabled={!releaseId || !canUse}
+                    title={canUse ? "このワールドを開きます" : "利用の権限がありません"}
+                    onClick={() => {
+                      if (releaseId) client.send({ t: "session.openWorld", releaseId });
+                    }}
+                  >
+                    開く
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

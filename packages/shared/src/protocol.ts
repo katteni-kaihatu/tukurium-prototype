@@ -55,6 +55,8 @@ export const PlacementInfo = z.object({
   workspaceName: z.string(),
   outputId: z.string(),
   outputName: z.string(),
+  /** 置いたアウトプットの種類。ワールドが、セッションで開いている空間 */
+  outputKind: z.enum(["item", "world", "library"]).nullable().default(null),
   position: vec3,
   yaw: z.number(),
   placedBy: id,
@@ -255,6 +257,11 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("ws.commit"), workspaceId: id, message: z.string().max(500) }),
   /** 作品のリリースをセッションに置く（作品の「利用」権限） */
   z.object({ t: z.literal("placeRelease"), releaseId: id, position: vec3, yaw: z.number() }),
+  /**
+   * 公開されたワールドを、このセッションで開く。
+   * それまで開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
+   */
+  z.object({ t: z.literal("session.openWorld"), releaseId: id }),
   /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */
   z.object({ t: z.literal("apply"), workspaceId: id, outputId: z.string(), snapshot: z.unknown() }),
   z.object({ t: z.literal("unplace"), placementId: id }),
