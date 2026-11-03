@@ -117,7 +117,7 @@ export const api = {
     description?: string;
     kind: "item" | "world";
     visibility: "public" | "private";
-    template: "empty" | "sample" | "gun" | "range";
+    template: "empty" | "sample" | "gun" | "range" | "forest" | "marubatsu";
   }) => call<RepoMeta>("POST", "/api/repos", body),
   repos: (owner?: string) =>
     call<RepoMeta[]>("GET", owner ? `/api/repos?owner=${encodeURIComponent(owner)}` : "/api/repos"),

@@ -10,6 +10,8 @@ const TEMPLATES = [
   { id: "sample", label: "銃と的", desc: "撃って当てるサンプル" },
   { id: "gun", label: "銃", desc: "銃だけ" },
   { id: "range", label: "射撃場", desc: "的と支柱" },
+  { id: "forest", label: "森", desc: "静かな森のワールド" },
+  { id: "marubatsu", label: "マルバツ", desc: "二人で○×。E で最初から" },
 ] as const;
 
 /** リポジトリ（画面上は「プロジェクト」）の新規作成 */
@@ -106,7 +108,11 @@ export function NewRepoPage() {
                     type="radio"
                     name="template"
                     checked={template === t.id}
-                    onChange={() => setTemplate(t.id)}
+                    onChange={() => {
+                      setTemplate(t.id);
+                      if (t.id === "forest") setKind("world");
+                      else if (t.id === "marubatsu") setKind("item");
+                    }}
                   />
                   <span>
                     {t.label}

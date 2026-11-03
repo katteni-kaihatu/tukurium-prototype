@@ -1,9 +1,11 @@
 import {
   diffFiles,
   emptyProject,
+  forestSample,
   gunAndTargetSample,
   gunSample,
   isOfficial,
+  marubatsuSample,
   targetRangeSample,
 } from "@tukurium/repo-model";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -16,6 +18,8 @@ const TEMPLATES = {
   sample: () => gunAndTargetSample(),
   gun: () => gunSample(),
   range: () => targetRangeSample(),
+  forest: () => forestSample(),
+  marubatsu: () => marubatsuSample(),
 } as const;
 
 const Selection = z.object({
@@ -75,12 +79,17 @@ export function registerRepoRoutes(
           description: z.string().max(300).optional(),
           kind: z.enum(["item", "world"]).default("item"),
           visibility: z.enum(["public", "private"]).default("public"),
-          template: z.enum(["empty", "sample", "gun", "range"]).default("empty"),
+          template: z
+            .enum(["empty", "sample", "gun", "range", "forest", "marubatsu"])
+            .default("empty"),
         })
         .parse(req.body);
       const snapshot = TEMPLATES[body.template](body.name);
       if (body.template === "empty") for (const o of snapshot.outputs) o.kind = body.kind;
-      return withOwner(await repos.create(user, { ...body, snapshot }));
+      // 森はワールド、マルバツはアイテム。ほかのひな形は選んだ種類のまま
+      const kind =
+        body.template === "forest" ? "world" : body.template === "marubatsu" ? "item" : body.kind;
+      return withOwner(await repos.create(user, { ...body, kind, snapshot }));
     }),
   );
 

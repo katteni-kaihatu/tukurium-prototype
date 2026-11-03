@@ -14,6 +14,9 @@ interface Node {
   modelId: string | null;
   geometryKey: string;
   materialKey: string;
+  /** 文字（Label）。中身が変わったときだけ作り直す */
+  label: THREE.Mesh | null;
+  labelKey: string;
 }
 
 export interface SyncOptions {
@@ -39,6 +42,9 @@ export class EntityView {
   private readonly gltf = new GLTFLoader();
   private readonly modelCache = new Map<string, Promise<THREE.Group>>();
   private readonly textures = new Map<string, THREE.Texture>();
+  /** 日本語のフォントを読み終えたか。読み終えたら文字を描き直す */
+  private fontReady = false;
+  private fontWait = false;
 
   sync(world: World, opts: SyncOptions): void {
     const ids = new Set(world.entityIds());
@@ -50,10 +56,20 @@ export class EntityView {
       if (!node) {
         const object = new THREE.Object3D();
         object.userData.entityId = id;
-        node = { object, mesh: null, model: null, modelId: null, geometryKey: "", materialKey: "" };
+        node = {
+          object,
+          mesh: null,
+          model: null,
+          modelId: null,
+          geometryKey: "",
+          materialKey: "",
+          label: null,
+          labelKey: "",
+        };
         this.nodes.set(id, node);
       }
       this.syncMesh(node, world, id, matDefs);
+      this.syncLabel(node, world, id);
       this.syncTransform(node, world, id);
     }
 
@@ -262,10 +278,97 @@ export class EntityView {
       .catch(() => this.modelCache.delete(modelId));
   }
 
+  private syncLabel(node: Node, world: World, id: EntityId): void {
+    const label = world.get(id, BUILTIN.Label);
+    const text = label ? String(label.text ?? "") : "";
+    if (!text) {
+      this.clearLabel(node);
+      return;
+    }
+    const color = /^#[0-9a-fA-F]{6}$/.test(String(label?.color)) ? String(label?.color) : "#26262e";
+    const size = Math.max(0.02, Number(label?.size) || 0.16);
+    const key = `${text}\0${color}\0${size}\0${this.fontReady ? 1 : 0}`;
+    if (node.label && node.labelKey === key) return;
+    this.clearLabel(node);
+    const tex = textTexture(text, color);
+    const canvas = tex.image as HTMLCanvasElement;
+    const aspect = canvas.width / Math.max(canvas.height, 1);
+    const geo = new THREE.PlaneGeometry(size * aspect, size);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    node.label = mesh;
+    node.labelKey = key;
+    node.object.add(mesh);
+    if (!this.fontReady) this.ensureFont();
+  }
+
+  /** ページの日本語フォントが届いたら、文字を描き直す */
+  private ensureFont(): void {
+    if (this.fontReady || this.fontWait) return;
+    const fonts = document.fonts;
+    if (!fonts) {
+      this.fontReady = true;
+      return;
+    }
+    this.fontWait = true;
+    void fonts.load('64px "Zen Kaku Gothic New"').then(
+      () => {
+        this.fontReady = true;
+        for (const n of this.nodes.values()) n.labelKey = "";
+      },
+      () => {
+        this.fontReady = true;
+      },
+    );
+  }
+
+  private clearLabel(node: Node): void {
+    const mesh = node.label;
+    if (!mesh) return;
+    mesh.removeFromParent();
+    mesh.geometry.dispose();
+    const mat = mesh.material;
+    if (mat instanceof THREE.MeshBasicMaterial) {
+      mat.map?.dispose();
+      mat.dispose();
+    }
+    node.label = null;
+    node.labelKey = "";
+  }
+
   private removeNode(id: EntityId): void {
     const n = this.nodes.get(id);
     if (!n) return;
+    this.clearLabel(n);
     n.object.removeFromParent();
     this.nodes.delete(id);
   }
+}
+
+const LABEL_FONT = '600 64px "Zen Kaku Gothic New", "Hiragino Sans", sans-serif';
+
+/** 文字をキャンバスに描いて、テクスチャにする */
+function textTexture(text: string, color: string): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return new THREE.CanvasTexture(canvas);
+  ctx.font = LABEL_FONT;
+  const pad = 18;
+  const width = Math.ceil(Math.max(ctx.measureText(text).width + pad * 2, 8));
+  const height = 64 + pad * 2;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.font = LABEL_FONT;
+  ctx.fillStyle = color;
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, pad, height / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
 }

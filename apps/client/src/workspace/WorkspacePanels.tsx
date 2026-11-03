@@ -1,7 +1,9 @@
 import {
   emptyProject,
+  forestSample,
   gunAndTargetSample,
   gunSample,
+  marubatsuSample,
   targetRangeSample,
 } from "@tukurium/repo-model";
 import type { PanelPublic } from "@tukurium/shared";
@@ -334,6 +336,17 @@ function WorkspaceStart() {
           onClick={() => ws.create("射撃場", targetRangeSample())}
         >
           ＋ サンプル「射撃場」
+        </button>
+        <button type="button" className={ui.btn} onClick={() => ws.create("森", forestSample())}>
+          ＋ サンプル「森」
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          title="クリックで○×。近くで E を押すと最初から"
+          onClick={() => ws.create("マルバツ", marubatsuSample())}
+        >
+          ＋ サンプル「マルバツ」
         </button>
         <button
           type="button"

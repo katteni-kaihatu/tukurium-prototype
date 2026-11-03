@@ -102,6 +102,11 @@ export const PlayInput = z.object({
   direction: vec3,
   player: z.string(),
   /**
+   * 入力した人の表示名。無いときは空。
+   * 本人の確定は player の ID で、名前は画面に出すため（今はクライアントの申告どおり。ADR 0012）。
+   */
+  playerName: z.string().max(32).optional(),
+  /**
    * 追加の数値。回すときはマウスの移動（ラジアン）。
    * 前後に動かすときはメートル（正で奥へ）。
    */

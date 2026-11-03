@@ -62,6 +62,8 @@ export interface InputEvent {
   origin: Vec3;
   direction: Vec3;
   player: string;
+  /** 表示名。無いときは空。player と同じく、今はクライアントの申告を信じる */
+  playerName?: string;
   /**
    * 追加の数値。
    * twist ではマウスの移動（ラジアン、[ヨー, ピッチ]）。
