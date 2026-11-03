@@ -47,6 +47,22 @@
 - [ ] Dependencies / Placement grant・World / Item 権限プリセット / Problems の UI を追加する（実効権限の runtime model と強制は U1 の gateway で先に完成させる）
 - [ ] 基盤の実測後、ユーザー間の公開・検索・install・fork・更新へ広げる
 
+### 4. Creator Platform の探索候補
+
+候補と運用方法（Discovery）: [`discovery/creator-platform-capabilities.md`](discovery/creator-platform-capabilities.md)
+
+UGC の制作体験、表現、配布を広げる機能を、実装順を固定する前に比較・検証する。候補への掲載や Focus 選定は実装の約束ではなく、最小の縦切り、層、権限、保存・同期、依存、Reference UGC による検証方法が揃ったものだけを Active plan へ昇格させる。
+
+現在の Focus は最大 5 件で、次の並びは優先順位を表さない。
+
+- **Undo / Redo**: Brush と Timeline に先立つ、安全な編集 transaction の基盤
+- **Animation**: キャラクター、装置、演出で共通する再生・asset binding の基盤
+- **Camera**: Player の視点に作用する権限・競合・解除・アクセシビリティの境界
+- **License / provenance**: U3 の出所保持を前提に、Package の依存・install・fork・公開でライセンス表記を失わない metadata と表示
+- **Sample UGC の充実**: U4 の Reference UGC 実装とは分けて、検証作品を学習・改造できる Sample へ育てる循環
+
+Video player、Particle、Timeline animation、Localization、Post processing、Brush も Candidate として保持する。関連 Active plan の phase 完了、ROADMAP の numbered section 完了、重大な前提変更、Focus の昇格時に最大 5 件を見直す。
+
 ## 後で判断するもの
 
 実測や利用経験が必要なため、先回りして作り込まない。
