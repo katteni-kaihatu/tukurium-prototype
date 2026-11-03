@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
 import { useProject } from "./hooks";
-import { problemKind, problemPlace } from "./ProblemsList";
+import { problemKind, problemPlace } from "./ProblemsPanel";
 import { scriptLine } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";

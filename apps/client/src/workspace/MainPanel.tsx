@@ -3,29 +3,44 @@ import { useApp } from "../app/store";
 import { api } from "../net/api";
 import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
-import { ProblemsList } from "./ProblemsList";
-import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
+import { useWorkspaceProblems } from "./useProblems";
 
 const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" } as const;
 
 /**
- * ワークスペースのメインパネル：アウトプットの切り替え、再生・一時停止・停止、ログ。
+ * ワークスペースのメインパネル：いま選んでいるアウトプットと、再生の状態だけを出す。
  * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
- * セッションに出す・適用・リンク先一覧は SessionLinks、スクリプトの問題は ProblemsList。
+ * セッションに出す・適用・リンク先一覧はセッションパネル、問題は問題パネル、
+ * ログと保存はログ・保存パネルに分け、下のボタンから開く。
  */
 export function MainPanel() {
   const ws = useWorkspace();
   const project = useProject();
-  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId, historyOpen, saveOpen } =
-    ws;
+  const {
+    outputId,
+    mode,
+    logs,
+    role,
+    isHost,
+    workspaceId,
+    historyOpen,
+    saveOpen,
+    sessionOpen,
+    problemsOpen,
+    logOpen,
+  } = ws;
   useWorkspace((s) => s.rev);
-  const info = useApp((s) => s.session?.workspaces.find((w) => w.id === workspaceId));
-  const hostName = useApp((s) => s.session?.participants.find((p) => p.id === info?.host)?.name);
+  const session = useApp((s) => s.session);
+  const info = session?.workspaces.find((w) => w.id === workspaceId);
+  const hostName = session?.participants.find((p) => p.id === info?.host)?.name;
   const outputs = project.outputs();
-  const errors = systemStatus.filter((s) => s.error);
   const canOperate = role === "editor" || role === "admin";
+  const links = (session?.placements ?? []).filter(
+    (p) => p.workspaceId === workspaceId && p.outputId === outputId,
+  );
+  const problemCount = useWorkspaceProblems().count;
 
   return (
     <>
@@ -152,57 +167,52 @@ export function MainPanel() {
           : "ホストを務められる人（管理権限）がいないため、再生できません"}
       </p>
 
-      <ProblemsList />
-
-      <SessionLinks />
-
-      <details className={styles.details} open={errors.length > 0 || undefined}>
-        <summary className={styles.summary}>
+      <div className={styles.panels}>
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={sessionOpen}
+          onClick={() => useWorkspace.setState({ sessionOpen: !sessionOpen })}
+        >
+          セッション
+          {links.length > 0 && <span className={ui.badge}>リンク先 {links.length}</span>}
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={problemsOpen}
+          onClick={() => useWorkspace.setState({ problemsOpen: !problemsOpen })}
+        >
+          問題
+          {problemCount.errors + problemCount.warnings > 0 ? (
+            <span
+              className={ui.badgeError}
+              title={
+                problemCount.stale ? `ほかに編集前の結果が ${problemCount.stale} 件` : undefined
+              }
+            >
+              {problemCount.errors + problemCount.warnings}
+            </span>
+          ) : problemCount.stale > 0 ? (
+            <span
+              className={ui.badgeError}
+              data-fresh="stale"
+              title="編集前の結果（確かめ直しています）"
+            >
+              {problemCount.stale}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={logOpen}
+          onClick={() => useWorkspace.setState({ logOpen: !logOpen })}
+        >
           ログ・保存
           {logs.length > 0 && <span className={ui.badge}>{logs.length}</span>}
-          {errors.length > 0 && (
-            <span className={ui.badgeError}>停止中の System {errors.length}</span>
-          )}
-        </summary>
-        <div className={ui.section}>
-          <div className={ui.sectionHead}>
-            <h3 className={ui.sectionTitle}>ログ</h3>
-            <button
-              type="button"
-              className={ui.iconBtn}
-              aria-label="ログを消す"
-              title="ログを消す"
-              onClick={ws.clearLogs}
-            >
-              ✕
-            </button>
-          </div>
-          <ol className={styles.log} aria-label="ログ">
-            {logs.length === 0 && (
-              <li className={ui.muted}>Play すると、スクリプトの log() やエラーがここに出ます</li>
-            )}
-            {logs.slice(-40).map((l) => (
-              <li key={l.seq} className={l.level === "error" ? styles.logError : undefined}>
-                <span className={styles.logTime}>{l.time.toFixed(2)}</span>
-                {l.systemId && (
-                  <span className={styles.logSys}>
-                    {project.system(l.systemId)?.name ?? l.systemId}
-                  </span>
-                )}
-                {l.message}
-              </li>
-            ))}
-          </ol>
-        </div>
-        <div className={ui.section}>
-          <div className={ui.sectionHead}>
-            <h3 className={ui.sectionTitle}>保存</h3>
-          </div>
-          <p className={ui.muted}>
-            作業内容はサーバーに自動保存されています。メッセージを付けて残すときは「保存」から。
-          </p>
-        </div>
-      </details>
+        </button>
+      </div>
     </>
   );
 }

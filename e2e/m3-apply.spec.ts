@@ -36,8 +36,11 @@ test("遊んでいる人の横で改造して適用すると、残弾は保っ�
   const path = await createSessionAndWorkspace(a, "れにうむ", "sample");
   const main = panel(a, "ワークスペース");
   await standAt(a, [0, 0, 6], 0);
-  await main.getByRole("button", { name: "セッションに出す" }).click();
-  await expect(main.getByLabel("リンク先一覧").locator("li")).toHaveCount(1);
+  // セッションに出す・適用・リンク先は、メインパネルのボタンで開くセッションパネルにある
+  await main.getByRole("button", { name: "セッション" }).click();
+  const sessionPanel = panel(a, "セッション");
+  await sessionPanel.getByRole("button", { name: "セッションに出す" }).click();
+  await expect(sessionPanel.getByLabel("リンク先一覧").locator("li")).toHaveCount(1);
 
   // b はワークスペースを開かずに、セッションの世界で遊ぶ
   const b = await join(browser, path, "ここあ");
@@ -67,10 +70,10 @@ test("遊んでいる人の横で改造して適用すると、残弾は保っ�
   await insp.getByLabel("damage", { exact: true }).press("Enter");
   await insp.getByLabel("ammo", { exact: true }).fill("99");
   await insp.getByLabel("ammo", { exact: true }).press("Enter");
-  await main.getByRole("button", { name: "適用" }).click();
+  await sessionPanel.getByRole("button", { name: "適用" }).click();
   await expect.poll(async () => (await sessionState(a, "銃", "Gun"))?.damage).toBe(3);
   expect((await sessionState(a, "銃", "Gun"))?.ammo).toBe(11); // 実行値を保つ
-  await expect(main.getByLabel("セッションのログ")).toContainText("適用しました");
+  await expect(sessionPanel.getByLabel("セッションのログ")).toContainText("適用しました");
 
   // b がもう一度撃つと、新しい威力で倒れる
   await fireInSession(b);
@@ -79,6 +82,6 @@ test("遊んでいる人の横で改造して適用すると、残弾は保っ�
     .toBeLessThanOrEqual(0);
 
   // リセットで初期値（いまの制作データの 99）に戻る
-  await main.getByLabel("リンク先一覧").getByRole("button", { name: "リセット" }).click();
+  await sessionPanel.getByLabel("リンク先一覧").getByRole("button", { name: "リセット" }).click();
   await expect.poll(async () => (await sessionState(a, "銃", "Gun"))?.ammo).toBe(99);
 });
