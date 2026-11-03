@@ -1,4 +1,5 @@
 export * from "./builtins";
+export * from "./dependencyGraph";
 export * from "./diagnostics";
 export * from "./extract";
 export * from "./files";
