@@ -5,9 +5,8 @@ import { listBelongings } from "./belongings";
 const manageTitle = "外せるのは、出した人、セッションの持ち主、元のワークスペースの共同編集者です";
 
 /**
- * セッションの持ち物。
  * セッションに置いてあるもの（ワークスペースから出したものと、公開された作品）の一覧。
- * 編集中のワークスペースのリソースやリンク先とは別で、セッションが持っている。
+ * 編集中のワークスペースの中身とは別。
  */
 export function SessionBelongings() {
   const client = useApp((s) => s.client);
@@ -24,12 +23,12 @@ export function SessionBelongings() {
         <span className={ui.badge}>{rows.length}</span>
       </div>
       <p className={ui.muted}>
-        セッションに置いてあるものです。いま開いているワークスペースの中身とは別で、セッションが持っています。
+        セッションに置いてあるものです。いま開いているワークスペースの中身とは別です。
       </p>
       {rows.length === 0 ? (
         <p className={ui.muted}>まだ何も置いてありません。</p>
       ) : (
-        <ul className={ui.list} aria-label="セッションの持ち物">
+        <ul className={ui.list} aria-label="置いてあるもの">
           {rows.map((row) => (
             <li key={row.id} className={ui.item} style={{ cursor: "default" }}>
               <span className={ui.itemName}>

@@ -63,7 +63,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
             title="セッションに置いてあるものの一覧"
             onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
           >
-            持ち物
+            セッション
             <span className={styles.navCount}>{placedCount}</span>
           </button>
         )}

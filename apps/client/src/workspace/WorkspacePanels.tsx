@@ -204,8 +204,8 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   if (belongingsOpen) {
     panels.push({
       id: "session-belongings",
-      title: "セッションの持ち物",
-      // メインパネルの右。ワークスペースを開いていなくても出せる
+      title: "セッション",
+      // メインパネルの右。ワークスペースを開いていなくても、セッションに置いてあるものを出せる
       initial: { x: 600, y: 96, width: 460, height: 480 },
       // ワークスペースのパネルが後から出ても、開いている一覧が後ろに隠れない
       focusKey: ready ? "workspace" : "session",
