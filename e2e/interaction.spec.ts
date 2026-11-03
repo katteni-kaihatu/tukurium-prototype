@@ -82,23 +82,28 @@ test("3D パネル：照準でクリックでき、右ドラッグで動かせ�
   await expect(res.locator("[data-e2e-aimed]")).toHaveAttribute("aria-pressed", "true");
 
   // 空間に入っているとき：右ドラッグで、向きに合わせてついてくる
-  const before = await page.evaluate(
-    () =>
-      (window as unknown as { __tukurium: any }).__tukurium.panels.transformOf("ws-resources")
-        .position[0],
-  );
+  const panelX = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __tukurium: any }).__tukurium.panels.transformOf("ws-resources")
+          .position[0] as number,
+    );
+  const before = await panelX();
   await page.mouse.down({ button: "right" });
   await page.evaluate(() => {
     (window as unknown as { __tukurium: any }).__tukurium.controller.yaw += 0.4;
   });
-  await page.waitForTimeout(300);
+  // 描画のフレームで動く（CI のソフトウェア描画は遅いので、決まった時間ではなく動くまで待つ）
+  await expect.poll(panelX, { timeout: 15_000 }).toBeLessThan(before - 0.2);
   await page.mouse.up({ button: "right" });
-  const after = await page.evaluate(
-    () =>
-      (window as unknown as { __tukurium: any }).__tukurium.panels.transformOf("ws-resources")
-        .position[0],
+  // 離したあとも、その場所に残る
+  await page.evaluate(() => {
+    (window as unknown as { __tukurium: any }).__tukurium.controller.yaw -= 0.4;
+  });
+  await page.evaluate(
+    () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
   );
-  expect(after).toBeLessThan(before - 0.2);
+  expect(await panelX()).toBeLessThan(before - 0.2);
 });
 
 test("右クリックで Grabbable を持ち、向きに合わせて動かし、もう一度で放す", async ({ page }) => {
