@@ -478,7 +478,10 @@ describe("素材", () => {
     });
     expect(up.statusCode).toBe(200);
     expect(up.json()).toMatchObject({ id: assetId(png), kind: "image", size: png.length });
-    const get = await app.inject({ method: "GET", url: `/api/assets/${assetId(png)}` });
+    const get = await app.inject({
+      method: "GET",
+      url: `/api/assets/${assetId(png)}?t=${a.token}`,
+    });
     expect(get.statusCode).toBe(200);
     expect(get.headers["content-type"]).toBe("image/png");
     expect(get.rawPayload.equals(png)).toBe(true);
@@ -503,6 +506,93 @@ describe("素材", () => {
     expect(bad.statusCode).toBe(415);
     const missing = await app.inject({ method: "GET", url: `/api/assets/${"0".repeat(64)}` });
     expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("権限・プライベートな作業", () => {
+  const preview = (marker: string) => ({
+    anchor: [0, 0, 0],
+    isolated: false,
+    outputKind: "item",
+    bounds: { center: [0, 1, 0], size: [1, 1, 1] },
+    world: { marker },
+    materials: [{ id: "m" }],
+  });
+
+  it("編集中の見た目は、開いていない人へ権限に合わせて届く（閲覧できなければ境界だけ）", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    a.send({ t: "ws.preview", workspaceId, preview: preview("v1") });
+    const full = await b.next("ws.preview");
+    expect(full).toMatchObject({
+      name: "銃",
+      restricted: false,
+      preview: { world: { marker: "v1" } },
+    });
+    // ホスト以外（開いていない人）の見た目は受け付けない
+    b.send({ t: "ws.preview", workspaceId, preview: preview("x") });
+    // 非公開にすると、境界だけになる
+    a.send({ t: "ws.setDefaultRole", workspaceId, role: null });
+    const restricted = await b.next("ws.preview", (m) => m.restricted);
+    expect(restricted).toMatchObject({
+      name: "作業中",
+      preview: { world: null, materials: [], bounds: { size: [1, 1, 1] } },
+    });
+    // 後から入った人にも最新の見た目が届く
+    const c = await client(url, "c");
+    c.send({ t: "session.join", sessionId: (await b.next("session")).session.id });
+    expect((await c.next("ws.preview")).restricted).toBe(true);
+    expect(a.inbox.some((m) => m.t === "ws.preview")).toBe(false);
+    expect(
+      [...b.inbox, ...c.inbox].some(
+        (m) => m.t === "ws.preview" && JSON.stringify(m).includes('"x"'),
+      ),
+    ).toBe(false);
+  });
+
+  it("非公開の作業はセッションに出せない・適用できない", async () => {
+    const { url } = await start();
+    const { a, workspaceId } = await sessionWithWorkspace(url);
+    a.send({ t: "ws.setDefaultRole", workspaceId, role: null });
+    await a.next("session", (m) => m.session.workspaces[0]?.defaultRole === null);
+    const snapshot = { outputs: [{ id: "out", name: "銃" }] };
+    a.send({ t: "place", workspaceId, outputId: "out", snapshot, position: [0, 0, 0], yaw: 0 });
+    expect((await a.next("error")).message).toMatch(/非公開/);
+    a.send({ t: "apply", workspaceId, outputId: "out", snapshot });
+    expect((await a.next("error")).message).toMatch(/非公開|出ていません/);
+  });
+
+  it("素材は、上げた人と、使っている制作データを閲覧できる人だけが取り出せる", async () => {
+    const { app, url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9]);
+    const id = assetId(png);
+    await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      payload: png,
+    });
+    const get = (token?: string) =>
+      app.inject({ method: "GET", url: `/api/assets/${id}${token ? `?t=${token}` : ""}` });
+    expect((await get()).statusCode).toBe(404);
+    expect((await get(a.token)).statusCode).toBe(200);
+    expect((await get(b.token)).statusCode).toBe(404);
+    // ワークスペースで使うと、閲覧できる人は取り出せる
+    a.send({ t: "ws.open", workspaceId });
+    const ref = new Y.Doc();
+    ref.getMap("assets").set(id, { id, kind: "image", contentType: "image/png", name: "p" });
+    a.send({
+      t: "ws.update",
+      workspaceId,
+      update: Buffer.from(Y.encodeStateAsUpdate(ref)).toString("base64"),
+    });
+    await expect.poll(async () => (await get(b.token)).statusCode).toBe(200);
+    // 非公開にすると、取り出せなくなる
+    a.send({ t: "ws.setDefaultRole", workspaceId, role: null });
+    await b.next("session", (m) => m.session.workspaces[0]?.defaultRole === null);
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: null });
+    await expect.poll(async () => (await get(b.token)).statusCode).toBe(404);
   });
 });
 

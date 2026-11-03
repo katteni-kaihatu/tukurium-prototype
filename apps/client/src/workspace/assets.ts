@@ -38,4 +38,4 @@ export async function uploadAsset(file: File): Promise<AssetDef> {
   return { id: body.id, kind: body.kind, contentType, name: file.name.replace(/\.[^.]+$/, "") };
 }
 
-export const assetUrl = (id: string) => `/api/assets/${id}`;
+export { assetUrl } from "../net/api";

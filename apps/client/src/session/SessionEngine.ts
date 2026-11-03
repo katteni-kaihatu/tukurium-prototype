@@ -87,6 +87,12 @@ export class SessionEngine {
     return { position: [p.x, p.y, p.z], yaw: this.controller.yaw, pitch: this.controller.pitch };
   }
 
+  /** 自分を別の場所へ移す（独立した空間やポータル） */
+  teleport(position: [number, number, number], yaw = 0): void {
+    this.controller.position.set(...position);
+    this.controller.yaw = yaw;
+  }
+
   upsertParticipant(p: Participant): void {
     this.avatars.upsert(p);
   }

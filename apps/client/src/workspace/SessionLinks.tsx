@@ -10,7 +10,8 @@ import ui from "./ui.module.css";
  */
 export function SessionLinks() {
   const project = useProject();
-  const { workspaceId, outputId, role, placePoint } = useWorkspace();
+  const { workspaceId, outputId, role, placePoint, anchor } = useWorkspace();
+  const teleport = useWorkspace((s) => s.teleport);
   useWorkspace((s) => s.rev);
   const { client, session, me } = useApp();
   const logs = useApp((s) => s.sessionLogs);
@@ -21,12 +22,16 @@ export function SessionLinks() {
   const links = (session?.placements ?? []).filter(
     (p) => p.workspaceId === workspaceId && p.outputId === outputId,
   );
-  const outputName = project.output(outputId)?.name ?? "";
+  const output = project.output(outputId);
+  const outputName = output?.name ?? "";
+  const info = session?.workspaces.find((w) => w.id === workspaceId);
+  const isPrivate = info?.defaultRole === null;
   if (!workspaceId) return null;
 
   const place = () => {
-    // 視線の先の床の上に、自分と同じ向きで置く
-    const at = placePoint?.() ?? { position: [0, 0, 0] as [number, number, number], yaw: 0 };
+    // アイテムは視線の先の床の上に、自分と同じ向きで置く。ワールドはセッションの原点に置く
+    const origin = { position: [0, 0, 0] as [number, number, number], yaw: 0 };
+    const at = output?.kind === "world" ? origin : (placePoint?.() ?? origin);
     client.send({
       t: "place",
       workspaceId,
@@ -43,14 +48,33 @@ export function SessionLinks() {
         <h3 className={ui.sectionTitle}>セッション</h3>
         <span className={ui.badge}>リンク先 {links.length}</span>
       </div>
+      {anchor?.isolated && (
+        <div className={ui.toolbar}>
+          <span className={ui.muted} style={{ flex: 1 }}>
+            {isPrivate ? "非公開の作業：独立した空間" : "ワールドの編集：独立した空間"}
+          </span>
+          <button type="button" className={ui.btn} onClick={() => teleport?.("space")}>
+            編集空間へ
+          </button>
+          <button type="button" className={ui.btn} onClick={() => teleport?.("session")}>
+            セッションに戻る
+          </button>
+        </div>
+      )}
       <div className={ui.toolbar}>
-        <button type="button" className={ui.btn} disabled={!canWrite} onClick={place}>
+        <button
+          type="button"
+          className={ui.btn}
+          disabled={!canWrite || isPrivate}
+          title={isPrivate ? "非公開の作業はセッションに出せません" : undefined}
+          onClick={place}
+        >
           セッションに出す
         </button>
         <button
           type="button"
           className={ui.btnPrimary}
-          disabled={!canWrite || links.length === 0}
+          disabled={!canWrite || links.length === 0 || isPrivate}
           title={
             links.length === 0
               ? "まずセッションに出してください"

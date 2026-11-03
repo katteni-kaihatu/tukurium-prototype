@@ -9,6 +9,7 @@ import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 import { SessionWorldController } from "./SessionWorldController";
 import { resetSessionWorld } from "./sessionWorld";
+import { WorkspacePreviews } from "./WorkspacePreviews";
 
 const POSE_INTERVAL_MS = 100;
 
@@ -56,6 +57,8 @@ export function SessionView() {
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const workspace = new WorkspaceController(engine);
     const sessionWorld = new SessionWorldController(engine);
+    const previews = new WorkspacePreviews(engine);
+    if (import.meta.env.DEV) (window as { __previews?: WorkspacePreviews }).__previews = previews;
 
     // 参加者の表示
     const me = () => useApp.getState().me?.id;
@@ -101,6 +104,7 @@ export function SessionView() {
       offMsg();
       workspace.dispose();
       sessionWorld.dispose();
+      previews.dispose();
       engine.dispose();
       engineRef.current = null;
       setEngine(null);

@@ -1,16 +1,16 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { createSessionAndWorkspace } from "./helpers";
+import { closePeople, createSessionAndWorkspace, newPerson } from "./helpers";
 
 // M4 の完了条件：作品を公開し、別の人がフォーク・抽出して作り始められる（シナリオ 10・11）
 
 test.describe.configure({ timeout: 150_000 });
 
+test.afterEach(closePeople);
+
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 
 async function person(browser: Browser, name: string) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await ctx.newPage();
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  const page = await newPerson(browser, name);
   return page;
 }
 

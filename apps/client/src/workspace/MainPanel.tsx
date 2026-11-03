@@ -76,6 +76,10 @@ export function MainPanel() {
               if (e.target.value === "__new") {
                 const id = project.addOutput(`アウトプット${outputs.length + 1}`, "item");
                 ws.setOutput(id);
+              } else if (e.target.value === "__newWorld") {
+                // ワールドは独立した空間で編集する（ポータルから入る）
+                const id = project.addOutput(`ワールド${outputs.length + 1}`, "world");
+                ws.setOutput(id);
               } else {
                 ws.setOutput(e.target.value);
               }
@@ -86,7 +90,8 @@ export function MainPanel() {
                 {o.name}
               </option>
             ))}
-            {canOperate && <option value="__new">＋ アウトプットを追加</option>}
+            {canOperate && <option value="__new">＋ アイテムを追加</option>}
+            {canOperate && <option value="__newWorld">＋ ワールドを追加</option>}
           </select>
         </label>
 

@@ -1,5 +1,13 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
-import { aimAt, createSessionAndWorkspace, fireInSession, sessionState, standAt } from "./helpers";
+import {
+  aimAt,
+  closePeople,
+  createSessionAndWorkspace,
+  fireInSession,
+  newPerson,
+  sessionState,
+  standAt,
+} from "./helpers";
 
 // M3 の完了条件：遊んでいる人がいる横で銃を改造し、適用すると残弾だけ保ったまま新しい挙動になる
 // （シナリオ 2・6・7・8）
@@ -7,12 +15,12 @@ import { aimAt, createSessionAndWorkspace, fireInSession, sessionState, standAt 
 // 2 つのブラウザでソフトウェア描画するため、手順の長いこのファイルは上限を延ばす
 test.describe.configure({ timeout: 150_000 });
 
+test.afterEach(closePeople);
+
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
 
 async function join(browser: Browser, path: string, name: string) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await ctx.newPage();
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  const page = await newPerson(browser, name);
   await page.goto(path);
   await page.locator('section[aria-label="ワークスペース"]').waitFor();
   return page;

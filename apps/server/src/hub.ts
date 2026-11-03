@@ -11,6 +11,7 @@ import {
   type ServerMessage,
   type SessionFrame,
   type SessionInfo,
+  type WorkspacePreview,
   type WorkspaceRole,
 } from "@tukurium/shared";
 import * as Y from "yjs";
@@ -93,7 +94,14 @@ interface Workspace {
   mode: PlayMode;
   lastFrame: PlayFrame | null;
   saveTimer: ReturnType<typeof setTimeout> | null;
+  /** 開いていない参加者に見せる、編集中の見た目（ホストが送る） */
+  lastPreview: WorkspacePreview | null;
 }
+
+const snapshotUsesAsset = (snap: unknown, assetId: string): boolean => {
+  const assets = (snap as { assets?: unknown } | null)?.assets;
+  return Array.isArray(assets) && assets.some((a) => (a as { id?: unknown })?.id === assetId);
+};
 
 const shortId = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
 const toB64 = (u: Uint8Array) => Buffer.from(u).toString("base64");
@@ -205,6 +213,13 @@ export class Hub {
         return;
       case "place":
         return this.place(conn, msg);
+      case "ws.preview": {
+        const w = this.workspaceFor(conn, msg.workspaceId);
+        if (!w || w.host !== conn) return; // ホスト以外の見た目は受け付けない
+        w.lastPreview = msg.preview;
+        for (const c of w.session.conns) if (!w.conns.has(c)) this.sendPreview(w, c);
+        return;
+      }
       case "ws.openRepo":
         return this.openRepo(conn, msg.repoId);
       case "ws.commit":
@@ -218,6 +233,9 @@ export class Hub {
           return this.deny(conn, "適用には共同編集の権限が必要です");
         if (!looksLikeSnapshot(msg.snapshot, msg.outputId))
           return this.deny(conn, "制作データが壊れています");
+        if (w.meta.defaultRole === null) {
+          return this.deny(conn, "非公開の作業はセッションに適用できません");
+        }
         const links = [...s.placements.values()].filter(
           (p) => p.workspaceId === msg.workspaceId && p.outputId === msg.outputId,
         );
@@ -303,6 +321,7 @@ export class Hub {
         if (!w || this.roleOf(w, user.id) !== "admin") return this.deny(conn, "管理権限が必要です");
         w.meta.defaultRole = msg.role;
         await this.store.saveWorkspace(w.meta);
+        this.sendPreviews(w.session);
         this.broadcastSession(w.session);
         return;
       }
@@ -440,6 +459,7 @@ export class Hub {
       this.sendPanels(other, conn);
       this.sendPanels(conn, other);
     }
+    this.sendPreviews(s, conn);
     this.broadcastSessionList();
   }
 
@@ -582,6 +602,10 @@ export class Hub {
     }
     if (!looksLikeSnapshot(msg.snapshot, msg.outputId)) {
       this.deny(conn, "制作データが壊れています");
+      return;
+    }
+    if (w.meta.defaultRole === null) {
+      this.deny(conn, "非公開の作業はセッションに出せません（独立した空間で表示・実行します）");
       return;
     }
     s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
@@ -772,6 +796,7 @@ export class Hub {
       mode: "edit",
       lastFrame: null,
       saveTimer: null,
+      lastPreview: null,
     };
     if (doc) {
       Y.applyUpdate(w.room.doc, Y.encodeStateAsUpdate(doc));
@@ -834,6 +859,7 @@ export class Hub {
     w.conns.delete(conn);
     w.room.leave(conn.id);
     if (w.host === conn) this.migrateHost(w);
+    this.sendPreview(w, conn);
     this.broadcastSession(w.session);
   }
 
@@ -906,6 +932,7 @@ export class Hub {
         this.setHost(w, c);
       }
     }
+    this.sendPreviews(w.session);
     // 権限が変わったので、その人に見せるパネルの内容も変わる
     for (const other of w.session.conns) {
       if (other.user?.id === userId)
@@ -938,6 +965,53 @@ export class Hub {
       w.saveTimer = null;
     }
     await this.store.saveDoc(w.meta.id, Y.encodeStateAsUpdate(w.room.doc));
+  }
+
+  /** 開いていない人に、編集中の見た目を権限に合わせて送る（閲覧できなければ境界だけ） */
+  private sendPreview(w: Workspace, to: Conn): void {
+    if (!w.lastPreview || !to.user || w.conns.has(to)) return;
+    const restricted = !canRead(this.roleOf(w, to.user.id));
+    this.send(to, {
+      t: "ws.preview",
+      workspaceId: w.meta.id,
+      name: restricted ? "作業中" : w.meta.name,
+      restricted,
+      preview: restricted ? { ...w.lastPreview, world: null, materials: [] } : w.lastPreview,
+    });
+  }
+
+  private sendPreviews(s: Session, to?: Conn): void {
+    for (const wid of s.workspaces) {
+      const w = this.workspaces.get(wid);
+      if (!w) continue;
+      for (const c of to ? [to] : s.conns) this.sendPreview(w, c);
+    }
+  }
+
+  /** 素材を見てよいか（すぐ分かる範囲）：参加中のセッションに置かれた物か、閲覧できるワークスペースで使われている */
+  canSeeAssetLive(user: User, assetId: string): boolean {
+    const uses = (snap: unknown) => snapshotUsesAsset(snap, assetId);
+    // 参加しているセッションに置かれている物の素材（作品のリリースを含む）
+    for (const s of this.sessions.values()) {
+      if (![...s.conns].some((c) => c.user?.id === user.id)) continue;
+      for (const p of s.placements.values()) if (uses(this.hostPart(s, p).snapshot)) return true;
+    }
+    for (const w of this.workspaces.values()) {
+      if (!canRead(this.roleOf(w, user.id))) continue;
+      if (new ProjectDoc(w.room.doc).assets().some((a) => a.id === assetId)) return true;
+    }
+    return false;
+  }
+
+  /** 素材を見てよいか（重い）：閲覧できるリポジトリの最新の内容で使われている */
+  async canSeeAssetInRepos(user: User, assetId: string): Promise<boolean> {
+    if (!this.repos) return false;
+    for (const r of await this.store.repos()) {
+      if (!(await this.repos.canRead(user, r))) continue;
+      const snap = await this.repos.snapshot(r.id).catch(() => null);
+      if (snapshotUsesAsset(snap, assetId)) return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------

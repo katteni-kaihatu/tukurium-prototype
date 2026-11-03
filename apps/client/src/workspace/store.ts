@@ -12,6 +12,7 @@ import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
+import type { WorkspaceAnchor } from "./anchor";
 import { WorkspaceSync } from "./WorkspaceSync";
 
 export type Selection =
@@ -61,6 +62,10 @@ interface WorkspaceState {
   incomingSounds: SoundEvent[];
   /** セッションに出すときの置き場所：視線の先の床（セッションの座標）と、自分の向き */
   placePoint: (() => { position: [number, number, number]; yaw: number }) | null;
+  /** 編集空間の置き場所（WorkspaceController が更新する） */
+  anchor: WorkspaceAnchor | null;
+  /** 独立した空間（space）とセッション（session）の間を移動する */
+  teleport: ((to: "space" | "session") => void) | null;
 
   create(name: string, snap: ProjectSnapshot): void;
   /** リポジトリ（プロジェクト）をこのセッションのワークスペースとして開く */
@@ -129,6 +134,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     viewPoint: null,
     incomingSounds: [],
     placePoint: null,
+    anchor: null,
+    teleport: null,
 
     commitRev: 0,
     libraryOpen: false,
