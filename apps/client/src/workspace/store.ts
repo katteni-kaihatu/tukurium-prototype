@@ -94,6 +94,12 @@ interface WorkspaceState {
   stop(): void;
   input(ev: InputEvent): void;
   openSystem(id: string): void;
+  /**
+   * 次に出すコードパネルの置き方。
+   * Resources が 3D なら 3D、2D なら 2D。seq は同じ置き方を続けて頼んでも届くようにする。
+   */
+  editorPlace: { mode: "2d" | "3d"; seq: number } | null;
+  placeEditor(mode: "2d" | "3d"): void;
   closeSystem(id: string): void;
   togglePanels(): void;
   clearLogs(): void;
@@ -148,6 +154,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     logs: [],
     openSystems: [],
     activeSystem: null,
+    editorPlace: null,
     panelsHidden: false,
     viewPoint: null,
     incomingSounds: [],
@@ -199,6 +206,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         logs: [],
         openSystems: [],
         activeSystem: null,
+        editorPlace: null,
         checkProblems: [],
         runProblems: [],
         jumpTo: null,
@@ -232,6 +240,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         jumpTo: null,
         openSystems: [],
         activeSystem: null,
+        editorPlace: null,
       });
     },
 
@@ -258,6 +267,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         openSystems: s.openSystems.includes(id) ? s.openSystems : [...s.openSystems, id],
         activeSystem: id,
       })),
+
+    placeEditor: (mode) =>
+      set((s) => ({ editorPlace: { mode, seq: (s.editorPlace?.seq ?? 0) + 1 } })),
 
     closeSystem: (id) =>
       set((s) => {

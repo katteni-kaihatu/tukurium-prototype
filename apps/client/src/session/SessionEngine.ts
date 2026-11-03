@@ -31,6 +31,8 @@ export class SessionEngine {
   private readonly clock = new THREE.Clock();
   private readonly frameListeners = new Set<(dt: number) => void>();
   private readonly pointerListeners = new Set<(button: number, phase: "down" | "up") => void>();
+  /** 右クリックを押したままホイールしたとき（前後の移動、メートル。正で奥へ） */
+  private readonly holdWheelListeners = new Set<(meters: number) => void>();
   /** 右クリックを押しているか。離すか、空間から出たら手を放す */
   private rightButton = false;
   private readonly resizeObserver: ResizeObserver;
@@ -88,6 +90,12 @@ export class SessionEngine {
     return () => this.pointerListeners.delete(fn);
   }
 
+  /** 右クリックを押したままホイールしたとき。戻り値で解除。 */
+  onHoldWheel(fn: (meters: number) => void): () => void {
+    this.holdWheelListeners.add(fn);
+    return () => this.holdWheelListeners.delete(fn);
+  }
+
   pose(): Pose {
     const p = this.controller.position;
     return { position: [p.x, p.y, p.z], yaw: this.controller.yaw, pitch: this.controller.pitch };
@@ -122,6 +130,7 @@ export class SessionEngine {
     document.removeEventListener("wheel", this.onWheel);
     this.frameListeners.clear();
     this.pointerListeners.clear();
+    this.holdWheelListeners.clear();
     this.panels.dispose();
     this.cssRenderer.domElement.remove();
     cancelAnimationFrame(this.frame);
@@ -212,7 +221,15 @@ export class SessionEngine {
       } else if (e.button === 0) {
         this.pressed = el;
         const c = this.center();
-        const init = { bubbles: true, cancelable: true, clientX: c.x, clientY: c.y, button: 0 };
+        // detail が 0 だと、コードエディタは行全体の選択とみなしてカーソルを出さない
+        const init = {
+          bubbles: true,
+          cancelable: true,
+          clientX: c.x,
+          clientY: c.y,
+          button: 0,
+          detail: 1,
+        };
         el.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1 }));
         el.dispatchEvent(new MouseEvent("mousedown", init));
         const focusable = el.closest<HTMLElement>(
@@ -255,7 +272,14 @@ export class SessionEngine {
     if (e.button === 0 && this.pressed) {
       const el = this.aimedPanelElement() ?? this.pressed;
       const c = this.center();
-      const init = { bubbles: true, cancelable: true, clientX: c.x, clientY: c.y, button: 0 };
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        clientX: c.x,
+        clientY: c.y,
+        button: 0,
+        detail: 1,
+      };
       el.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerId: 1 }));
       el.dispatchEvent(new MouseEvent("mouseup", init));
       if (el === this.pressed || this.pressed.contains(el) || el.contains(this.pressed))
@@ -275,8 +299,27 @@ export class SessionEngine {
     if (this.controller.locked || this.container.contains(e.target as Node)) e.preventDefault();
   };
 
-  /** 照準の先の 3D パネルをホイールでスクロールする */
+  /** ホイールの量をメートルにする。上へ回す（deltaY が負）と奥へ動かす */
+  private wheelMeters(e: WheelEvent): number {
+    let dy = e.deltaY;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) dy *= 16;
+    else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) dy *= 400;
+    return (-dy / 100) * 0.3;
+  }
+
+  /** 照準の先の 3D パネルをホイールでスクロールする。持っているときは前後に動かす */
   private onWheel = (e: WheelEvent): void => {
+    const meters = this.wheelMeters(e);
+    if (this.panels.isMoving) {
+      e.preventDefault();
+      this.panels.moveDepth(meters);
+      return;
+    }
+    if (this.rightButton && this.controller.locked) {
+      e.preventDefault();
+      if (meters !== 0) for (const fn of this.holdWheelListeners) fn(meters);
+      return;
+    }
     if (!this.controller.locked) return;
     for (let el = this.aimedPanelElement(); el; el = el.parentElement) {
       const h = el as HTMLElement;

@@ -88,7 +88,10 @@ export const PlayInput = z.object({
   origin: vec3,
   direction: vec3,
   player: z.string(),
-  /** マウスの移動を角度（ラジアン）にしたもの。持っている物を回すときに付ける */
+  /**
+   * 追加の数値。回すときはマウスの移動（ラジアン）。
+   * 前後に動かすときはメートル（正で奥へ）。
+   */
   pointer: z.tuple([z.number(), z.number()]).optional(),
 });
 

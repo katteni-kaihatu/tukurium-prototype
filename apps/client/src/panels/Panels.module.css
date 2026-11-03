@@ -45,6 +45,16 @@
   flex: 1 1 auto;
 }
 
+/* 空間では、カーソルの点滅が途中で止まったまま消えることがある */
+.host[data-mode="3d"] :global(.cm-focused > .cm-scroller > .cm-cursorLayer) {
+  animation: none;
+  opacity: 1;
+}
+
+.host[data-mode="3d"] :global(.cm-cursor) {
+  border-left-width: 2px;
+}
+
 .host[data-mode="3d"] .window {
   /* 空間では背景のぼかしが効かないので不透明にする */
   background: var(--c-paper);

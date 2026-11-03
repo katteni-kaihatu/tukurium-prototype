@@ -77,6 +77,16 @@ export class WorkspaceController {
     this.disposers.push(
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => this.onPointer(button, phase)),
+      engine.onHoldWheel((meters) => {
+        if (useWorkspace.getState().mode !== "play") return;
+        useWorkspace.getState().input({
+          action: "reach",
+          phase: "down",
+          player: this.me(),
+          pointer: [meters, 0],
+          ...this.viewRay(),
+        });
+      }),
     );
     useWorkspace.setState({
       viewPoint: () => this.pointInFront(2),
