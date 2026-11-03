@@ -1,27 +1,45 @@
-import type { Diagnostic, ProjectDoc, ResourcePathIndex } from "@tukurium/repo-model";
+import {
+  countCurrent,
+  type Diagnostic,
+  type DiagnosticView,
+  type ProjectDoc,
+  type ResourcePathIndex,
+} from "@tukurium/repo-model";
 import { useProject } from "./hooks";
-import type { Problem } from "./problems";
+import { RUNTIME_PROVIDER, SCRIPT_PROVIDER, scriptLine } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems, useProjectDiagnostics } from "./useProblems";
 
 /** 問題 1 件の場所の表示（「Shoot.js 4 行目」） */
-export function problemPlace(name: string, p: Problem): string {
-  return `${name}.js${p.line ? ` ${p.line} 行目` : ""}`;
+export function problemPlace(name: string, p: Diagnostic): string {
+  const line = scriptLine(p);
+  return `${name}.js${line ? ` ${line} 行目` : ""}`;
+}
+
+const isScript = (d: Diagnostic) =>
+  d.provider === SCRIPT_PROVIDER || d.provider === RUNTIME_PROVIDER;
+
+/** 問題の種類の短い説明 */
+export function problemKind(d: DiagnosticView): string {
+  if (d.freshness === "stale") return d.phase === "runtime" ? "編集前の実行" : "編集前の確認";
+  if (d.phase === "runtime") return "実行して停止";
+  return d.severity === "warning" ? "注意" : "Play 前の確認";
 }
 
 /**
- * スクリプトの問題の一覧。編集中の確認（構文など）と、実行して止まった System をまとめて出す。
- * クリックするとコードを開いて、その行へ移る。
+ * 問題の一覧（ADR 0010）。スクリプトの問題（編集中の確認・実行して止まったもの）と、
+ * 制作データの問題（構造・リソース参照）をまとめて出す。
+ * 編集した後の古い結果は stale として薄く出し、件数には数えない。
  */
 export function ProblemsList() {
   const problems = useProblems();
   const project = useProject();
-  const showProblem = useWorkspace((s) => s.showProblem);
   const { diagnostics, index } = useProjectDiagnostics();
-  const { select, setOutput, outputId } = useWorkspace();
-  /** 問題の対象を Inspector で選ぶ（選べるものだけ） */
+  const { select, setOutput, outputId, showProblem } = useWorkspace();
+  /** スクリプトはコードのその行へ、ほかは Inspector で選ぶ（選べるものだけ） */
   const target = (d: Diagnostic): (() => void) | null => {
+    if (isScript(d)) return () => showProblem(d);
     const { kind, id } = d.subject;
     if (kind === "entity") {
       const e = project.entity(id);
@@ -40,60 +58,67 @@ export function ProblemsList() {
     if (kind === "system" || kind === "material") return () => select({ kind, id });
     return null;
   };
-  const count = problems.length + diagnostics.length;
-  if (count === 0) return null;
+  // 制作データの問題は、いまの制作データからその場で計算するので、いつも current
+  const items: DiagnosticView[] = [
+    ...problems,
+    ...diagnostics.map((d) => ({ ...d, freshness: "current" as const })),
+  ];
+  if (items.length === 0) return null;
+  const count = countCurrent(items);
   return (
     <section className={ui.section} aria-label="問題">
       <div className={ui.sectionHead}>
         <h3 className={ui.sectionTitle}>問題</h3>
-        <span className={ui.badgeError}>{count}</span>
+        {count.errors + count.warnings > 0 ? (
+          <span
+            className={ui.badgeError}
+            title={count.stale ? `ほかに編集前の結果が ${count.stale} 件` : undefined}
+          >
+            {count.errors + count.warnings}
+          </span>
+        ) : (
+          // 編集した直後は数字を 0 にせず、編集前の結果の件数を薄く出す（点滅を避ける）
+          <span
+            className={ui.badgeError}
+            data-fresh="stale"
+            title="編集前の結果（確かめ直しています）"
+          >
+            {count.stale}
+          </span>
+        )}
       </div>
       <ul className={ui.list}>
-        {problems.map((p) => (
-          <li key={`${p.source}:${p.systemId}:${p.message}`}>
-            <button
-              type="button"
-              className={ui.problem}
-              title="コードを開く"
-              onClick={() => showProblem(p)}
-            >
-              <span className={ui.problemPlace}>
-                {problemPlace(project.system(p.systemId)?.name ?? p.systemId, p)}
-                <span className={ui.problemKind}>
-                  {p.source === "run" ? "実行して停止" : "Play 前の確認"}
-                </span>
-              </span>
-              <span>{p.message}</span>
-            </button>
-          </li>
-        ))}
-        {diagnostics.map((d) => {
+        {items.map((d) => {
           const go = target(d);
           const body = (
             <>
               <span className={ui.problemPlace}>
-                {placeOf(d, project, index)}
-                <span className={ui.problemKind}>
-                  {d.severity === "warning" ? "注意" : "Play 前の確認"}
-                </span>
+                {isScript(d)
+                  ? problemPlace(project.system(d.subject.id)?.name ?? d.subject.id, d)
+                  : placeOf(d, project, index)}
+                <span className={ui.problemKind}>{problemKind(d)}</span>
               </span>
               <span>{d.message}</span>
             </>
           );
+          const attrs = {
+            className: ui.problem,
+            "data-tone": d.severity,
+            "data-fresh": d.freshness,
+          };
           return (
-            <li key={d.id}>
+            <li key={`${d.freshness}:${d.id}`}>
               {go ? (
                 <button
                   type="button"
-                  className={ui.problem}
-                  data-tone={d.severity}
-                  title={d.detail ?? "Inspector で選ぶ"}
+                  {...attrs}
+                  title={isScript(d) ? "コードを開く" : (d.detail ?? "Inspector で選ぶ")}
                   onClick={go}
                 >
                   {body}
                 </button>
               ) : (
-                <div className={ui.problem} data-tone={d.severity} title={d.detail}>
+                <div {...attrs} title={d.detail}>
                   {body}
                 </div>
               )}

@@ -24,7 +24,8 @@ export const PROJECT_REF: ResourceRef = { kind: "project", id: "project" };
 /** 問題の場所。行番号などの動きやすい値は指紋に入れない */
 export type DiagnosticLocation =
   | { kind: "name" }
-  | { kind: "script"; line: number | null; column?: number }
+  /** symbol：どの書き方についての問題か（Query の名前など。指紋に入る） */
+  | { kind: "script"; line: number | null; column?: number; symbol?: string }
   | { kind: "property"; path: string[] };
 
 export type Severity = "error" | "warning" | "info";
@@ -61,7 +62,7 @@ function stableLocation(loc: DiagnosticLocation | null): string {
       return "name";
     case "script":
       // 前の行に書き足しただけで別の問題にならないよう、行番号は使わない
-      return "script";
+      return loc.symbol === undefined ? "script" : `script:${loc.symbol}`;
     case "property":
       return `property:${loc.path.join(".")}`;
   }

@@ -14,7 +14,7 @@
 
 - [x] Phase 0: identity / path / binding / diagnostics の判断を ADR で固定する（[ADR 0010](adr/0010-resource-identity-paths-diagnostics.md)）
 - [x] ResourcePathIndex と snapshot validation（名前の衝突・フォルダの輪・置き場所。UI で作る・名前を変える・移すときは衝突を避ける）
-- [ ] 汎用 Diagnostic model と最小 Provider（model、構造とリソース参照の Provider、祖先フォルダの集計は済み。スクリプトの問題を Diagnostic へ移すことと stale / generation が残り）
+- [x] 汎用 Diagnostic model と最小 Provider（構造・リソース参照・スクリプト・実行の問題を一つの形にした。編集前の結果は stale、非同期の確認は世代で古い結果を捨てる）
 - [ ] ProjectDependencyGraph と増分無効化
 - [ ] System の構造化された resource binding
 - [ ] runtime を alias / stable ID ベースへ移行

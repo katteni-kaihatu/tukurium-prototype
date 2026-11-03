@@ -380,6 +380,11 @@
   color: #7a5208;
 }
 
+.badgeError[data-fresh="stale"],
+.problem[data-fresh="stale"] {
+  opacity: 0.55;
+}
+
 div.problem,
 div.problem:hover {
   cursor: default;

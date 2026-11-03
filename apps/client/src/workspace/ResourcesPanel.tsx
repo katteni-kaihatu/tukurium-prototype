@@ -113,7 +113,7 @@ export function ResourcesPanel() {
    */
   const badgeOf = (it: ResItem): Badge | null => {
     const s = summary.get(it.id);
-    const script = it.kind === "system" ? problems.filter((p) => p.systemId === it.id).length : 0;
+    const script = it.kind === "system" ? problems.filter((p) => p.subject.id === it.id).length : 0;
     const errors = (s?.errors ?? 0) + script;
     if (errors > 0) return { tone: "error", label: `エラー ${errors} 件` };
     if (s?.warnings) return { tone: "warning", label: `注意 ${s.warnings} 件` };
