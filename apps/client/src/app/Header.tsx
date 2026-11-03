@@ -15,6 +15,8 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
   const { myName, status, session, me } = useApp();
   const location = useLocation();
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
+  const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
+  const placedCount = session?.placements.length ?? 0;
   const others = (session?.participants ?? []).filter((p) => p.id !== me?.id);
 
   return (
@@ -52,6 +54,18 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
           >
             ライブラリ
           </Link>
+        )}
+        {inSession && (
+          <button
+            type="button"
+            className={belongingsOpen ? styles.navActive : styles.navItem}
+            aria-pressed={belongingsOpen}
+            title="セッションに置いてあるものの一覧"
+            onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
+          >
+            持ち物
+            <span className={styles.navCount}>{placedCount}</span>
+          </button>
         )}
       </nav>
       {inSession && session && (

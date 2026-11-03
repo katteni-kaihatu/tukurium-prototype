@@ -95,6 +95,8 @@ interface WorkspaceState {
   commitRev: number;
   /** セッションのライブラリ（作品を置く）パネルを開いているか */
   libraryOpen: boolean;
+  /** セッションに置いてあるものの一覧を開いているか */
+  belongingsOpen: boolean;
   historyOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
@@ -203,6 +205,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     commitRev: 0,
     libraryOpen: false,
+    belongingsOpen: false,
     historyOpen: false,
     sessionOpen: false,
     inspectorOpen: true,

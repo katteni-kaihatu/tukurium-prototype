@@ -16,6 +16,11 @@ const fmt = (v: unknown): string => {
  * 入力途中の文字やスクロール位置は共有しない（要件 §6 の未決定事項。初版は要約のみ）。
  */
 export function summarize(panelId: string): string[] {
+  if (panelId === "session-belongings") {
+    const placements = useApp.getState().session?.placements ?? [];
+    if (placements.length === 0) return ["まだ何も置いてありません"];
+    return [`${placements.length} 個`, ...placements.map((p) => p.outputName)].slice(0, MAX_LINES);
+  }
   const ws = useWorkspace.getState();
   const project = ws.project;
   if (!project) return [];

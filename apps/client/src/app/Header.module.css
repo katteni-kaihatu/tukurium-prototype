@@ -241,6 +241,11 @@
   justify-content: center;
 }
 
+.navCount {
+  composes: count;
+  margin-left: 6px;
+}
+
 .popover {
   position: absolute;
   top: 46px;
