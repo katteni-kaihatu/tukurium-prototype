@@ -1,8 +1,10 @@
 import {
+  compileSystem,
   type Diagnostic,
   type DiagnosticView,
   makeDiagnostic,
   type ProjectDoc,
+  ResourcePathIndex,
 } from "@tukurium/repo-model";
 import type { SystemStatus } from "@tukurium/runtime";
 import { ScriptError, ScriptSandbox } from "@tukurium/script";
@@ -60,11 +62,23 @@ export async function checkScripts(
   const registry = project.registry();
   const problems: Diagnostic[] = [];
   const only = systemIds ? new Set(systemIds) : null;
+  let index: ResourcePathIndex | null = null;
   for (const def of project.systems()) {
     if (only && !only.has(def.id)) continue;
     const code = project.code(def.id)?.toString() ?? "";
+    // import を安定 ID に結び付ける（見つからない・曖昧な import はその行の問題にする）
+    if (code.includes("import")) {
+      index ??= ResourcePathIndex.fromSnapshot(project.snapshot());
+    }
+    const compiled = index
+      ? compileSystem(def.id, code, index)
+      : { ok: true, javascript: code, diagnostics: [] };
+    if (!compiled.ok) {
+      problems.push(...compiled.diagnostics);
+      continue;
+    }
     try {
-      const meta = sb.loadSystem(def.id, code, CHECK_REALM);
+      const meta = sb.loadSystem(def.id, compiled.javascript, CHECK_REALM);
       for (const name of [...meta.query.with, ...meta.query.without]) {
         if (!registry.idOf(name)) {
           problems.push(

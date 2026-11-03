@@ -3,7 +3,9 @@ import {
   checkProjectStructure,
   type Diagnostic,
   type DiagnosticSummary,
+  type QueryItem,
   ResourcePathIndex,
+  readSystemQuery,
   summarizeDiagnostics,
   viewDiagnostics,
 } from "@tukurium/repo-model";
@@ -63,4 +65,20 @@ export function useProjectDiagnostics(): {
     const diagnostics = [...checkProjectStructure(snap, index), ...checkProjectReferences(snap)];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
   }, [project, rev]);
+}
+
+/**
+ * System の Query を読む関数（表示・Entity との照合用）。import した名前も文字列の名前も、
+ * KokoState の ID に読み替える（ADR 0010）。
+ */
+export function useSystemQuery(): (systemId: string) => {
+  with: QueryItem[];
+  without: QueryItem[];
+} {
+  const project = useWorkspace((s) => s.project);
+  const { index } = useProjectDiagnostics();
+  return (systemId) =>
+    project && index
+      ? readSystemQuery(systemId, project.code(systemId)?.toString() ?? "", index)
+      : { with: [], without: [] };
 }

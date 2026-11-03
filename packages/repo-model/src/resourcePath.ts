@@ -161,6 +161,25 @@ export class ResourcePathIndex {
     return this.entries.get(id);
   }
 
+  /**
+   * 表示名で書かれた KokoState（移行の間の書き方）の ID。Built-in と利用者定義を通して、
+   * ちょうど一つだけ当てはまるときに返す。
+   */
+  kokoIdByName(name: string): string | null {
+    const hits = [
+      ...[...this.builtinName].filter(([, n]) => n === name).map(([id]) => id),
+      ...[...this.entries.values()]
+        .filter((e) => e.kind === "kokostate" && e.name === name)
+        .map((e) => e.id),
+    ];
+    return hits.length === 1 ? (hits[0] ?? null) : null;
+  }
+
+  /** 表示名（Built-in も含む） */
+  nameOf(id: string): string | undefined {
+    return this.builtinName.get(id) ?? this.entries.get(id)?.name;
+  }
+
   all(): PathEntry[] {
     return [...this.entries.values()];
   }

@@ -4,10 +4,9 @@ import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import { problemKind, problemPlace } from "./ProblemsList";
-import { parseQuery } from "./queryInfo";
 import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems } from "./useProblems";
+import { useProblems, useSystemQuery } from "./useProblems";
 
 const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
   { type: "number", label: "Number", default: 0 },
@@ -227,6 +226,7 @@ function OutputProperties({ id }: { id: string }) {
 
 function KokoDefProperties({ id }: { id: string }) {
   const { select, openDetail, closeDetail } = useWorkspace();
+  const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
   const { error, safely } = useSafe();
@@ -242,8 +242,8 @@ function KokoDefProperties({ id }: { id: string }) {
 
   const holders = project.entities().filter((e) => id in e.states);
   const queried = project.systems().filter((s) => {
-    const q = parseQuery(project.code(s.id)?.toString() ?? "");
-    return q.with.includes(def.name) || q.without.includes(def.name);
+    const q = queryOf(s.id);
+    return [...q.with, ...q.without].some((k) => k.id === def.id);
   });
 
   return (
@@ -420,6 +420,7 @@ function KokoDefProperties({ id }: { id: string }) {
 
 function SystemProperties({ id }: { id: string }) {
   const { openSystem, select, showProblem, closeDetail } = useWorkspace();
+  const queryOf = useSystemQuery();
   const { error, safely } = useSafe();
   const problems = useProblems().filter((p) => p.subject.id === id);
   const project = useProject();
@@ -427,7 +428,7 @@ function SystemProperties({ id }: { id: string }) {
   const def = project.system(id);
   if (!def) return <p className={ui.empty}>System が見つかりません</p>;
   const editing = canEdit;
-  const q = parseQuery(project.code(id)?.toString() ?? "");
+  const q = queryOf(id);
   const usedBy = project.outputs().filter((o) => o.systems.some((s) => s.id === id));
 
   return (
@@ -476,9 +477,13 @@ function SystemProperties({ id }: { id: string }) {
             {q.with.length === 0 ? (
               <span className={ui.muted}>なし</span>
             ) : (
-              q.with.map((n) => (
-                <span key={n} className={ui.badgeBrand}>
-                  {n}
+              q.with.map((k) => (
+                <span
+                  key={k.id ?? k.name}
+                  className={k.id ? ui.badgeBrand : ui.badgeError}
+                  title={k.id ? undefined : "見つからない KokoState"}
+                >
+                  {k.name}
                 </span>
               ))
             )}
@@ -490,9 +495,13 @@ function SystemProperties({ id }: { id: string }) {
             {q.without.length === 0 ? (
               <span className={ui.muted}>なし</span>
             ) : (
-              q.without.map((n) => (
-                <span key={n} className={ui.badge}>
-                  {n}
+              q.without.map((k) => (
+                <span
+                  key={k.id ?? k.name}
+                  className={k.id ? ui.badge : ui.badgeError}
+                  title={k.id ? undefined : "見つからない KokoState"}
+                >
+                  {k.name}
                 </span>
               ))
             )}

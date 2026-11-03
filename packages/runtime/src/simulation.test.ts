@@ -363,3 +363,54 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     expect(pos[2]).toBeCloseTo(-3, 4);
   });
 });
+
+describe("Simulation：import で書いた System（ADR 0010）", () => {
+  /** Gun を States フォルダに、Shoot を Systems フォルダに入れ、Shoot を import で書き直す */
+  function importSample(code: string): ProjectSnapshot {
+    const snap = gunAndTargetSample();
+    snap.folders = [
+      { id: "f_states", name: "States", parent: null },
+      { id: "f_sys", name: "Systems", parent: null },
+    ];
+    const gun = snap.kokostates.find((k) => k.name === "Gun");
+    if (!gun) throw new Error("Gun がありません");
+    snap.placement = { [gun.id]: "f_states", sys_shoot: "f_sys" };
+    snap.systems = snap.systems.map((s) => (s.id === "sys_shoot" ? { ...s, code } : s));
+    return snap;
+  }
+
+  it("import した KokoState で Query を書き、entity.get で値を読み書きできる", async () => {
+    sim = await Simulation.create(
+      importSample(`import Gun from "../States/Gun.koko";
+import Transform from "@builtin/Transform.koko";
+export default system({
+  query: { with: [Gun, Transform] },
+  onInput(e, ev) {
+    if (ev.action !== "fire" || ev.phase !== "down") return;
+    const gun = e.get(Gun);
+    gun.ammo -= 1;
+    const t = world.get(e.id, Transform);
+    log("pos", t.position.length);
+  },
+});`),
+      "out_range",
+      { realm: "repo1" },
+    );
+    expect(sim.systemStatus().find((s) => s.id === "sys_shoot")).toMatchObject({ error: null });
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(11);
+  });
+
+  it("見つからない import は、その行の読み込みエラーにする", async () => {
+    sim = await Simulation.create(
+      importSample(`export default system({});\nimport Gun from "./Gun.koko";`),
+      "out_range",
+      { realm: "repo1" },
+    );
+    expect(sim.systemStatus().find((s) => s.id === "sys_shoot")).toMatchObject({
+      error: "KokoState「./Gun.koko」が見つかりません",
+      line: 2,
+    });
+  });
+});

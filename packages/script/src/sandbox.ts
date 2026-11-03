@@ -69,6 +69,14 @@ globalThis.system = (def) => {
   if (def === null || typeof def !== "object") throw new TypeError("system() には設定オブジェクトを渡してください");
   return def;
 };
+// import した KokoState（コンパイラが const X = __koko(ID, 名前) に書き換える。ADR 0010）
+// 移行の間は、名前としても使えるようにしておく（Query の with に入れる・e[X]・world.get(id, X)）
+globalThis.__koko = (id, name) => Object.freeze({
+  id, name,
+  toString() { return name; },
+  toJSON() { return name; },
+});
+const __kokoName = (k) => (k !== null && typeof k === "object" && typeof k.name === "string") ? k.name : String(k);
 globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
 globalThis.console = { log: globalThis.log, warn: globalThis.log, error: globalThis.log };
 const __ns = {};
@@ -99,6 +107,8 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
   try {
     for (const e of entities) {
       const view = { id: e.id, ...e.states };
+      // entity.get(Gun)：import した KokoState（または名前）でその値を取る
+      Object.defineProperty(view, "get", { value: (k) => view[__kokoName(k)], enumerable: false });
       fn.call(def, view, ...args);
       for (const k of Object.keys(e.states)) e.states[k] = view[k];
     }
