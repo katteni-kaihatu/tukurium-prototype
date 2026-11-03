@@ -392,6 +392,36 @@
   box-shadow: 0 0 0 2px #fff;
 }
 
+.errorDot[data-tone="warning"],
+.badgeInline[data-tone="warning"] {
+  background: #c98a12;
+}
+
+.errorDot[data-tone="nestedError"],
+.badgeInline[data-tone="nestedError"] {
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 2px #b23b3b,
+    0 0 0 2px #fff;
+}
+
+.errorDot[data-tone="nestedWarning"],
+.badgeInline[data-tone="nestedWarning"] {
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 2px #c98a12,
+    0 0 0 2px #fff;
+}
+
+.badgeInline {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #b23b3b;
+}
+
 .tileName {
   font-size: 12px;
   font-weight: 700;

@@ -1,0 +1,196 @@
+import type { KokoStateDef } from "@tukurium/eks";
+import { BUILTIN_KOKOSTATES, RESOURCE_KIND } from "../builtins";
+import type { ProjectSnapshot } from "../schema";
+import { type Diagnostic, type DiagnosticInput, makeDiagnostic, type ResourceRef } from "./types";
+
+/** リソース参照の検査（ADR 0010）：Material・Entity・アウトプットが指すものがあるか */
+export const REFERENCES_PROVIDER = "references";
+
+type ResKind = "material" | "model" | "image" | "audio";
+const RES_LABEL: Record<ResKind, string> = {
+  material: "マテリアル",
+  model: "モデル",
+  image: "画像",
+  audio: "音声",
+};
+
+export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const push = (d: Omit<DiagnosticInput, "phase" | "provider">) =>
+    out.push(makeDiagnostic({ ...d, phase: "authoring", provider: REFERENCES_PROVIDER }));
+
+  /** リソース ID → 種類（マテリアルと素材） */
+  const resources = new Map<string, ResKind>();
+  for (const m of snap.materials) resources.set(m.id, "material");
+  for (const a of snap.assets ?? []) resources.set(a.id, a.kind);
+  const defs = new Map<string, KokoStateDef>();
+  for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
+  const entities = new Map(snap.entities.map((e) => [e.id, e]));
+  const outputs = new Map(snap.outputs.map((o) => [o.id, o]));
+  const systems = new Set(snap.systems.map((s) => s.id));
+
+  /** 参照を確かめ、問題があれば出す。expected が null なら種類は問わない */
+  const checkResource = (
+    subject: ResourceRef,
+    path: string[],
+    id: string,
+    expected: ResKind | null,
+    what: string,
+    related: ResourceRef[] = [],
+  ) => {
+    const actual = resources.get(id);
+    if (!actual)
+      push({
+        code: "missing-resource",
+        severity: "error",
+        subject,
+        location: { kind: "property", path },
+        related,
+        message: `${what} に指定した${expected ? RES_LABEL[expected] : "リソース"}がありません`,
+        detail: `ID: ${id}`,
+      });
+    else if (expected && actual !== expected)
+      push({
+        code: "wrong-resource-kind",
+        severity: "error",
+        subject,
+        location: { kind: "property", path },
+        related,
+        message: `${what} には${RES_LABEL[expected]}を指定します（いまは${RES_LABEL[actual]}）`,
+      });
+  };
+
+  for (const m of snap.materials)
+    if (m.map)
+      checkResource({ kind: "material", id: m.id }, ["map"], m.map, "image", `「${m.name}」の map`);
+
+  for (const e of snap.entities) {
+    const subject: ResourceRef = { kind: "entity", id: e.id };
+    for (const [kokoId, values] of Object.entries(e.states)) {
+      const def = defs.get(kokoId);
+      if (!def) {
+        push({
+          code: "missing-kokostate",
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: [kokoId] },
+          related: [],
+          message: `「${e.name}」が持っている KokoState の定義がありません`,
+          detail: `ID: ${kokoId}`,
+        });
+        continue;
+      }
+      const related: ResourceRef[] = def.builtin ? [] : [{ kind: "kokostate", id: def.id }];
+      for (const f of def.fields) {
+        const v = values[f.id];
+        if (typeof v !== "string" || v === "") continue;
+        const what = `「${e.name}」の ${def.name}.${f.name}`;
+        if (f.type === "resource")
+          checkResource(
+            subject,
+            [kokoId, f.id],
+            v,
+            RESOURCE_KIND[`${kokoId}/${f.id}`] ?? null,
+            what,
+            related,
+          );
+        else if (f.type === "entity" && !entities.has(v))
+          push({
+            code: "missing-entity",
+            severity: "error",
+            subject,
+            location: { kind: "property", path: [kokoId, f.id] },
+            related,
+            message: `${what} に指定した Entity がありません`,
+            detail: `ID: ${v}`,
+          });
+      }
+    }
+
+    if (!outputs.has(e.output))
+      push({
+        code: "entity-output-missing",
+        severity: "error",
+        subject,
+        location: null,
+        related: [],
+        message: `「${e.name}」が入っているアウトプットがありません`,
+      });
+    if (e.parent !== null) {
+      const parent = entities.get(e.parent);
+      if (!parent)
+        push({
+          code: "entity-parent-missing",
+          severity: "error",
+          subject,
+          location: null,
+          related: [],
+          message: `「${e.name}」の親の Entity がありません`,
+        });
+      else if (parent.output !== e.output)
+        push({
+          code: "entity-parent-other-output",
+          severity: "error",
+          subject,
+          location: null,
+          related: [{ kind: "entity", id: parent.id }],
+          message: `「${e.name}」の親「${parent.name}」が別のアウトプットにあります`,
+        });
+    }
+  }
+
+  // Entity の親子の輪（マージなどで起こりうる）。輪ごとに一件
+  const done = new Set<string>();
+  for (const start of snap.entities) {
+    const trail: string[] = [];
+    let cur: string | null = start.id;
+    while (cur && !done.has(cur) && entities.has(cur)) {
+      const at = trail.indexOf(cur);
+      if (at >= 0) {
+        const [first, ...rest] = trail.slice(at).sort();
+        if (first !== undefined)
+          push({
+            code: "entity-parent-cycle",
+            severity: "error",
+            subject: { kind: "entity", id: first },
+            location: null,
+            related: rest.map((id) => ({ kind: "entity", id })),
+            message: `Entity「${[first, ...rest].map((id) => entities.get(id)?.name ?? id).join("」「")}」が互いの子になっています`,
+          });
+        break;
+      }
+      trail.push(cur);
+      cur = entities.get(cur)?.parent ?? null;
+    }
+    for (const id of trail) done.add(id);
+  }
+
+  for (const o of snap.outputs) {
+    const subject: ResourceRef = { kind: "output", id: o.id };
+    for (const s of o.systems)
+      if (!systems.has(s.id))
+        push({
+          code: "output-system-missing",
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["systems", s.id] },
+          related: [],
+          message: `アウトプット「${o.name}」の System の一つがありません`,
+          detail: `ID: ${s.id}`,
+        });
+    for (const k of o.keep) {
+      const e = entities.get(k.entity);
+      const field = defs.get(k.koko)?.fields.find((f) => f.id === k.field);
+      if (!e || e.output !== o.id || !field || !(k.koko in e.states))
+        push({
+          code: "keep-invalid",
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["keep", k.entity, k.koko, k.field] },
+          related: [],
+          message: `アウトプット「${o.name}」の状態維持マークが、ない値を指しています`,
+        });
+    }
+  }
+  return out;
+}

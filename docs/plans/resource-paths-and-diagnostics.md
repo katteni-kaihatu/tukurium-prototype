@@ -2,7 +2,7 @@
 
 - 状態: **Active**
 - 対象: M0〜M6 完了後のリソース参照・型・診断の再設計
-- 実装状況: Phase 0 完了。Phase 1 完了。Phase 2 は Diagnostic model と構造の Provider まで
+- 実装状況: Phase 0 完了。Phase 1 完了。Phase 2 は Diagnostic model、構造とリソース参照の Provider、リソースごとの集計（`summarizeDiagnostics`）まで。スクリプトの問題の移行と stale / generation が残り
 - 関連 ADR: [0010](../adr/0010-resource-identity-paths-diagnostics.md)（Phase 0 の決定：仮想 import、種類をまたぐ名前の一意性、版ごとの realm、作っている途中の問題では Play を止めない）
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 

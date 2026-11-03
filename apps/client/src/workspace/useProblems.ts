@@ -1,4 +1,11 @@
-import { checkProjectStructure, type Diagnostic, ResourcePathIndex } from "@tukurium/repo-model";
+import {
+  checkProjectReferences,
+  checkProjectStructure,
+  type Diagnostic,
+  type DiagnosticSummary,
+  ResourcePathIndex,
+  summarizeDiagnostics,
+} from "@tukurium/repo-model";
 import { useEffect, useMemo } from "react";
 import { checkScripts, mergeProblems, type Problem } from "./problems";
 import { useWorkspace } from "./store";
@@ -33,20 +40,22 @@ export function useProblems(): Problem[] {
 }
 
 /**
- * 制作データの構造の問題（名前の衝突・フォルダの輪など。ADR 0010）。
+ * 制作データの問題（構造・リソース参照。ADR 0010）と、リソースごとの件数。
  * 各クライアントが同じ制作データから同じ結果を計算するので、保存も配信もしない。
  */
-export function useStructureDiagnostics(): {
+export function useProjectDiagnostics(): {
   diagnostics: Diagnostic[];
   index: ResourcePathIndex | null;
+  summary: Map<string, DiagnosticSummary>;
 } {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(() => {
-    if (!project) return { diagnostics: [], index: null };
+    if (!project) return { diagnostics: [], index: null, summary: new Map() };
     const snap = project.snapshot();
     const index = ResourcePathIndex.fromSnapshot(snap);
-    return { diagnostics: checkProjectStructure(snap, index), index };
+    const diagnostics = [...checkProjectStructure(snap, index), ...checkProjectReferences(snap)];
+    return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
   }, [project, rev]);
 }
