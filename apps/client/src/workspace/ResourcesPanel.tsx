@@ -4,6 +4,7 @@ import { ASSET_ACCEPT, assetUrl, uploadAsset } from "./assets";
 import { useCanEdit, useProject } from "./hooks";
 import { type Selection, useWorkspace } from "./store";
 import ui from "./ui.module.css";
+import { useProblems } from "./useProblems";
 
 type Tab = "koko" | "system" | "material" | "asset";
 
@@ -21,6 +22,7 @@ export function ResourcesPanel() {
   const { selection, select, openSystem } = useWorkspace();
   const project = useProject();
   const canEdit = useCanEdit();
+  const problems = useProblems();
   useWorkspace((s) => s.rev);
   const [tab, setTab] = useState<Tab>("koko");
   const [menu, setMenu] = useState(false);
@@ -167,7 +169,11 @@ export function ResourcesPanel() {
                 onDoubleClick={() => it.kind === "system" && openSystem(it.id)}
               >
                 <span className={ui.itemName}>{it.name}</span>
-                <span className={ui.badge}>{it.sub}</span>
+                {it.kind === "system" && problems.some((p) => p.systemId === it.id) ? (
+                  <span className={ui.badgeError}>エラー</span>
+                ) : (
+                  <span className={ui.badge}>{it.sub}</span>
+                )}
               </button>
             </li>
           ))}

@@ -100,8 +100,10 @@ export const api = {
   repos: (owner?: string) =>
     call<RepoMeta[]>("GET", owner ? `/api/repos?owner=${encodeURIComponent(owner)}` : "/api/repos"),
   repo: (id: string) => call<RepoDetail>("GET", `/api/repos/${id}`),
-  updateRepo: (id: string, body: { description?: string; visibility?: "public" | "private" }) =>
-    call<RepoMeta>("PATCH", `/api/repos/${id}`, body),
+  updateRepo: (
+    id: string,
+    body: { name?: string; description?: string; visibility?: "public" | "private" },
+  ) => call<RepoMeta>("PATCH", `/api/repos/${id}`, body),
   commits: (id: string) => call<CommitInfo[]>("GET", `/api/repos/${id}/commits`),
   files: (id: string, commit?: string) =>
     call<Record<string, string>>(

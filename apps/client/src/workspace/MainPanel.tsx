@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
+import { api } from "../net/api";
 import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
+import { ProblemsList } from "./ProblemsList";
 import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -10,7 +13,7 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
 /**
  * ワークスペースのメインパネル：アウトプットの切り替え、再生・一時停止・停止、ログ。
  * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
- * セッションに出す・適用・リンク先一覧は SessionLinks。コミット（M4）・History / Releases（M4）は後の段階で。
+ * セッションに出す・適用・リンク先一覧は SessionLinks、スクリプトの問題は ProblemsList。
  */
 export function MainPanel() {
   const ws = useWorkspace();
@@ -26,9 +29,7 @@ export function MainPanel() {
   return (
     <>
       <div className={styles.head}>
-        <span className={styles.repo}>
-          <b>{info?.name ?? project.name}</b>
-        </span>
+        <RepoName repoId={info?.repoId ?? null} name={info?.name ?? project.name} />
         <span className={styles.branch}>main</span>
         {role && (
           <span className={role === "viewer" ? ui.badgeWarn : ui.badgeBrand}>
@@ -139,6 +140,8 @@ export function MainPanel() {
           : "ホストを務められる人（管理権限）がいないため、再生できません"}
       </p>
 
+      <ProblemsList />
+
       <SessionLinks />
 
       <details className={styles.details} open={errors.length > 0 || undefined}>
@@ -189,5 +192,68 @@ export function MainPanel() {
         </div>
       </details>
     </>
+  );
+}
+
+/** プロジェクト名。持ち主はその場で変えられる（Enter で決定、Esc でやめる） */
+function RepoName({ repoId, name }: { repoId: string | null; name: string }) {
+  const me = useApp((s) => s.me);
+  const [owner, setOwner] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setOwner(null);
+    if (!repoId) return;
+    api.repo(repoId).then(
+      (r) => setOwner(r.owner),
+      () => setOwner(null),
+    );
+  }, [repoId]);
+  const canRename = repoId !== null && owner !== null && owner === me?.id;
+
+  const commit = () => {
+    const next = draft?.trim() ?? "";
+    setDraft(null);
+    if (!repoId || !next || next === name) return;
+    api.updateRepo(repoId, { name: next }).then(
+      () => setError(null),
+      (e: Error) => setError(e.message),
+    );
+  };
+
+  if (draft !== null) {
+    return (
+      <input
+        className={ui.input}
+        aria-label="プロジェクト名"
+        value={draft}
+        maxLength={64}
+        // biome-ignore lint/a11y/noAutofocus: 名前の編集を始めた直後に入力できるように
+        autoFocus
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setDraft(null);
+        }}
+        style={{ width: 200 }}
+      />
+    );
+  }
+  return (
+    <span className={styles.repo}>
+      <b title={error ?? undefined}>{name}</b>
+      {canRename && (
+        <button
+          type="button"
+          className={ui.iconBtn}
+          aria-label="プロジェクト名を変える"
+          title="プロジェクト名を変える"
+          onClick={() => setDraft(name)}
+        >
+          ✎
+        </button>
+      )}
+    </span>
   );
 }

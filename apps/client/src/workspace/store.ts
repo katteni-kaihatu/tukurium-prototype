@@ -13,6 +13,7 @@ import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
 import type { WorkspaceAnchor } from "./anchor";
+import { mergeProblems, type Problem, runProblems } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
 export type Selection =
@@ -53,6 +54,14 @@ interface WorkspaceState {
   remote: { world: World; names: Record<string, string> } | null;
   simRev: number;
   systemStatus: SystemStatus[];
+  /** 編集中の確認で見つかった問題（構文など） */
+  checkProblems: Problem[];
+  /** 実行して止まった System（次の Play まで残す。Stop しても消さない） */
+  runProblems: Problem[];
+  /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
+  jumpTo: { systemId: string; line: number | null; seq: number } | null;
+  /** 問題の場所をエディタで開く */
+  showProblem(p: Problem): void;
   logs: WorkspaceLog[];
   openSystems: string[];
   activeSystem: string | null;
@@ -127,6 +136,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     remote: null,
     simRev: 0,
     systemStatus: [],
+    checkProblems: [],
+    runProblems: [],
+    jumpTo: null,
+    showProblem: (p) => {
+      get().openSystem(p.systemId);
+      set((s) => ({
+        jumpTo: { systemId: p.systemId, line: p.line, seq: (s.jumpTo?.seq ?? 0) + 1 },
+      }));
+    },
     logs: [],
     openSystems: [],
     activeSystem: null,
@@ -181,6 +199,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         logs: [],
         openSystems: [],
         activeSystem: null,
+        checkProblems: [],
+        runProblems: [],
+        jumpTo: null,
       });
       client().send({ t: "ws.open", workspaceId });
     },
@@ -206,6 +227,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         remote: null,
         mode: "edit",
         selection: null,
+        checkProblems: [],
+        runProblems: [],
+        jumpTo: null,
         openSystems: [],
         activeSystem: null,
       });
@@ -456,3 +480,13 @@ function fromB64(s: string): Uint8Array {
 // 開発時のみ：E2E テストやデバッグからストアを参照できるようにする
 if (import.meta.env.DEV)
   (window as { __workspace?: typeof useWorkspace }).__workspace = useWorkspace;
+
+// 実行して止まった System を、Stop した後も「問題」に残す。次の Play で消す
+useWorkspace.subscribe((s, prev) => {
+  if (s.mode !== "edit" && prev.mode === "edit") {
+    useWorkspace.setState({ runProblems: runProblems(s.systemStatus) });
+  } else if (s.systemStatus !== prev.systemStatus && s.systemStatus.some((x) => x.error)) {
+    const merged = mergeProblems(runProblems(s.systemStatus), s.runProblems);
+    if (merged.length !== s.runProblems.length) useWorkspace.setState({ runProblems: merged });
+  }
+});

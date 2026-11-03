@@ -153,6 +153,7 @@ describe("Simulation：System の扱い", () => {
     const status = Object.fromEntries(sim.systemStatus().map((s) => [s.id, s]));
     expect(status.sys_a?.enabled).toBe(false);
     expect(status.sys_a?.error).toMatch(/boom/);
+    expect(status.sys_a?.line).toBe(1);
     expect(status.sys_loop?.error).toMatch(/時間制限/);
     expect(sim.world.get("e1", "ks_c")?.n).toBe(2);
   });

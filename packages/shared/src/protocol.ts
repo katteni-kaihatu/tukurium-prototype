@@ -97,6 +97,15 @@ export const SoundEvent = z.object({
   volume: z.number(),
 });
 
+/** System の状態（止まった理由と行） */
+export const SystemStatusInfo = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  error: z.string().nullable(),
+  line: z.number().int().nullable().default(null),
+});
+
 /** ホストが配信する実行状態。world は EKS の WorldSnapshot。 */
 export const PlayFrame = z.object({
   sounds: z.array(SoundEvent).max(32).optional(),
@@ -105,14 +114,7 @@ export const PlayFrame = z.object({
   time: z.number(),
   world: z.unknown(),
   names: z.record(z.string(), z.string()),
-  status: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      enabled: z.boolean(),
-      error: z.string().nullable(),
-    }),
-  ),
+  status: z.array(SystemStatusInfo),
 });
 export type PlayFrame = z.infer<typeof PlayFrame>;
 
@@ -124,14 +126,7 @@ export const SessionFrame = z.object({
   names: z.record(z.string(), z.string()),
   /** 表示用のマテリアル（ID はリポジトリごとに付け替え済み） */
   materials: z.array(z.unknown()),
-  status: z.array(
-    z.object({
-      id: z.string(),
-      name: z.string(),
-      enabled: z.boolean(),
-      error: z.string().nullable(),
-    }),
-  ),
+  status: z.array(SystemStatusInfo),
 });
 export type SessionFrame = z.infer<typeof SessionFrame>;
 

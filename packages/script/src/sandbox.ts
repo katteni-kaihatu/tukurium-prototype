@@ -45,10 +45,20 @@ export class ScriptError extends Error {
     message: string,
     readonly systemId: string | null,
     readonly kind: "load" | "runtime" | "timeout" | "memory",
+    /** スクリプトの何行目か（分かるときだけ。1 始まり） */
+    readonly line: number | null = null,
   ) {
     super(message);
     this.name = "ScriptError";
   }
+}
+
+/** QuickJS のスタックから、その System のファイルの行番号を取り出す */
+export function lineInStack(stack: string | undefined, systemId: string | null): number | null {
+  if (!stack || !systemId) return null;
+  const esc = systemId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`/${esc}\\.js:(\\d+)`).exec(stack);
+  return m ? Number(m[1]) : null;
 }
 
 const PRELUDE = (hostNames: string[]) => `
@@ -297,7 +307,9 @@ export class ScriptSandbox {
     kind: "load" | "runtime",
   ): QuickJSHandle {
     if (result.error) {
-      const err = vm.dump(result.error) as { name?: string; message?: string } | string;
+      const err = vm.dump(result.error) as
+        | { name?: string; message?: string; stack?: string }
+        | string;
       result.error.dispose();
       const message =
         typeof err === "string" ? err : `${err.name ?? "Error"}: ${err.message ?? ""}`;
@@ -315,7 +327,8 @@ export class ScriptSandbox {
       if (/out of memory/i.test(message)) {
         throw new ScriptError("メモリ上限を超えたため停止しました", systemId, "memory");
       }
-      throw new ScriptError(message, systemId, kind);
+      const line = typeof err === "object" ? lineInStack(err.stack, systemId) : null;
+      throw new ScriptError(message, systemId, kind, line);
     }
     return result.value;
   }

@@ -400,10 +400,40 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
 }
 
 function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
+  const [name, setName] = useState(repo.name);
   const [description, setDescription] = useState(repo.description);
+  const [error, setError] = useState<string | null>(null);
+  const save = (body: { name?: string; description?: string }) => {
+    setError(null);
+    void api.updateRepo(repo.id, body).then(onChange, (e: Error) => setError(e.message));
+  };
   return (
     <section className={styles.card} aria-label="設定">
       <h2 className={styles.h2}>General</h2>
+      <div className={styles.field}>
+        <label htmlFor="repo-name">プロジェクト名</label>
+        <input
+          id="repo-name"
+          className={styles.input}
+          value={name}
+          maxLength={64}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={styles.btn}
+          disabled={!name.trim() || name.trim() === repo.name}
+          onClick={() => save({ name: name.trim() })}
+        >
+          名前を変える
+        </button>
+        <span className={styles.sub}>
+          開いているワークスペースにもすぐ反映されます。履歴には次のコミットで入ります。
+        </span>
+      </div>
+      {error && <p className={styles.error}>{error}</p>}
       <div className={styles.field}>
         <label htmlFor="repo-desc">説明</label>
         <textarea
@@ -414,11 +444,7 @@ function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
         />
       </div>
       <div className={styles.row}>
-        <button
-          type="button"
-          className={styles.btn}
-          onClick={() => void api.updateRepo(repo.id, { description }).then(onChange)}
-        >
+        <button type="button" className={styles.btn} onClick={() => save({ description })}>
           保存
         </button>
       </div>

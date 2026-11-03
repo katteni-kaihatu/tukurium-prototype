@@ -137,6 +137,7 @@ export class SessionEngine {
     this.controller.update(dt);
     this.avatars.update(dt);
     this.remotePanels.update();
+    this.panels.update(this.camera);
     for (const fn of this.frameListeners) fn(dt);
     this.renderer.render(this.scene, this.camera);
     this.cssRenderer.render(this.scene, this.camera);

@@ -44,6 +44,8 @@ export class PanelSpace {
     if (!p) {
       const wrapper = document.createElement("div");
       wrapper.style.pointerEvents = "auto";
+      // 裏から見たときは表示もクリックもしない（鏡文字のパネルがクリックを奪わないように）
+      wrapper.style.backfaceVisibility = "hidden";
       const object = new CSS3DObject(wrapper);
       object.scale.setScalar(PANEL_METERS_PER_PX);
       const occluder = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.occluderMaterial);
@@ -73,6 +75,23 @@ export class PanelSpace {
     p.occluder.geometry.dispose();
     p.wrapper.remove();
     this.placed.delete(id);
+  }
+
+  /**
+   * 毎フレーム：カメラの後ろ・すぐ近くのパネルを隠す。
+   * CSS の透視投影では、カメラの後ろの要素が画面いっぱいに広がってクリックを奪うことがある。
+   */
+  update(camera: THREE.Camera): void {
+    if (this.placed.size === 0) return;
+    const eye = camera.getWorldPosition(new THREE.Vector3());
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const to = new THREE.Vector3();
+    for (const p of this.placed.values()) {
+      to.copy(p.object.position).sub(eye);
+      const visible = to.dot(forward) > 0.3;
+      const v = visible ? "" : "hidden";
+      if (p.wrapper.style.visibility !== v) p.wrapper.style.visibility = v;
+    }
   }
 
   transformOf(id: string): PanelTransform | undefined {

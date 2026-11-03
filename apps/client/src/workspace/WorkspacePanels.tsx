@@ -20,6 +20,7 @@ import { ResourcesPanel } from "./ResourcesPanel";
 import { useWorkspace } from "./store";
 import { summarize } from "./summary";
 import ui from "./ui.module.css";
+import { useScriptCheck } from "./useProblems";
 
 const MAIN: PanelSpec = {
   id: "ws-main",
@@ -54,6 +55,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const ready = useWorkspace((s) => s.ready && s.project !== null);
   const hasEditor = useWorkspace((s) => s.openSystems.length > 0);
   const hidden = useWorkspace((s) => s.panelsHidden);
+  useScriptCheck();
   const [members, setMembers] = useState(false);
 
   const historyOpen = useWorkspace((s) => s.historyOpen);

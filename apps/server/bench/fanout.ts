@@ -1,6 +1,6 @@
 // サーバーの中継の重さを、参加人数を変えて測る（サーバーを別に起動しておく）。
 //   PORT=8799 node dist/main.js &
-//   npx tsx bench/fanout.ts ws://localhost:8799/ws
+//   pnpm bench:server ws://localhost:8799/ws
 // 全員が位置を 10Hz で送り、持ち主（セッションのホスト）が世界の状態（約 40KB ≒ 100 Entity）を 15Hz で配る。
 // 位置が他の全員に届くまでの時間（中央値・95 パーセンタイル）を出す。
 import { PROTOCOL_VERSION } from "@tukurium/shared";
