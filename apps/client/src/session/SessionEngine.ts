@@ -175,6 +175,13 @@ export class SessionEngine {
   private mouse = { x: 0, y: 0 };
   /** 照準でクリックを渡している要素（mousedown の相手） */
   private pressed: Element | null = null;
+  /** 照準のクリックが、何回目の連続クリックか（1 回・2 回・3 回） */
+  private aimedDetail = 1;
+  /** 連続クリックの 1 回目。あいだに別のパネルが被さっても、同じ相手へ dblclick を渡す */
+  private clickAnchor: Element | null = null;
+  private clickAnchorAt = 0;
+  private clickAnchorYaw = 0;
+  private clickAnchorPitch = 0;
 
   private ndc = (): THREE.Vector2 => {
     if (this.controller.locked) return new THREE.Vector2(0, 0);
@@ -219,20 +226,10 @@ export class SessionEngine {
         const id = this.panels.idOf(el);
         if (id) this.panels.startMove(id, this.camera, this.ndc);
       } else if (e.button === 0) {
-        this.pressed = el;
-        const c = this.center();
-        // detail が 0 だと、コードエディタは行全体の選択とみなしてカーソルを出さない
-        const init = {
-          bubbles: true,
-          cancelable: true,
-          clientX: c.x,
-          clientY: c.y,
-          button: 0,
-          detail: 1,
-        };
-        el.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1 }));
-        el.dispatchEvent(new MouseEvent("mousedown", init));
-        const focusable = el.closest<HTMLElement>(
+        const target = this.aimedClickTarget(el);
+        this.pressed = target;
+        this.forwardAimed(target, "down", this.aimedDetail);
+        const focusable = target.closest<HTMLElement>(
           "input, textarea, select, button, a[href], [contenteditable='true'], [tabindex]",
         );
         focusable?.focus();
@@ -270,20 +267,8 @@ export class SessionEngine {
     }
     if (!this.controller.locked) return;
     if (e.button === 0 && this.pressed) {
-      const el = this.aimedPanelElement() ?? this.pressed;
-      const c = this.center();
-      const init = {
-        bubbles: true,
-        cancelable: true,
-        clientX: c.x,
-        clientY: c.y,
-        button: 0,
-        detail: 1,
-      };
-      el.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerId: 1 }));
-      el.dispatchEvent(new MouseEvent("mouseup", init));
-      if (el === this.pressed || this.pressed.contains(el) || el.contains(this.pressed))
-        (el as HTMLElement).click?.();
+      // 押した相手へ離す。離す瞬間の照準は、あいだに開いたパネルで別の要素になる
+      this.forwardAimed(this.pressed, "up", this.aimedDetail);
       this.pressed = null;
       return;
     }
@@ -298,6 +283,65 @@ export class SessionEngine {
   private onContextMenu = (e: MouseEvent): void => {
     if (this.controller.locked || this.container.contains(e.target as Node)) e.preventDefault();
   };
+
+  /**
+   * 連続クリックの相手。
+   * 1 回目で別のパネル（詳細など）が開くと、2 回目の照準はそのパネルに乗ってしまう。
+   * 視点が動いておらず、照準が別のパネルに移ったときだけ、最初のパネルへ届ける。
+   * 同じパネルの中（コードの別の文字など）は、いま照準がある要素へ届ける。
+   */
+  private aimedClickTarget(el: Element): Element {
+    const now = performance.now();
+    const yaw = this.controller.yaw;
+    const pitch = this.controller.pitch;
+    const anchor = this.clickAnchor;
+    const still =
+      !!anchor?.isConnected &&
+      now - this.clickAnchorAt < 500 &&
+      Math.abs(yaw - this.clickAnchorYaw) < 0.03 &&
+      Math.abs(pitch - this.clickAnchorPitch) < 0.03;
+    const anchorPanel = anchor ? this.panels.idOf(anchor) : null;
+    const covered = still && anchorPanel !== null && anchorPanel !== this.panels.idOf(el);
+    if (covered && anchor) {
+      this.aimedDetail = Math.min(3, this.aimedDetail + 1);
+      return anchor;
+    }
+    this.aimedDetail = still ? Math.min(3, this.aimedDetail + 1) : 1;
+    if (!still) {
+      this.clickAnchorAt = now;
+      this.clickAnchorYaw = yaw;
+      this.clickAnchorPitch = pitch;
+    }
+    this.clickAnchor = el;
+    return el;
+  }
+
+  /**
+   * 照準のクリックをパネルへ渡す。
+   * detail が 0 だとコードエディタは行全体の選択になる。
+   * 2 回目のクリックでは dblclick も渡す（リソースのスクリプトを開くため）。
+   */
+  private forwardAimed(el: Element, phase: "down" | "up", detail: number): void {
+    const c = this.center();
+    const init: MouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      clientX: c.x,
+      clientY: c.y,
+      button: 0,
+      buttons: phase === "down" ? 1 : 0,
+      detail,
+    };
+    if (phase === "down") {
+      el.dispatchEvent(new PointerEvent("pointerdown", { ...init, pointerId: 1 }));
+      el.dispatchEvent(new MouseEvent("mousedown", init));
+      return;
+    }
+    el.dispatchEvent(new PointerEvent("pointerup", { ...init, pointerId: 1 }));
+    el.dispatchEvent(new MouseEvent("mouseup", init));
+    el.dispatchEvent(new MouseEvent("click", init));
+    if (detail === 2) el.dispatchEvent(new MouseEvent("dblclick", init));
+  }
 
   /** ホイールの量をメートルにする。上へ回す（deltaY が負）と奥へ動かす */
   private wheelMeters(e: WheelEvent): number {

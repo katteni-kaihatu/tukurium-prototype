@@ -16,12 +16,11 @@ import type { WorkspaceAnchor } from "./anchor";
 import { mergeProblems, type Problem, runProblems } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
-export type Selection =
-  | { kind: "entity"; id: string }
-  | { kind: "output"; id: string }
-  | { kind: "koko"; id: string }
-  | { kind: "system"; id: string }
-  | { kind: "material"; id: string };
+/** Hierarchy で選んだもの。Inspector の右側に出る */
+export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: string };
+
+/** KokoState・マテリアル・スクリプト。Inspector とは別の詳細パネルで開く */
+export type DetailTarget = { kind: "koko" | "system" | "material"; id: string };
 
 export type Mode = PlayMode;
 export type WorkspaceLog = LogEntry & { seq: number };
@@ -47,6 +46,8 @@ interface WorkspaceState {
   rev: number;
   outputId: string;
   selection: Selection | null;
+  /** 開いている詳細（KokoState・マテリアル・スクリプト）。null ならパネルを出さない */
+  detail: (DetailTarget & { seq: number }) | null;
   mode: Mode;
   /** ホストのときだけ：実行中の Simulation */
   sim: Simulation | null;
@@ -87,6 +88,8 @@ interface WorkspaceState {
   open(workspaceId: string): void;
   leave(): void;
   select(sel: Selection | null): void;
+  openDetail(target: DetailTarget): void;
+  closeDetail(): void;
   setOutput(id: string): void;
   play(): void;
   pause(): void;
@@ -100,6 +103,9 @@ interface WorkspaceState {
    */
   editorPlace: { mode: "2d" | "3d"; seq: number } | null;
   placeEditor(mode: "2d" | "3d"): void;
+  /** 詳細パネルも、開いた元のパネルと同じ置き方にする */
+  detailPlace: { mode: "2d" | "3d"; seq: number } | null;
+  placeDetail(mode: "2d" | "3d"): void;
   closeSystem(id: string): void;
   togglePanels(): void;
   clearLogs(): void;
@@ -137,6 +143,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     rev: 0,
     outputId: "",
     selection: null,
+    detail: null,
     mode: "edit",
     sim: null,
     remote: null,
@@ -155,6 +162,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     openSystems: [],
     activeSystem: null,
     editorPlace: null,
+    detailPlace: null,
     panelsHidden: false,
     viewPoint: null,
     incomingSounds: [],
@@ -201,12 +209,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         ready: false,
         error: null,
         selection: null,
+        detail: null,
         mode: "edit",
         remote: null,
         logs: [],
         openSystems: [],
         activeSystem: null,
         editorPlace: null,
+        detailPlace: null,
         checkProblems: [],
         runProblems: [],
         jumpTo: null,
@@ -235,16 +245,22 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         remote: null,
         mode: "edit",
         selection: null,
+        detail: null,
         checkProblems: [],
         runProblems: [],
         jumpTo: null,
         openSystems: [],
         activeSystem: null,
         editorPlace: null,
+        detailPlace: null,
       });
     },
 
     select: (selection) => set({ selection }),
+
+    openDetail: (target) => set((s) => ({ detail: { ...target, seq: (s.detail?.seq ?? 0) + 1 } })),
+
+    closeDetail: () => set({ detail: null }),
 
     setOutput: (outputId) => {
       if (get().mode !== "edit") get().stop();
@@ -270,6 +286,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     placeEditor: (mode) =>
       set((s) => ({ editorPlace: { mode, seq: (s.editorPlace?.seq ?? 0) + 1 } })),
+
+    placeDetail: (mode) =>
+      set((s) => ({ detailPlace: { mode, seq: (s.detailPlace?.seq ?? 0) + 1 } })),
 
     closeSystem: (id) =>
       set((s) => {

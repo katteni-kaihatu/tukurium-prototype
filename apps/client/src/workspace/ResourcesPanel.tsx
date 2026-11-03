@@ -36,12 +36,14 @@ const loadView = (): View => {
 /**
  * Resources：リポジトリの KokoState 定義・System・マテリアル・素材（アウトプット間で共有）。
  * デザインどおり、左にフォルダの木、右にいまのフォルダの中身を並べる。
- * - クリックで選ぶ（Inspector に出る）、ダブルクリックで開く（フォルダに入る・コードを開く）
+ * - クリックで選ぶ（KokoState・マテリアル・スクリプトは詳細パネルで開く）
+ * - ダブルクリックで開く（フォルダに入る・コードを開く）
  * - ドラッグして、フォルダ（木か中身のフォルダ）へ移せる
  * - フォルダは並べ方だけの情報で、実行には関わらない（コミットには入る）
  */
 export function ResourcesPanel() {
-  const { selection, select, openSystem, placeEditor } = useWorkspace();
+  const { openSystem, placeEditor, openDetail, placeDetail } = useWorkspace();
+  const detailId = useWorkspace((s) => s.detail?.id ?? null);
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
@@ -109,11 +111,18 @@ export function ResourcesPanel() {
   const hasError = (it: ResItem) =>
     it.kind === "system" && problems.some((p) => p.systemId === it.id);
 
+  /** このパネルが 3D なら詳細も 3D、2D なら 2D で開く */
+  const showDetail = (kind: "koko" | "system" | "material", id: string) => {
+    const mode =
+      root.current?.closest("[data-mode]")?.getAttribute("data-mode") === "3d" ? "3d" : "2d";
+    placeDetail(mode);
+    openDetail({ kind, id });
+  };
   const pick = (it: ResItem) => {
     setSel(it.id);
-    if (it.kind === "koko" || it.kind === "builtin") select({ kind: "koko", id: it.id });
-    else if (it.kind === "system") select({ kind: "system", id: it.id });
-    else if (it.kind === "material") select({ kind: "material", id: it.id });
+    if (it.kind === "koko" || it.kind === "builtin") showDetail("koko", it.id);
+    else if (it.kind === "system") showDetail("system", it.id);
+    else if (it.kind === "material") showDetail("material", it.id);
   };
   /** このパネルが 3D ならコードも 3D、2D なら 2D で開く */
   const openCode = (id: string) => {
@@ -127,9 +136,8 @@ export function ResourcesPanel() {
     else if (it.kind === "system") openCode(it.id);
     else pick(it);
   };
-  // ここで選んだもの。まだ何も選んでいなければ、Inspector で選んでいるもの
-  const isSelected = (it: ResItem) =>
-    sel !== null ? sel === it.id : selection !== null && selection.id === it.id;
+  // ここで選んだもの。フォルダを移したあとなど、選んでいなければ開いている詳細
+  const isSelected = (it: ResItem) => (sel !== null ? sel === it.id : detailId === it.id);
 
   /** 作ったものは、いまのフォルダに入れる */
   const placeHere = (id: string) => {

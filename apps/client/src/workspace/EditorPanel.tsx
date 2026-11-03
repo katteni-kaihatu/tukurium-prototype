@@ -4,11 +4,14 @@ import { Decoration, EditorView } from "@codemirror/view";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
+import { installFlatEditorCoords } from "../panels/editorCoords";
 import { useProject } from "./hooks";
 import { problemPlace } from "./ProblemsList";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems } from "./useProblems";
+
+installFlatEditorCoords();
 
 /**
  * System のコードエディタ。CodeMirror を制作データの Y.Text に結びつける
