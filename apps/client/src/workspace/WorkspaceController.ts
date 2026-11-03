@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import type { SessionEngine } from "../session/SessionEngine";
+import { useSessionWorld } from "../session/sessionWorld";
 import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
 import { queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
@@ -58,6 +59,7 @@ export class WorkspaceController {
   private uiTimer = 0;
   private anchorKey = "";
   private holdTimer = 0;
+  private turning = false;
   private previewKey = "";
   private previewTimer = 0;
   private readonly disposers: (() => void)[] = [];
@@ -108,6 +110,7 @@ export class WorkspaceController {
   }
 
   dispose(): void {
+    this.endTurn();
     for (const d of this.disposers) d();
     this.view.dispose();
     this.bounds.removeFromParent();
@@ -261,6 +264,7 @@ export class WorkspaceController {
 
   /** 持っている物があれば、視点を間隔をあけて送る（ほかの人にも持っている位置が見える） */
   private sendHold(dt: number): void {
+    if (this.turning && !this.holdingPlay()) this.endTurn();
     const ws = useWorkspace.getState();
     this.holdTimer += dt;
     if (ws.mode !== "play" || this.holdTimer < HOLD_SEC) return;
@@ -268,6 +272,35 @@ export class WorkspaceController {
     const world = ws.runtime()?.world;
     if (!world || !holdsSomething(world, this.me())) return;
     ws.input({ action: "hold", phase: "down", player: this.me(), ...this.viewRay() });
+  }
+
+  /** 再生中に、自分が物を持っているか */
+  private holdingPlay(): boolean {
+    const ws = useWorkspace.getState();
+    if (ws.mode !== "play") return false;
+    const world = ws.runtime()?.world;
+    return !!world && holdsSomething(world, this.me());
+  }
+
+  /** E を押している間、見回すのを止めて、マウスで持っている物を回す */
+  private beginTurn(): void {
+    this.turning = true;
+    this.engine.controller.setLookOverride((dx, dy) => {
+      const s = this.engine.controller.sensitivity;
+      useWorkspace.getState().input({
+        action: "twist",
+        phase: "down",
+        player: this.me(),
+        pointer: [-dx * s, -dy * s],
+        ...this.viewRay(),
+      });
+    });
+  }
+
+  private endTurn(): void {
+    if (!this.turning) return;
+    this.turning = false;
+    this.engine.controller.setLookOverride(null);
   }
 
   private refreshUi(dt: number, status: ReturnType<Simulation["systemStatus"]>): void {
@@ -305,6 +338,11 @@ export class WorkspaceController {
   private onPointer(button: number, phase: "down" | "up"): void {
     const ws = useWorkspace.getState();
     if (ws.mode === "play" && button === 0) {
+      // 持っているときの左クリックは、撃たずに傾きを直す
+      if (phase === "down" && this.holdingPlay()) {
+        ws.input({ action: "align", phase, player: this.me(), ...this.viewRay() });
+        return;
+      }
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });
       return;
     }
@@ -314,6 +352,9 @@ export class WorkspaceController {
       return;
     }
     if (ws.mode === "edit" && !ws.panelsHidden && button === 0 && phase === "down") {
+      // セッションの物を持っている左クリックは、傾きを直すほうに使う
+      const session = useSessionWorld.getState().view()?.world;
+      if (session && holdsSomething(session, this.me())) return;
       this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
       const id = this.view.pick(this.raycaster);
       ws.select(id ? { kind: "entity", id } : null);
@@ -327,6 +368,12 @@ export class WorkspaceController {
     if (e.code === "Tab" && e.type === "keydown") {
       e.preventDefault();
       ws.togglePanels();
+      return;
+    }
+    // 持っている間の E は use ではなく、マウスで物を回す
+    if (e.code === "KeyE" && this.holdingPlay()) {
+      if (e.type === "keydown") this.beginTurn();
+      else this.endTurn();
       return;
     }
     const action = KEY_ACTIONS[e.code];

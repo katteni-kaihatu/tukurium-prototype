@@ -70,8 +70,10 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     name: "Held",
     builtin: true,
     fields: [
-      /** Play 中、自分の視点に対してこの位置に持つ（m） */
+      /** 視点に対する位置（m）。右クリックで持ったときは、持った瞬間の位置を入れる */
       { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
+      /** 視点に対する角度（度）。右クリックで持ったときは、持った瞬間の角度を入れる */
+      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
       /** 持っている人の ID。空なら、見ている人みんなが自分の手に持つ（銃のサンプルなど） */
       { id: "player", name: "player", type: "string", default: "" },
     ],
@@ -81,7 +83,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     name: "Grabbable",
     builtin: true,
     fields: [
-      /** 右クリックで持ったとき、目の前のこの距離（m）に持つ */
+      /** 以前、持ったときに目の前へ寄せる距離だった。いまは持った位置を保つので使わない */
       { id: "distance", name: "distance", type: "number", default: 1.2 },
     ],
   },

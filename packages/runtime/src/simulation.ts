@@ -24,7 +24,13 @@ import {
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
-import { worldTransform } from "./transform";
+import {
+  placeFromView,
+  poseInView as poseRelativeToView,
+  straightenRotation,
+  twistRotation,
+  worldTransform,
+} from "./transform";
 
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
 /** 右クリックで物を持てる距離（m） */
@@ -37,6 +43,8 @@ export interface InputEvent {
   origin: Vec3;
   direction: Vec3;
   player: string;
+  /** マウスの移動を角度（ラジアン、[ヨー, ピッチ]）にしたもの。持っている物を回すとき */
+  pointer?: [number, number];
 }
 
 export interface SystemStatus {
@@ -452,22 +460,38 @@ export class Simulation {
   }
 
   /**
-   * 組み込みの入力：右クリック（grab）で Grabbable を持つ・放す、持っている間の視点（hold）で動かす。
-   * 処理したら true（スクリプトの onInput には渡さない）。
+   * 組み込みの入力。処理したら true（スクリプトの onInput には渡さない）。
+   * - grab：右クリックで Grabbable を持つ・放す。持った瞬間の位置と角度は変えない
+   * - hold：持っている物を、視点との位置関係を保ったまま動かす
+   * - align：傾きを直し、上下の軸（Y）の向きだけ残す
+   * - twist：マウスの動きで、持っている物の角度を変える
    */
   private builtinInput(ev: InputEvent): boolean {
-    if (ev.action !== "grab" && ev.action !== "hold") return false;
-    const mine = this.world
-      .query({ with: [BUILTIN.Grabbable, BUILTIN.Held] })
-      .filter((id) => this.world.get(id, BUILTIN.Held)?.player === ev.player);
+    if (
+      ev.action !== "grab" &&
+      ev.action !== "hold" &&
+      ev.action !== "align" &&
+      ev.action !== "twist"
+    )
+      return false;
+    const mine = this.heldBy(ev.player);
     if (ev.action === "hold") {
-      for (const id of mine) this.holdInFront(id, ev);
+      for (const id of mine) this.placeHeld(id, ev);
+      return true;
+    }
+    if (ev.action === "align") {
+      if (ev.phase === "down") for (const id of mine) this.straightenHeld(id, ev);
+      return true;
+    }
+    if (ev.action === "twist") {
+      for (const id of mine) this.twistHeld(id, ev);
       return true;
     }
     if (ev.phase !== "down") return true;
     if (mine.length > 0) {
-      // 放す：その場に置く（動く剛体なら落ちる）
+      // 放す：見えている位置に置いてから手を放す（動く剛体なら落ちる）
       for (const id of mine) {
+        this.placeHeld(id, ev);
         this.world.remove(id, BUILTIN.Held);
         const rb = this.world.get(id, BUILTIN.RigidBody);
         if (rb) rb.linvel = [0, 0, 0];
@@ -481,22 +505,59 @@ export class Simulation {
       target = this.world.parentOf(target);
     if (!target || this.world.parentOf(target) !== null) return true;
     if (this.world.hasState(target, BUILTIN.Held)) return true; // ほかの人が持っている
-    const distance = Number(this.world.get(target, BUILTIN.Grabbable)?.distance ?? 1.2);
-    this.world.add(target, BUILTIN.Held, { offset: [0, -0.15, -distance], player: ev.player });
-    this.holdInFront(target, ev);
+    const pose = this.poseInView(target, ev);
+    if (!pose) return true;
+    this.world.add(target, BUILTIN.Held, { ...pose, player: ev.player });
     return true;
   }
 
-  /** 持っている物を、持っている人の視点の先へ動かす（ほかの人にはこの位置で見える） */
-  private holdInFront(id: EntityId, ev: InputEvent): void {
+  private heldBy(player: string): EntityId[] {
+    return this.world
+      .query({ with: [BUILTIN.Grabbable, BUILTIN.Held] })
+      .filter((id) => this.world.get(id, BUILTIN.Held)?.player === player);
+  }
+
+  /** いまの位置と角度を、視点からの差として覚える（持った瞬間に動かさないため） */
+  private poseInView(id: EntityId, ev: InputEvent): { offset: Vec3; rotation: Vec3 } | null {
     const t = this.world.get(id, BUILTIN.Transform);
-    if (!t) return;
-    const distance = Number(this.world.get(id, BUILTIN.Grabbable)?.distance ?? 1.2);
-    const [dx, dy, dz] = ev.direction;
-    const [ox, oy, oz] = ev.origin;
-    t.position = [ox + dx * distance, oy + dy * distance - 0.15, oz + dz * distance];
-    const r = t.rotation as Vec3;
-    t.rotation = [r[0], (Math.atan2(-dx, -dz) * 180) / Math.PI, r[2]];
+    if (!t) return null;
+    return poseRelativeToView(ev.origin, ev.direction, t.position as Vec3, t.rotation as Vec3);
+  }
+
+  /** 覚えた位置関係のまま、持っている人の視点へ置く（ほかの人にはこの位置で見える） */
+  private placeHeld(id: EntityId, ev: InputEvent): void {
+    const t = this.world.get(id, BUILTIN.Transform);
+    const held = this.world.get(id, BUILTIN.Held);
+    if (!t || !held) return;
+    const placed = placeFromView(
+      ev.origin,
+      ev.direction,
+      (held.offset as Vec3 | undefined) ?? [0, 0, 0],
+      (held.rotation as Vec3 | undefined) ?? [0, 0, 0],
+    );
+    t.position = placed.position;
+    t.rotation = placed.rotation;
+  }
+
+  /** 傾きを直し、上下の軸まわりの向きだけ残す */
+  private straightenHeld(id: EntityId, ev: InputEvent): void {
+    const t = this.world.get(id, BUILTIN.Transform);
+    const held = this.world.get(id, BUILTIN.Held);
+    if (!t || !held) return;
+    t.rotation = straightenRotation(t.rotation as Vec3);
+    const pose = this.poseInView(id, ev);
+    if (pose) held.rotation = pose.rotation;
+  }
+
+  /** マウスの動き（ラジアン）だけ、持っている物を回す */
+  private twistHeld(id: EntityId, ev: InputEvent): void {
+    const t = this.world.get(id, BUILTIN.Transform);
+    const held = this.world.get(id, BUILTIN.Held);
+    const [yaw, pitch] = ev.pointer ?? [0, 0];
+    if (!t || !held || (yaw === 0 && pitch === 0)) return;
+    t.rotation = twistRotation(t.rotation as Vec3, yaw, pitch);
+    const pose = this.poseInView(id, ev);
+    if (pose) held.rotation = pose.rotation;
   }
 
   /** 配置の Entity を World に作る（ID の付け替え、ルートへの配置の位置・向き） */

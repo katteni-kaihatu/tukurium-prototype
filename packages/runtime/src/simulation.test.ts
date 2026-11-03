@@ -242,7 +242,7 @@ describe("Simulation：System の扱い", () => {
 });
 
 describe("Simulation：右クリックで持つ（Grabbable）", () => {
-  it("Grabbable を持ち、視点に合わせて動かし、もう一度で放す。持っている間は落ちない", async () => {
+  const box = (rotation: Vec3 = [0, 0, 0], rigid = true) => {
     const p = project(`export default system({ query: { with: ["Counter"] }, onUpdate() {} });`);
     p.entities.push({
       id: "box",
@@ -251,33 +251,94 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
       output: "out",
       order: 1,
       states: {
-        [BUILTIN.Transform]: { position: [0, 1.5, -3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [BUILTIN.Transform]: { position: [0, 1.5, -3], rotation, scale: [1, 1, 1] },
         [BUILTIN.Mesh]: { shape: "box", size: [0.5, 0.5, 0.5] },
         [BUILTIN.Collider]: {},
-        [BUILTIN.RigidBody]: { type: "dynamic" },
+        ...(rigid ? { [BUILTIN.RigidBody]: { type: "dynamic" } } : {}),
         [BUILTIN.Grabbable]: { distance: 1 },
       },
     });
-    sim = await Simulation.create(p, "out", { realm: "r" });
+    return p;
+  };
+
+  it("持った瞬間は位置も角度も変えず、すぐ離せば同じ場所にある", async () => {
+    sim = await Simulation.create(box([10, 20, 30], false), "out", { realm: "r" });
     sim.step(1 / 60);
     sim.input(fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
-    // 持っている間は、視点の先へ動き、落ちない
-    sim.input({ ...fire([1, 0, 0], "hold") });
+    const held = sim.world.get("box", BUILTIN.Held);
+    expect(held?.player).toBe("p1");
+    const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    const rot = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
+    expect(pos[0]).toBeCloseTo(0, 5);
+    expect(pos[1]).toBeCloseTo(1.5, 5);
+    expect(pos[2]).toBeCloseTo(-3, 5);
+    expect(rot[0]).toBeCloseTo(10, 4);
+    expect(rot[1]).toBeCloseTo(20, 4);
+    expect(rot[2]).toBeCloseTo(30, 4);
+    // 同じ視点のまま追従しても、場所は変わらない
+    sim.input(fire([0, 0, -1], "hold"));
+    sim.step(1 / 60);
+    const still = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(still[2]).toBeCloseTo(-3, 4);
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    const after = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(after[0]).toBeCloseTo(0, 4);
+    expect(after[1]).toBeCloseTo(1.5, 4);
+    expect(after[2]).toBeCloseTo(-3, 4);
+    // 向きを変えてから離すと、見えていた位置に残る（追従の送信を待たない）
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    sim.input(fire([1, 0, 0], "grab"));
+    sim.step(1 / 60);
+    const left = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    expect(left[0]).toBeCloseTo(3, 1);
+    expect(left[1]).toBeCloseTo(1.5, 1);
+    expect(left[2]).toBeCloseTo(0, 1);
+  });
+
+  it("持っている間は視点との位置関係を保ち、落ちない。ほかの人は取れない", async () => {
+    sim = await Simulation.create(box(), "out", { realm: "r" });
+    sim.step(1 / 60);
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    // 右を向くと、持ったときの「3m 手前」が右へ移る
+    sim.input(fire([1, 0, 0], "hold"));
     for (let i = 0; i < 30; i++) sim.step(1 / 60);
     const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
-    expect(pos[0]).toBeCloseTo(1, 1);
-    expect(pos[1]).toBeCloseTo(1.35, 1);
-    // ほかの人は、持たれている物を取れない
+    expect(pos[0]).toBeCloseTo(3, 1);
+    expect(pos[1]).toBeCloseTo(1.5, 1);
+    expect(pos[2]).toBeCloseTo(0, 1);
     sim.input({ ...fire([1, 0, 0], "grab"), player: "p2" });
     sim.step(1 / 60);
     expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
-    // もう一度で放す → 落ちる
     sim.input(fire([1, 0, 0], "grab"));
     for (let i = 0; i < 30; i++) sim.step(1 / 60);
     expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
-    const after = sim.world.get("box", BUILTIN.Transform)?.position as Vec3 | undefined;
-    expect(after?.[1]).toBeLessThan(1.3);
+    const dropped = sim.world.get("box", BUILTIN.Transform)?.position as Vec3 | undefined;
+    expect(dropped?.[1]).toBeLessThan(1.4);
+  });
+
+  it("左クリックで傾きを直し、E の動きで角度が変わる", async () => {
+    sim = await Simulation.create(box([30, 40, 25], false), "out", { realm: "r" });
+    sim.step(1 / 60);
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    sim.input(fire([0, 0, -1], "align"));
+    sim.step(1 / 60);
+    const upright = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
+    expect(upright[0]).toBeCloseTo(0, 4);
+    expect(upright[2]).toBeCloseTo(0, 4);
+    expect(Math.abs(upright[1])).toBeGreaterThan(1);
+    const y = upright[1];
+    sim.input({ ...fire([0, 0, -1], "twist"), pointer: [Math.PI / 2, 0] });
+    sim.step(1 / 60);
+    const turned = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
+    expect(turned[1]).not.toBeCloseTo(y, 0);
+    const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(pos[2]).toBeCloseTo(-3, 4);
   });
 });

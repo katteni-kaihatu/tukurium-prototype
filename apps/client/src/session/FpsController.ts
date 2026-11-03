@@ -23,6 +23,8 @@ export class FpsController {
   private velocityY = 0;
   private readonly opts: Required<FpsOptions>;
   private readonly disposers: (() => void)[] = [];
+  /** セットしている間、マウスは見回さず、この関数へ移動量（px）を渡す */
+  private lookOverride: ((dx: number, dy: number) => void) | null = null;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -40,13 +42,29 @@ export class FpsController {
     };
     this.listen(window, "keydown", (e) => this.onKey(e as KeyboardEvent, true));
     this.listen(window, "keyup", (e) => this.onKey(e as KeyboardEvent, false));
-    this.listen(window, "blur", () => this.keys.clear());
+    this.listen(window, "blur", () => {
+      this.keys.clear();
+      this.lookOverride = null;
+    });
     this.listen(document, "mousemove", (e) => this.onMouseMove(e as MouseEvent));
     this.apply();
   }
 
   get locked(): boolean {
     return document.pointerLockElement === this.element;
+  }
+
+  /** 見回す速さ（ラジアン / px） */
+  get sensitivity(): number {
+    return this.opts.sensitivity;
+  }
+
+  /**
+   * マウスで見回すのを止める。fn には移動量（px）が渡る。
+   * null で元に戻す。
+   */
+  setLookOverride(fn: ((dx: number, dy: number) => void) | null): void {
+    this.lookOverride = fn;
   }
 
   lock(): void {
@@ -112,6 +130,10 @@ export class FpsController {
 
   private onMouseMove(e: MouseEvent): void {
     if (!this.locked) return;
+    if (this.lookOverride) {
+      if (e.movementX !== 0 || e.movementY !== 0) this.lookOverride(e.movementX, e.movementY);
+      return;
+    }
     this.yaw -= e.movementX * this.opts.sensitivity;
     this.pitch -= e.movementY * this.opts.sensitivity;
     const limit = Math.PI / 2 - 0.01;
