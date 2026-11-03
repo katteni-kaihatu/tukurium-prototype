@@ -1,17 +1,19 @@
 import {
   checkProjectReferences,
   checkProjectStructure,
+  countCurrent,
   type Diagnostic,
   type DiagnosticSummary,
+  type DiagnosticView,
   type QueryItem,
   ResourcePathIndex,
   readSystemQuery,
   summarizeDiagnostics,
   viewDiagnostics,
 } from "@tukurium/repo-model";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { IncrementalCheck } from "./incrementalCheck";
-import { checkScripts, type Problem } from "./problems";
+import { checkScripts, type Problem, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
 
 /** 制作データが変わるたびに、影響を受ける System だけを（少し待って）確かめ、「問題」を更新する */
@@ -65,6 +67,47 @@ export function useProjectDiagnostics(): {
     const diagnostics = [...checkProjectStructure(snap, index), ...checkProjectReferences(snap)];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
   }, [project, rev]);
+}
+
+/**
+ * 問題の一覧を一か所にまとめる：スクリプトの問題（編集中の確認・実行）と、
+ * 制作データの問題（構造・リソース参照。いつも current）。
+ * パネルの中身と、メインパネルのボタンの件数と、エラーで自動で開く判定で共用する。
+ */
+export function useWorkspaceProblems(): {
+  items: DiagnosticView[];
+  count: ReturnType<typeof countCurrent>;
+  index: ResourcePathIndex | null;
+} {
+  const problems = useProblems();
+  const { diagnostics, index } = useProjectDiagnostics();
+  const items = useMemo<DiagnosticView[]>(
+    () => [...problems, ...diagnostics.map((d) => ({ ...d, freshness: "current" as const }))],
+    [problems, diagnostics],
+  );
+  const count = useMemo(() => countCurrent(items), [items]);
+  return { items, count, index };
+}
+
+/**
+ * 新しいエラーが出たら問題パネルを開く。すでに開いていれば前に出す（problemsFocus を進める）。
+ * パネルを閉じても、同じエラーが残っている間は開き直さない（trackErrorPrints が覚えている）。
+ */
+export function useOpenProblemsOnError(): void {
+  const { items } = useWorkspaceProblems();
+  const workspaceId = useWorkspace((s) => s.workspaceId);
+  const known = useRef<ReadonlySet<string>>(new Set());
+  // ワークスペースを変えたら、前の所のエラーの記憶は捨てる（下の判定より先に流れる）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: workspaceId が変わること自体が合図
+  useEffect(() => {
+    known.current = new Set();
+  }, [workspaceId]);
+  useEffect(() => {
+    const tracked = trackErrorPrints(known.current, items);
+    known.current = tracked.known;
+    if (tracked.appeared.length === 0) return;
+    useWorkspace.setState((s) => ({ problemsOpen: true, problemsFocus: s.problemsFocus + 1 }));
+  }, [items]);
 }
 
 /**

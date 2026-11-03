@@ -1,15 +1,14 @@
-import {
-  countCurrent,
-  type Diagnostic,
-  type DiagnosticView,
-  type ProjectDoc,
-  type ResourcePathIndex,
+import type {
+  Diagnostic,
+  DiagnosticView,
+  ProjectDoc,
+  ResourcePathIndex,
 } from "@tukurium/repo-model";
 import { useProject } from "./hooks";
 import { RUNTIME_PROVIDER, SCRIPT_PROVIDER, scriptLine } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems, useProjectDiagnostics } from "./useProblems";
+import { useWorkspaceProblems } from "./useProblems";
 
 /** 問題 1 件の場所の表示（「Shoot.js 4 行目」） */
 export function problemPlace(name: string, p: Diagnostic): string {
@@ -28,14 +27,14 @@ export function problemKind(d: DiagnosticView): string {
 }
 
 /**
- * 問題の一覧（ADR 0010）。スクリプトの問題（編集中の確認・実行して止まったもの）と、
+ * 問題パネル（ADR 0010）。スクリプトの問題（編集中の確認・実行して止まったもの）と、
  * 制作データの問題（構造・リソース参照）をまとめて出す。
  * 編集した後の古い結果は stale として薄く出し、件数には数えない。
+ * メインパネルからはボタンで開く。新しいエラーが出たら自動で開く（useOpenProblemsOnError）。
  */
-export function ProblemsList() {
-  const problems = useProblems();
+export function ProblemsPanel() {
   const project = useProject();
-  const { diagnostics, index } = useProjectDiagnostics();
+  const { items, count, index } = useWorkspaceProblems();
   const { select, setOutput, outputId, showProblem, openDetail, placeDetail } = useWorkspace();
   /** スクリプトはコードのその行へ。定義は詳細パネル、Entity は Inspector */
   const openDef = (el: EventTarget | null, kind: "koko" | "system" | "material", id: string) => {
@@ -66,13 +65,12 @@ export function ProblemsList() {
     if (kind === "system" || kind === "material") return (e) => openDef(e.currentTarget, kind, id);
     return null;
   };
-  // 制作データの問題は、いまの制作データからその場で計算するので、いつも current
-  const items: DiagnosticView[] = [
-    ...problems,
-    ...diagnostics.map((d) => ({ ...d, freshness: "current" as const })),
-  ];
-  if (items.length === 0) return null;
-  const count = countCurrent(items);
+  if (items.length === 0)
+    return (
+      <div className={ui.section}>
+        <p className={ui.muted}>問題はありません。</p>
+      </div>
+    );
   return (
     <section className={ui.section} aria-label="問題">
       <div className={ui.sectionHead}>

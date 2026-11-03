@@ -25,6 +25,29 @@ export function scriptLine(d: Diagnostic): number | null {
   return d.location?.kind === "script" ? d.location.line : null;
 }
 
+/**
+ * エラーの出入りを追う（純粋関数）。新しく current になったエラーの指紋を appeared に返す。
+ * stale の間も一覧に残っているエラーは「知っている」ままにし、確かめ直しで
+ * current に戻っただけでは appeared にしない。消えてから出直したものは appeared にする。
+ * 問題パネルをエラーで自動で開く判定（useOpenProblemsOnError）が使う。
+ */
+export function trackErrorPrints(
+  known: ReadonlySet<string>,
+  items: readonly DiagnosticView[],
+): { appeared: string[]; known: Set<string> } {
+  const present = new Set(items.filter((d) => d.severity === "error").map((d) => d.fingerprint));
+  const appeared = [
+    ...new Set(
+      items
+        .filter((d) => d.severity === "error" && d.freshness === "current")
+        .map((d) => d.fingerprint),
+    ),
+  ].filter((fp) => !known.has(fp));
+  const next = new Set([...known].filter((fp) => present.has(fp)));
+  for (const fp of appeared) next.add(fp);
+  return { appeared, known: next };
+}
+
 function scriptDiagnostic(
   systemId: string,
   code: string,

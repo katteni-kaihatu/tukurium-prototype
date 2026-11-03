@@ -1,4 +1,6 @@
 import type { Vec3 } from "@tukurium/eks";
+import { countCurrent, viewDiagnostics } from "@tukurium/repo-model";
+import { useApp } from "../app/store";
 import { useWorkspace } from "./store";
 
 const MAX_LINES = 9;
@@ -23,9 +25,30 @@ export function summarize(panelId: string): string[] {
       return [
         `Output: ${out?.name ?? "-"}（${out?.kind ?? "-"}）`,
         ws.mode === "edit" ? "Edit mode" : ws.mode === "play" ? "Play mode" : "一時停止中",
-        ...ws.logs.slice(-3).map((l) => `> ${l.message}`),
       ].slice(0, MAX_LINES);
     }
+    case "ws-session": {
+      const session = useApp.getState().session;
+      const links = (session?.placements ?? []).filter(
+        (p) => p.workspaceId === ws.workspaceId && p.outputId === ws.outputId,
+      );
+      return [
+        `リンク先 ${links.length}`,
+        ...links.map((p, i) => `${p.outputName} #${i + 1}`),
+      ].slice(0, MAX_LINES);
+    }
+    case "ws-problems": {
+      // 要約は定期的に作り直すので、ここでは軽く数えられるスクリプト・実行の問題だけにする
+      const count = countCurrent(viewDiagnostics([ws.runProblems, ...ws.checkProblems], ws.rev));
+      if (count.errors + count.warnings === 0 && count.stale === 0) return ["問題はありません"];
+      return [
+        `エラー・注意 ${count.errors + count.warnings}${count.stale ? `（編集前の結果 ${count.stale}）` : ""}`,
+      ];
+    }
+    case "ws-log":
+      return ws.logs.length === 0
+        ? ["ログはまだありません"]
+        : ws.logs.slice(-MAX_LINES).map((l) => `> ${l.message}`);
     case "ws-inspector": {
       const sel = ws.selection;
       if (!sel) return ["（何も選んでいません）"];

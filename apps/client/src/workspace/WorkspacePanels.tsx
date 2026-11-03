@@ -15,14 +15,17 @@ import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { InspectorPanel } from "./InspectorPanel";
 import { LibraryPanel } from "./LibraryPanel";
+import { LogPanel } from "./LogPanel";
 import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
+import { ProblemsPanel } from "./ProblemsPanel";
 import { ResourcesPanel } from "./ResourcesPanel";
 import { SavePanel } from "./SavePanel";
+import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import { summarize } from "./summary";
 import ui from "./ui.module.css";
-import { useScriptCheck } from "./useProblems";
+import { useOpenProblemsOnError, useScriptCheck } from "./useProblems";
 
 const MAIN: PanelSpec = {
   id: "ws-main",
@@ -61,12 +64,17 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const editorFocus = useWorkspace((s) => `${s.activeSystem}:${s.jumpTo?.seq ?? 0}`);
   const hidden = useWorkspace((s) => s.panelsHidden);
   useScriptCheck();
+  useOpenProblemsOnError();
   const [members, setMembers] = useState(false);
 
   const historyOpen = useWorkspace((s) => s.historyOpen);
   const saveOpen = useWorkspace((s) => s.saveOpen);
   const saveSeq = useWorkspace((s) => s.saveSeq);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
+  const sessionOpen = useWorkspace((s) => s.sessionOpen);
+  const problemsOpen = useWorkspace((s) => s.problemsOpen);
+  const problemsFocus = useWorkspace((s) => s.problemsFocus);
+  const logOpen = useWorkspace((s) => s.logOpen);
   const detail = useWorkspace((s) => s.detail);
   const panels: PanelSpec[] = [];
   if (libraryOpen) {
@@ -118,6 +126,35 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       INSPECTOR,
       RESOURCES,
     );
+    if (sessionOpen) {
+      panels.push({
+        id: "ws-session",
+        title: "セッション",
+        initial: { right: 16, y: 470, width: 460 },
+        render: () => <SessionLinks />,
+        onClose: () => useWorkspace.setState({ sessionOpen: false }),
+      });
+    }
+    if (problemsOpen) {
+      panels.push({
+        id: "ws-problems",
+        title: "問題",
+        initial: { x: 640, y: 84, width: 480 },
+        // 新しいエラーが出たときに前に出す
+        focusKey: problemsFocus,
+        render: () => <ProblemsPanel />,
+        onClose: () => useWorkspace.setState({ problemsOpen: false }),
+      });
+    }
+    if (logOpen) {
+      panels.push({
+        id: "ws-log",
+        title: "ログ・保存",
+        initial: { x: 640, y: 470, width: 520 },
+        render: () => <LogPanel />,
+        onClose: () => useWorkspace.setState({ logOpen: false }),
+      });
+    }
     if (hasEditor) {
       panels.push({
         id: "ws-editor",

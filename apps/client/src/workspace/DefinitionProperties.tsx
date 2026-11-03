@@ -3,7 +3,7 @@ import { newId, type OutputDef, type OutputExposure } from "@tukurium/repo-model
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
-import { problemKind, problemPlace } from "./ProblemsList";
+import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems, useSystemQuery } from "./useProblems";
