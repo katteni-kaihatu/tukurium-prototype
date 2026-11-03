@@ -188,3 +188,32 @@ describe("名前の規則", () => {
     expect(normalizeName("Café")).toBe(normalizeName("CAFÉ"));
   });
 });
+
+describe("spellingFor（リファクタリングで書き直すパス）", () => {
+  const idx = ResourcePathIndex.fromSnapshot(
+    snap({
+      kokostates: [koko("ks_gun", "Gun"), koko("ks_top", "Top"), koko("ks_hp", "Health")],
+      systems: [sys("s_deep", "Deep"), sys("s_top", "TopSys")],
+      folders: [
+        { id: "f_c", name: "Combat", parent: null },
+        { id: "f_st", name: "States", parent: "f_c" },
+        { id: "f_sy", name: "Systems", parent: "f_c" },
+      ],
+      placement: { ks_gun: "f_st", ks_hp: "f_sy", s_deep: "f_sy" },
+    }),
+  );
+
+  it("System のフォルダからの相対パス", () => {
+    expect(idx.spellingFor("ks_gun", "s_deep", "relative")).toBe("../States/Gun.koko");
+    expect(idx.spellingFor("ks_hp", "s_deep", "relative")).toBe("./Health.koko");
+    expect(idx.spellingFor("ks_top", "s_deep", "relative")).toBe("../../Top.koko");
+    expect(idx.spellingFor("ks_gun", "s_top", "relative")).toBe("./Combat/States/Gun.koko");
+  });
+
+  it("いちばん上からのパスと Built-in", () => {
+    expect(idx.spellingFor("ks_gun", "s_deep", "absolute")).toBe("/Combat/States/Gun.koko");
+    expect(idx.spellingFor(BUILTIN.Transform, "s_deep", "relative")).toBe(
+      "@builtin/Transform.koko",
+    );
+  });
+});
