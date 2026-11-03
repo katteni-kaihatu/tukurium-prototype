@@ -1,7 +1,9 @@
 import {
   emptyProject,
+  forestSample,
   gunAndTargetSample,
   gunSample,
+  marubatsuSample,
   targetRangeSample,
 } from "@tukurium/repo-model";
 import { useState } from "react";
@@ -232,6 +234,27 @@ function WorkspaceSwitcher() {
               }}
             >
               ＋ サンプル「射撃場」
+            </button>
+            <button
+              type="button"
+              className={styles.popBtn}
+              onClick={() => {
+                ws.create("森", forestSample());
+                setOpen(false);
+              }}
+            >
+              ＋ サンプル「森」
+            </button>
+            <button
+              type="button"
+              className={styles.popBtn}
+              title="クリックで○×。近くで E を押すと最初から"
+              onClick={() => {
+                ws.create("マルバツ", marubatsuSample());
+                setOpen(false);
+              }}
+            >
+              ＋ サンプル「マルバツ」
             </button>
             {workspaceId && (
               <button

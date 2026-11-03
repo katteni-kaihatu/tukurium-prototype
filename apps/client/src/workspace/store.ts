@@ -155,6 +155,14 @@ let unobserve: (() => void) | null = null;
 
 const client = () => useApp.getState().client;
 
+/** 入力に、今の表示名を添える（すでに名前があればそのまま） */
+function withPlayerName(ev: InputEvent): InputEvent {
+  if (ev.playerName) return ev;
+  const { me, myName } = useApp.getState();
+  const playerName = me?.name || myName;
+  return playerName ? { ...ev, playerName } : ev;
+}
+
 /**
  * いま開いているワークスペース。
  * - 制作データは Y.Doc をサーバーと同期する（WorkspaceSync）。
@@ -340,9 +348,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     stop: () => command("stop"),
 
     input: (ev) => {
+      const named = withPlayerName(ev);
       const { isHost, sim, workspaceId } = get();
-      if (isHost && sim) sim.input(ev);
-      else if (workspaceId) client().send({ t: "ws.input", workspaceId, input: ev });
+      if (isHost && sim) sim.input(named);
+      else if (workspaceId) client().send({ t: "ws.input", workspaceId, input: named });
     },
 
     openSystem: (id) =>

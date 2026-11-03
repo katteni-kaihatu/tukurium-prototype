@@ -42,9 +42,10 @@ export const useSessionWorld = create<SessionWorldState>((_set, get) => ({
   incomingSounds: [],
   incomingEffects: [],
   input: (ev) => {
+    const named = withPlayerName(ev);
     const { isHost, sim } = get();
-    if (isHost && sim) sim.input(ev);
-    else client().send({ t: "session.input", input: ev });
+    if (isHost && sim) sim.input(named);
+    else client().send({ t: "session.input", input: named });
   },
   view: () => {
     const { sim, remote } = get();
@@ -53,6 +54,14 @@ export const useSessionWorld = create<SessionWorldState>((_set, get) => ({
     return null;
   },
 }));
+
+/** 入力に、今の表示名を添える（すでに名前があればそのまま） */
+function withPlayerName(ev: InputEvent): InputEvent {
+  if (ev.playerName) return ev;
+  const { me, myName } = useApp.getState();
+  const playerName = me?.name || myName;
+  return playerName ? { ...ev, playerName } : ev;
+}
 
 const set = useSessionWorld.setState;
 const st = () => useSessionWorld.getState();

@@ -13,6 +13,7 @@ import type { Config } from "./config";
 import { Hub, type HubOptions } from "./hub";
 import { registerRepoRoutes } from "./repos/routes";
 import { RepoService } from "./repos/service";
+import { seedSampleModels } from "./sampleModels";
 import { PostgresStore } from "./store/postgres";
 import { MemoryStore, type Store, type User } from "./store/store";
 
@@ -46,6 +47,7 @@ export async function buildApp(
   const assets =
     options.assets ??
     (config.s3 ? new S3AssetStore(config.s3) : new DiskAssetStore(config.assetDir));
+  await seedSampleModels(assets);
   app.addContentTypeParser(
     Object.keys(ASSET_TYPES),
     { parseAs: "buffer", bodyLimit: MAX_ASSET_BYTES },

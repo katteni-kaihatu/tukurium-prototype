@@ -12,6 +12,7 @@ export const BUILTIN = {
   Held: "builtin.Held",
   Grabbable: "builtin.Grabbable",
   AudioSource: "builtin.AudioSource",
+  Label: "builtin.Label",
 } as const;
 
 /** プロシージャルメッシュの形状。size の意味は各 KokoState 定義のコメントを参照。 */
@@ -95,6 +96,18 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       /** 音声の素材 ID */
       { id: "clip", name: "clip", type: "resource", default: null },
       { id: "volume", name: "volume", type: "number", default: 1 },
+    ],
+  },
+  {
+    id: BUILTIN.Label,
+    name: "Label",
+    builtin: true,
+    fields: [
+      /** 出す文字。空なら表示しない */
+      { id: "text", name: "text", type: "string", default: "" },
+      { id: "color", name: "color", type: "color", default: "#26262e" },
+      /** 文字の高さ（m） */
+      { id: "size", name: "size", type: "number", default: 0.16 },
     ],
   },
 ];
