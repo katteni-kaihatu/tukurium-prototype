@@ -38,7 +38,7 @@
 現在の dependency graph の次から設計判断を始め、System binding と Runtime Host API を固定する前に権限境界を組み込む。Library の検索・共有 UI より、実行時に強制できる安全な API と最小 package model を先に作る。
 
 - [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
-- [ ] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る
+- [ ] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る（引数の検証を一つの定義に集め、find / get / set / destroy / spawn を自分の配置の中だけにした。raycast と emit は U2 で置き換えるまで別の配置に届く）
 - [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する
 - [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する
 - [ ] 公式 Library を通して入力・Raycast・Damage・一時 effect を提供し、銃サンプルを最初の移行例にする

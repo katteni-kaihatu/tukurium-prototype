@@ -11,10 +11,9 @@ describe("Host API の棚卸し（ADR 0012）", () => {
     const reaching = Object.entries(HOST_API_POLICY)
       .filter(([, p]) => p.currentReach === "any-placement")
       .map(([name, p]) => [name, p.crossPlacement]);
+    // U1 で find・destroy・get・set・spawn は自分の配置の中だけにした。残りは U2 で置き換える
     expect(reaching.sort()).toEqual([
-      ["world.destroy", "deny"],
       ["world.emit", "public-contract"],
-      ["world.find", "deny"],
       ["world.raycast", "target-policy"],
     ]);
   });

@@ -25,6 +25,7 @@ import {
   ScriptSandbox,
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
+import { type HostArgs, parseHostArgs } from "./hostApi";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
   moveAlongView,
@@ -696,66 +697,62 @@ export class Simulation {
     }
   }
 
-  private callHost(name: HostName, args: Json[], ctx: HostCallContext): Json | undefined {
+  /**
+   * 呼び出しの主体の配置（ADR 0012）。処理中の Entity が分かればその配置、
+   * 分からなければ（ハンドラの外）その System を使っている配置すべて。
+   */
+  private callerParts(ctx: HostCallContext): Part[] {
+    const entity = ctx.entity ?? null;
+    if (entity) {
+      const part = [...this.parts.values()].find((p) => p.entities.has(entity));
+      if (part) return [part];
+    }
+    const sys = this.systems.find((x) => x.id === ctx.systemId);
+    return sys ? [...sys.users].flatMap((id) => this.parts.get(id) ?? []) : [];
+  }
+
+  /**
+   * スクリプトから呼ばれた Host API。引数は HOST_API_ARGS で検証し、対象は
+   * 呼んだ System の配置の中だけに絞る（別の配置は「見つからない」。ADR 0012）。
+   * world.raycast と world.emit は、U2 で opaque handle と公開 Contract に置き換えるまで、
+   * 別の配置にも届く（HOST_API_POLICY）。
+   */
+  private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
     const scope = this.scopeOfRealm(ctx.realm);
-    const vec3 = (v: Json): Vec3 => {
-      if (!Array.isArray(v) || v.length !== 3 || !v.every((n) => typeof n === "number")) {
-        throw new TypeError("[x, y, z] の形の数値の配列を渡してください");
-      }
-      return v as Vec3;
-    };
-    const entityId = (v: Json): EntityId => {
-      if (typeof v !== "string") throw new TypeError("Entity の ID（文字列）を渡してください");
-      return v;
-    };
-    const api: Record<HostName, (args: Json[]) => Json | undefined> = {
+    const callers = this.callerParts(ctx);
+    const own = (id: string | undefined): id is EntityId =>
+      typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
+    const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
       "world.raycast": ([origin, direction, max, opts]) => {
-        const exclude =
-          opts && typeof opts === "object" && !Array.isArray(opts) && Array.isArray(opts.exclude)
-            ? (opts.exclude as string[])
-            : [];
-        const hit = this.physics.raycast(
-          vec3(origin ?? null),
-          vec3(direction ?? null),
-          typeof max === "number" ? max : 100,
-          exclude,
-        );
+        const hit = this.physics.raycast(origin, direction, max ?? 100, opts?.exclude ?? []);
         return hit ? { entity: hit.entity, distance: hit.distance, point: hit.point } : null;
       },
       "world.emit": ([target, name, data]) => {
-        if (typeof name !== "string") throw new TypeError("イベント名（文字列）を渡してください");
-        this.pending.push({ target: entityId(target ?? null), name, data: data ?? null });
+        this.pending.push({ target, name, data: (data ?? null) as Json });
         return undefined;
       },
       "world.get": ([id, kokoName]) => {
-        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName, scope) : undefined;
-        if (!koko || typeof id !== "string" || !this.world.hasState(id, koko)) return null;
+        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        if (!koko || !own(id) || !this.world.hasState(id, koko)) return null;
         return this.toNamed(koko, this.world.get(id, koko) ?? {});
       },
       "world.set": ([id, kokoName, values]) => {
-        const koko = typeof kokoName === "string" ? this.registry.idOf(kokoName, scope) : undefined;
-        if (!koko || typeof id !== "string" || !this.world.hasState(id, koko)) return false;
-        if (!values || typeof values !== "object" || Array.isArray(values)) return false;
+        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
         this.writeNamed(id, koko, values as Record<string, Json>, null);
         return true;
       },
       "world.find": ([name]) => {
-        for (const [id, n] of this.names) if (n === name && this.world.has(id)) return id;
+        for (const [id, n] of this.names) if (n === name && own(id)) return id;
         return null;
       },
       "world.spawn": ([desc]) => {
-        const d = (desc && typeof desc === "object" && !Array.isArray(desc) ? desc : {}) as Record<
-          string,
-          Json
-        >;
-        const parent = typeof d.parent === "string" && this.world.has(d.parent) ? d.parent : null;
+        const parent = own(desc?.parent) ? desc.parent : null;
         const id = this.world.spawn(undefined, parent);
-        this.names.set(id, typeof d.name === "string" ? d.name : id);
-        const states = (d.states && typeof d.states === "object" ? d.states : {}) as Record<
-          string,
-          Json
-        >;
-        for (const [kokoName, values] of Object.entries(states)) {
+        this.names.set(id, desc?.name ?? id);
+        // 作った Entity は、呼んだ System の配置のものにする
+        callers[0]?.entities.add(id);
+        for (const [kokoName, values] of Object.entries(desc?.states ?? {})) {
           const koko = this.registry.idOf(kokoName, scope);
           if (!koko) continue;
           this.world.add(id, koko);
@@ -766,34 +763,30 @@ export class Simulation {
         return id;
       },
       "world.destroy": ([id]) => {
-        if (typeof id === "string") this.world.destroy(id);
+        if (own(id)) this.world.destroy(id);
         return undefined;
       },
       "time.now": () => this.time,
       "audio.play": ([clip, entity, volume]) => {
         // clip：素材の名前か ID。null なら entity の AudioSource の clip を鳴らす
-        const target = typeof entity === "string" && this.world.has(entity) ? entity : null;
+        const target = own(entity) ? entity : null;
         const source = target ? this.world.get(target, BUILTIN.AudioSource) : undefined;
         const assets = this.realmAssets.get(ctx.realm) ?? [];
-        const ref = typeof clip === "string" ? clip : (source?.clip as string | null | undefined);
+        const ref = clip ?? (source?.clip as string | null | undefined);
         const asset =
           assets.find((a) => a.kind === "audio" && (a.name === ref || a.id === ref))?.id ??
           (typeof ref === "string" && /^[0-9a-f]{64}$/.test(ref) ? ref : null);
         if (!asset) return false;
         const pos = target ? worldTransform(this.world, target).position : null;
-        const vol =
-          typeof volume === "number"
-            ? volume
-            : typeof source?.volume === "number"
-              ? source.volume
-              : 1;
+        const vol = volume ?? (typeof source?.volume === "number" ? source.volume : 1);
         if (this.sounds.length < 32) {
           this.sounds.push({ asset, position: pos ? [pos.x, pos.y, pos.z] : null, volume: vol });
         }
         return true;
       },
     };
-    return api[name](args);
+    const call = api[name] as (args: unknown) => Json | undefined;
+    return call(parseHostArgs(name, rawArgs));
   }
 
   private active(handler: string): LoadedSystem[] {

@@ -51,7 +51,8 @@ describe("ScriptSandbox", () => {
     let es = sandbox.run("shoot", "onInput", [gun("g1")], [{ action: "fire" }]);
     expect(es[0]?.states.Gun).toEqual({ ammo: 1, interval: 0.5, cooldown: 0.5 });
     expect(emitted).toEqual([
-      ["target", "hit", { damage: 1 }, { realm: "default", systemId: "shoot" }],
+      // 呼び出したときに処理していた Entity も渡る（どの配置のための呼び出しかを決める）
+      ["target", "hit", { damage: 1 }, { realm: "default", systemId: "shoot", entity: "g1" }],
     ]);
 
     es = sandbox.run("shoot", "onUpdate", es, [0.2]);
