@@ -54,11 +54,11 @@
 | `audio.play` | audio.play | 自分の領域 | 拒む | ホスト（配る分の quota は将来サーバー） |
 | `world.raycast` | physics.raycast | **全配置** | 対象が公開した Collider だけ。結果は opaque handle | ホスト |
 | `world.emit` | interaction.send | **全配置** | 対象が公開した Contract だけ | サーバーの再検証が必要（未実装） |
-| `world.find` | entity.discover | **全配置** | 拒む（自分の配置の中だけ） | ホスト |
-| `world.get` | state.read | 自分の領域 | 対象の policy で公開した state だけ | ホスト |
-| `world.set` | state.write | 自分の領域 | 対象の policy で許した state だけ | サーバーの再検証が必要（未実装） |
-| `world.spawn` | entity.spawn | 自分の領域 | 拒む（一時的な effect は effects.spawn に分ける） | サーバーの再検証が必要（未実装） |
-| `world.destroy` | entity.destroy | **全配置** | 拒む（自分の配置の中だけ） | サーバーの再検証が必要（未実装） |
+| `world.find` | entity.discover | 自分の配置（U1） | 拒む（自分の配置の中だけ） | ホスト |
+| `world.get` | state.read | 自分の配置（U1） | 対象の policy で公開した state だけ | ホスト |
+| `world.set` | state.write | 自分の配置（U1） | 対象の policy で許した state だけ | サーバーの再検証が必要（未実装） |
+| `world.spawn` | entity.spawn | 自分の配置（U1） | 拒む（一時的な effect は effects.spawn に分ける） | サーバーの再検証が必要（未実装） |
+| `world.destroy` | entity.destroy | 自分の配置（U1） | 拒む（自分の配置の中だけ） | サーバーの再検証が必要（未実装） |
 | 組み込みの入力の player | — | 申告どおり | 接続から本人を決める | サーバーで実行が必要（未実装） |
 
 ### 6. handle と付与の寿命
@@ -69,6 +69,15 @@
 - Contract の要求（Damage など）には、判定する側が発行する request ID を付け、同じ要求の再送・二重配送を一度だけ適用する。順序・保持期間・引き継ぎ時の扱いは U2 で決めてテストで固定する。
 
 ## 結果
+
+### U1 でしたこと
+
+- Host API の引数は、一つの定義（`packages/runtime/src/hostApi.ts` の `HOST_API_ARGS`。zod）で `unknown` から検証する。今まで黙って無視していた引数は「無いもの」として扱い、例外にしていた引数（座標・Entity の ID・イベント名）は例外にする。
+- 呼び出しの主体の配置は、呼んだときに処理していた Entity から決める（サンドボックスが渡す）。ハンドラの外では、その System を使っている配置すべてとする。
+- `world.find` / `get` / `set` / `destroy` と `spawn` の親、`audio.play` の音源の Entity は、呼んだ System の配置の中だけにした。別の配置は「見つからない」と同じ結果になる。`world.spawn` で作った Entity は、呼んだ System の配置のものになる。
+- `world.raycast` と `world.emit` は、別の配置への正当な使い道（別のリポジトリの銃で的を撃つ）の代わりができるまで、まだ別の配置に届く。U2 で opaque handle と公開 Contract に置き換える。この 2 つが残る間は、U1 を完了とはしない。
+
+### この先
 
 - U1 で、全 Host API を一つの Capability gateway に通す。`HOST_API_POLICY` で「全配置」に届いている 4 つ（raycast・emit・find・destroy）は、U1 / U2 で上の表のとおりに直す。そのとき characterization test を意図して書き換える。
 - 最初の縦の一本（U2）：外部の銃が、保護された World の公開 Collider を Raycast し、内部の Entity / KokoState を取らずに、当たった点へ一時的な effect を出し、公開された Damage Contract だけを呼ぶ。
