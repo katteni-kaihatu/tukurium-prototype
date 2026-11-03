@@ -5,6 +5,7 @@ import {
   newId,
   type OutputDef,
   type OutputExposure,
+  packageSystems,
 } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
@@ -91,19 +92,35 @@ function NameRow(props: {
 
 function OutputProperties({ id }: { id: string }) {
   useWorkspace((st) => st.rev);
+  const packages = useWorkspace((st) => st.packages);
   const project = useProject();
   const canEdit = useCanEdit();
   const output = project.output(id);
   if (!output) return <p className={ui.empty}>アウトプットが見つかりません</p>;
   const editing = canEdit;
-  const systems = project.systems();
+  // このプロジェクトの System と、依存のライブラリの System（`@別名/名前`。ADR 0015）
+  const systems = [
+    ...project.systems().map((s) => ({
+      id: s.id,
+      name: s.name,
+      code: () => project.code(s.id)?.toString() ?? "",
+    })),
+    ...packageSystems(packages.values()).map((s) => ({
+      id: s.id,
+      name: `@${s.alias}/${s.name}`,
+      code: () => s.code,
+    })),
+  ];
   const update = (patch: Partial<OutputDef>) => project.updateOutput({ ...output, ...patch });
   // 有効な System のコードから読み取った、要る権限（ADR 0012）
   const capabilities = [
     ...new Set(
       output.systems
         .filter((s) => s.enabled)
-        .flatMap((s) => inferCapabilities(s.id, project.code(s.id)?.toString() ?? "").capabilities),
+        .flatMap(
+          (s) =>
+            inferCapabilities(s.id, systems.find((d) => d.id === s.id)?.code() ?? "").capabilities,
+        ),
     ),
   ].sort();
   const move = (i: number, d: -1 | 1) => {

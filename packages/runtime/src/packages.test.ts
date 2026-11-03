@@ -161,3 +161,125 @@ describe("依存の KokoState を再生で使う（ADR 0015）", () => {
     expect(sim.world.get("p1/ent", HEALTH3)?.f_hp).toBe(8);
   });
 });
+
+/** ライブラリの System（Systems/Count.system）。モジュールの変数で数え、hp にその値を入れる */
+const COUNT = `import Health from "../States/Health.koko";
+let n = 0;
+export default system({ query: { with: [Health] }, onUpdate(e) { n += 1; e.get(Health).hp = n; } });`;
+
+function withSystem(code: string, extra: PackageManifest["exports"] = []): PackageResolution[] {
+  return [
+    {
+      status: "ready",
+      dependency: dep,
+      manifest: {
+        format: 1,
+        exports: [
+          ...manifest.exports,
+          ...extra,
+          {
+            kind: "system",
+            id: "sys_count",
+            path: "/Systems/Count.system",
+            definition: { id: "sys_count", name: "Count", code },
+          },
+        ],
+      },
+    },
+  ];
+}
+const COUNT_ID = packageResourceId(dep, "sys_count");
+
+/** 依存の System だけを動かすプロジェクト */
+function usesLibrarySystem(tag = "a"): ProjectSnapshot {
+  const s = project(tag);
+  s.systems = [];
+  const out = s.outputs[0];
+  if (out) out.systems = [{ id: COUNT_ID, enabled: true }];
+  return s;
+}
+
+describe("依存の System をアウトプットで使う（ADR 0015）", () => {
+  it("ライブラリの中の論理パスで import を解決し、再生で動く。主体はそのライブラリの Package", async () => {
+    sim = await Simulation.create(usesLibrarySystem(), "out", {
+      realm: "ws",
+      packages: withSystem(COUNT),
+    });
+    expect(sim.systemStatus().map((s) => [s.name, s.error])).toEqual([["@combat/Count", null]]);
+    sim.step(1 / 60);
+    sim.step(1 / 60);
+    expect(sim.world.get("ent", HEALTH)?.f_hp).toBe(2);
+    expect(sim.executionContext("main", COUNT_ID)).toMatchObject({
+      packageId: "w_lib",
+      resolvedVersion: "2",
+      contentHash: "h",
+      systemId: COUNT_ID,
+      placementId: "main",
+    });
+  });
+
+  it("ライブラリで公開していないものを import した System は、見つからないで止まる", async () => {
+    const code = `import Secret from "../States/Secret.koko";\nexport default system({ query: { with: [Secret] }, onUpdate() {} });`;
+    sim = await Simulation.create(usesLibrarySystem(), "out", {
+      realm: "ws",
+      packages: withSystem(code),
+    });
+    expect(sim.systemStatus()[0]?.error).toContain("見つかりません");
+  });
+
+  it("依存の中身が届いていなければ、理由つきで止まる", async () => {
+    sim = await Simulation.create(usesLibrarySystem(), "out", { realm: "ws" });
+    expect(sim.systemStatus()[0]?.error).toContain("中身が届いていません");
+  });
+
+  it("使うプロジェクトが違えば、同じライブラリの System でも VM は別（変数が混ざらない）", async () => {
+    sim = await Simulation.createSession();
+    const at = { position: [0, 0, 0] as [number, number, number], yaw: 0 };
+    const packages = withSystem(COUNT);
+    sim.addPart({
+      id: "p1",
+      realm: "repoA",
+      outputId: "out",
+      snapshot: usesLibrarySystem("a"),
+      packages,
+      ...at,
+    });
+    sim.addPart({
+      id: "p2",
+      realm: "repoB",
+      outputId: "out",
+      snapshot: usesLibrarySystem("b"),
+      packages,
+      ...at,
+    });
+    expect(sim.systemStatus()).toHaveLength(2);
+    sim.step(1 / 60);
+    expect(sim.world.get("p1/ent", HEALTH)?.f_hp).toBe(1);
+    expect(sim.world.get("p2/ent", HEALTH)?.f_hp).toBe(1);
+    sim.removePart("p1");
+    sim.removePart("p2");
+    expect(sim.systemStatus()).toEqual([]);
+  });
+
+  it("ライブラリの System には、使う側の KokoState は見えない（Built-in と依存のものだけ）", async () => {
+    sim = await Simulation.createSession();
+    const snap = usesLibrarySystem();
+    snap.kokostates = [{ id: "ks_secret", name: "Secret", fields: [] }];
+    const ent = snap.entities[0];
+    if (ent) ent.states.ks_secret = {};
+    const code = `import Health from "../States/Health.koko";
+export default system({ query: { with: [Health] }, onUpdate(e) { e.get(Health).hp = e.Secret === undefined ? 1 : 2; } });`;
+    sim.addPart({
+      id: "p1",
+      realm: "repoA",
+      outputId: "out",
+      snapshot: snap,
+      packages: withSystem(code),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    sim.step(1 / 60);
+    expect(sim.systemStatus()[0]?.error).toBeNull();
+    expect(sim.world.get("p1/ent", HEALTH)?.f_hp).toBe(1);
+  });
+});

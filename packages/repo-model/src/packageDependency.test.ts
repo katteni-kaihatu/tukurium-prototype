@@ -4,9 +4,12 @@ import { checkProjectReferences } from "./diagnostics";
 import { fromFiles, toFiles } from "./files";
 import {
   isPackageResourceId,
+  librarySnapshot,
   type PackageResolution,
   packageKokoStates,
   packageResourceId,
+  packageSystems,
+  parsePackageResourceId,
   resolutionMap,
   validateAlias,
 } from "./packageDependency";
@@ -236,5 +239,94 @@ describe("実行時の取り込み（ADR 0015）", () => {
     expect(checkProjectReferences(s).map((d) => d.code)).toContain(
       "package-kokostate-not-in-dependencies",
     );
+  });
+});
+
+describe("依存の System（ADR 0015）", () => {
+  /** ライブラリ：Health と、それを使う Drain を公開。Drain2 は公開していない Secret を使う */
+  function libraryWithSystems(): ProjectSnapshot {
+    return {
+      version: 1,
+      name: "lib",
+      kokostates: [
+        { id: "ks_health", name: "Health", fields: [] },
+        { id: "ks_secret", name: "Secret", fields: [] },
+      ],
+      systems: [
+        { id: "sys_drain", name: "Drain", code: `import H from "../States/Health.koko";` },
+        { id: "sys_peek", name: "Peek", code: `import S from "../States/Secret.koko";` },
+        { id: "sys_dep", name: "Dep", code: `import X from "@other/A.koko";` },
+      ],
+      materials: [],
+      outputs: [],
+      entities: [],
+      folders: [
+        { id: "f_states", name: "States", parent: null },
+        { id: "f_sys", name: "Systems", parent: null },
+      ],
+      placement: {
+        ks_health: "f_states",
+        ks_secret: "f_states",
+        sys_drain: "f_sys",
+        sys_peek: "f_sys",
+        sys_dep: "f_sys",
+      },
+      exports: ["ks_health", "sys_drain", "sys_peek", "sys_dep"],
+    };
+  }
+  const resolved = (): PackageResolution => ({
+    status: "ready",
+    dependency: dep,
+    manifest: packageManifest(libraryWithSystems()),
+  });
+
+  it("公開した System を、Package と版で区切った ID で候補にする", () => {
+    expect(packageSystems([resolved()]).map((s) => [s.id, s.name, s.alias])).toEqual([
+      [packageResourceId(dep, "sys_dep"), "Dep", "combat"],
+      [packageResourceId(dep, "sys_drain"), "Drain", "combat"],
+      [packageResourceId(dep, "sys_peek"), "Peek", "combat"],
+    ]);
+    expect(parsePackageResourceId(packageResourceId(dep, "sys_drain"))).toEqual({
+      packageId: "w_lib",
+      version: 3,
+      resourceId: "sys_drain",
+    });
+    expect(parsePackageResourceId("sys_drain")).toBeNull();
+  });
+
+  it("ライブラリの中の論理パスで、System の import を解決できる（公開したものだけ）", () => {
+    const r = resolved();
+    if (r.status !== "ready") throw new Error("ready のはず");
+    const lib = librarySnapshot(r);
+    const index = ResourcePathIndex.fromSnapshot(lib);
+    const drain = lib.systems.find((s) => s.name === "Drain");
+    const peek = lib.systems.find((s) => s.name === "Peek");
+    const ok = compileSystem(drain?.id ?? "", drain?.code ?? "", index);
+    expect(ok.bindings[0]?.resourceId).toBe(packageResourceId(dep, "ks_health"));
+    const ng = compileSystem(peek?.id ?? "", peek?.code ?? "", index);
+    expect(ng.diagnostics[0]?.code).toBe("import-unresolved");
+  });
+
+  it("公開した System が公開していないもの・依存を import していたら、ライブラリ側で問題にする", () => {
+    const codes = checkProjectReferences(libraryWithSystems())
+      .filter((d) => d.code.startsWith("exported-system"))
+      .map((d) => [d.code, d.subject.id]);
+    expect(codes).toEqual([
+      ["exported-system-imports-private", "sys_peek"],
+      ["exported-system-imports-package", "sys_dep"],
+    ]);
+  });
+
+  it("アウトプットのライブラリの System が、今の依存にない版なら注意にする", () => {
+    const s = project();
+    const out = s.outputs[0];
+    if (out) out.systems = [{ id: packageResourceId(dep, "sys_drain"), enabled: true }];
+    const code = (snap: ProjectSnapshot) =>
+      checkProjectReferences(snap)
+        .map((d) => d.code)
+        .filter((c) => c.startsWith("output-system"));
+    expect(code(s)).toEqual([]);
+    s.dependencies = [{ ...dep, version: 4 }];
+    expect(code(s)).toEqual(["output-system-not-in-dependencies"]);
   });
 });

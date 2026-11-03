@@ -292,7 +292,7 @@ Placement grant の保存形式と effective permission の計算も U1 の runt
 - [x] 依存の診断（依存にない別名・見つからない／公開されていない（区別しない）・hash の不一致・取り出せない）と依存グラフの辺（System → 別名）
 - [ ] 依存の依存と輪の検出（manifest に依存を入れる。自分のライブラリへの依存も輪として扱う）
 - [x] 実行時の取り込み：KokoState（Entity に付けて再生で動く。同じ版は置いた物どうしで共有。セッションではサーバーが持ち主の許可で中身を添える）
-- [ ] ライブラリの System をアウトプットで使い、PackageExecutionContext を付ける
+- [x] ライブラリの System をアウトプットで使い、PackageExecutionContext を付ける（import は同じライブラリの公開したものと Built-in だけ。VM は使うプロジェクトとライブラリの版ごと）
 - [ ] 抽出／フォークで出所と結び付けを保つ
 
 ### U4: 公式 Platform Primitive / Library と reference UGC
