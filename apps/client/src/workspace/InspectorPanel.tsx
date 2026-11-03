@@ -5,9 +5,9 @@ import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
-import { parseQuery } from "./queryInfo";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
+import { useSystemQuery } from "./useProblems";
 
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
@@ -196,6 +196,7 @@ function Properties() {
 
 function EntityProperties({ id }: { id: EntityId }) {
   const { mode, runtime, stop, outputId } = useWorkspace();
+  const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
@@ -245,11 +246,8 @@ function EntityProperties({ id }: { id: EntityId }) {
   };
 
   const matchedSystems = project.systems().filter((s) => {
-    const q = parseQuery(project.code(s.id)?.toString() ?? "");
-    const has = (name: string) => {
-      const kid = registry.idOf(name);
-      return kid !== undefined && attached.includes(kid);
-    };
+    const q = queryOf(s.id);
+    const has = (k: { id: string | null }) => k.id !== null && attached.includes(k.id);
     return q.with.length > 0 && q.with.every(has) && !q.without.some(has);
   });
 

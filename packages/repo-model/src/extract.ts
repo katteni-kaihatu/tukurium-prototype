@@ -1,6 +1,6 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import { BUILTIN, isBuiltin } from "./builtins";
-import { parseQuery } from "./queryInfo";
+import { ProjectDependencyGraph } from "./dependencyGraph";
 import { newId, type ProjectSnapshot, type Provenance } from "./schema";
 
 export interface ExtractSelection {
@@ -44,13 +44,17 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
       }
     }
   }
-  // System が Query で使う KokoState
+  // System が使う KokoState（import したもの・Query に名前で書いたもの）。依存グラフから集める
+  const graph = ProjectDependencyGraph.fromSnapshot(src);
   for (const s of src.systems) {
     if (!out.systems.has(s.id)) continue;
-    const q = parseQuery(s.code);
-    for (const name of [...q.with, ...q.without]) {
-      const def = src.kokostates.find((k) => k.name === name);
-      if (def) out.kokostates.add(def.id);
+    for (const dep of graph.dependenciesOf({ kind: "system", id: s.id })) {
+      if (dep.kind === "kokostate" && !isBuiltin(dep.id)) out.kokostates.add(dep.id);
+      if (dep.kind === "name" && dep.id.startsWith("kokostate/")) {
+        const name = dep.id.slice("kokostate/".length);
+        const def = src.kokostates.find((k) => k.name === name);
+        if (def) out.kokostates.add(def.id);
+      }
     }
   }
   for (const m of src.materials) if (out.materials.has(m.id) && m.map) out.assets.add(m.map);

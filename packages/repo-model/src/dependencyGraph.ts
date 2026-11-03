@@ -2,7 +2,9 @@ import type { KokoStateDef } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { parseQuery } from "./queryInfo";
+import { ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
+import { compileSystem } from "./systemCompiler";
 
 /**
  * 制作データの依存グラフ（計画 Phase 3）。「A は B に依存する」を A → B の辺で持つ。
@@ -29,6 +31,12 @@ function parseKey(key: string): GraphRef {
   const at = key.indexOf(":");
   return { kind: key.slice(0, at) as GraphRef["kind"], id: key.slice(at + 1) };
 }
+
+/**
+ * パスの構造（フォルダ・置き場所・名前）の節。import を書いた System はこれに依存する
+ * （フォルダの移動や名前の変更で、同じ書き方の解決先が変わりうるため）。
+ */
+export const PATHS_REF: GraphRef = { kind: "name", id: "paths" };
 
 /** KokoState の名前の節 */
 export const kokoNameRef = (name: string): GraphRef => ({ kind: "name", id: `kokostate/${name}` });
@@ -71,10 +79,19 @@ export class ProjectDependencyGraph {
       for (const s of o.systems)
         this.edge({ kind: "output", id: o.id }, { kind: "system", id: s.id });
 
+    let index: ResourcePathIndex | null = null;
     for (const s of snap.systems) {
+      const from: GraphRef = { kind: "system", id: s.id };
+      // 移行の間の書き方：Query に KokoState の名前を書く
       const q = parseQuery(s.code);
-      for (const name of [...q.with, ...q.without])
-        this.edge({ kind: "system", id: s.id }, kokoNameRef(name));
+      for (const name of [...q.with, ...q.without]) this.edge(from, kokoNameRef(name));
+      // import で書いた KokoState（ADR 0010）
+      if (!s.code.includes("import")) continue;
+      index ??= ResourcePathIndex.fromSnapshot(snap);
+      const compiled = compileSystem(s.id, s.code, index);
+      if (compiled.bindings.length === 0 && compiled.diagnostics.length === 0) continue;
+      this.edge(from, PATHS_REF);
+      for (const b of compiled.bindings) this.edge(from, { kind: "kokostate", id: b.resourceId });
     }
   }
 
@@ -128,6 +145,16 @@ function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
   return out;
 }
 
+/** パスの構造を比べるための文字列（ID・名前・親・拡張子） */
+function pathSignature(snap: ProjectSnapshot): string {
+  return JSON.stringify(
+    ResourcePathIndex.fromSnapshot(snap)
+      .all()
+      .map((e) => [e.id, e.name, e.parent, e.ext])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  );
+}
+
 /**
  * 前と今の制作データで、変わった（足された・消えた）リソース。
  * KokoState が変わったときは、前と今の名前の節も含める（名前で書いた Query のため）。
@@ -141,6 +168,7 @@ export function changedRefs(prev: ProjectSnapshot, next: ProjectSnapshot): Graph
   const names = new Map<string, string>();
   for (const k of prev.kokostates) names.set(`prev:${k.id}`, k.name);
   for (const k of next.kokostates) names.set(`next:${k.id}`, k.name);
+  if (pathSignature(prev) !== pathSignature(next)) changed.add(refKey(PATHS_REF));
   for (const key of [...changed]) {
     const r = parseKey(key);
     if (r.kind !== "kokostate") continue;

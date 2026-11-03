@@ -14,8 +14,9 @@ export function emptyProject(name: string): ProjectSnapshot {
   };
 }
 
-export const NEW_SYSTEM_CODE = `export default system({
-  // この System が処理する Entity の条件（KokoState の名前）
+export const NEW_SYSTEM_CODE = `// KokoState は import で読み込む（例：import Gun from "./Gun.koko";）
+export default system({
+  // この System が処理する Entity の条件（import した KokoState）
   query: { with: [], without: [] },
 
   onUpdate(e, dt) {

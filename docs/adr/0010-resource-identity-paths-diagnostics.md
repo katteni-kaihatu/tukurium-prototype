@@ -76,4 +76,6 @@ export default system({
 ## 結果
 
 - `packages/repo-model` に、論理パスの索引（`ResourcePathIndex`）、汎用の `Diagnostic`、構造の検査（`ProjectStructureValidator`）を置く。どれも UI に依存しない。
+- コンパイラ（`compileSystem`）は import 文の範囲だけを `const Gun = __koko("<ID>", "<名前>");` に書き換え、行の数を保つ（source map を使わずに、実行時のエラーの行番号をそのまま使える）。`entity.get(Gun)` で値を取る。
+- runtime を ID ベースへ移すまでの間、`__koko` が返す値は文字列としては KokoState の名前になる（Query の with・`e[Gun]`・`world.get(id, Gun)` がそのまま動く）。
 - System の書き方と runtime の移行（§3・§4）、Snapshot の版上げは、計画の Phase 4〜7 で行う。それまでは今の表示名での参照が動き続ける。Registry が同じ realm の中で名前の重複を拒むため、同じ名前の KokoState を実際に作れるようにするのは runtime の移行のあととする。

@@ -62,6 +62,24 @@ describe("抽出", () => {
     expect(sel.materials.sort()).toEqual(["mat_gun", "mat_wood"]);
   });
 
+  it("System を選ぶと、import した KokoState も一緒に集める", () => {
+    const src = gunAndTargetSample();
+    src.kokostates.push({ id: "ks_ammo", name: "Ammo", fields: [] });
+    src.systems.push({
+      id: "sys_reload",
+      name: "Reload",
+      code: 'import Ammo from "/Ammo.koko";\nexport default system({ query: { with: [Ammo] } });',
+    });
+    const sel = collectSelection(src, {
+      outputs: [],
+      kokostates: [],
+      systems: ["sys_reload"],
+      materials: [],
+      assets: [],
+    });
+    expect(sel.kokostates).toEqual(["ks_ammo"]);
+  });
+
   it("新しいリポジトリへ：選んだものと由来が入る", () => {
     const out = extractInto(
       gunAndTargetSample(),

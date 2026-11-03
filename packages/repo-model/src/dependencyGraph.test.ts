@@ -98,12 +98,14 @@ describe("増分の無効化", () => {
   it("素材を消すと、関係する Material・Entity（とその子）・アウトプットだけが dirty になる", () => {
     const prev = base();
     const next = { ...base(), assets: [] };
-    expect(keys(changedRefs(prev, next))).toEqual(["asset:img"]);
+    // 素材が消えるとパスの構造も変わる（import を書いた System がなければ、誰も依存していない）
+    expect(keys(changedRefs(prev, next))).toEqual(["asset:img", "name:paths"]);
     expect(keys(dirtyRefs(prev, next))).toEqual([
       "asset:img",
       "entity:c",
       "entity:e",
       "material:m",
+      "name:paths",
       "output:out",
     ]);
   });
@@ -142,5 +144,46 @@ describe("増分の無効化", () => {
     next.materials = next.materials.map((m) => ({ ...m, color: "#000" }));
     const dirty = keys(dirtyRefs(prev, next));
     expect(dirty.filter((k) => k.startsWith("system:"))).toEqual([]);
+  });
+});
+
+describe("import で書いた System の依存", () => {
+  function withImport(): ProjectSnapshot {
+    const s = base();
+    s.folders = [{ id: "f", name: "States", parent: null }];
+    s.placement = { ks_gun: "f" };
+    s.systems = s.systems.map((x) =>
+      x.id === "sys_shoot"
+        ? {
+            ...x,
+            code: 'import Gun from "/States/Gun.koko";\nexport default system({ query: { with: [Gun] } });',
+          }
+        : x,
+    );
+    return s;
+  }
+
+  it("結び付けた KokoState の ID と、パスの構造に依存する", () => {
+    const g = ProjectDependencyGraph.fromSnapshot(withImport());
+    expect(keys(g.dependenciesOf({ kind: "system", id: "sys_shoot" }))).toEqual([
+      "kokostate:ks_gun",
+      "name:paths",
+    ]);
+  });
+
+  it("フォルダの名前を変えると、import を書いた System だけが dirty になる", () => {
+    const prev = withImport();
+    const next = withImport();
+    next.folders = [{ id: "f", name: "Parts", parent: null }];
+    const dirty = keys(dirtyRefs(prev, next));
+    expect(dirty).toContain("system:sys_shoot");
+    expect(dirty).not.toContain("system:sys_hp");
+  });
+
+  it("パスに関係しない変更（マテリアルの色）では dirty にならない", () => {
+    const prev = withImport();
+    const next = withImport();
+    next.materials = next.materials.map((m) => ({ ...m, color: "#000" }));
+    expect(keys(dirtyRefs(prev, next)).filter((k) => k.startsWith("system:"))).toEqual([]);
   });
 });

@@ -11,9 +11,11 @@ import {
   type AssetDef,
   BUILTIN,
   buildRegistry,
+  compileSystem,
   isBuiltin,
   type MaterialDef,
   type ProjectSnapshot,
+  ResourcePathIndex,
 } from "@tukurium/repo-model";
 import {
   type HostCallContext,
@@ -640,6 +642,7 @@ export class Simulation {
   private loadSystems(part: Part, reload = false): void {
     const output = part.snapshot.outputs.find((o) => o.id === part.outputId);
     if (!output) throw new Error(`Unknown output: ${part.outputId}`);
+    let index: ResourcePathIndex | null = null;
     for (const ref of output.systems) {
       const def = part.snapshot.systems.find((s) => s.id === ref.id);
       if (!def) continue;
@@ -665,7 +668,18 @@ export class Simulation {
       this.systems.push(sys);
       if (!ref.enabled) continue;
       try {
-        const meta = this.sandbox.loadSystem(id, def.code, part.realm);
+        // import した KokoState を安定 ID に結び付けた JS にしてから読み込む（ADR 0010）
+        index ??= ResourcePathIndex.fromSnapshot(part.snapshot);
+        const compiled = compileSystem(def.id, def.code, index);
+        const first = compiled.diagnostics[0];
+        if (!compiled.ok && first)
+          throw new ScriptError(
+            first.message,
+            id,
+            "load",
+            first.location?.kind === "script" ? first.location.line : null,
+          );
+        const meta = this.sandbox.loadSystem(id, compiled.javascript, part.realm);
         const scope = this.scopeOfRealm(part.realm);
         const resolve = (names: string[]) =>
           names.map((n) => {
