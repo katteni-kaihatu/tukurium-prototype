@@ -64,6 +64,12 @@ export class PostgresStore implements Store {
     return { user, token };
   }
 
+  async ensureUser(user: User) {
+    // token は使わない（誰も知らない値の hash を入れて、ログインできないようにする）
+    await this
+      .sql`insert into users (id, name, token_hash) values (${user.id}, ${user.name}, ${hash(newToken())}) on conflict (id) do nothing`;
+  }
+
   async renameUser(id: string, name: string) {
     await this.sql`update users set name = ${name} where id = ${id}`;
   }

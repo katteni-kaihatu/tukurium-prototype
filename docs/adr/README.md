@@ -18,4 +18,5 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0012](0012-runtime-authority-target-policy.md) | 採用 | 権限の単位（置いた物）・境界（World の配置）・判定の場所・対象の policy | 今は協調セッションに限る。サーバーの判定は U2 以降 |
 | [0013](0013-package-identity-version.md) | 採用 | Package の同一性・書き換えない版・exports・依存 | 型だけ。Registry は U3 |
 | [0014](0014-session-open-world.md) | 採用 | セッションで開くワールドは公開作品から一つ。開くと入れ替わる | アイテムの配置は残る |
-| [0015](0015-library-package-minimal.md) | 採用 | 最小の Library Package：ライブラリの作品、公開の印、サーバーが計算する content hash | 依存と `@別名` の import は次の段階 |
+| [0015](0015-library-package-minimal.md) | 採用 | 最小の Library Package：ライブラリの作品、公開の印、サーバーが計算する content hash、依存・`@別名` の import・実行時の取り込み・依存の依存・抽出 | U3 |
+| [0016](0016-official-library-reference-ugc.md) | 採用 | 公式の発行者・同梱の公式ライブラリ（combat）・reference UGC（銃と的） | U4 の最初の一区切り。扉・収集物と安定度の印は次 |

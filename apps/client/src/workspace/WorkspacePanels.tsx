@@ -21,6 +21,7 @@ import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { ResourcesPanel } from "./ResourcesPanel";
+import { createReferenceSample } from "./referenceSample";
 import { SavePanel } from "./SavePanel";
 import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
@@ -299,6 +300,18 @@ function WorkspaceStart() {
           onClick={() => ws.create("銃と的", gunAndTargetSample())}
         >
           ＋ サンプル「銃と的」で作る
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
+          title="的の hp と Damage の受け取りを、公式ライブラリ「combat」に任せた銃と的"
+          onClick={() => {
+            void createReferenceSample().catch((e: Error) =>
+              useWorkspace.setState({ error: e.message }),
+            );
+          }}
+        >
+          ＋ サンプル「銃と的（公式ライブラリ）」
         </button>
         <button type="button" className={ui.btn} onClick={() => ws.create("銃", gunSample())}>
           ＋ サンプル「銃」

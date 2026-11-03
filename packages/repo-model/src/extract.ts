@@ -348,7 +348,7 @@ function rebindImports(
   for (const [from, to] of added) {
     const before = src.systems.find((s) => s.id === from);
     const after = dst.systems.find((s) => s.id === to);
-    if (!before || !after || !after.code.includes("import")) continue;
+    if (!before || !after?.code.includes("import")) continue;
     after.code = rewriteImports(after.code, (spelling) => {
       const pkg = parsePackageSpelling(spelling);
       if (pkg) {

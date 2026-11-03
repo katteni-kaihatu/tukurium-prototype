@@ -660,8 +660,10 @@ describe("リポジトリ・コミット・作品", () => {
       200,
     );
     expect((await B.get(`/api/repos/${repo.id}`)).statusCode).toBe(404);
-    expect((await B.get("/api/repos")).json()).toEqual([]);
-    expect((await A.get("/api/repos")).json()).toHaveLength(1);
+    // 公式ライブラリ（公式の発行者のリポジトリ）は、いつも見える
+    const mine = (list: { owner: string }[]) => list.filter((r) => r.owner !== "u_official");
+    expect(mine((await B.get("/api/repos")).json())).toEqual([]);
+    expect(mine((await A.get("/api/repos")).json())).toHaveLength(1);
     expect((await B.patch(`/api/repos/${repo.id}`, { visibility: "public" })).statusCode).toBe(403);
   });
 
@@ -795,6 +797,26 @@ describe("リポジトリ・コミット・作品", () => {
     const profile = (await B.get(`/api/users/${a.me.id}`)).json();
     expect(profile.name).toBe("a");
     expect(profile.works).toHaveLength(1);
+  });
+
+  it("公式ライブラリは起動のときに用意され、公式の印は発行者で決まる", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "Tukurium 公式");
+    const A = api(app, a.token);
+    const works = (await A.get("/api/works")).json() as {
+      id: string;
+      official: boolean;
+      outputKind: string;
+    }[];
+    expect(works.find((w) => w.id === "w_official_combat")).toMatchObject({
+      official: true,
+      outputKind: "library",
+    });
+    // 同じ名前の利用者が出しても、公式にはならない
+    const repo = (await A.post("/api/repos", { name: "combat", template: "gun" })).json();
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();
+    const list = (await A.get("/api/works")).json() as { id: string; official: boolean }[];
+    expect(list.find((w) => w.id === work.id)?.official).toBe(false);
   });
 
   it("作品のリリースをセッションに置く（利用の権限）", async () => {

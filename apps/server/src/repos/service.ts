@@ -4,6 +4,8 @@ import {
   extractInto,
   fromFiles,
   lockKey,
+  OFFICIAL_PUBLISHER,
+  officialLibraries,
   type PackageDependency,
   type PackageManifest,
   type PackageResolution,
@@ -82,11 +84,13 @@ export class RepoService {
       kind?: string;
       visibility?: "public" | "private";
       snapshot: ProjectSnapshot;
+      /** 決まった ID で作る（公式ライブラリ）。ふつうは振る */
+      id?: string;
     },
     forkedFrom: RepoMeta["forkedFrom"] = null,
   ): Promise<RepoMeta> {
     const meta: RepoMeta = {
-      id: shortId("r"),
+      id: init.id ?? shortId("r"),
       owner: owner.id,
       name: init.name.trim().slice(0, 64) || "untitled",
       description: (init.description ?? "").slice(0, 300),
@@ -245,6 +249,44 @@ export class RepoService {
     };
     await this.store.saveRelease(r);
     return r;
+  }
+
+  /**
+   * 同梱の公式ライブラリを、公式の発行者の作品として用意する（起動のときに呼ぶ。ADR 0016）。
+   * リポジトリ・作品の ID は決まった値。中身が最新の版と違えば（または版がなければ）コミットして新しい版を出す。
+   * 出した版は書き換えない。
+   */
+  async ensureOfficialLibraries(): Promise<void> {
+    const publisher: User = { ...OFFICIAL_PUBLISHER };
+    await this.store.ensureUser(publisher);
+    for (const lib of officialLibraries()) {
+      const created = !(await this.store.repo(lib.repoId));
+      if (created)
+        await this.create(publisher, {
+          id: lib.repoId,
+          name: lib.name,
+          description: lib.description,
+          kind: "library",
+          snapshot: lib.snapshot,
+        });
+      const work = await this.store.work(lib.workId);
+      if (!work)
+        await this.store.saveWork({
+          id: lib.workId,
+          repoId: lib.repoId,
+          outputId: lib.outputId,
+          name: lib.name,
+          owner: publisher.id,
+          perms: { use: true, view: true, fork: true },
+          createdAt: new Date().toISOString(),
+        });
+      const latest = (await this.store.releases(lib.workId))[0];
+      if (latest?.contentHash === contentHashOf(packageManifest(lib.snapshot))) continue;
+      // 作ったばかりなら、最初のコミットが同梱の中身。そうでなければ、同梱の中身をコミットしてから出す
+      if (!created)
+        await this.commit(lib.repoId, lib.snapshot, "公式ライブラリを更新", publisher, []);
+      await this.release(publisher, lib.workId);
+    }
   }
 
   /**

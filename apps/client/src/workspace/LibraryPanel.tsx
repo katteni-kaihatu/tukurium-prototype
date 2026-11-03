@@ -34,6 +34,18 @@ export function LibraryPanel() {
   const [adding, setAdding] = useState<{ work: Work; alias: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const deps = project?.dependencies() ?? [];
+  const packages = useWorkspace((s) => s.packages);
+  // 書き方の例：依存が公開している KokoState の、実際のパス
+  const example = [...packages.values()].flatMap((r) =>
+    r.status === "ready"
+      ? r.manifest.exports
+          .filter((e) => e.kind === "kokostate")
+          .map((e) => {
+            const name = (e.definition as { name?: string }).name ?? "State";
+            return `import ${name} from "@${r.dependency.alias}${e.path}";`;
+          })
+      : [],
+  )[0];
   useEffect(() => {
     api.works().then(setWorks, (e: Error) => setError(e.message));
   }, []);
@@ -115,7 +127,7 @@ export function LibraryPanel() {
                 ))}
               </ul>
               <p className={ui.muted}>
-                書き方：import Health from "@{deps[0]?.alias}/States/Health.koko";
+                書き方：{example ?? `import 名前 from "@${deps[0]?.alias}/パス.koko";`}
                 （公開の印を付けた KokoState だけ。Inspector で Entity に付けられます）
               </p>
             </>
@@ -148,6 +160,14 @@ export function LibraryPanel() {
                       · {w.ownerName} / {w.repoName}
                     </span>
                   </span>
+                  {w.official && (
+                    <span
+                      className={ui.badgeBrand}
+                      title="公式の発行者の作品（名前ではなく発行者で決まる）"
+                    >
+                      公式
+                    </span>
+                  )}
                   {kind && <span className={ui.badge}>{kind}</span>}
                   {w.latest ? (
                     <span className={ui.badge}>v{w.latest.version}</span>

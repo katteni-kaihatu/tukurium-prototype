@@ -3,6 +3,7 @@ export * from "./dependencyGraph";
 export * from "./diagnostics";
 export * from "./extract";
 export * from "./files";
+export * from "./official";
 export * from "./packageDependency";
 export * from "./packageManifest";
 export * from "./projectDoc";

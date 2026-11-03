@@ -29,6 +29,8 @@ export async function buildApp(
     app.log.warn("DATABASE_URL が未設定のため、メモリに保存します（再起動で消えます）");
   }
   const repos = new RepoService(store, config.gitDir);
+  // 同梱の公式ライブラリを用意する（中身が変わっていれば新しい版を出す。ADR 0016）
+  await repos.ensureOfficialLibraries();
   const hub = new Hub(store, { log: (m) => app.log.info(m), repos, ...options.hub });
 
   // Yjs の更新を運ぶので大きめにする（初期内容の送信など）
