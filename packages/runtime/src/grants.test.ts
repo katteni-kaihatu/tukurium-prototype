@@ -98,6 +98,17 @@ describe("実効権限（セッション）", () => {
     expect(s.systemStatus().find((x) => x.name === "Shoot")?.error).toBeNull();
   });
 
+  it("置いた後に付与を変えられる（null に戻すと宣言どおり）", async () => {
+    const { s, logs } = await session(RAYCAST);
+    s.setGrants("gun", []);
+    s.input(fire);
+    s.step(1 / 60);
+    s.setGrants("gun", null);
+    s.input(fire);
+    s.step(1 / 60);
+    expect(said(logs, "hit")).toEqual(["hit no", "hit yes"]);
+  });
+
   it("コードから読み取れない使い方（宣言に無い Capability）はセッションでは拒む", async () => {
     const { s, logs } = await session(DYNAMIC);
     s.input(fire);

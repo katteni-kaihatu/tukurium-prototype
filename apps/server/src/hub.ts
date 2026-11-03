@@ -56,6 +56,8 @@ interface Placement {
   position: [number, number, number];
   yaw: number;
   placedBy: string;
+  /** 置いた物への付与（null は宣言どおり。ADR 0012） */
+  grants: string[] | null;
 }
 
 interface Session {
@@ -251,6 +253,19 @@ export class Hub {
             by: user.name,
           });
         }
+        this.broadcastSession(s);
+        return;
+      }
+      case "setGrants": {
+        const s = conn.session;
+        const p = s?.placements.get(msg.placementId);
+        if (!s || !p) return;
+        const w = p.workspaceId ? this.workspaces.get(p.workspaceId) : undefined;
+        const allowed =
+          s.owner === user.id || p.placedBy === user.id || (w && canWrite(this.roleOf(w, user.id)));
+        if (!allowed) return this.deny(conn, "この配置の権限を変える権限がありません");
+        p.grants = msg.grants ? [...new Set(msg.grants)].sort() : null;
+        if (s.host) this.send(s.host, { t: "host.setGrants", id: p.id, grants: p.grants });
         this.broadcastSession(s);
         return;
       }
@@ -545,6 +560,7 @@ export class Hub {
           position: p.position,
           yaw: p.yaw,
           placedBy: p.placedBy,
+          grants: p.grants,
           outputId: p.outputId,
           workspaceName: p.workspaceId
             ? (this.workspaces.get(p.workspaceId)?.meta.name ?? "（閉じたワークスペース）")
@@ -617,6 +633,7 @@ export class Hub {
       position: msg.position,
       yaw: msg.yaw,
       placedBy: user.id,
+      grants: null,
     };
     s.placements.set(p.id, p);
     if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
@@ -632,6 +649,7 @@ export class Hub {
       snapshot: p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot,
       position: p.position,
       yaw: p.yaw,
+      grants: p.grants,
     };
   }
 
@@ -792,6 +810,7 @@ export class Hub {
       position: msg.position,
       yaw: msg.yaw,
       placedBy: user.id,
+      grants: null,
     };
     s.placements.set(p.id, p);
     if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
