@@ -22,3 +22,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0016](0016-official-library-reference-ugc.md) | 採用 | 公式の発行者・同梱の公式ライブラリ（combat・interaction）・reference UGC（銃と的・扉とスイッチ）・Built-in の Interact | U4。収集物と安定度の印は次 |
 | [0017](0017-label-and-player-name.md) | 採用 | 文字を出す Label と、入力に添える表示名 | プロトコルの版は上げない。本人の確定は ID |
 | [0018](0018-player-bag.md) | 採用 | プレイヤーが持ち歩くバッグ：種類はライブラリの KokoState、触れるのは E で押したときだけ、セッションの間だけ残る | U4 の収集物と Inventory |
+| [0019](0019-api-stability-all-experimental.md) | 採用 | API の安定度は、今はすべて experimental。公式ライブラリは公式アカウントの UGC として扱い印を付けない | 上げるのはワークショップができてから |

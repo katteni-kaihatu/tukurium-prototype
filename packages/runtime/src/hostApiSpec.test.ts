@@ -1,6 +1,7 @@
 import { HOST_CAPABILITIES } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
 import { HOST_API_POLICY } from "./capabilities";
+import { BUILTIN_CONTRACTS } from "./contracts";
 import { HOST_API_ARGS } from "./hostApi";
 import { HOST_API_SPEC, hostApiCompletions, hostApiDeclarations } from "./hostApiSpec";
 import { HOST_API } from "./simulation";
@@ -35,5 +36,12 @@ describe("Host API の一つの定義（HOST_API_SPEC）", () => {
       info: expect.stringContaining("physics.raycast"),
     });
     expect(hostApiCompletions("nope")).toEqual([]);
+  });
+
+  it("今は Host API・Built-in の Contract をすべて experimental にし、説明にも出す（ADR 0019）", () => {
+    for (const s of Object.values(HOST_API_SPEC)) expect(s.stability).toBe("experimental");
+    for (const c of Object.values(BUILTIN_CONTRACTS)) expect(c.stability).toBe("experimental");
+    expect(hostApiCompletions("bag")[0]?.info).toContain("experimental");
+    expect(hostApiDeclarations()).toContain("・experimental）");
   });
 });

@@ -303,7 +303,7 @@ UGC の種類を増やすため、Runtime Built-in、Host Capability、公式 Li
 
 - [x] 公式の発行者（決まった ID。公式の印は発行者で決まる）と、サーバーに同梱して起動のときに登録する公式ライブラリ（決まった Package ID。中身が変われば新しい版）
 - [x] 公式「combat」（Health と Damageable）と、それを使う reference UGC「銃と的（公式ライブラリ）」。今の銃からの Damage も公式の Damageable が受ける
-- [ ] API の安定度（experimental / preview / stable / deprecated）の印と診断
+- [x] API の安定度（[ADR 0019](../adr/0019-api-stability-all-experimental.md)：今は Host API・Built-in の Contract をすべて experimental。公式ライブラリは公式アカウントの UGC として扱い印を付けない。知らせるのはエディタの説明と入力補完だけ。上げるのはワークショップができてから）
 - [x] 扉とスイッチ（E で見ている物に Built-in の Interact v1。公式「interaction」（Toggle・Toggleable）と、それを使う reference UGC「扉とスイッチ」）
 - [x] 収集物と Inventory（[ADR 0018](../adr/0018-player-bag.md)：プレイヤーが持ち歩くバッグを Host が持つ。種類はライブラリの KokoState、bag.* は E で押した Interact の中だけ。公式「items」（Key・KeyPickup）と reference UGC「鍵と扉」。入力のプレイヤー ID はサーバーが本人で上書き）
 
