@@ -1,7 +1,7 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import type { PackageExport, PackageManifest } from "./packageManifest";
 import { BUILTIN_PREFIX, normalizeName, validateName } from "./resourcePath";
-import type { PackageDependency } from "./schema";
+import type { FolderDef, PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
  * プロジェクトの依存と `@別名/...` の import（ADR 0015）。
@@ -111,4 +111,87 @@ export function resolutionMap(
     );
   }
   return out;
+}
+
+/** 取り込んだ ID を Package ID・版・元の ID に分ける（`pkg:` でなければ null） */
+export function parsePackageResourceId(
+  id: string,
+): { packageId: string; version: number; resourceId: string } | null {
+  const m = /^pkg:(.+)@(\d+)\/(.+)$/.exec(id);
+  if (!m) return null;
+  return { packageId: m[1] as string, version: Number(m[2]), resourceId: m[3] as string };
+}
+
+/** 依存から使える System（アウトプットに入れる候補。ID は Package と版で区切ったもの） */
+export interface PackageSystem {
+  id: string;
+  name: string;
+  code: string;
+  /** 依存の別名 */
+  alias: string;
+}
+
+export function packageSystems(resolutions: Iterable<PackageResolution>): PackageSystem[] {
+  const out: PackageSystem[] = [];
+  for (const r of resolutions) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as { name?: unknown; code?: unknown } | null;
+      if (e.kind !== "system" || typeof def?.name !== "string" || typeof def.code !== "string")
+        continue;
+      out.push({
+        id: packageResourceId(r.dependency, e.id),
+        name: def.name,
+        code: def.code,
+        alias: r.dependency.alias,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * ライブラリの版の中身から、公開したものだけの制作データを組み立て直す（ID は Package と版で区切る）。
+ * ライブラリの System の import（`./Health.koko` など）を、ライブラリの中の論理パスで解決するのに使う。
+ * 公開していないものは入らないので、それを import した System は「見つからない」になる。
+ */
+export function librarySnapshot(
+  r: Extract<PackageResolution, { status: "ready" }>,
+): ProjectSnapshot {
+  const dep = r.dependency;
+  const snap: ProjectSnapshot = {
+    version: 1,
+    name: dep.alias,
+    kokostates: [],
+    systems: [],
+    materials: [],
+    outputs: [],
+    entities: [],
+    folders: [],
+    placement: {},
+  };
+  const folderId = (path: string) => `pkgdir:${dep.packageId}@${dep.version}:${path}`;
+  const folders = new Map<string, FolderDef>();
+  for (const e of r.manifest.exports) {
+    const segments = e.path.split("/").filter((s) => s !== "");
+    let parent: string | null = null;
+    let prefix = "";
+    for (const seg of segments.slice(0, -1)) {
+      prefix += `/${seg}`;
+      const id = folderId(prefix);
+      if (!folders.has(id)) folders.set(id, { id, name: seg, parent });
+      parent = id;
+    }
+    const id = packageResourceId(dep, e.id);
+    const def = e.definition as Record<string, unknown> | null;
+    if (typeof def?.name !== "string") continue;
+    if (e.kind === "kokostate" && Array.isArray(def.fields))
+      snap.kokostates.push({ id, name: def.name, fields: structuredClone(def.fields) });
+    else if (e.kind === "system" && typeof def.code === "string")
+      snap.systems.push({ id, name: def.name, code: def.code });
+    else continue;
+    if (parent && snap.placement) snap.placement[id] = parent;
+  }
+  snap.folders = [...folders.values()];
+  return snap;
 }

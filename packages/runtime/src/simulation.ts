@@ -18,11 +18,13 @@ import {
   inferCapabilities,
   isBuiltin,
   isPackageResourceId,
+  librarySnapshot,
   type MaterialDef,
   type OutputExposure,
   type PackageResolution,
   type ProjectSnapshot,
   packageKokoStates,
+  parsePackageResourceId,
   ResourcePathIndex,
   resolutionMap,
 } from "@tukurium/repo-model";
@@ -164,6 +166,14 @@ interface Part extends PartSpec {
  * Built-in と同じく、どの realm からも同じ ID で使う（同じライブラリの同じ版は、置いた物どうしで共有。ADR 0015）
  */
 const PACKAGE_SCOPE = "\u0000package";
+
+/**
+ * ライブラリの System を動かす VM の領域。使うプロジェクト（realm）とライブラリの版ごとに分ける
+ * （同じライブラリでも、使うプロジェクトが違えば変数は混ざらない。使う側のスクリプトとも別の VM。ADR 0015）
+ */
+const libraryVm = (realm: string, packageId: string, version: number) =>
+  `${realm}|pkg:${packageId}@${version}`;
+const isLibraryVm = (realm: string) => realm.includes("|pkg:");
 
 /** realm で区切らない KokoState（Built-in と、依存から取り込んだもの） */
 const isShared = (id: KokoStateId) => isBuiltin(id) || isPackageResourceId(id);
@@ -386,7 +396,8 @@ export class Simulation {
     this.releasePackageDefs(realm, new Set());
     this.realmMaterials.delete(realm);
     this.realmAssets.delete(realm);
-    for (const sys of [...this.systems]) if (sys.realm === realm) this.dropSystem(sys);
+    for (const sys of [...this.systems])
+      if (sys.realm === realm || sys.realm.startsWith(`${realm}|pkg:`)) this.dropSystem(sys);
     this.sandbox.disposeRealm(realm);
   }
 
@@ -406,10 +417,29 @@ export class Simulation {
     return [...caps].sort();
   }
 
-  /** 実行の主体（ADR 0012・0013）。Package の仕組みができるまでは、ワークスペースの出力を暗黙の Package とする */
+  /**
+   * 実行の主体（ADR 0012・0013）。ライブラリの System なら、その Package（作品の ID・版・content hash）。
+   * それ以外は、ワークスペースの出力を暗黙の Package とする
+   */
   executionContext(partId: string, systemId: string): PackageExecutionContext | undefined {
     const part = this.parts.get(partId);
     if (!part) return undefined;
+    const ref = parsePackageResourceId(systemId);
+    const dep = ref
+      ? part.snapshot.dependencies?.find(
+          (d) => d.packageId === ref.packageId && d.version === ref.version,
+        )
+      : undefined;
+    if (dep)
+      return {
+        packageInstanceId: `${part.id}|${dep.packageId}@${dep.version}`,
+        packageId: dep.packageId as PackageId,
+        resolvedVersion: String(dep.version),
+        contentHash: dep.contentHash,
+        systemId,
+        placementId: part.id,
+        worldInstanceId: this.baseWorld()?.id ?? "session",
+      };
     const revision = part.realm.includes("@") ? part.realm.slice(part.realm.indexOf("@") + 1) : "";
     return {
       packageInstanceId: part.id,
@@ -898,26 +928,93 @@ export class Simulation {
   private dropSystem(sys: LoadedSystem): void {
     this.sandbox.unloadSystem(sys.id);
     this.systems.splice(this.systems.indexOf(sys), 1);
+    // ライブラリの VM は、その版の System がなくなったら破棄する
+    if (isLibraryVm(sys.realm) && !this.systems.some((s) => s.realm === sys.realm))
+      this.sandbox.disposeRealm(sys.realm);
+  }
+
+  /**
+   * アウトプットの System の中身と、読み込む場所。ライブラリの System（`pkg:` の ID）は、
+   * 依存の中身から取り出し、ライブラリの中の論理パスで import を解決する（公開したものだけが見える）。
+   * 使えないときは、その理由。
+   */
+  private systemSource(
+    part: Part,
+    refId: string,
+    packages: Map<string, PackageResolution>,
+    ownIndex: () => ResourcePathIndex,
+  ):
+    | {
+        ok: true;
+        def: { id: string; name: string; code: string };
+        realm: string;
+        index: () => ResourcePathIndex;
+        packages?: Map<string, PackageResolution>;
+      }
+    | { ok: false; name: string; error: string }
+    | null {
+    const ref = parsePackageResourceId(refId);
+    if (!ref) {
+      const def = part.snapshot.systems.find((s) => s.id === refId);
+      return def ? { ok: true, def, realm: part.realm, index: ownIndex, packages } : null;
+    }
+    const resolution = [...packages.values()].find(
+      (r) => r.dependency.packageId === ref.packageId && r.dependency.version === ref.version,
+    );
+    if (!resolution)
+      return { ok: false, name: refId, error: "このライブラリの版は、今の依存にありません" };
+    const alias = resolution.dependency.alias;
+    if (resolution.status !== "ready")
+      return {
+        ok: false,
+        name: `@${alias}`,
+        error: `ライブラリ「@${alias}」を使えません：${resolution.message}`,
+      };
+    const lib = librarySnapshot(resolution);
+    const def = lib.systems.find((s) => s.id === refId);
+    if (!def)
+      return {
+        ok: false,
+        name: `@${alias}`,
+        error: `ライブラリ「@${alias}」（v${ref.version}）に、この System は公開されていません`,
+      };
+    let index: ResourcePathIndex | null = null;
+    return {
+      ok: true,
+      def: { ...def, name: `@${alias}/${def.name}` },
+      realm: libraryVm(part.realm, ref.packageId, ref.version),
+      index: () => {
+        index ??= ResourcePathIndex.fromSnapshot(lib);
+        return index;
+      },
+    };
   }
 
   private loadSystems(part: Part, reload = false): void {
     const output = part.snapshot.outputs.find((o) => o.id === part.outputId);
     if (!output) throw new Error(`Unknown output: ${part.outputId}`);
     let index: ResourcePathIndex | null = null;
+    const ownIndex = () => {
+      index ??= ResourcePathIndex.fromSnapshot(part.snapshot);
+      return index;
+    };
     const packages = resolutionMap(part.snapshot.dependencies, part.packages);
     for (const ref of output.systems) {
-      const def = part.snapshot.systems.find((s) => s.id === ref.id);
-      if (!def) continue;
-      const id = this.multi ? `${part.realm}:${def.id}` : def.id;
+      const source = this.systemSource(part, ref.id, packages, ownIndex);
+      if (!source) continue;
+      const id = this.multi ? `${part.realm}:${ref.id}` : ref.id;
       const existing = this.systems.find((s) => s.id === id);
       if (existing && !reload) {
         existing.users.add(part.id);
         continue;
       }
       if (existing) this.dropSystem(existing);
+      const def = source.ok ? source.def : { id: ref.id, name: source.name, code: "" };
+      // ライブラリの System は自分の VM で動き、使う側の KokoState は見えない（Built-in と依存のものだけ）
+      const realm = source.ok ? source.realm : part.realm;
       const sys: LoadedSystem = {
         id,
-        realm: part.realm,
+        realm,
         users: new Set([part.id]),
         name: def.name,
         with: [],
@@ -932,9 +1029,9 @@ export class Simulation {
       this.systems.push(sys);
       if (!ref.enabled) continue;
       try {
+        if (!source.ok) throw new ScriptError(source.error, id, "load");
         // import した KokoState を安定 ID に結び付けた JS にしてから読み込む（ADR 0010）
-        index ??= ResourcePathIndex.fromSnapshot(part.snapshot);
-        const compiled = compileSystem(def.id, def.code, index, packages);
+        const compiled = compileSystem(def.id, def.code, source.index(), source.packages);
         const first = compiled.diagnostics[0];
         if (!compiled.ok && first)
           throw new ScriptError(
@@ -943,11 +1040,11 @@ export class Simulation {
             "load",
             first.location?.kind === "script" ? first.location.line : null,
           );
-        const meta = this.sandbox.loadSystem(id, compiled.javascript, part.realm);
-        const scope = this.scopeOfRealm(part.realm);
+        const meta = this.sandbox.loadSystem(id, compiled.javascript, realm);
+        const scope = this.scopeOfRealm(realm);
         const resolve = (refs: string[]) =>
           refs.map((n) => {
-            const k = this.resolveKoko(n, part.realm);
+            const k = this.resolveKoko(n, realm);
             if (k) return k;
             if (this.registry.isAmbiguous(n, scope))
               throw new ScriptError(

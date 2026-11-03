@@ -1,7 +1,9 @@
 import type { KokoStateDef } from "@tukurium/eks";
-import { BUILTIN_KOKOSTATES, RESOURCE_KIND } from "../builtins";
+import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
+import { ResourcePathIndex } from "../resourcePath";
 import type { ProjectSnapshot } from "../schema";
+import { compileSystem } from "../systemCompiler";
 import { type Diagnostic, type DiagnosticInput, makeDiagnostic, type ResourceRef } from "./types";
 
 /** リソース参照の検査（ADR 0010）：Material・Entity・アウトプットが指すものがあるか */
@@ -182,7 +184,21 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
 
   for (const o of snap.outputs) {
     const subject: ResourceRef = { kind: "output", id: o.id };
-    for (const s of o.systems)
+    for (const s of o.systems) {
+      if (isPackageResourceId(s.id)) {
+        // ライブラリの System は依存の中身にあるので、今の依存のものかだけを見る（ADR 0015）
+        if ((snap.dependencies ?? []).some((d) => belongsToDependency(s.id, d))) continue;
+        push({
+          code: "output-system-not-in-dependencies",
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["systems", s.id] },
+          related: [],
+          message: `アウトプット「${o.name}」のライブラリの System は、今の依存にありません（版を変えたか、外しました）`,
+          detail: `ID: ${s.id}`,
+        });
+        continue;
+      }
       if (!systems.has(s.id))
         push({
           code: "output-system-missing",
@@ -193,6 +209,7 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
           message: `アウトプット「${o.name}」の System の一つがありません`,
           detail: `ID: ${s.id}`,
         });
+    }
     for (const k of o.keep) {
       const e = entities.get(k.entity);
       const field = defs.get(k.koko)?.fields.find((f) => f.id === k.field);
@@ -206,6 +223,35 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
           message: `アウトプット「${o.name}」の状態維持マークが、ない値を指しています`,
         });
     }
+  }
+  // 公開した System は、使う側では同じライブラリの公開したものと Built-in しか見えない（ADR 0015）
+  const exported = new Set(snap.exports ?? []);
+  let index: ResourcePathIndex | null = null;
+  for (const s of snap.systems) {
+    if (!exported.has(s.id) || !s.code.includes("import")) continue;
+    index ??= ResourcePathIndex.fromSnapshot(snap);
+    const compiled = compileSystem(s.id, s.code, index);
+    const subject: ResourceRef = { kind: "system", id: s.id };
+    for (const b of compiled.bindings) {
+      if (isBuiltin(b.resourceId) || exported.has(b.resourceId)) continue;
+      push({
+        code: "exported-system-imports-private",
+        severity: "error",
+        subject,
+        location: { kind: "script", line: b.line, symbol: b.spelling },
+        related: [{ kind: "kokostate", id: b.resourceId }],
+        message: `公開した System「${s.name}」が、公開していない「${b.name}」を import しています（使う側では見つかりません。「${b.name}」も公開してください）`,
+      });
+    }
+    for (const alias of compiled.packageImports)
+      push({
+        code: "exported-system-imports-package",
+        severity: "error",
+        subject,
+        location: { kind: "script", line: null, symbol: `@${alias}` },
+        related: [],
+        message: `公開した System「${s.name}」が、ライブラリ（@${alias}）を import しています。依存の依存はまだ使えません`,
+      });
   }
   return out;
 }
