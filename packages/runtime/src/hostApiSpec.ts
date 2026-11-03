@@ -19,6 +19,16 @@ const entityId = z.string({ error: "Entity の ID（文字列）を渡してく�
 const lenient = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 const record = z.record(z.string(), z.unknown());
 
+/**
+ * API の安定度（ADR 0019）。experimental：互換性なく変えうる／preview：変えるときは major を上げ、移し方と診断を
+ * 用意する／stable：同じ major の中では後方互換を守る／deprecated：後継があり、いずれ外す。
+ * 今はすべて experimental（ワークショップができ、実際の作品で使われてから上げる）。
+ */
+export type Stability = "experimental" | "preview" | "stable" | "deprecated";
+
+/** 印を付けないものの安定度 */
+export const DEFAULT_STABILITY: Stability = "experimental";
+
 interface SpecEntry<A extends z.ZodType> extends HostApiPolicy {
   /** 引数（QuickJS から届いた unknown を検証する） */
   args: A;
@@ -29,9 +39,14 @@ interface SpecEntry<A extends z.ZodType> extends HostApiPolicy {
   returns: string;
   /** 利用者向けの説明 */
   doc: string;
+  /** 安定度（書かなければ DEFAULT_STABILITY） */
+  stability?: Stability;
 }
 
-const entry = <A extends z.ZodType>(e: SpecEntry<A>) => e;
+const entry = <A extends z.ZodType>(e: SpecEntry<A>) => ({
+  ...e,
+  stability: e.stability ?? DEFAULT_STABILITY,
+});
 
 const BAG_NOTE =
   "E で押された Interact を受けている間だけ、押した人のバッグ（どの配置にも属さない）に触れる。種類は import したライブラリの KokoState だけ（ADR 0018）";
@@ -284,6 +299,7 @@ const HIT_METHODS: {
   returns: string;
   doc: string;
   capability: CapabilityId;
+  stability?: Stability;
 }[] = [
   {
     name: "send",
@@ -311,6 +327,10 @@ const namespaces = () => {
 };
 
 /** 利用者向けの型の宣言（.d.ts）。型付き JavaScript（計画 Phase 8）とエディタで使う */
+/** 説明の終わりに添える：要る権限と安定度 */
+const note = (capability: CapabilityId, stability: Stability = DEFAULT_STABILITY) =>
+  `要る権限：${capability}・${stability}`;
+
 export function hostApiDeclarations(): string {
   const lines = [
     "// Host API の宣言（packages/runtime/src/hostApiSpec.ts から作った。手で書き換えない）",
@@ -326,7 +346,7 @@ export function hostApiDeclarations(): string {
     "  readonly point: Vec3;",
     ...HIT_METHODS.map(
       (m) =>
-        `  /** ${m.doc}（要る権限：${m.capability}） */\n  ${m.name}${m.params}: ${m.returns};`,
+        `  /** ${m.doc}（${note(m.capability, m.stability)}） */\n  ${m.name}${m.params}: ${m.returns};`,
     ),
     "}",
   ];
@@ -334,7 +354,7 @@ export function hostApiDeclarations(): string {
     lines.push(`declare const ${ns}: {`);
     for (const name of names) {
       const s = HOST_API_SPEC[name];
-      lines.push(`  /** ${s.doc}（要る権限：${s.capability}） */`);
+      lines.push(`  /** ${s.doc}（${note(s.capability, s.stability)}） */`);
       lines.push(`  ${name.split(".")[1]}${s.params}: ${s.returns};`);
     }
     lines.push("};");
@@ -358,7 +378,7 @@ export function hostApiCompletions(namespace: string): HostApiCompletion[] {
       label: m.name,
       type: "function",
       detail: `${m.params}: ${m.returns}`,
-      info: `${m.doc}（要る権限：${m.capability}）`,
+      info: `${m.doc}（${note(m.capability, m.stability)}）`,
     }));
   return (namespaces().get(namespace) ?? []).map((name) => {
     const s = HOST_API_SPEC[name];
@@ -366,7 +386,7 @@ export function hostApiCompletions(namespace: string): HostApiCompletion[] {
       label: name.split(".")[1] ?? name,
       type: "function",
       detail: `${s.params}: ${s.returns}`,
-      info: `${s.doc}（要る権限：${s.capability}）`,
+      info: `${s.doc}（${note(s.capability, s.stability)}）`,
     };
   });
 }

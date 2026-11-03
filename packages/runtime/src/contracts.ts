@@ -8,6 +8,8 @@ import { z } from "zod";
 export const BUILTIN_CONTRACTS = {
   Damage: {
     version: 1,
+    /** 安定度（ADR 0019。今はすべて experimental） */
+    stability: "experimental",
     payload: z
       .object({
         amount: z.number().finite().min(0).max(1_000_000),
@@ -21,6 +23,7 @@ export const BUILTIN_CONTRACTS = {
    */
   Interact: {
     version: 1,
+    stability: "experimental",
     payload: z.object({ player: z.string().max(64) }).strict(),
   },
 } as const;
