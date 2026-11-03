@@ -5,16 +5,16 @@ import {
   targetRangeSample,
 } from "@tukurium/repo-model";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useWorkspace } from "../workspace/store";
 import styles from "./Header.module.css";
 import { useApp } from "./store";
 
-const NAV = ["作る", "探す", "ライブラリ"] as const;
-
 /** 画面上部のバー。セッション中はワークスペースの切り替えと参加者を出す。 */
 export function Header({ inSession = false }: { inSession?: boolean }) {
   const { myName, status, session, me } = useApp();
+  const location = useLocation();
+  const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const others = (session?.participants ?? []).filter((p) => p.id !== me?.id);
 
   return (
@@ -24,18 +24,35 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
         <span className={styles.wordmark}>ツクリウム</span>
       </Link>
       <nav aria-label="メイン" className={styles.nav}>
-        {NAV.map((label, i) => (
+        <Link
+          to="/"
+          className={location.pathname === "/" || inSession ? styles.navActive : styles.navItem}
+        >
+          作る
+        </Link>
+        <Link
+          to="/explore"
+          className={location.pathname === "/explore" ? styles.navActive : styles.navItem}
+        >
+          探す
+        </Link>
+        {inSession ? (
           <button
-            key={label}
             type="button"
-            aria-current={i === 0 ? "page" : undefined}
-            className={i === 0 ? styles.navActive : styles.navItem}
-            disabled={i !== 0}
-            title={i !== 0 ? "初版では見た目だけです" : undefined}
+            className={libraryOpen ? styles.navActive : styles.navItem}
+            aria-pressed={libraryOpen}
+            onClick={() => useWorkspace.setState({ libraryOpen: !libraryOpen })}
           >
-            {label}
+            ライブラリ
           </button>
-        ))}
+        ) : (
+          <Link
+            to="/u/me"
+            className={location.pathname.startsWith("/u/") ? styles.navActive : styles.navItem}
+          >
+            ライブラリ
+          </Link>
+        )}
       </nav>
       {inSession && session && (
         <>

@@ -69,6 +69,30 @@ export function HomePage() {
           </button>
         </section>
 
+        <section className={styles.card} aria-labelledby="home-projects">
+          <h2 id="home-projects" className={styles.title}>
+            プロジェクト
+          </h2>
+          <p className={styles.lead}>
+            作ったものはプロジェクトにコミットして残し、作品として公開できます。
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Link
+              to="/new"
+              className={styles.primary}
+              style={{ display: "inline-flex", alignItems: "center", textDecoration: "none" }}
+            >
+              ＋ 新しいプロジェクト
+            </Link>
+            <Link to="/u/me" className={styles.item} style={{ minHeight: 44 }}>
+              自分のプロジェクト
+            </Link>
+            <Link to="/explore" className={styles.item} style={{ minHeight: 44 }}>
+              作品を探す
+            </Link>
+          </div>
+        </section>
+
         <section className={styles.card} aria-labelledby="home-list">
           <h2 id="home-list" className={styles.title}>
             開いているセッション

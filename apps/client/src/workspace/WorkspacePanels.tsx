@@ -7,10 +7,13 @@ import {
 import type { PanelPublic } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
+import { api, type RepoMeta } from "../net/api";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
 import type { SessionEngine } from "../session/SessionEngine";
 import { EditorPanel } from "./EditorPanel";
+import { HistoryPanel } from "./HistoryPanel";
 import { InspectorPanel } from "./InspectorPanel";
+import { LibraryPanel } from "./LibraryPanel";
 import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
 import { ResourcesPanel } from "./ResourcesPanel";
@@ -53,10 +56,30 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const hidden = useWorkspace((s) => s.panelsHidden);
   const [members, setMembers] = useState(false);
 
+  const historyOpen = useWorkspace((s) => s.historyOpen);
+  const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const panels: PanelSpec[] = [];
+  if (libraryOpen) {
+    panels.push({
+      id: "ws-library",
+      title: "ライブラリ",
+      initial: { right: 16, y: 84, width: 420 },
+      render: () => <LibraryPanel />,
+      onClose: () => useWorkspace.setState({ libraryOpen: false }),
+    });
+  }
   if (!ready) {
     panels.push(START);
   } else {
+    if (historyOpen) {
+      panels.push({
+        id: "ws-history",
+        title: "History",
+        initial: { x: 600, y: 84, width: 460 },
+        render: () => <HistoryPanel />,
+        onClose: () => useWorkspace.setState({ historyOpen: false }),
+      });
+    }
     panels.push(
       {
         ...MAIN,
@@ -174,6 +197,7 @@ function WorkspaceStart() {
           ))}
         </ul>
       )}
+      <OpenFromProject />
       <div className={ui.toolbar}>
         <button
           type="button"
@@ -201,5 +225,36 @@ function WorkspaceStart() {
         </button>
       </div>
     </div>
+  );
+}
+
+/** 自分の（または公開されている）プロジェクトを、このセッションのワークスペースとして開く */
+function OpenFromProject() {
+  const me = useApp((s) => s.me);
+  const [repos, setRepos] = useState<RepoMeta[]>([]);
+  useEffect(() => {
+    if (me) void api.repos().then(setRepos);
+  }, [me]);
+  if (repos.length === 0) return null;
+  const mine = repos.filter((r) => r.owner === me?.id);
+  const others = repos.filter((r) => r.owner !== me?.id);
+  return (
+    <>
+      <h3 className={ui.sectionTitle}>プロジェクトから開く</h3>
+      <ul className={ui.list} aria-label="プロジェクト">
+        {[...mine, ...others].slice(0, 8).map((r) => (
+          <li key={r.id}>
+            <button
+              type="button"
+              className={ui.item}
+              onClick={() => useWorkspace.getState().openRepo(r.id)}
+            >
+              <span className={ui.itemName}>{r.name}</span>
+              <span className={ui.badge}>{r.owner === me?.id ? "自分" : r.ownerName}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
