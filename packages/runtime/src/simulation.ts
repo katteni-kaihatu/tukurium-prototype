@@ -136,7 +136,7 @@ interface PendingEvent {
 const MAX_EVENTS_PER_STEP = 256;
 
 /** スクリプトから呼べる API（名前空間.関数名）。 */
-const HOST_API = [
+export const HOST_API = [
   "world.raycast",
   "world.emit",
   "world.get",
@@ -147,7 +147,7 @@ const HOST_API = [
   "time.now",
   "audio.play",
 ] as const;
-type HostName = (typeof HOST_API)[number];
+export type HostName = (typeof HOST_API)[number];
 
 /**
  * アウトプットを実行する。EKS の World ＋ 物理 ＋ スクリプト。
