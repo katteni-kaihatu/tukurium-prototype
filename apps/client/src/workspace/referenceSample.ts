@@ -1,18 +1,38 @@
-import { OFFICIAL_COMBAT, referenceGunAndTarget } from "@tukurium/repo-model";
+import {
+  OFFICIAL_COMBAT,
+  OFFICIAL_INTERACTION,
+  type PackageDependency,
+  type ProjectSnapshot,
+  referenceDoorAndSwitch,
+  referenceGunAndTarget,
+} from "@tukurium/repo-model";
 import { api } from "../net/api";
 import { useWorkspace } from "./store";
 
+/** reference UGC（ADR 0016）：使う公式ライブラリと、その lock から制作データを作る関数 */
+const REFERENCES = {
+  gunAndTarget: { library: OFFICIAL_COMBAT, build: referenceGunAndTarget },
+  doorAndSwitch: { library: OFFICIAL_INTERACTION, build: referenceDoorAndSwitch },
+} satisfies Record<
+  string,
+  {
+    library: { alias: string; workId: string };
+    build: (dep: PackageDependency) => ProjectSnapshot;
+  }
+>;
+
 /**
- * reference UGC「銃と的（公式ライブラリ）」を作る（ADR 0016）。サーバーの公式 combat の最新の版を
- * 依存に固定（lock）してから作るので、作ったあとに公式の版が上がっても中身は変わらない。
+ * reference UGC のサンプルを作る。サーバーの公式ライブラリの最新の版を依存に固定（lock）してから作るので、
+ * 作ったあとに公式の版が上がっても中身は変わらない。
  */
-export async function createReferenceSample(): Promise<void> {
+export async function createReferenceSample(kind: keyof typeof REFERENCES): Promise<void> {
+  const { library, build } = REFERENCES[kind];
   const works = await api.works();
-  const combat = works.find((w) => w.id === OFFICIAL_COMBAT.workId && w.official);
-  if (!combat?.latest) throw new Error("公式ライブラリ「combat」が見つかりません");
-  const pkg = await api.packageVersion(combat.id, combat.latest.version);
-  const snapshot = referenceGunAndTarget({
-    alias: OFFICIAL_COMBAT.alias,
+  const work = works.find((w) => w.id === library.workId && w.official);
+  if (!work?.latest) throw new Error(`公式ライブラリ「${library.alias}」が見つかりません`);
+  const pkg = await api.packageVersion(work.id, work.latest.version);
+  const snapshot = build({
+    alias: library.alias,
     packageId: pkg.packageId,
     version: pkg.version,
     contentHash: pkg.contentHash,

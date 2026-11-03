@@ -15,7 +15,18 @@ export const BUILTIN_CONTRACTS = {
       })
       .strict(),
   },
+  /**
+   * プレイヤーが E（use）で見ている物を押す（ADR 0016）。送れるのは Host だけで、player は Host が
+   * 実際の入力から入れる（スクリプトからは送れない。偽の player を名乗れないようにする）。
+   */
+  Interact: {
+    version: 1,
+    payload: z.object({ player: z.string().max(64) }).strict(),
+  },
 } as const;
+
+/** スクリプトから hit.send で送れない Contract（プレイヤーの操作として Host だけが送る） */
+export const HOST_ONLY_CONTRACTS: readonly ContractName[] = ["Interact"];
 
 export type ContractName = keyof typeof BUILTIN_CONTRACTS;
 

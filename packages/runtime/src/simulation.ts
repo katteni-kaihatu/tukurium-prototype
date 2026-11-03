@@ -38,7 +38,7 @@ import {
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
-import { isContractName, parseContractPayload } from "./contracts";
+import { HOST_ONLY_CONTRACTS, isContractName, parseContractPayload } from "./contracts";
 import { type HostArgs, parseHostArgs } from "./hostApi";
 import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
@@ -137,6 +137,8 @@ export interface EffectEvent {
 export const EFFECT_KINDS = ["spark"] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 const MAX_EFFECTS = 32;
+/** E（use）で押せる距離（m） */
+const INTERACT_RANGE = 3;
 
 /** 鳴らす音（ホストが手元で鳴らし、状態と一緒にほかの人にも配る） */
 export interface SoundEvent {
@@ -639,6 +641,7 @@ export class Simulation {
     const inputs = this.inputs;
     this.inputs = [];
     for (const ev of inputs) {
+      this.deliverInteract(ev);
       if (this.builtinInput(ev)) continue;
       for (const sys of this.active("onInput"))
         this.runSystem(sys, "onInput", this.matches(sys), [ev as unknown as Json]);
@@ -812,6 +815,36 @@ export class Simulation {
     if (!pose) return true;
     this.world.add(target, BUILTIN.Held, { ...pose, player: ev.player });
     return true;
+  }
+
+  /**
+   * E（use）で見ている物へ、Built-in の Interact を届ける（ADR 0016）。送り手はプレイヤーで、Host が判定する。
+   * 自分が持っている物は通り抜け、届くのは INTERACT_RANGE まで。セッションでは、相手の配置の「外からの見え方」が
+   * 非公開なら見つからず、衝突のみなら届かない。受け付ける System がなければ何もしない。
+   * use の入力そのものは、今までどおり System の onInput にも届く。
+   */
+  private deliverInteract(ev: InputEvent): void {
+    if (ev.action !== "use" || ev.phase !== "down") return;
+    const hidden = this.multi
+      ? [...this.parts.values()]
+          .filter((p) => this.exposureOf(p) === "private")
+          .flatMap((p) => [...p.entities])
+      : [];
+    const hit = this.physics.raycast(ev.origin, ev.direction, INTERACT_RANGE, [
+      ...this.heldBy(ev.player),
+      ...hidden,
+    ]);
+    if (!hit) return;
+    const part = this.partOf(hit.entity);
+    if (this.multi && part && this.exposureOf(part) !== "interactive") return;
+    const handler = "contract:Interact";
+    if (!this.active(handler).some((sys) => this.entityMatches(sys, hit.entity))) return;
+    this.pending.push({
+      kind: "contract",
+      target: hit.entity,
+      name: "Interact",
+      data: { player: ev.player },
+    });
   }
 
   private heldBy(player: string): EntityId[] {
@@ -1194,6 +1227,8 @@ export class Simulation {
       },
       "contract.send": ([token, name, payload]) => {
         if (!isContractName(name)) throw new TypeError(`Contract「${name}」はありません`);
+        if (HOST_ONLY_CONTRACTS.includes(name))
+          throw new TypeError(`${name} はプレイヤーの操作（E）でだけ送られます`);
         const data = parseContractPayload(name, payload) as Json;
         const handle = this.handles.get(token);
         // 偽の・期限切れの・別の配置で発行された handle は「無いもの」と同じ
