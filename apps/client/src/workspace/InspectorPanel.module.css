@@ -1,6 +1,7 @@
 .split {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  /* 詳細は幅を固定し、パネルを広げた分はヒエラルキー側へ回す */
+  grid-template-columns: minmax(0, 1fr) 380px;
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -22,7 +23,8 @@
 }
 
 .props {
-  min-width: 0;
+  width: 380px;
+  max-width: 380px;
   min-height: 0;
   overflow: auto;
 }
@@ -38,6 +40,11 @@
 @media (max-width: 720px) {
   .split {
     grid-template-columns: 1fr;
+  }
+
+  .props {
+    width: auto;
+    max-width: none;
   }
 
   .tree {

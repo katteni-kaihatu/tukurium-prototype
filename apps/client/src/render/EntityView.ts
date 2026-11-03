@@ -69,7 +69,8 @@ export class EntityView {
       if (heldState && opts.holdCamera) {
         parent = opts.holdCamera;
         node.object.position.set(...(heldState.offset as Vec3));
-        node.object.rotation.set(0, 0, 0);
+        const turn = (heldState.rotation as Vec3 | undefined) ?? [0, 0, 0];
+        node.object.rotation.set(turn[0] * DEG, turn[1] * DEG, turn[2] * DEG, "XYZ");
         this.held.add(id);
       } else {
         const p = world.parentOf(id);
