@@ -36,6 +36,8 @@ export interface Work {
   repoName?: string;
   perms: WorkPerms;
   latest?: Release | null;
+  /** リリースしたアウトプットの種類。ワールドは原点、アイテムは視線の先に置く */
+  outputKind?: "item" | "world" | "library" | null;
   createdAt: string;
 }
 

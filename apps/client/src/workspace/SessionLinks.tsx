@@ -87,6 +87,13 @@ export function SessionLinks() {
         >
           適用
         </button>
+        <button
+          type="button"
+          className={ui.btn}
+          onClick={() => useWorkspace.setState({ libraryOpen: true })}
+        >
+          公開された作品
+        </button>
       </div>
       {!session?.host && links.length > 0 && (
         <p className={ui.notice}>

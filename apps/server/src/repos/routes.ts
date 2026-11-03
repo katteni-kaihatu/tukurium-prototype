@@ -234,11 +234,20 @@ export function registerRepoRoutes(
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
       const works = await store.works(q);
       return Promise.all(
-        works.map(async (w) => ({
-          ...(await withOwner(w)),
-          repoName: (await store.repo(w.repoId))?.name ?? "?",
-          latest: (await store.releases(w.id))[0] ?? null,
-        })),
+        works.map(async (w) => {
+          const latest = (await store.releases(w.id))[0] ?? null;
+          // 置いたときの種類（ワールドは原点、アイテムは視線の先）は、リリースしたコミットのものを使う
+          const snap = latest
+            ? await repos.snapshot(w.repoId, latest.commit).catch(() => null)
+            : null;
+          const outputKind = snap?.outputs.find((o) => o.id === w.outputId)?.kind ?? null;
+          return {
+            ...(await withOwner(w)),
+            repoName: (await store.repo(w.repoId))?.name ?? "?",
+            latest,
+            outputKind,
+          };
+        }),
       );
     }),
   );
