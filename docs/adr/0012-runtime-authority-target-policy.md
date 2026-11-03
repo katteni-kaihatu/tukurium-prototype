@@ -88,6 +88,8 @@
 - セッションでは、Host API を呼ぶたびに「その System の宣言にあり、呼び出しの主体の配置すべてに付与されている」かを判定する。外れたら、見つからない・できなかったのと同じ値を返し、その System に注意（`capability-denied`）を残す。System は止めない。別の配置への届き方（World の上限・相手の公開範囲）は、これまでどおりそれぞれの Host API の中で判定する。
 - 実行の主体（`PackageExecutionContext`）は、Package の仕組みができるまで、ワークスペースの出力を暗黙の Package（`workspace:<リポジトリ>`）とし、版は realm の版、置いた物は配置、World は土台の World（ないときは `session`）で組み立てる（`Simulation.executionContext`）。
 
+- Host API の定義は `packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` 一つにまとめた。引数の検証（`HOST_API_ARGS`）、権限の分類（`HOST_API_POLICY`）、拒んだときの値、利用者向けの型の宣言（`hostApiDeclarations`）、エディタの入力補完（`hostApiCompletions`）は、ここから作る。
+
 ### U2 の最初の縦の一本でしたこと
 
 利用者と相談して、書き方と初期設定を次のように決めた。

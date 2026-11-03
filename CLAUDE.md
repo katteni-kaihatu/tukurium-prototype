@@ -31,7 +31,7 @@
 
 ## 守ること（破ると壊れる・検査で落ちる）
 
-- **Host API（`world.*` など）を足したら**、`packages/runtime/src/capabilities.ts` の `HOST_API_POLICY` に Capability と判定の場所の分類を足す（テストが検査する。ADR 0012）。
+- **Host API（`world.*` など）を足したら**、`packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` に一件足す（引数・Capability・判定の場所・拒んだときの値・利用者向けの型と説明）。repo-model の `HOST_CAPABILITIES` にも同じ Capability を足す（テストが一致を検査する。ADR 0012）。
 - **通信の形**は `packages/shared/src/protocol.ts` の zod で決める。互換性がなくなる変更では `PROTOCOL_VERSION` を上げる。
 - **パッケージを足したら**、`docker/Dockerfile` に、その package.json の COPY を足す（`pnpm lint` が検査する）。
 - **サーバーが実行時に使う npm パッケージ**は `apps/server/package.json` の dependencies に書く。バンドルでは外部扱いになり、本番では node_modules から読む。

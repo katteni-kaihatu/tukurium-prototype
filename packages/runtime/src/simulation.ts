@@ -33,6 +33,7 @@ import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { isContractName, parseContractPayload } from "./contracts";
 import { type HostArgs, parseHostArgs } from "./hostApi";
+import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
   moveAlongView,
@@ -201,20 +202,10 @@ interface HitHandle {
   expires: number;
 }
 
-/** 実効権限で拒んだときに Host API が返す値（見つからない・できなかったと同じ形） */
-const DENIED_RESULT: Record<HostName, Json | undefined> = {
-  "world.raycast": null,
-  "world.emit": undefined,
-  "world.get": null,
-  "world.set": false,
-  "world.find": null,
-  "world.spawn": null,
-  "world.destroy": undefined,
-  "time.now": null,
-  "audio.play": false,
-  "contract.send": false,
-  "effects.spawn": false,
-};
+/** 実効権限で拒んだときに Host API が返す値（HOST_API_SPEC から作る） */
+const DENIED_RESULT = Object.fromEntries(
+  Object.entries(HOST_API_SPEC).map(([name, spec]) => [name, spec.denied]),
+) as Record<HostName, Json | undefined>;
 
 /** handle の寿命（秒） */
 const HANDLE_TTL = 1;
