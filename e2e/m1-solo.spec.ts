@@ -106,7 +106,10 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   await fire(page);
   await expect.poll(() => runtimeState(page, "的", "Target")).toEqual({ hp: 1 });
   await expect.poll(() => runtimeState(page, "銃", "Gun")).toEqual({ ammo: 4 });
-  await expect(main.locator("li", { hasText: "hit 1" })).toHaveCount(1);
+  // ログはメインパネルではなく「ログ・保存」パネルに出る（ボタンで開く）
+  await main.getByRole("button", { name: "ログ・保存" }).click();
+  const logPanel = panel(page, "ログ・保存");
+  await expect(logPanel.locator("li", { hasText: "hit 1" })).toHaveCount(1);
 
   // 外すと当たらない
   await aimAt(page, [0, 10, -4]);
