@@ -39,7 +39,7 @@
 
 - [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
 - [x] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る（引数の検証を一つの定義に集め、別の配置へは opaque handle と公開 Contract だけで届くようにした。利用者向けの型の生成は「2. スクリプト境界の堅牢化」で）
-- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。拒否の Diagnostic・付与と World の上限・サーバーでの判定が残り）
+- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。土台の World の上限（guestPolicy のプリセット）も済み。拒否の Diagnostic・置いた物ごとの付与・サーバーでの判定が残り）
 - [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する
 - [ ] 公式 Library を通して入力・Raycast・Damage・一時 effect を提供し、銃サンプルを最初の移行例にする
 - [ ] Dependencies / 権限プリセット / Problems の UI を追加する
