@@ -51,12 +51,17 @@ let sandbox: Promise<ScriptSandbox> | null = null;
  * Query の KokoState が見つからない）を、実行用とは別のサンドボックスで読み込んで調べる。
  * 実行はしない（読み込みだけ）ので、副作用はない。
  */
-export async function checkScripts(project: ProjectDoc): Promise<Diagnostic[]> {
+export async function checkScripts(
+  project: ProjectDoc,
+  systemIds?: readonly string[],
+): Promise<Diagnostic[]> {
   sandbox ??= ScriptSandbox.create({ loadTimeLimitMs: 1000 });
   const sb = await sandbox;
   const registry = project.registry();
   const problems: Diagnostic[] = [];
+  const only = systemIds ? new Set(systemIds) : null;
   for (const def of project.systems()) {
+    if (only && !only.has(def.id)) continue;
     const code = project.code(def.id)?.toString() ?? "";
     try {
       const meta = sb.loadSystem(def.id, code, CHECK_REALM);

@@ -63,8 +63,8 @@ interface WorkspaceState {
   remote: { world: World; names: Record<string, string> } | null;
   simRev: number;
   systemStatus: SystemStatus[];
-  /** 編集中の確認で見つかった問題（構文など）と、調べたときの版（rev） */
-  checkProblems: ObservedDiagnostics;
+  /** 編集中の確認で見つかった問題（構文など）。System ごとに、調べたときの版（rev）と組で持つ */
+  checkProblems: ObservedDiagnostics[];
   /** 実行して止まった System と、Play を始めたときの版（次の Play まで残す。Stop しても消さない） */
   runProblems: ObservedDiagnostics;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
@@ -157,7 +157,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     remote: null,
     simRev: 0,
     systemStatus: [],
-    checkProblems: NO_DIAGNOSTICS,
+    checkProblems: [],
     runProblems: NO_DIAGNOSTICS,
     jumpTo: null,
     showProblem: (p) => {
@@ -227,7 +227,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         activeSystem: null,
         editorPlace: null,
         detailPlace: null,
-        checkProblems: NO_DIAGNOSTICS,
+        checkProblems: [],
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
       });
@@ -256,7 +256,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         mode: "edit",
         selection: null,
         detail: null,
-        checkProblems: NO_DIAGNOSTICS,
+        checkProblems: [],
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
         openSystems: [],

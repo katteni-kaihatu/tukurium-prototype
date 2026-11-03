@@ -3,35 +3,37 @@ import {
   checkProjectStructure,
   type Diagnostic,
   type DiagnosticSummary,
-  GenerationGate,
   ResourcePathIndex,
   summarizeDiagnostics,
   viewDiagnostics,
 } from "@tukurium/repo-model";
 import { useEffect, useMemo } from "react";
+import { IncrementalCheck } from "./incrementalCheck";
 import { checkScripts, type Problem } from "./problems";
 import { useWorkspace } from "./store";
 
-/** 編集中の確認の世代（古い確認の結果が、後から届いて新しい結果を上書きしないように） */
-const checkGate = new GenerationGate();
-
-/** 制作データが変わるたびに（少し待って）スクリプトを確かめ、「問題」を更新する */
+/** 制作データが変わるたびに、影響を受ける System だけを（少し待って）確かめ、「問題」を更新する */
 export function useScriptCheck(): void {
   const project = useWorkspace((s) => s.project);
   const ready = useWorkspace((s) => s.ready);
   const rev = useWorkspace((s) => s.rev);
+  const checker = useMemo(
+    () => (project ? new IncrementalCheck((ids) => checkScripts(project, ids)) : null),
+    [project],
+  );
   useEffect(() => {
-    if (!project || !ready) return;
-    // 確かめ終わるまでは、前の結果を stale（編集前の結果）として見せておく
+    if (!project || !ready || !checker) return;
+    // 影響を受けない System の結果はすぐ今の版にする。受ける System は、確かめ終わるまで stale
+    checker.update(project.snapshot(), rev);
+    useWorkspace.setState({ checkProblems: checker.sets() });
     const timer = setTimeout(() => {
-      const generation = checkGate.begin();
-      void checkScripts(project).then((diagnostics) => {
-        if (checkGate.accepts(generation) && useWorkspace.getState().project === project)
-          useWorkspace.setState({ checkProblems: { diagnostics, observedVersion: rev } });
+      void checker.check(rev).then((accepted) => {
+        if (accepted && useWorkspace.getState().project === project)
+          useWorkspace.setState({ checkProblems: checker.sets() });
       });
     }, 400);
     return () => clearTimeout(timer);
-  }, [project, ready, rev]);
+  }, [project, ready, rev, checker]);
 }
 
 /** いまのスクリプトの問題の一覧（current → stale、実行して止まったもの → 編集中の確認の順） */
@@ -39,7 +41,7 @@ export function useProblems(): Problem[] {
   const run = useWorkspace((s) => s.runProblems);
   const check = useWorkspace((s) => s.checkProblems);
   const rev = useWorkspace((s) => s.rev);
-  return useMemo(() => viewDiagnostics([run, check], rev), [run, check, rev]);
+  return useMemo(() => viewDiagnostics([run, ...check], rev), [run, check, rev]);
 }
 
 /**
