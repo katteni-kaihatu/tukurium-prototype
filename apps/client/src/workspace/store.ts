@@ -93,6 +93,14 @@ interface WorkspaceState {
   /** セッションのライブラリ（作品を置く）パネルを開いているか */
   libraryOpen: boolean;
   historyOpen: boolean;
+  /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
+  sessionOpen: boolean;
+  /** 問題のパネルを開いているか */
+  problemsOpen: boolean;
+  /** 新しいエラーが出たときに問題パネルを前に出すための合図（増えるたびに前に出る） */
+  problemsFocus: number;
+  /** ログ・保存のパネルを開いているか */
+  logOpen: boolean;
   open(workspaceId: string): void;
   leave(): void;
   select(sel: Selection | null): void;
@@ -183,6 +191,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     commitRev: 0,
     libraryOpen: false,
     historyOpen: false,
+    sessionOpen: false,
+    problemsOpen: false,
+    problemsFocus: 0,
+    logOpen: false,
     openRepo: (repoId) => client().send({ t: "ws.openRepo", repoId }),
     create: (name, snap) => {
       const doc = new ProjectDoc();
@@ -230,6 +242,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         checkProblems: [],
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
+        sessionOpen: false,
+        problemsOpen: false,
+        problemsFocus: 0,
+        logOpen: false,
       });
       client().send({ t: "ws.open", workspaceId });
     },
@@ -263,6 +279,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         activeSystem: null,
         editorPlace: null,
         detailPlace: null,
+        sessionOpen: false,
+        problemsOpen: false,
+        problemsFocus: 0,
+        logOpen: false,
       });
     },
 

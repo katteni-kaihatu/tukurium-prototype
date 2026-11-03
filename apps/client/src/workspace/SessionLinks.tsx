@@ -5,8 +5,9 @@ import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
 /**
- * セッションとのつながり：アウトプットをセッションに出す、適用する、リンク先（配置）の一覧（要件 §7）。
+ * セッションパネル：アウトプットをセッションに出す、適用する、リンク先（配置）の一覧（要件 §7）。
  * 適用は、このワークスペース・アウトプットにリンクしている配置すべてを更新する。
+ * メインパネルからはボタンで開く。
  */
 export function SessionLinks() {
   const project = useProject();
