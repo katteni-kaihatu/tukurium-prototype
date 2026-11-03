@@ -11,6 +11,8 @@ import {
 } from "./assets/assetStore";
 import type { Config } from "./config";
 import { Hub, type HubOptions } from "./hub";
+import { registerRepoRoutes } from "./repos/routes";
+import { RepoService } from "./repos/service";
 import { PostgresStore } from "./store/postgres";
 import { MemoryStore, type Store } from "./store/store";
 
@@ -26,10 +28,13 @@ export async function buildApp(
   if (!config.databaseUrl && !options.store) {
     app.log.warn("DATABASE_URL が未設定のため、メモリに保存します（再起動で消えます）");
   }
-  const hub = new Hub(store, { log: (m) => app.log.info(m), ...options.hub });
+  const repos = new RepoService(store, config.gitDir);
+  const hub = new Hub(store, { log: (m) => app.log.info(m), repos, ...options.hub });
 
   // Yjs の更新を運ぶので大きめにする（初期内容の送信など）
   await app.register(fastifyWebsocket, { options: { maxPayload: 8 * 1024 * 1024 } });
+
+  registerRepoRoutes(app, store, repos);
 
   app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
 

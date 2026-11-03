@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import postgres from "postgres";
-import { newToken, newUserId, type Store, type User, type WorkspaceMeta } from "./store";
+import {
+  newToken,
+  newUserId,
+  type Release,
+  type RepoMeta,
+  type Store,
+  type User,
+  type Work,
+  type WorkspaceMeta,
+} from "./store";
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
 
@@ -27,6 +36,13 @@ export class PostgresStore implements Store {
         doc bytea,
         updated_at timestamptz not null default now()
       )`;
+    // リポジトリ・作品・リリースは JSON で持ち、検索に使う列だけ別に持つ
+    await this
+      .sql`create table if not exists repos (id text primary key, owner text not null, data jsonb not null)`;
+    await this
+      .sql`create table if not exists works (id text primary key, repo_id text not null, owner text not null, data jsonb not null)`;
+    await this
+      .sql`create table if not exists releases (id text primary key, work_id text not null, data jsonb not null)`;
   }
 
   async close(): Promise<void> {
@@ -68,6 +84,67 @@ export class PostgresStore implements Store {
   async saveDoc(id: string, state: Uint8Array) {
     await this
       .sql`update workspaces set doc = ${Buffer.from(state)}, updated_at = now() where id = ${id}`;
+  }
+
+  async user(id: string) {
+    const rows = await this.sql<User[]>`select id, name from users where id = ${id}`;
+    return rows[0] ?? null;
+  }
+
+  async saveRepo(meta: RepoMeta) {
+    await this.sql`
+      insert into repos (id, owner, data) values (${meta.id}, ${meta.owner}, ${this.sql.json(meta as never)})
+      on conflict (id) do update set owner = excluded.owner, data = excluded.data`;
+  }
+
+  async repo(id: string) {
+    const rows = await this.sql<{ data: RepoMeta }[]>`select data from repos where id = ${id}`;
+    return rows[0]?.data ?? null;
+  }
+
+  async repos(filter: { owner?: string } = {}) {
+    const rows = filter.owner
+      ? await this.sql<{ data: RepoMeta }[]>`select data from repos where owner = ${filter.owner}`
+      : await this.sql<{ data: RepoMeta }[]>`select data from repos`;
+    return rows.map((r) => r.data).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async saveWork(w: Work) {
+    await this.sql`
+      insert into works (id, repo_id, owner, data) values (${w.id}, ${w.repoId}, ${w.owner}, ${this.sql.json(w as never)})
+      on conflict (id) do update set data = excluded.data`;
+  }
+
+  async work(id: string) {
+    const rows = await this.sql<{ data: Work }[]>`select data from works where id = ${id}`;
+    return rows[0]?.data ?? null;
+  }
+
+  async works(filter: { repoId?: string; owner?: string } = {}) {
+    const rows = filter.repoId
+      ? await this.sql<{ data: Work }[]>`select data from works where repo_id = ${filter.repoId}`
+      : filter.owner
+        ? await this.sql<{ data: Work }[]>`select data from works where owner = ${filter.owner}`
+        : await this.sql<{ data: Work }[]>`select data from works`;
+    return rows.map((r) => r.data).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async saveRelease(r: Release) {
+    await this.sql`
+      insert into releases (id, work_id, data) values (${r.id}, ${r.workId}, ${this.sql.json(r as never)})
+      on conflict (id) do update set data = excluded.data`;
+  }
+
+  async releases(workId: string) {
+    const rows = await this.sql<
+      { data: Release }[]
+    >`select data from releases where work_id = ${workId}`;
+    return rows.map((r) => r.data).sort((a, b) => b.version - a.version);
+  }
+
+  async release(id: string) {
+    const rows = await this.sql<{ data: Release }[]>`select data from releases where id = ${id}`;
+    return rows[0]?.data ?? null;
   }
 
   async loadDoc(id: string) {

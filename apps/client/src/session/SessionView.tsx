@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
 import { useWorkspace } from "../workspace/store";
@@ -15,6 +15,8 @@ const POSE_INTERVAL_MS = 100;
 /** セッションの 3D 空間。参加・退出、参加者の表示、ワークスペースのパネル。 */
 export function SessionView() {
   const { sessionId = "" } = useParams();
+  const [search, setSearch] = useSearchParams();
+  const openRepo = search.get("open");
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SessionEngine | null>(null);
   const [locked, setLocked] = useState(false);
@@ -36,6 +38,13 @@ export function SessionView() {
       useApp.setState({ session: null, participants: {}, remotePanels: {} });
     };
   }, [client, sessionId]);
+
+  // ?open=リポジトリID：セッションに入ったら、そのリポジトリをワークスペースとして開く
+  useEffect(() => {
+    if (!openRepo || session?.id !== sessionId) return;
+    useWorkspace.getState().openRepo(openRepo);
+    setSearch({}, { replace: true });
+  }, [openRepo, session?.id, sessionId, setSearch]);
 
   // 3D 空間
   useEffect(() => {

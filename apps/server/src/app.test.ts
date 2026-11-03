@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -35,6 +38,7 @@ async function start(opts: { ownerGraceMs?: number } = {}) {
       databaseUrl: undefined,
       s3: undefined,
       assetDir: "",
+      gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
     },
     { store, assets, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
   );
@@ -499,5 +503,182 @@ describe("素材", () => {
     expect(bad.statusCode).toBe(415);
     const missing = await app.inject({ method: "GET", url: `/api/assets/${"0".repeat(64)}` });
     expect(missing.statusCode).toBe(404);
+  });
+});
+
+describe("リポジトリ・コミット・作品", () => {
+  const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
+    get: (url: string) =>
+      app.inject({ method: "GET", url, headers: { "x-tukurium-token": token } }),
+    post: (url: string, payload: object = {}) =>
+      app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
+    patch: (url: string, payload: object) =>
+      app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
+  });
+
+  it("リポジトリを作り、履歴・ファイル・差分を見られる。非公開は持ち主だけ", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const b = await client(url, "b");
+    const A = api(app, a.token);
+    const B = api(app, b.token);
+    const repo = (await A.post("/api/repos", { name: "銃と的", template: "sample" })).json();
+    expect(repo).toMatchObject({
+      name: "銃と的",
+      visibility: "public",
+      owner: a.me.id,
+      ownerName: "a",
+    });
+    const info = (await B.get(`/api/repos/${repo.id}`)).json();
+    expect(info.outputs.map((o: { name: string }) => o.name)).toEqual(["射撃場"]);
+    expect(info.canFork).toBe(true);
+    const commits = (await B.get(`/api/repos/${repo.id}/commits`)).json();
+    expect(commits.map((c: { message: string }) => c.message)).toEqual(["最初のコミット"]);
+    const files = (await B.get(`/api/repos/${repo.id}/files`)).json();
+    expect(files["systems/sys_shoot.js"]).toContain("system(");
+    const diff = (await B.get(`/api/repos/${repo.id}/commits/${commits[0].oid}/diff`)).json();
+    expect(diff.every((d: { change: string }) => d.change === "added")).toBe(true);
+
+    expect((await A.patch(`/api/repos/${repo.id}`, { visibility: "private" })).statusCode).toBe(
+      200,
+    );
+    expect((await B.get(`/api/repos/${repo.id}`)).statusCode).toBe(404);
+    expect((await B.get("/api/repos")).json()).toEqual([]);
+    expect((await A.get("/api/repos")).json()).toHaveLength(1);
+    expect((await B.patch(`/api/repos/${repo.id}`, { visibility: "public" })).statusCode).toBe(403);
+  });
+
+  it("ワークスペースを作るとリポジトリができ、持ち主がコミットすると一緒に編集した人が Co-author になる", async () => {
+    const { app, url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    const repoId = workspaceId.replace(/^w_/, "");
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    // b はコミットできない
+    b.send({ t: "ws.commit", workspaceId, message: "x" });
+    expect((await b.next("error")).message).toMatch(/持ち主/);
+    a.send({ t: "ws.commit", workspaceId, message: "的を増やした" });
+    const done = await b.next("ws.committed");
+    expect(done).toMatchObject({ message: "的を増やした", by: "れにうむ" });
+    const commits = (await api(app, a.token).get(`/api/repos/${repoId}/commits`)).json();
+    expect(commits[0].message).toContain("的を増やした");
+    expect(commits[0].message).toContain("Co-authored-by: ここあ");
+  });
+
+  it("1 リポジトリ 1 ワークスペース：別のセッションで開かれていたら断る。同じセッションなら参加する", async () => {
+    const { app, url } = await start();
+    const { a, workspaceId } = await sessionWithWorkspace(url);
+    const repoId = workspaceId.replace(/^w_/, "");
+    const c = await client(url, "c");
+    c.send({ t: "session.create", name: "別の部屋" });
+    await c.next("session");
+    c.send({ t: "ws.openRepo", repoId });
+    expect((await c.next("ws.denied")).reason).toMatch(/別のセッション/);
+    // 同じセッションの人が repo から開くと、同じワークスペースに入る
+    const sid = (await a.next("session")).session.id;
+    const d = await client(url, "d");
+    d.send({ t: "session.join", sessionId: sid });
+    await d.next("session");
+    d.send({ t: "ws.openRepo", repoId });
+    expect((await d.next("ws.created")).workspaceId).toBe(workspaceId);
+    expect((await d.next("ws.doc")).workspaceId).toBe(workspaceId);
+    expect(app).toBeTruthy();
+  });
+
+  it("フォーク・抽出（新規・既存）で由来が残る。作品の公開・リリース・権限", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const b = await client(url, "b");
+    const A = api(app, a.token);
+    const B = api(app, b.token);
+    const src = (await A.post("/api/repos", { name: "銃と的", template: "sample" })).json();
+
+    const fork = (await B.post(`/api/repos/${src.id}/fork`, {})).json();
+    expect(fork).toMatchObject({
+      owner: b.me.id,
+      forkedFrom: { repoId: src.id, repoName: "銃と的" },
+    });
+    const forkInfo = (await B.get(`/api/repos/${fork.id}`)).json();
+    expect(forkInfo.provenance[0]).toMatchObject({ kind: "fork", repoId: src.id });
+    expect((await B.get(`/api/repos/${fork.id}/commits`)).json()).toHaveLength(2);
+
+    const ex = (
+      await B.post(`/api/repos/${src.id}/extract`, {
+        selection: { kokostates: ["ks_gun"], systems: ["sys_shoot"] },
+        target: { name: "銃の部品" },
+      })
+    ).json();
+    const exSnap = (await B.get(`/api/repos/${ex.repo.id}/snapshot`)).json();
+    expect(exSnap.kokostates.map((k: { name: string }) => k.name)).toEqual(["Gun"]);
+    expect(exSnap.provenance[0]).toMatchObject({
+      kind: "extract",
+      repoId: src.id,
+      items: ["Gun", "Shoot"],
+    });
+
+    const range = (await B.post("/api/repos", { name: "射撃場", template: "range" })).json();
+    await B.post(`/api/repos/${src.id}/extract`, {
+      selection: { outputs: ["out_range"] },
+      target: { repoId: range.id },
+    });
+    const merged = (await B.get(`/api/repos/${range.id}/snapshot`)).json();
+    expect(merged.outputs).toHaveLength(2);
+    // 他人のリポジトリには取り込めない
+    const bad = await A.post(`/api/repos/${src.id}/extract`, {
+      selection: { outputs: ["out_range"] },
+      target: { repoId: range.id },
+    });
+    expect(bad.statusCode).toBe(403);
+
+    // 作品：持ち主だけが公開・リリースできる。既定ですべて許可
+    expect((await B.post("/api/works", { repoId: src.id, outputId: "out_range" })).statusCode).toBe(
+      403,
+    );
+    const work = (await A.post("/api/works", { repoId: src.id, outputId: "out_range" })).json();
+    expect(work.perms).toEqual({ use: true, view: true, fork: true });
+    const r1 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    const r2 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    expect([r1.version, r2.version]).toEqual([1, 2]);
+    const list = (await B.get("/api/works")).json();
+    expect(list[0]).toMatchObject({ name: "射撃場", repoName: "銃と的", latest: { version: 2 } });
+
+    // 非公開のリポジトリでも、作品の「閲覧」権限があれば見られる。外せば見られない
+    await A.patch(`/api/repos/${src.id}`, { visibility: "private" });
+    expect((await B.get(`/api/repos/${src.id}`)).statusCode).toBe(200);
+    await A.patch(`/api/works/${work.id}`, { perms: { view: false, fork: false } });
+    expect((await B.get(`/api/repos/${src.id}`)).statusCode).toBe(404);
+    expect((await B.post(`/api/repos/${src.id}/fork`, {})).statusCode).toBe(403);
+
+    const profile = (await B.get(`/api/users/${a.me.id}`)).json();
+    expect(profile.name).toBe("a");
+    expect(profile.works).toHaveLength(1);
+  });
+
+  it("作品のリリースをセッションに置く（利用の権限）", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const A = api(app, a.token);
+    const src = (await A.post("/api/repos", { name: "射撃場", template: "range" })).json();
+    const work = (await A.post("/api/works", { repoId: src.id, outputId: "out_range" })).json();
+    const rel = (await A.post(`/api/works/${work.id}/releases`)).json();
+    a.send({ t: "session.create", name: "部屋" });
+    await a.next("session.host");
+    a.send({ t: "placeRelease", releaseId: rel.id, position: [0, 0, 0], yaw: 0 });
+    const add = await a.next("host.addPart");
+    expect(add.part.realm).toBe(`rel_${rel.id}`);
+    expect((add.part.snapshot as { name: string }).name).toBe("射撃場");
+    const info = await a.next("session", (m) => m.session.placements.length === 1);
+    expect(info.session.placements[0]).toMatchObject({
+      workspaceId: null,
+      releaseId: rel.id,
+      workspaceName: "射撃場 v1",
+    });
+
+    const b = await client(url, "b");
+    await A.patch(`/api/works/${work.id}`, { perms: { use: false } });
+    b.send({ t: "session.join", sessionId: info.session.id });
+    await b.next("session");
+    b.send({ t: "placeRelease", releaseId: rel.id, position: [0, 0, 0], yaw: 0 });
+    expect((await b.next("error")).message).toMatch(/利用する権限/);
   });
 });

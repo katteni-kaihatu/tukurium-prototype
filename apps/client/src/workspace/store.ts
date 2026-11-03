@@ -63,6 +63,13 @@ interface WorkspaceState {
   placePoint: (() => { position: [number, number, number]; yaw: number }) | null;
 
   create(name: string, snap: ProjectSnapshot): void;
+  /** リポジトリ（プロジェクト）をこのセッションのワークスペースとして開く */
+  openRepo(repoId: string): void;
+  /** コミットのたびに増える（履歴パネルの再読み込み用） */
+  commitRev: number;
+  /** セッションのライブラリ（作品を置く）パネルを開いているか */
+  libraryOpen: boolean;
+  historyOpen: boolean;
   open(workspaceId: string): void;
   leave(): void;
   select(sel: Selection | null): void;
@@ -123,6 +130,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     incomingSounds: [],
     placePoint: null,
 
+    commitRev: 0,
+    libraryOpen: false,
+    historyOpen: false,
+    openRepo: (repoId) => client().send({ t: "ws.openRepo", repoId }),
     create: (name, snap) => {
       const doc = new ProjectDoc();
       doc.load(snap);
@@ -302,6 +313,11 @@ client().on((msg) => {
       return;
     case "ws.log":
       if (msg.workspaceId === s.workspaceId) log(msg.message, msg.level);
+      return;
+    case "ws.committed":
+      if (msg.workspaceId !== s.workspaceId) return;
+      log(`${msg.by} がコミットしました：${msg.message}`);
+      set((st) => ({ commitRev: st.commitRev + 1 }));
       return;
     case "session.closed":
       s.leave();

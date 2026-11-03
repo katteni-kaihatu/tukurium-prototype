@@ -5,9 +5,6 @@ import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-/** 初版では見た目だけ置く機能（計画 §9） */
-const LATER = "初版では見た目だけです";
-
 const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" } as const;
 
 /**
@@ -18,7 +15,7 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
 export function MainPanel() {
   const ws = useWorkspace();
   const project = useProject();
-  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId } = ws;
+  const { outputId, mode, logs, systemStatus, role, isHost, workspaceId, historyOpen } = ws;
   useWorkspace((s) => s.rev);
   const info = useApp((s) => s.session?.workspaces.find((w) => w.id === workspaceId));
   const hostName = useApp((s) => s.session?.participants.find((p) => p.id === info?.host)?.name);
@@ -39,11 +36,30 @@ export function MainPanel() {
           </span>
         )}
         <span style={{ flex: 1 }} />
-        {["Project", "History", "Releases"].map((label) => (
-          <button key={label} type="button" className={ui.btn} disabled title={LATER}>
-            {label}
-          </button>
-        ))}
+        {info?.repoId && (
+          <a className={ui.btn} href={`/p/${info.repoId}`} target="_blank" rel="noreferrer">
+            Project
+          </a>
+        )}
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={historyOpen}
+          onClick={() => useWorkspace.setState({ historyOpen: !historyOpen })}
+        >
+          History
+        </button>
+        {info?.repoId && (
+          <a
+            className={ui.btn}
+            href={`/p/${info.repoId}`}
+            target="_blank"
+            rel="noreferrer"
+            title="作品の公開とリリースはプロジェクトのページで"
+          >
+            Releases
+          </a>
+        )}
       </div>
 
       <div className={styles.bar}>
@@ -163,14 +179,8 @@ export function MainPanel() {
             <h3 className={ui.sectionTitle}>保存</h3>
           </div>
           <p className={ui.muted}>
-            作業内容はサーバーに自動保存されています。メッセージ付きのコミットは M4
-            で使えるようになります。
+            作業内容はサーバーに自動保存されています。メッセージ付きのコミットは History から。
           </p>
-          <div className={ui.toolbar}>
-            <button type="button" className={ui.btn} disabled title={LATER}>
-              コミット
-            </button>
-          </div>
         </div>
       </details>
     </>

@@ -13,10 +13,13 @@
     "@aws-sdk/client-s3": "^3.1161.0",
     "@fastify/static": "10.1.8",
     "@fastify/websocket": "11.3.6",
+    "@tukurium/repo-model": "workspace:*",
     "@tukurium/shared": "workspace:*",
     "fastify": "5.12.8",
+    "isomorphic-git": "1.44.10",
     "postgres": "4.0.0",
-    "yjs": "^13.6.33"
+    "yjs": "^13.6.33",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

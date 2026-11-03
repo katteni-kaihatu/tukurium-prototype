@@ -69,6 +69,18 @@ export interface ProjectSnapshot {
   assets?: AssetDef[];
   outputs: OutputDef[];
   entities: EntityDef[];
+  /** フォーク・抽出の由来（元のリポジトリやコミットを後から追える） */
+  provenance?: Provenance[];
+}
+
+export interface Provenance {
+  kind: "fork" | "extract";
+  repoId: string;
+  repoName: string;
+  commit: string;
+  /** 抽出したもの（アウトプット・リソースの名前） */
+  items: string[];
+  at: string;
 }
 
 export function newId(prefix: string): string {

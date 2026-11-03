@@ -33,6 +33,8 @@ export type Participant = z.infer<typeof Participant>;
 export const WorkspaceInfo = z.object({
   id,
   name: z.string(),
+  /** 編集しているリポジトリ */
+  repoId: id.nullable(),
   /** 再生の実行を確定する人（ワークスペースのホスト） */
   host: id.nullable(),
   /** 参加者に最初に与える権限。null は非公開（招待した人だけ） */
@@ -47,7 +49,9 @@ export type WorkspaceInfo = z.infer<typeof WorkspaceInfo>;
 /** セッションに配置された実体（ワークスペースのアウトプット 1 回分） */
 export const PlacementInfo = z.object({
   id,
-  workspaceId: id,
+  /** ワークスペースから出した配置（適用できる）。作品のリリースから置いた配置なら null */
+  workspaceId: id.nullable(),
+  releaseId: id.nullable(),
   workspaceName: z.string(),
   outputId: z.string(),
   outputName: z.string(),
@@ -218,6 +222,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
     position: vec3,
     yaw: z.number(),
   }),
+  /** リポジトリをこのセッションのワークスペースとして開く（1 リポジトリ 1 ワークスペース） */
+  z.object({ t: z.literal("ws.openRepo"), repoId: id }),
+  /** コミット（意図的な保存）。メッセージ付き */
+  z.object({ t: z.literal("ws.commit"), workspaceId: id, message: z.string().max(500) }),
+  /** 作品のリリースをセッションに置く（作品の「利用」権限） */
+  z.object({ t: z.literal("placeRelease"), releaseId: id, position: vec3, yaw: z.number() }),
   /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */
   z.object({ t: z.literal("apply"), workspaceId: id, outputId: z.string(), snapshot: z.unknown() }),
   z.object({ t: z.literal("unplace"), placementId: id }),
@@ -252,6 +262,13 @@ export const ServerMessage = z.discriminatedUnion("t", [
   }),
 
   z.object({ t: z.literal("ws.created"), workspaceId: id }),
+  z.object({
+    t: z.literal("ws.committed"),
+    workspaceId: id,
+    commit: z.string(),
+    message: z.string(),
+    by: z.string(),
+  }),
   z.object({ t: z.literal("ws.doc"), workspaceId: id, update: b64, role: WorkspaceRole }),
   z.object({ t: z.literal("ws.denied"), workspaceId: id, reason: z.string() }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),

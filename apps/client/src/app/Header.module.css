@@ -40,6 +40,9 @@
 
 .navItem,
 .navActive {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
   height: 36px;
   padding: 0 14px;
   border: 0;

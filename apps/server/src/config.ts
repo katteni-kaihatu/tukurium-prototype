@@ -16,6 +16,8 @@ export interface Config {
       }
     | undefined;
   assetDir: string;
+  /** Git リポジトリの置き場 */
+  gitDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -34,5 +36,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         }
       : undefined,
     assetDir: env.ASSET_DIR || "./data/assets",
+    gitDir: env.GIT_DATA_DIR || "./data/git",
   };
 }
