@@ -3,6 +3,7 @@ import {
   emptyProject,
   gunAndTargetSample,
   gunSample,
+  isOfficial,
   targetRangeSample,
 } from "@tukurium/repo-model";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -246,6 +247,8 @@ export function registerRepoRoutes(
             repoName: (await store.repo(w.repoId))?.name ?? "?",
             latest,
             outputKind,
+            // 公式かどうかは発行者で決める（名前は見ない。ADR 0013 §1）
+            official: isOfficial(w.owner),
           };
         }),
       );

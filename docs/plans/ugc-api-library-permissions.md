@@ -299,6 +299,14 @@ Placement grant の保存形式と effective permission の計算も U1 の runt
 
 UGC の種類を増やすため、Runtime Built-in、Host Capability、公式 Library を段階的に拡張する。API の網羅的な一覧を先に固定せず、reference UGC を end-to-end で実装し、共通性または Host 境界としての必要性が確認できた機能だけを、設計レビュー後に適切な層へ昇格させる。
 
+進み具合（[ADR 0016](../adr/0016-official-library-reference-ugc.md)）：
+
+- [x] 公式の発行者（決まった ID。公式の印は発行者で決まる）と、サーバーに同梱して起動のときに登録する公式ライブラリ（決まった Package ID。中身が変われば新しい版）
+- [x] 公式「combat」（Health と Damageable）と、それを使う reference UGC「銃と的（公式ライブラリ）」。今の銃からの Damage も公式の Damageable が受ける
+- [ ] API の安定度（experimental / preview / stable / deprecated）の印と診断
+- [ ] 扉とスイッチ（Interact）
+- [ ] 収集物と Inventory（Pickup・所有権）
+
 #### U4 の開始条件
 
 公開 API の横展開は次を満たしてから始める。開始条件を満たす前でも、reference UGC 内の experimental API として必要性を検証してよいが、stable API として公開しない。

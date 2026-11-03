@@ -56,6 +56,8 @@ export interface Work {
   latest?: Release | null;
   /** リリースしたアウトプットの種類。ワールドは原点、アイテムは視線の先に置く */
   outputKind?: "item" | "world" | "library" | null;
+  /** 公式の発行者の作品か（名前ではなく発行者で決まる。ADR 0016） */
+  official?: boolean;
   createdAt: string;
 }
 

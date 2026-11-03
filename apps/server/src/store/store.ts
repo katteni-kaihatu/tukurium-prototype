@@ -72,6 +72,8 @@ export interface Store {
   close(): Promise<void>;
   userByToken(token: string): Promise<User | null>;
   createUser(name: string): Promise<{ user: User; token: string }>;
+  /** 決まった ID の利用者を用意する（なければ作る。ログインはできない。公式の発行者に使う） */
+  ensureUser(user: User): Promise<void>;
   renameUser(id: string, name: string): Promise<void>;
   saveWorkspace(meta: WorkspaceMeta): Promise<void>;
   workspace(id: string): Promise<WorkspaceMeta | null>;
@@ -115,6 +117,9 @@ export class MemoryStore implements Store {
     this.users.set(user.id, user);
     this.tokens.set(token, user.id);
     return { user: { ...user }, token };
+  }
+  async ensureUser(user: User) {
+    if (!this.users.has(user.id)) this.users.set(user.id, { ...user });
   }
   async renameUser(id: string, name: string) {
     const u = this.users.get(id);

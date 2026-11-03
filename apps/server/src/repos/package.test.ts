@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunAndTargetSample, type ProjectSnapshot } from "@tukurium/repo-model";
+import {
+  gunAndTargetSample,
+  OFFICIAL_COMBAT,
+  OFFICIAL_PUBLISHER,
+  type ProjectSnapshot,
+} from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryStore } from "../store/store";
 import { RepoService } from "./service";
@@ -152,5 +157,30 @@ describe("Library Package（ADR 0015）", () => {
     const forked = await repos.snapshot(fork.id);
     expect(forked.dependencies).toEqual([dep]);
     expect(forked.exports).toEqual(["ks_gun"]);
+  });
+
+  it("公式ライブラリを、決まった ID で用意する。何度呼んでも版は増えず、中身が違えば新しい版を出す", async () => {
+    dir = await mkdtemp(join(tmpdir(), "tk-pkg-"));
+    const store = new MemoryStore();
+    const repos = new RepoService(store, dir);
+    await repos.ensureOfficialLibraries();
+    await repos.ensureOfficialLibraries();
+    const id = OFFICIAL_COMBAT.workId;
+    const releases = await store.releases(id);
+    expect(releases.map((r) => r.version)).toEqual([1]);
+    expect((await store.work(id))?.owner).toBe(OFFICIAL_PUBLISHER.id);
+    // 誰でも使える。中身は Health と Damageable
+    const pkg = await repos.packageVersion(bob, id, 1);
+    expect(pkg.manifest.exports.map((e) => e.path)).toEqual(["/Health.koko", "/Damageable.system"]);
+    // 最新の版が同梱の中身と違えば（ここでは手で別の中身を出す）、起動のときに同梱の中身を新しい版で出す
+    const official = { ...OFFICIAL_PUBLISHER };
+    const snap = await repos.snapshot(OFFICIAL_COMBAT.repoId);
+    snap.exports = [OFFICIAL_COMBAT.health];
+    await repos.commit(OFFICIAL_COMBAT.repoId, snap, "変更", official, []);
+    await repos.release(official, id);
+    await repos.ensureOfficialLibraries();
+    const after = await store.releases(id);
+    expect(after.map((r) => r.version)).toEqual([3, 2, 1]);
+    expect(after[0]?.contentHash).toBe(releases[0]?.contentHash);
   });
 });
