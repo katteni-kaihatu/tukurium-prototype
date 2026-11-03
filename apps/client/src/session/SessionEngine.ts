@@ -225,21 +225,24 @@ export class SessionEngine {
     for (const fn of this.pointerListeners) fn(e.button, "down");
   };
 
-  /** 右クリックを離した。パネルか、持っている物を、見えている位置に置く */
-  private releaseRight(): void {
+  /**
+   * 右クリックを離した。パネルか、持っている物を、見えている位置に置く。
+   * 空間から出た直後は locked がすでに false なので、leaving のときも放す。
+   */
+  private releaseRight(leaving = false): void {
     if (!this.rightButton) return;
     this.rightButton = false;
     if (this.panels.isMoving) {
       this.panels.endMove();
       return;
     }
-    if (!this.controller.locked) return;
+    if (!leaving && !this.controller.locked) return;
     for (const fn of this.pointerListeners) fn(2, "up");
   }
 
   /** 空間から出たとき、押しっぱなしの右クリックを離したことにする */
   private onLockChange = (): void => {
-    if (!this.controller.locked) this.releaseRight();
+    if (!this.controller.locked) this.releaseRight(true);
   };
 
   private onMouseUp = (e: MouseEvent): void => {
