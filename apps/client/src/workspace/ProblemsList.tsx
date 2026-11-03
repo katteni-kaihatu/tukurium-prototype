@@ -36,9 +36,17 @@ export function ProblemsList() {
   const problems = useProblems();
   const project = useProject();
   const { diagnostics, index } = useProjectDiagnostics();
-  const { select, setOutput, outputId, showProblem } = useWorkspace();
-  /** スクリプトはコードのその行へ、ほかは Inspector で選ぶ（選べるものだけ） */
-  const target = (d: Diagnostic): (() => void) | null => {
+  const { select, setOutput, outputId, showProblem, openDetail, placeDetail } = useWorkspace();
+  /** スクリプトはコードのその行へ。定義は詳細パネル、Entity は Inspector */
+  const openDef = (el: EventTarget | null, kind: "koko" | "system" | "material", id: string) => {
+    const mode =
+      el instanceof Element && el.closest("[data-mode]")?.getAttribute("data-mode") === "3d"
+        ? "3d"
+        : "2d";
+    placeDetail(mode);
+    openDetail({ kind, id });
+  };
+  const target = (d: Diagnostic): ((e: { currentTarget: EventTarget | null }) => void) | null => {
     if (isScript(d)) return () => showProblem(d);
     const { kind, id } = d.subject;
     if (kind === "entity") {
@@ -54,8 +62,8 @@ export function ProblemsList() {
         setOutput(id);
         select({ kind: "output", id });
       };
-    if (kind === "kokostate") return () => select({ kind: "koko", id });
-    if (kind === "system" || kind === "material") return () => select({ kind, id });
+    if (kind === "kokostate") return (e) => openDef(e.currentTarget, "koko", id);
+    if (kind === "system" || kind === "material") return (e) => openDef(e.currentTarget, kind, id);
     return null;
   };
   // 制作データの問題は、いまの制作データからその場で計算するので、いつも current
@@ -112,7 +120,15 @@ export function ProblemsList() {
                 <button
                   type="button"
                   {...attrs}
-                  title={isScript(d) ? "コードを開く" : (d.detail ?? "Inspector で選ぶ")}
+                  title={
+                    isScript(d)
+                      ? "コードを開く"
+                      : d.subject.kind === "kokostate" ||
+                          d.subject.kind === "system" ||
+                          d.subject.kind === "material"
+                        ? "詳細パネルで開く"
+                        : (d.detail ?? "Inspector で選ぶ")
+                  }
                   onClick={go}
                 >
                   {body}

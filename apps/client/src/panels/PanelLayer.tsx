@@ -173,27 +173,27 @@ export function PanelLayer({
     };
   }, [engine]);
 
-  // Resources から開いたコードは、そのパネルと同じ置き方（2D か 3D）で出す
+  // Resources から開いたコードと詳細は、そのパネルと同じ置き方（2D か 3D）で出す
   const editorPlace = useWorkspace((s) => s.editorPlace);
+  const detailPlace = useWorkspace((s) => s.detailPlace);
   useLayoutEffect(() => {
-    if (!editorPlace) return;
-    const spec = panels.find((p) => p.id === "ws-editor");
-    if (!spec) return;
+    const jobs: { id: string; mode: "2d" | "3d"; key: "editorPlace" | "detailPlace" }[] = [];
+    if (editorPlace) jobs.push({ id: "ws-editor", mode: editorPlace.mode, key: "editorPlace" });
+    if (detailPlace) jobs.push({ id: "ws-detail", mode: detailPlace.mode, key: "detailPlace" });
+    const ready = jobs.filter((job) => panels.some((p) => p.id === job.id));
+    if (ready.length === 0) return;
     setStates((prev) => {
-      const st = prev[spec.id] ?? initialState(spec);
-      if (editorPlace.mode === "2d") {
-        return st.pinned ? prev : { ...prev, [spec.id]: { ...st, pinned: true } };
+      let next = prev;
+      for (const job of ready) {
+        const spec = panels.find((p) => p.id === job.id);
+        if (spec) next = placeLike(next, spec, job.mode, engine, elements.current);
       }
-      if (!st.pinned && st.transform) return prev;
-      const rect = elements.current.get(spec.id)?.getBoundingClientRect();
-      const others = Object.values(prev).filter((p) => p !== st && !p.pinned).length;
-      return {
-        ...prev,
-        [spec.id]: { ...st, pinned: false, transform: placeInFront(engine, rect, others) },
-      };
+      return next;
     });
-    useWorkspace.setState({ editorPlace: null });
-  }, [editorPlace, panels, engine]);
+    const clear: { editorPlace?: null; detailPlace?: null } = {};
+    for (const job of ready) clear[job.key] = null;
+    useWorkspace.setState(clear);
+  }, [editorPlace, detailPlace, panels, engine]);
 
   const togglePin = useCallback(
     (spec: PanelSpec) => {
@@ -285,6 +285,27 @@ export function PanelLayer({
       })}
     </div>
   );
+}
+
+/** 開いた元と同じ置き方にする。すでにその置き方なら、動かさない */
+function placeLike(
+  prev: Record<string, PanelState>,
+  spec: PanelSpec,
+  mode: "2d" | "3d",
+  engine: SessionEngine,
+  elements: Map<string, HTMLElement>,
+): Record<string, PanelState> {
+  const st = prev[spec.id] ?? initialState(spec);
+  if (mode === "2d") {
+    return st.pinned ? prev : { ...prev, [spec.id]: { ...st, pinned: true } };
+  }
+  if (!st.pinned && st.transform) return prev;
+  const rect = elements.get(spec.id)?.getBoundingClientRect();
+  const others = Object.values(prev).filter((p) => p !== st && !p.pinned).length;
+  return {
+    ...prev,
+    [spec.id]: { ...st, pinned: false, transform: placeInFront(engine, rect, others) },
+  };
 }
 
 /**

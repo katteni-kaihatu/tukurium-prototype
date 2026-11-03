@@ -29,16 +29,8 @@ export function summarize(panelId: string): string[] {
     case "ws-inspector": {
       const sel = ws.selection;
       if (!sel) return ["（何も選んでいません）"];
-      if (sel.kind !== "entity") {
-        const name =
-          sel.kind === "output"
-            ? project.output(sel.id)?.name
-            : sel.kind === "system"
-              ? project.system(sel.id)?.name
-              : sel.kind === "material"
-                ? project.material(sel.id)?.name
-                : project.registry().get(sel.id)?.name;
-        return [`${sel.kind}: ${name ?? sel.id}`];
+      if (sel.kind === "output") {
+        return [`output: ${project.output(sel.id)?.name ?? sel.id}`];
       }
       const e = project.entity(sel.id);
       if (!e) return [];
@@ -51,6 +43,19 @@ export function summarize(panelId: string): string[] {
         for (const f of def.fields.slice(0, 3)) lines.push(`  ${f.name}  ${fmt(values[f.id])}`);
       }
       return lines.slice(0, MAX_LINES);
+    }
+    case "ws-detail": {
+      const d = ws.detail;
+      if (!d) return [];
+      const name =
+        d.kind === "system"
+          ? project.system(d.id)?.name
+          : d.kind === "material"
+            ? project.material(d.id)?.name
+            : project.registry().get(d.id)?.name;
+      const label =
+        d.kind === "system" ? "Script" : d.kind === "material" ? "Material" : "KokoState";
+      return [`${label}: ${name ?? d.id}`];
     }
     case "ws-resources":
       return [
