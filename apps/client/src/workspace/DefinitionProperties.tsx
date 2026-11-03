@@ -1,5 +1,11 @@
 import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
-import { type GuestPolicy, newId, type OutputDef, type OutputExposure } from "@tukurium/repo-model";
+import {
+  type GuestPolicy,
+  inferCapabilities,
+  newId,
+  type OutputDef,
+  type OutputExposure,
+} from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
@@ -92,6 +98,14 @@ function OutputProperties({ id }: { id: string }) {
   const editing = canEdit;
   const systems = project.systems();
   const update = (patch: Partial<OutputDef>) => project.updateOutput({ ...output, ...patch });
+  // 有効な System のコードから読み取った、要る権限（ADR 0012）
+  const capabilities = [
+    ...new Set(
+      output.systems
+        .filter((s) => s.enabled)
+        .flatMap((s) => inferCapabilities(s.id, project.code(s.id)?.toString() ?? "").capabilities),
+    ),
+  ].sort();
   const move = (i: number, d: -1 | 1) => {
     const list = [...output.systems];
     const j = i + d;
@@ -137,6 +151,23 @@ function OutputProperties({ id }: { id: string }) {
               ライブラリ（準備中）
             </option>
           </select>
+        </div>
+        <div className={ui.row}>
+          <span className={ui.label}>使う権限</span>
+          <span
+            className={ui.toolbar}
+            title="有効な System のコードから読み取った、要る Capability。セッションでは、これと置いた物への付与・World の上限で判定する"
+          >
+            {capabilities.length === 0 ? (
+              <span className={ui.muted}>なし</span>
+            ) : (
+              capabilities.map((c) => (
+                <span key={c} className={ui.badge}>
+                  {c}
+                </span>
+              ))
+            )}
+          </span>
         </div>
         <div className={ui.row}>
           <label className={ui.label} htmlFor={`exposure-${id}`}>

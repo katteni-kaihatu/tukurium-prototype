@@ -1,26 +1,17 @@
+import type { CapabilityId } from "@tukurium/repo-model";
 import type { HostName } from "./simulation";
+
+export type { CapabilityId };
 
 /**
  * UGC の権限の型と、今の Host API の棚卸し（計画 UGC U0、ADR 0011〜0013）。
  *
  * U1 / U2 で Host API の schema 検証、配置の既定境界、opaque handle、公開 Contract を実行時に強制するようにした。
- * HOST_API_POLICY はまだ棚卸し metadata で、要求 Capability と effective grant の強制は未実装。
+ * 要る Capability はコードから読み取り（inferCapabilities）、セッションでは「宣言 ∩ 置いた物への付与」で
+ * 強制する（Simulation.callHost）。Host API と Capability の対応は repo-model の HOST_CAPABILITIES と一致させる。
  * server-revalidate / server-execute の操作も協調セッション向けで、Server authority は未実装。
  * 新しい Host API を足すときは、必ず HOST_API_POLICY にも分類を足す（テストで検査する）。
  */
-
-/** Capability の ID。`名前空間.操作` で、意味を変えるときは version を上げる */
-export type CapabilityId =
-  | "time.read"
-  | "audio.play"
-  | "effects.spawn"
-  | "physics.raycast"
-  | "interaction.send"
-  | "entity.discover"
-  | "state.read"
-  | "state.write"
-  | "entity.spawn"
-  | "entity.destroy";
 
 export interface CapabilityRef {
   id: CapabilityId;

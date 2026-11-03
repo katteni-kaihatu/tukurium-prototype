@@ -8,4 +8,5 @@ export * from "./queryInfo";
 export * from "./resourcePath";
 export * from "./samples";
 export * from "./schema";
+export * from "./systemCapabilities";
 export * from "./systemCompiler";

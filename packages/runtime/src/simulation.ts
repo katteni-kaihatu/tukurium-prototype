@@ -11,8 +11,11 @@ import {
   type AssetDef,
   BUILTIN,
   buildRegistry,
+  type CapabilityId,
   compileSystem,
   type GuestPolicy,
+  HOST_CAPABILITIES,
+  inferCapabilities,
   isBuiltin,
   type MaterialDef,
   type OutputExposure,
@@ -27,6 +30,7 @@ import {
   ScriptSandbox,
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
+import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { isContractName, parseContractPayload } from "./contracts";
 import { type HostArgs, parseHostArgs } from "./hostApi";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
@@ -100,6 +104,11 @@ export interface PartSpec {
   /** 配置の位置と向き（ルートの Entity に足す） */
   position: Vec3;
   yaw: number;
+  /**
+   * 置いた物への付与（ADR 0012）。ないときは、その物の System がコードから読み取った宣言をそのまま付与する。
+   * 細かく取り消す画面は U5 で作る
+   */
+  grants?: CapabilityId[];
 }
 
 /** 一時的な effect（ホストが手元で出し、状態と一緒にほかの人にも配る。保存しない） */
@@ -166,6 +175,8 @@ interface LoadedSystem {
   error: string | null;
   line: number | null;
   warnings: Map<string, RuntimeWarning>;
+  /** コードから読み取った、要る Capability（宣言） */
+  capabilities: Set<CapabilityId>;
 }
 
 interface PendingEvent {
@@ -189,6 +200,21 @@ interface HitHandle {
   /** この時刻を過ぎたら使えない */
   expires: number;
 }
+
+/** 実効権限で拒んだときに Host API が返す値（見つからない・できなかったと同じ形） */
+const DENIED_RESULT: Record<HostName, Json | undefined> = {
+  "world.raycast": null,
+  "world.emit": undefined,
+  "world.get": null,
+  "world.set": false,
+  "world.find": null,
+  "world.spawn": null,
+  "world.destroy": undefined,
+  "time.now": null,
+  "audio.play": false,
+  "contract.send": false,
+  "effects.spawn": false,
+};
 
 /** handle の寿命（秒） */
 const HANDLE_TTL = 1;
@@ -350,6 +376,30 @@ export class Simulation {
     this.realmAssets.delete(realm);
     for (const sys of [...this.systems]) if (sys.realm === realm) this.dropSystem(sys);
     this.sandbox.disposeRealm(realm);
+  }
+
+  /** 置いた物の System が、コードから読み取った要る Capability（宣言）の和 */
+  declaredCapabilities(partId: string): CapabilityId[] {
+    const caps = new Set<CapabilityId>();
+    for (const sys of this.systems)
+      if (sys.users.has(partId)) for (const c of sys.capabilities) caps.add(c);
+    return [...caps].sort();
+  }
+
+  /** 実行の主体（ADR 0012・0013）。Package の仕組みができるまでは、ワークスペースの出力を暗黙の Package とする */
+  executionContext(partId: string, systemId: string): PackageExecutionContext | undefined {
+    const part = this.parts.get(partId);
+    if (!part) return undefined;
+    const revision = part.realm.includes("@") ? part.realm.slice(part.realm.indexOf("@") + 1) : "";
+    return {
+      packageInstanceId: part.id,
+      packageId: `workspace:${part.source}` as PackageId,
+      resolvedVersion: revision,
+      contentHash: revision,
+      systemId,
+      placementId: part.id,
+      worldInstanceId: this.baseWorld()?.id ?? "session",
+    };
   }
 
   /** 配置と、制作データの中の KokoState ID から、実行時の KokoState ID を求める（版付きの realm を含む） */
@@ -821,6 +871,7 @@ export class Simulation {
         error: null,
         line: null,
         warnings: new Map(),
+        capabilities: new Set(inferCapabilities(def.id, def.code).capabilities),
       };
       this.systems.push(sys);
       if (!ref.enabled) continue;
@@ -871,6 +922,27 @@ export class Simulation {
     }
     const sys = this.systems.find((x) => x.id === ctx.systemId);
     return sys ? [...sys.users].flatMap((id) => this.parts.get(id) ?? []) : [];
+  }
+
+  /**
+   * 実効権限の判定（ADR 0012）：その System の宣言（コードから読み取り）にあり、呼び出しの主体の配置すべてに
+   * 付与されている Capability だけを許す。拒んだときは、その System に注意を残す。
+   * 別の配置への届き方（World の上限・相手の公開範囲）は、それぞれの Host API の中で判定する。
+   */
+  private permits(name: HostName, ctx: HostCallContext, callers: Part[]): boolean {
+    const cap = HOST_CAPABILITIES[name];
+    const sys = this.systems.find((x) => x.id === ctx.systemId);
+    const declared = cap !== undefined && sys?.capabilities.has(cap) === true;
+    const granted = callers.every(
+      (p) => cap !== undefined && (p.grants === undefined || p.grants.includes(cap)),
+    );
+    if (declared && granted) return true;
+    this.warn(
+      ctx.systemId,
+      "capability-denied",
+      `権限「${cap ?? name}」がないため、${name} は使えませんでした${declared ? "（置いた物に付与されていません）" : "（コードから読み取れない使い方です）"}`,
+    );
+    return false;
   }
 
   /** Entity が入っている配置 */
@@ -930,6 +1002,8 @@ export class Simulation {
    */
   private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
     const callers = this.callerParts(ctx);
+    // セッションでは、実効権限（宣言 ∩ 置いた物への付与）に無い Capability を拒む（deny-by-default）
+    if (this.multi && !this.permits(name, ctx, callers)) return DENIED_RESULT[name];
     const own = (id: string | undefined): id is EntityId =>
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
     const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
