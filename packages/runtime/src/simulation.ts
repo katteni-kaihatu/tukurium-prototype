@@ -489,8 +489,9 @@ export class Simulation {
     }
     if (ev.phase !== "down") return true;
     if (mine.length > 0) {
-      // 放す：その場に置く（動く剛体なら落ちる）
+      // 放す：見えている位置に置いてから手を放す（動く剛体なら落ちる）
       for (const id of mine) {
+        this.placeHeld(id, ev);
         this.world.remove(id, BUILTIN.Held);
         const rb = this.world.get(id, BUILTIN.RigidBody);
         if (rb) rb.linvel = [0, 0, 0];

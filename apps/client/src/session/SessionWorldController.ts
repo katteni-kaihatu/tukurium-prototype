@@ -142,6 +142,7 @@ export class SessionWorldController {
         this.engine.audio.play(snd.asset, snd.position, snd.volume);
       useSessionWorld.setState({ incomingSounds: [] });
     }
+    if (this.turning && !this.holding()) this.endTurn();
     const view = s.view();
     if (!view) {
       this.view.root.visible = false;
@@ -156,7 +157,6 @@ export class SessionWorldController {
       player: useApp.getState().me?.id,
     });
     // 持っている物があれば、視点を間隔をあけて送る
-    if (this.turning && !this.holding()) this.endTurn();
     this.holdTimer += dt;
     if (this.holdTimer > 0.1) {
       this.holdTimer = 0;

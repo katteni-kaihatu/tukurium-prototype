@@ -288,6 +288,16 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     expect(after[0]).toBeCloseTo(0, 4);
     expect(after[1]).toBeCloseTo(1.5, 4);
     expect(after[2]).toBeCloseTo(-3, 4);
+    // 向きを変えてから離すと、見えていた位置に残る（追従の送信を待たない）
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    sim.input(fire([1, 0, 0], "grab"));
+    sim.step(1 / 60);
+    const left = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    expect(left[0]).toBeCloseTo(3, 1);
+    expect(left[1]).toBeCloseTo(1.5, 1);
+    expect(left[2]).toBeCloseTo(0, 1);
   });
 
   it("持っている間は視点との位置関係を保ち、落ちない。ほかの人は取れない", async () => {
