@@ -317,3 +317,26 @@ export function planImportRefactor(prev: ProjectSnapshot, next: ProjectSnapshot)
   }
   return edits;
 }
+
+/**
+ * import のパスを書き換える（抽出で、取り込み先の構造・依存の別名に合わせる）。AST で import 文の
+ * パスの文字列だけを置き換えるので、ほかのコードと行の数は変わらない。`next` が null を返したものはそのまま。
+ */
+export function rewriteImports(source: string, next: (spelling: string) => string | null): string {
+  let imports: ImportDeclaration[];
+  try {
+    const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+    imports = ast.body.filter((n): n is ImportDeclaration => n.type === "ImportDeclaration");
+  } catch {
+    return source;
+  }
+  let out = source;
+  // 後ろから置き換えて、前の位置をずらさない
+  for (const node of [...imports].sort((a, b) => b.source.start - a.source.start)) {
+    const spelling = String(node.source.value);
+    const to = next(spelling);
+    if (to === null || to === spelling) continue;
+    out = out.slice(0, node.source.start) + JSON.stringify(to) + out.slice(node.source.end);
+  }
+  return out;
+}

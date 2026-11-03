@@ -135,4 +135,22 @@ describe("Library Package（ADR 0015）", () => {
     await repos.commit(lib1.repoId, snap1, "輪", alice, []);
     await expect(repos.release(alice, lib1.id)).rejects.toMatchObject({ status: 409 });
   });
+
+  it("フォークしても、依存（lock）と公開の印はそのまま残る", async () => {
+    const { repos, repo, work } = await setup();
+    const rel = await repos.release(alice, work.id);
+    const snap = await repos.snapshot(repo.id);
+    const dep = {
+      alias: "arms",
+      packageId: work.id,
+      version: 1,
+      contentHash: rel.contentHash ?? "",
+    };
+    snap.dependencies = [dep];
+    await repos.commit(repo.id, snap, "依存", alice, []);
+    const fork = await repos.fork(bob, repo.id);
+    const forked = await repos.snapshot(fork.id);
+    expect(forked.dependencies).toEqual([dep]);
+    expect(forked.exports).toEqual(["ks_gun"]);
+  });
 });

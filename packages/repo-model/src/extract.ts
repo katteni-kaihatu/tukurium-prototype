@@ -1,7 +1,16 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import { BUILTIN, isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
-import { newId, type ProjectSnapshot, type Provenance } from "./schema";
+import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
+import { ResourcePathIndex } from "./resourcePath";
+import {
+  type FolderDef,
+  newId,
+  type PackageDependency,
+  type ProjectSnapshot,
+  type Provenance,
+} from "./schema";
+import { compileSystem, rewriteImports } from "./systemCompiler";
 
 export interface ExtractSelection {
   outputs: string[];
@@ -71,7 +80,11 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
  * 抽出：選んだもの（依存を含む）を、取り込み先の制作データに加える（取り込み先がなければ新しく作る）。
  * - 取り込み先に同じ ID で同じ中身があれば、そのまま使う。中身が違えば新しい ID を振り直す。
  * - KokoState の名前がぶつかったら名前を付け替え、取り出した System のコードの名前も書き換える。
- * - 由来（元のリポジトリ・コミット・取り出したもの）を provenance に残す。
+ * - 取り出したものが入っていたフォルダも作り（同じパスのフォルダがあればそれを使う）、
+ *   System の import を取り込み先の構造に合わせて書き直す（ADR 0010 §3）。
+ * - 取り出したものが使うライブラリ（依存）も持ってくる。取り込み先に同じ lock があればその別名を使い、
+ *   別名がほかのものとぶつかれば付け替えて import も書き直す。別の版は共存させる（ADR 0015）。
+ * - 由来（元のリポジトリ・コミット・取り出したもの・持ってきた依存）を provenance に残す。
  */
 export function extractInto(
   src: ProjectSnapshot,
@@ -94,7 +107,11 @@ export function extractInto(
         entities: [],
       };
   dst.assets ??= [];
+  dst.folders ??= [];
+  dst.placement ??= {};
   const remap = new Map<string, string>();
+  /** 取り込み先に新しく足したリソース（取り出し元の ID → 取り込み先の ID）。フォルダの置き場所を写す */
+  const added = new Map<string, string>();
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
   // KokoState（名前の衝突も解く）
@@ -114,6 +131,7 @@ export function extractInto(
     while (dst.kokostates.some((k) => k.name === next.name)) next.name = `${base}_${n++}`;
     if (next.name !== base) renamed.set(base, next.name);
     dst.kokostates.push(next);
+    added.set(id, next.id);
   }
 
   const copyById = <T extends { id: string }>(
@@ -133,12 +151,14 @@ export function extractInto(
         remap.set(id, next.id);
       }
       into.push(next);
+      added.set(id, next.id);
     }
   };
   copyById(src.materials, dst.materials, sel.materials, "mat");
   copyById(src.assets ?? [], dst.assets, sel.assets, "asset");
 
   for (const id of sel.systems) {
+    if (parsePackageResourceId(id)) continue; // ライブラリの System は依存で持ってくる
     const s = src.systems.find((x) => x.id === id);
     if (!s) continue;
     let code = s.code;
@@ -152,7 +172,11 @@ export function extractInto(
       remap.set(id, next.id);
     }
     dst.systems.push(next);
+    added.set(id, next.id);
   }
+
+  const aliases = carryDependencies(src, sel, dst);
+  copyFolders(src, dst, added);
 
   const r = (id: string) => remap.get(id) ?? id;
   for (const oid of sel.outputs) {
@@ -198,14 +222,143 @@ export function extractInto(
     ...selection.materials.map((id) => src.materials.find((m) => m.id === id)?.name ?? id),
     ...selection.assets.map((id) => src.assets?.find((a) => a.id === id)?.name ?? id),
   ];
+  rebindImports(src, dst, added, aliases.map);
   const record: Provenance = {
     kind: "extract",
     repoId: source.repoId,
     repoName: source.repoName,
     commit: source.commit,
     items: [...new Set(names)],
+    ...(aliases.carried.length > 0 ? { dependencies: aliases.carried } : {}),
     at: new Date().toISOString(),
   };
   dst.provenance = [...(dst.provenance ?? []), record];
   return dst;
+}
+
+/**
+ * 取り出したもの（Entity の KokoState・アウトプットの System・System の `@別名` の import）が使う依存を、
+ * 取り込み先へ持ってくる。返すのは、取り出し元の別名 → 取り込み先の別名と、新しく足した依存。
+ */
+function carryDependencies(
+  src: ProjectSnapshot,
+  sel: ExtractSelection,
+  dst: ProjectSnapshot,
+): { map: Map<string, string>; carried: PackageDependency[] } {
+  const srcDeps = src.dependencies ?? [];
+  const needed = new Set<string>();
+  const byId = (id: string) => {
+    const ref = parsePackageResourceId(id);
+    const d = ref
+      ? srcDeps.find((x) => x.packageId === ref.packageId && x.version === ref.version)
+      : undefined;
+    if (d) needed.add(d.alias);
+  };
+  for (const o of src.outputs) {
+    if (!sel.outputs.includes(o.id)) continue;
+    for (const s of o.systems) byId(s.id);
+    for (const e of src.entities)
+      if (e.output === o.id) for (const k of Object.keys(e.states)) byId(k);
+  }
+  let index: ResourcePathIndex | null = null;
+  for (const s of src.systems) {
+    if (!sel.systems.includes(s.id) || !s.code.includes("@")) continue;
+    index ??= ResourcePathIndex.fromSnapshot(src);
+    for (const alias of compileSystem(s.id, s.code, index).packageImports) needed.add(alias);
+  }
+
+  const map = new Map<string, string>();
+  const carried: PackageDependency[] = [];
+  dst.dependencies = [...(dst.dependencies ?? [])];
+  for (const dep of srcDeps) {
+    if (!needed.has(dep.alias)) continue;
+    const same = dst.dependencies.find((d) => lockKey(d) === lockKey(dep));
+    if (same) {
+      map.set(dep.alias, same.alias);
+      continue;
+    }
+    // 別名がほかのもの（別のライブラリ・別の版）とぶつかれば付け替える
+    let alias = dep.alias;
+    for (let n = 2; dst.dependencies.some((d) => d.alias === alias); n++)
+      alias = `${dep.alias}_${n}`;
+    const next = { ...dep, alias };
+    dst.dependencies.push(next);
+    carried.push(next);
+    map.set(dep.alias, alias);
+  }
+  dst.dependencies.sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0));
+  return { map, carried };
+}
+
+/** 新しく足したリソースを、取り出し元と同じパスのフォルダへ置く（なければ作る。同じパスがあれば使う） */
+function copyFolders(src: ProjectSnapshot, dst: ProjectSnapshot, added: Map<string, string>): void {
+  const srcFolders = new Map((src.folders ?? []).map((f) => [f.id, f] as const));
+  const folders = dst.folders as FolderDef[];
+  const placement = dst.placement as Record<string, string>;
+  /** 取り出し元のフォルダの名前を、いちばん上から並べたもの（輪なら null） */
+  const chain = (folder: string | undefined): string[] | null => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (
+      let f = folder ? srcFolders.get(folder) : undefined;
+      f;
+      f = srcFolders.get(f.parent ?? "")
+    ) {
+      if (seen.has(f.id)) return null;
+      seen.add(f.id);
+      names.unshift(f.name);
+      if (f.parent === null) break;
+    }
+    return names;
+  };
+  const ensure = (names: string[]): string | null => {
+    let parent: string | null = null;
+    for (const name of names) {
+      const hit = folders.find((f) => f.parent === parent && f.name === name);
+      if (hit) {
+        parent = hit.id;
+        continue;
+      }
+      const id = newId("fld");
+      folders.push({ id, name, parent });
+      parent = id;
+    }
+    return parent;
+  };
+  for (const [from, to] of added) {
+    const names = chain(src.placement?.[from]);
+    if (!names || names.length === 0) continue;
+    const folder = ensure(names);
+    if (folder) placement[to] = folder;
+  }
+}
+
+/**
+ * 取り出した System の import を、取り込み先の構造と依存の別名に合わせて書き直す。
+ * 取り出し元で解決できた import だけを書き直す（もともと解決できないものには手を付けない）。
+ */
+function rebindImports(
+  src: ProjectSnapshot,
+  dst: ProjectSnapshot,
+  added: Map<string, string>,
+  aliases: Map<string, string>,
+): void {
+  const srcIndex = ResourcePathIndex.fromSnapshot(src);
+  const dstIndex = ResourcePathIndex.fromSnapshot(dst);
+  for (const [from, to] of added) {
+    const before = src.systems.find((s) => s.id === from);
+    const after = dst.systems.find((s) => s.id === to);
+    if (!before || !after || !after.code.includes("import")) continue;
+    after.code = rewriteImports(after.code, (spelling) => {
+      const pkg = parsePackageSpelling(spelling);
+      if (pkg) {
+        const alias = aliases.get(pkg.alias);
+        return alias && alias !== pkg.alias ? `@${alias}/${pkg.path}` : null;
+      }
+      const r = srcIndex.resolve(spelling, from);
+      if (!r.ok) return null;
+      const target = added.get(r.id) ?? r.id;
+      return dstIndex.spellingFor(target, to, spelling.startsWith("/") ? "absolute" : "relative");
+    });
+  }
 }

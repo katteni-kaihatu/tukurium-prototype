@@ -71,11 +71,16 @@ describe("プロジェクトの依存（ADR 0015）", () => {
     expect(p.dependencies().map((d) => d.alias)).toEqual(["a"]);
   });
 
-  it("同じ別名・同じ Package を二つ足せない（Package は一つの版に固定する）", () => {
+  it("同じ別名・同じ Package の同じ版は二つ足せない。別の版は別の別名で共存できる", () => {
     const p = new ProjectDoc();
     p.addDependency(dep);
     expect(() => p.addDependency({ ...dep, packageId: "w_other" })).toThrow(/別名/);
-    expect(() => p.addDependency({ ...dep, alias: "other", version: 4 })).toThrow(/もう/);
+    expect(() => p.addDependency({ ...dep, alias: "other" })).toThrow(/もう/);
+    p.addDependency({ ...dep, alias: "old", version: 2, contentHash: "h2" });
+    expect(p.dependencies().map((d) => [d.alias, d.version])).toEqual([
+      ["combat", 3],
+      ["old", 2],
+    ]);
   });
 
   it("別名に使えない書き方を拒む", () => {

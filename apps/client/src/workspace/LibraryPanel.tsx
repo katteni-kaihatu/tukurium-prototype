@@ -135,7 +135,8 @@ export function LibraryPanel() {
             // ライブラリは置くものではなく、プロジェクトの依存に足して import で使う（ADR 0015）
             const isLibrary = w.outputKind === "library";
             const kind = w.outputKind ? KIND_LABEL[w.outputKind] : null;
-            const used = deps.some((d) => d.packageId === w.id);
+            // 同じライブラリでも、別の版なら足せる（別の別名で共存する）
+            const used = deps.some((d) => d.packageId === w.id && d.version === w.latest?.version);
             const own = repoId !== null && w.repoId === repoId;
             return (
               <Fragment key={w.id}>
@@ -163,7 +164,7 @@ export function LibraryPanel() {
                         disabled={!w.latest || !canUse || used || own}
                         title={
                           used
-                            ? "もう使っています"
+                            ? "この版はもう使っています"
                             : own
                               ? "このプロジェクト自身のライブラリは使えません（依存が輪になります）"
                               : !canUse
