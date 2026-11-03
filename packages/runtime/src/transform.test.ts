@@ -1,6 +1,12 @@
 import { Euler, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { placeFromView, poseInView, straightenRotation, viewQuaternion } from "./transform";
+import {
+  moveAlongView,
+  placeFromView,
+  poseInView,
+  straightenRotation,
+  viewQuaternion,
+} from "./transform";
 
 describe("視点の姿勢", () => {
   it("FPS のカメラ（ロール 0）と同じ向きになる", () => {
@@ -68,5 +74,15 @@ describe("視点の姿勢", () => {
     expect(upright[0]).toBeCloseTo(0, 4);
     expect(upright[1]).toBeCloseTo(25, 4);
     expect(upright[2]).toBeCloseTo(0, 4);
+  });
+
+  it("前後に動かしても、視線の上の位置は変わらない", () => {
+    const far = moveAlongView([0.4, -0.2, -2], 1);
+    expect(far[0] / far[2]).toBeCloseTo(0.4 / -2, 4);
+    expect(far[1] / far[2]).toBeCloseTo(-0.2 / -2, 4);
+    expect(Math.hypot(...far)).toBeCloseTo(Math.hypot(0.4, -0.2, -2) + 1, 4);
+    const near = moveAlongView([0, 0, -1], -10);
+    expect(Math.hypot(...near)).toBeCloseTo(0.35, 4);
+    expect(near[2]).toBeLessThan(0);
   });
 });

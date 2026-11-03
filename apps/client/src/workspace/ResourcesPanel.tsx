@@ -41,7 +41,7 @@ const loadView = (): View => {
  * - フォルダは並べ方だけの情報で、実行には関わらない（コミットには入る）
  */
 export function ResourcesPanel() {
-  const { selection, select, openSystem } = useWorkspace();
+  const { selection, select, openSystem, placeEditor } = useWorkspace();
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
@@ -57,6 +57,7 @@ export function ResourcesPanel() {
   const [busy, setBusy] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const root = useRef<HTMLDivElement>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   const all = useMemo(() => resourceItems(project), [project, rev]);
@@ -114,9 +115,16 @@ export function ResourcesPanel() {
     else if (it.kind === "system") select({ kind: "system", id: it.id });
     else if (it.kind === "material") select({ kind: "material", id: it.id });
   };
+  /** このパネルが 3D ならコードも 3D、2D なら 2D で開く */
+  const openCode = (id: string) => {
+    const mode =
+      root.current?.closest("[data-mode]")?.getAttribute("data-mode") === "3d" ? "3d" : "2d";
+    placeEditor(mode);
+    openSystem(id);
+  };
   const open = (it: ResItem) => {
     if (it.kind === "folder") go(it.id);
-    else if (it.kind === "system") openSystem(it.id);
+    else if (it.kind === "system") openCode(it.id);
     else pick(it);
   };
   // ここで選んだもの。まだ何も選んでいなければ、Inspector で選んでいるもの
@@ -145,7 +153,7 @@ export function ResourcesPanel() {
         const id = project.addSystem(`NewSystem${project.systems().length + 1}`, NEW_SYSTEM_CODE);
         placeHere(id);
         pick({ id, kind: "system", name: "", parent: here });
-        openSystem(id);
+        openCode(id);
       } else {
         const id = project.addMaterial(`Material${project.materials().length + 1}`);
         placeHere(id);
@@ -262,7 +270,7 @@ export function ResourcesPanel() {
   const assetSel = selected && ["model", "image", "audio"].includes(selected.kind);
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} ref={root}>
       <div className={styles.toolbar}>
         <button
           type="button"

@@ -30,6 +30,9 @@ export class SessionWorldController {
     engine.scene.add(this.view.root);
     this.disposers.push(
       engine.onFrame((dt) => this.update(dt)),
+      engine.onHoldWheel((meters) => {
+        if (useWorkspace.getState().mode === "edit") this.input("reach", "down", [meters, 0]);
+      }),
       engine.onPointer((button, phase) => {
         // 持っているときの左クリックは、撃たずに傾きを直す
         if (button === 0 && phase === "down" && this.holding()) {

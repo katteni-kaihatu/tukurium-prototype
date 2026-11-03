@@ -1,5 +1,5 @@
 import type { Vec3 } from "@tukurium/eks";
-import { placeFromView, poseInView, straightenRotation } from "@tukurium/runtime";
+import { moveAlongView, placeFromView, poseInView, straightenRotation } from "@tukurium/runtime";
 import * as THREE from "three";
 import { CSS3DObject, type CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
@@ -116,6 +116,12 @@ export class PanelSpace {
 
   get isMoving(): boolean {
     return this.moving !== null;
+  }
+
+  /** 持っているパネルを、同じ方向のまま前後に動かす（正で奥へ、メートル） */
+  moveDepth(meters: number): void {
+    if (!this.moving || meters === 0) return;
+    this.moving.offset = moveAlongView(this.moving.offset, meters);
   }
 
   /** 空間から取り除く（要素は呼び出し側が別の場所へ移す）。 */

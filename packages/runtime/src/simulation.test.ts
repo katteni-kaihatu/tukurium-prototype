@@ -326,6 +326,23 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     expect(dropped?.[1]).toBeLessThan(1.4);
   });
 
+  it("ホイールで前後に動かし、画面上の位置は保つ", async () => {
+    sim = await Simulation.create(box([0, 0, 0], false), "out", { realm: "r" });
+    sim.step(1 / 60);
+    sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    sim.input({ ...fire([0, 0, -1], "reach"), pointer: [1, 0] });
+    sim.step(1 / 60);
+    const far = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(far[0]).toBeCloseTo(0, 2);
+    expect(far[1]).toBeCloseTo(1.5, 2);
+    expect(far[2]).toBeCloseTo(-4, 2);
+    sim.input({ ...fire([0, 0, -1], "reach"), pointer: [-1, 0] });
+    sim.step(1 / 60);
+    const back = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
+    expect(back[2]).toBeCloseTo(-3, 2);
+  });
+
   it("左クリックで傾きを直し、E の動きで角度が変わる", async () => {
     sim = await Simulation.create(box([30, 40, 25], false), "out", { realm: "r" });
     sim.step(1 / 60);

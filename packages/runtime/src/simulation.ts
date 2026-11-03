@@ -25,6 +25,7 @@ import {
 import { buildWorld } from "./buildWorld";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
+  moveAlongView,
   placeFromView,
   poseInView as poseRelativeToView,
   straightenRotation,
@@ -43,7 +44,11 @@ export interface InputEvent {
   origin: Vec3;
   direction: Vec3;
   player: string;
-  /** マウスの移動を角度（ラジアン、[ヨー, ピッチ]）にしたもの。持っている物を回すとき */
+  /**
+   * 追加の数値。
+   * twist ではマウスの移動（ラジアン、[ヨー, ピッチ]）。
+   * reach では前後の移動（メートル、[距離, 0]。正で奥へ）。
+   */
   pointer?: [number, number];
 }
 
@@ -465,13 +470,15 @@ export class Simulation {
    * - hold：持っている物を、視点との位置関係を保ったまま動かす
    * - align：傾きを直し、上下の軸（Y）の向きだけ残す
    * - twist：マウスの動きで、持っている物の角度を変える
+   * - reach：ホイールで、持っている物を前後に動かす
    */
   private builtinInput(ev: InputEvent): boolean {
     if (
       ev.action !== "grab" &&
       ev.action !== "hold" &&
       ev.action !== "align" &&
-      ev.action !== "twist"
+      ev.action !== "twist" &&
+      ev.action !== "reach"
     )
       return false;
     const mine = this.heldBy(ev.player);
@@ -485,6 +492,11 @@ export class Simulation {
     }
     if (ev.action === "twist") {
       for (const id of mine) this.twistHeld(id, ev);
+      return true;
+    }
+    if (ev.action === "reach") {
+      const delta = ev.pointer?.[0] ?? 0;
+      if (delta !== 0) for (const id of mine) this.reachHeld(id, ev, delta);
       return true;
     }
     if (ev.phase === "up") {
@@ -547,6 +559,14 @@ export class Simulation {
     t.rotation = straightenRotation(t.rotation as Vec3);
     const pose = this.poseInView(id, ev);
     if (pose) held.rotation = pose.rotation;
+  }
+
+  /** ホイールの分だけ、持っている物を前後に動かす（画面上の位置は保つ） */
+  private reachHeld(id: EntityId, ev: InputEvent, deltaMeters: number): void {
+    const held = this.world.get(id, BUILTIN.Held);
+    if (!held) return;
+    held.offset = moveAlongView((held.offset as Vec3 | undefined) ?? [0, 0, 0], deltaMeters);
+    this.placeHeld(id, ev);
   }
 
   /** マウスの動き（ラジアン）だけ、持っている物を回す */

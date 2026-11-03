@@ -93,6 +93,22 @@ export function placeFromView(
   return { position: position.toArray() as Vec3, rotation };
 }
 
+/** 持っているものを、これより手前・奥には動かさない（m） */
+const HOLD_NEAR = 0.35;
+const HOLD_FAR = 12;
+
+/**
+ * 視点からのずれを、同じ方向のまま前後に動かす。
+ * deltaMeters が正なら奥へ、負なら手前へ。画面上の位置は変わらない。
+ */
+export function moveAlongView(offset: Vec3, deltaMeters: number): Vec3 {
+  const dist = Math.hypot(offset[0], offset[1], offset[2]);
+  const next = Math.min(HOLD_FAR, Math.max(HOLD_NEAR, (dist || HOLD_NEAR) + deltaMeters));
+  if (dist < 1e-6) return [0, 0, -next];
+  const s = next / dist;
+  return [offset[0] * s, offset[1] * s, offset[2] * s];
+}
+
 /** 傾きを直し、上下の軸まわりの向きだけ残す */
 export function straightenRotation(rotationDeg: Vec3): Vec3 {
   const euler = new Euler().setFromQuaternion(degreesToQuaternion(rotationDeg), "YXZ");

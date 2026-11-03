@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "
 import { createPortal } from "react-dom";
 import * as THREE from "three";
 import type { SessionEngine } from "../session/SessionEngine";
+import { useWorkspace } from "../workspace/store";
 import { PANEL_METERS_PER_PX, type PanelTransform } from "./PanelSpace";
 import styles from "./Panels.module.css";
 
@@ -171,6 +172,28 @@ export function PanelLayer({
       for (const id of elements.current.keys()) engine.panels.remove(id);
     };
   }, [engine]);
+
+  // Resources から開いたコードは、そのパネルと同じ置き方（2D か 3D）で出す
+  const editorPlace = useWorkspace((s) => s.editorPlace);
+  useLayoutEffect(() => {
+    if (!editorPlace) return;
+    const spec = panels.find((p) => p.id === "ws-editor");
+    if (!spec) return;
+    setStates((prev) => {
+      const st = prev[spec.id] ?? initialState(spec);
+      if (editorPlace.mode === "2d") {
+        return st.pinned ? prev : { ...prev, [spec.id]: { ...st, pinned: true } };
+      }
+      if (!st.pinned && st.transform) return prev;
+      const rect = elements.current.get(spec.id)?.getBoundingClientRect();
+      const others = Object.values(prev).filter((p) => p !== st && !p.pinned).length;
+      return {
+        ...prev,
+        [spec.id]: { ...st, pinned: false, transform: placeInFront(engine, rect, others) },
+      };
+    });
+    useWorkspace.setState({ editorPlace: null });
+  }, [editorPlace, panels, engine]);
 
   const togglePin = useCallback(
     (spec: PanelSpec) => {
