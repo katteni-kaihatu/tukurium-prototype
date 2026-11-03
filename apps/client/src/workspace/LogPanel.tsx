@@ -6,12 +6,13 @@ import ui from "./ui.module.css";
 /**
  * ログ・保存パネル：Play 中のスクリプトの log() とエラー（時系列）、保存の状態。
  * 「問題」（いま残っている診断）とは分ける（計画 §2.4）。
- * 保存は、作業内容がサーバーに自動で残ることと、意図的な保存であるコミット（History）の案内。
+ * 保存は、作業内容がサーバーに自動で残ることの案内と、意図的な保存（保存パネル）への入口。
+ * メッセージ付きの保存そのものは保存パネルが担う（main の #28 で独立した）。
  */
 export function LogPanel() {
   const ws = useWorkspace();
   const project = useProject();
-  const { logs, historyOpen } = ws;
+  const { logs, saveOpen } = ws;
   useWorkspace((s) => s.rev);
   return (
     <>
@@ -51,16 +52,19 @@ export function LogPanel() {
           <h3 className={ui.sectionTitle}>保存</h3>
         </div>
         <p className={ui.muted}>
-          作業内容はサーバーに自動保存されています。メッセージ付きのコミットは History から。
+          作業内容はサーバーに自動保存されています。メッセージを付けて残すときは「保存」から。
         </p>
         <div className={ui.toolbar}>
           <button
             type="button"
             className={ui.btn}
-            aria-pressed={historyOpen}
-            onClick={() => useWorkspace.setState({ historyOpen: !historyOpen })}
+            aria-pressed={saveOpen}
+            onClick={() => {
+              if (saveOpen) useWorkspace.setState({ saveOpen: false });
+              else useWorkspace.getState().openSave();
+            }}
           >
-            History を開く
+            保存パネルを開く
           </button>
         </div>
       </div>

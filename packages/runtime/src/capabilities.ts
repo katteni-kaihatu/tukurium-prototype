@@ -64,8 +64,11 @@ export type Authority = "runtime-host" | "server-revalidate" | "server-execute";
 
 export interface HostApiPolicy {
   capability: CapabilityId;
-  /** 今の実装で届く範囲（characterization test で固定した動き） */
-  currentReach: "own-realm" | "any-placement";
+  /**
+   * 今の実装で届く範囲（characterization test で固定した動き）。
+   * own-placement：呼んだ System の配置の中だけ（U1）。any-placement：別の配置にも届く
+   */
+  currentReach: "own-placement" | "any-placement";
   /** U1 / U2 での、別の配置への扱い */
   crossPlacement: "deny" | "public-contract" | "target-policy";
   authority: Authority;
@@ -76,14 +79,14 @@ export interface HostApiPolicy {
 export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = {
   "time.now": {
     capability: "time.read",
-    currentReach: "own-realm",
+    currentReach: "own-placement",
     crossPlacement: "deny",
     authority: "runtime-host",
     note: "読むだけ。対象を取らない",
   },
   "audio.play": {
     capability: "audio.play",
-    currentReach: "own-realm",
+    currentReach: "own-placement",
     crossPlacement: "deny",
     authority: "runtime-host",
     note: "鳴らす素材は自分の領域のもの。数の上限あり（32）。別の参加者へ配る分は将来サーバーで quota を検証",
@@ -104,38 +107,38 @@ export const HOST_API_POLICY: Record<HostName, HostApiPolicy> = {
   },
   "world.find": {
     capability: "entity.discover",
-    currentReach: "any-placement",
+    currentReach: "own-placement",
     crossPlacement: "deny",
     authority: "runtime-host",
-    note: "今は配置をまたいで名前で探せる。自分の配置の中だけにする（非公開は「見つからない」）",
+    note: "U1 で、自分の配置の中だけを探すようにした（別の配置は「見つからない」）",
   },
   "world.get": {
     capability: "state.read",
-    currentReach: "own-realm",
+    currentReach: "own-placement",
     crossPlacement: "target-policy",
     authority: "runtime-host",
-    note: "呼んだ側の KokoState の名前で引くので、今も別の領域の状態は読めない",
+    note: "U1 で、自分の配置の Entity だけにした（同じ領域でも別の配置は「見つからない」）",
   },
   "world.set": {
     capability: "state.write",
-    currentReach: "own-realm",
+    currentReach: "own-placement",
     crossPlacement: "target-policy",
     authority: "server-revalidate",
     note: "別の持ち主の永続状態を変えるものは、サーバーの判定なしに保護済みとしない",
   },
   "world.spawn": {
     capability: "entity.spawn",
-    currentReach: "own-realm",
+    currentReach: "own-placement",
     crossPlacement: "deny",
     authority: "server-revalidate",
-    note: "一時的な effect（effects.spawn）と分ける。親は任意の Entity を指定できてしまう点を U1 で直す",
+    note: "親は自分の配置の Entity だけ（U1）。作った Entity は呼んだ System の配置のものになる。一時的な effect（effects.spawn）とは分ける",
   },
   "world.destroy": {
     capability: "entity.destroy",
-    currentReach: "any-placement",
+    currentReach: "own-placement",
     crossPlacement: "deny",
     authority: "server-revalidate",
-    note: "今は別の配置の Entity も消せる。自分の配置の中だけにする",
+    note: "U1 で、自分の配置の中だけにした（別の配置は何も起きない）",
   },
 };
 

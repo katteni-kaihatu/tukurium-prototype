@@ -67,14 +67,14 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
     .poll(async () => (await sessionState(a, "的2", "Target"))?.hp)
     .toBeLessThanOrEqual(0);
 
-  // 5. れにうむがコミットする（一緒に編集したここあが Co-author）
-  await main.getByRole("button", { name: "History" }).click();
-  const hist = panel(a, "History");
-  await hist.getByLabel("コミットメッセージ").fill("的の名前と威力を調整");
-  await hist.getByRole("button", { name: "コミット", exact: true }).click();
-  await expect(hist.getByLabel("コミットの履歴").locator("li").first()).toContainText(
-    "的の名前と威力を調整",
-  );
+  // 5. れにうむが保存する（一緒に編集したここあが Co-author）
+  await main.getByRole("button", { name: "保存", exact: true }).click();
+  const save = panel(a, "保存");
+  await save.getByLabel("メッセージ").fill("的の名前と威力を調整");
+  await save.getByRole("button", { name: "保存", exact: true }).click();
+  await main.getByRole("button", { name: "履歴", exact: true }).click();
+  const hist = panel(a, "履歴");
+  await expect(hist.getByRole("button", { name: /的の名前と威力を調整/ })).toBeVisible();
 
   // 6. プロジェクトのページで作品として公開し、リリースする（別のタブで）
   const repoId = await a.evaluate(() =>

@@ -26,6 +26,7 @@ export function MainPanel() {
     isHost,
     workspaceId,
     historyOpen,
+    saveOpen,
     sessionOpen,
     problemsOpen,
     logOpen,
@@ -60,10 +61,21 @@ export function MainPanel() {
         <button
           type="button"
           className={ui.btn}
+          aria-pressed={saveOpen}
+          onClick={() => {
+            if (saveOpen) useWorkspace.setState({ saveOpen: false });
+            else useWorkspace.getState().openSave();
+          }}
+        >
+          保存
+        </button>
+        <button
+          type="button"
+          className={ui.btn}
           aria-pressed={historyOpen}
           onClick={() => useWorkspace.setState({ historyOpen: !historyOpen })}
         >
-          History
+          履歴
         </button>
         {info?.repoId && (
           <a

@@ -24,6 +24,8 @@ export interface SystemMeta {
 export interface HostCallContext {
   realm: string;
   systemId: string | null;
+  /** 呼び出したときに処理していた Entity（ハンドラの外なら null） */
+  entity?: string | null;
 }
 
 /** スクリプトから呼べるホスト関数。名前は "world.raycast" のように「名前空間.関数名」。 */
@@ -65,6 +67,8 @@ const PRELUDE = (hostNames: string[]) => `
 "use strict";
 const __systems = Object.create(null);
 let __current = null;
+// いま処理している Entity（Host API の呼び出しが、どの配置のためのものかを決める。ADR 0012）
+let __entity = null;
 globalThis.system = (def) => {
   if (def === null || typeof def !== "object") throw new TypeError("system() には設定オブジェクトを渡してください");
   return def;
@@ -83,7 +87,7 @@ const __ns = {};
 for (const full of ${JSON.stringify(hostNames)}) {
   const [ns, fn] = full.split(".");
   (__ns[ns] ??= {})[fn] = (...args) => {
-    const r = __hostCall(full, JSON.stringify(args), __current);
+    const r = __hostCall(full, JSON.stringify(args), __current, __entity);
     return r === undefined ? undefined : JSON.parse(r);
   };
 }
@@ -106,6 +110,7 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
   __current = id;
   try {
     for (const e of entities) {
+      __entity = e.id;
       const view = { id: e.id, ...e.states };
       // entity.get(Gun)：import した KokoState（または名前）でその値を取る
       Object.defineProperty(view, "get", { value: (k) => view[__kokoName(k)], enumerable: false });
@@ -114,6 +119,7 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
     }
   } finally {
     __current = null;
+    __entity = null;
   }
   return JSON.stringify(entities);
 };
@@ -272,11 +278,12 @@ export class ScriptSandbox {
       systemId: vm.typeof(idH) === "string" ? vm.getString(idH) : null,
     });
 
-    const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH) => {
+    const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH, entityH) => {
       const name = vm.getString(nameH);
       const fn = hostFns[name];
       if (!fn) throw new Error(`unknown host function ${name}`);
-      const result = fn(JSON.parse(vm.getString(argsH)) as Json[], ctxOf(idH));
+      const entity = entityH && vm.typeof(entityH) === "string" ? vm.getString(entityH) : null;
+      const result = fn(JSON.parse(vm.getString(argsH)) as Json[], { ...ctxOf(idH), entity });
       return result === undefined ? vm.undefined : vm.newString(JSON.stringify(result));
     });
     vm.setProp(vm.global, "__hostCall", hostCall);

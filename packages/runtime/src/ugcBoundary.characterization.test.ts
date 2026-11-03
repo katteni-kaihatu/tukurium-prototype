@@ -33,9 +33,18 @@ const PROBE = `export default system({
       const found = world.find("的2");
       if (found) world.destroy(found);
     }
+    if (ev.action === "self") {
+      log("self", world.find("銃"));
+    }
+    if (ev.action === "spawnkill") {
+      const id = world.spawn({ name: "tmp" });
+      log("spawned", world.find("tmp") === id);
+      world.destroy(id);
+      log("after", world.find("tmp"));
+    }
     if (ev.action === "poke") {
-      const found = world.find("的2");
-      if (found) world.emit(found, "hit", { damage: 1 });
+      const hit = world.raycast(ev.origin, ev.direction, 100);
+      if (hit) world.emit(hit.entity, "hit", { damage: 1 });
     }
   },
 });`;
@@ -77,29 +86,13 @@ async function session(logs: LogEntry[]) {
 
 const messages = (logs: LogEntry[]) => logs.filter((l) => l.level === "log").map((l) => l.message);
 
-describe("今の動き：配置（別の作者の Item / World）の間に境界がない", () => {
+describe("今の動き：U2 まで別の配置に届くもの（Raycast・emit）", () => {
   it("Raycast は、別の配置の Entity の生の ID を返す（発見できる）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
     s.input(input("probe"));
     s.step(1 / 60);
     expect(messages(logs)).toContain("hit victim/ent_target2");
-  });
-
-  it("world.find は、配置をまたいで名前で Entity を探せる", async () => {
-    const logs: LogEntry[] = [];
-    const s = await session(logs);
-    s.input(input("probe"));
-    s.step(1 / 60);
-    expect(messages(logs)).toContain("find victim/ent_target2");
-  });
-
-  it("world.get は、呼んだ側の KokoState の名前で引くので、別の領域の状態は読めない", async () => {
-    const logs: LogEntry[] = [];
-    const s = await session(logs);
-    s.input(input("probe"));
-    s.step(1 / 60);
-    expect(messages(logs)).toContain("get null");
   });
 
   it("world.emit は、別の配置の Entity にイベントを送れる（的の System が受けて hp が減る）", async () => {
@@ -109,14 +102,53 @@ describe("今の動き：配置（別の作者の Item / World）の間に境界
     s.step(1 / 60);
     expect(s.world.get("victim/ent_target2", "repoVictim:ks_target")?.f_hp).toBe(2);
   });
+});
 
-  it("world.destroy は、別の配置の Entity も消せる", async () => {
+describe("U1：別の配置は「見つからない」（ADR 0012）", () => {
+  it("world.find は、自分の配置の中だけを探す", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    expect(s.world.has("victim/ent_target2")).toBe(true);
+    s.input(input("probe"));
+    s.step(1 / 60);
+    expect(messages(logs)).toContain("find null");
+    expect(messages(logs)).toContain('get "none"');
+  });
+
+  it("world.destroy は、別の配置の Entity を消せない（見つからないのと同じで、何も起きない）", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs);
     s.input(input("smash"));
     s.step(1 / 60);
-    expect(s.world.has("victim/ent_target2")).toBe(false);
+    expect(s.world.has("victim/ent_target2")).toBe(true);
+  });
+
+  it("同じアウトプットを 2 か所に置いても、それぞれ自分の配置の Entity だけが見える", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs);
+    s.addPart({
+      id: "attacker2",
+      realm: "repoAttacker",
+      outputId: "out_gun",
+      snapshot: probeSample(),
+      position: [3, 0, 0],
+      yaw: 0,
+    });
+    s.input(input("self"));
+    s.step(1 / 60);
+    expect(
+      messages(logs)
+        .filter((m) => m.startsWith("self"))
+        .sort(),
+    ).toEqual(["self attacker/ent_gun", "self attacker2/ent_gun"]);
+  });
+
+  it("world.spawn で作った Entity は、作った System の配置のものになる（自分で消せる）", async () => {
+    const logs: LogEntry[] = [];
+    const s = await session(logs);
+    s.input(input("spawnkill"));
+    s.step(1 / 60);
+    expect(messages(logs)).toContain("spawned true");
+    expect(messages(logs)).toContain("after null");
   });
 });
 
