@@ -26,6 +26,7 @@ import {
   packageKokoStates,
   parsePackageResourceId,
   ResourcePathIndex,
+  reachablePackages,
   resolutionMap,
 } from "@tukurium/repo-model";
 import {
@@ -492,7 +493,7 @@ export class Simulation {
     const newDefs = new Map(
       [
         ...snapshot.kokostates,
-        ...packageKokoStates(resolutionMap(snapshot.dependencies, packages).values()),
+        ...packageKokoStates(reachablePackages(snapshot.dependencies, packages)),
       ].map((d) => [d.id, d]),
     );
 
@@ -731,8 +732,8 @@ export class Simulation {
       next.add(id);
     }
     this.realmDefs.set(realm, next);
-    // 依存から取り込んだ KokoState（同じ ID は同じ Package・同じ版なので、中身も同じ）
-    const pkgDefs = packageKokoStates(resolutionMap(snapshot.dependencies, packages).values());
+    // 依存（依存の依存も）から取り込んだ KokoState（同じ ID は同じ Package・同じ版なので、中身も同じ）
+    const pkgDefs = packageKokoStates(reachablePackages(snapshot.dependencies, packages));
     for (const def of pkgDefs) this.registry.register(def, PACKAGE_SCOPE);
     this.releasePackageDefs(realm, new Set(pkgDefs.map((d) => d.id)));
     this.realmMaterials.set(
@@ -987,6 +988,8 @@ export class Simulation {
         index ??= ResourcePathIndex.fromSnapshot(lib);
         return index;
       },
+      // ライブラリの System の `@別名` は、そのライブラリの依存（依存の依存）で解決する
+      packages: resolutionMap(resolution.manifest.dependencies, part.packages),
     };
   }
 

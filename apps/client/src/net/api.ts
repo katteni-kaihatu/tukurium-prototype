@@ -1,6 +1,7 @@
 import type {
   FileChange,
   PackageManifest,
+  PackageResolution,
   ProjectSnapshot,
   Provenance,
 } from "@tukurium/repo-model";
@@ -39,6 +40,8 @@ export interface PackageVersion {
   version: number;
   contentHash: string;
   manifest: PackageManifest;
+  /** 依存の依存（間のライブラリの作者の許可でサーバーが取り出したもの） */
+  dependencies?: PackageResolution[];
 }
 
 export interface Work {

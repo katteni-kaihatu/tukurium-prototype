@@ -283,3 +283,74 @@ export default system({ query: { with: [Health] }, onUpdate(e) { e.get(Health).h
     expect(sim.world.get("p1/ent", HEALTH)?.f_hp).toBe(1);
   });
 });
+
+describe("依存の依存（ADR 0015）", () => {
+  /** Lib2：Lib1（別名 base）に依存し、Lib1 の Health を減らす System を公開している */
+  const lib2Dep: PackageDependency = {
+    alias: "arms",
+    packageId: "w_lib2",
+    version: 1,
+    contentHash: "h2",
+  };
+  const lib2: PackageResolution = {
+    status: "ready",
+    dependency: lib2Dep,
+    manifest: {
+      format: 1,
+      exports: [
+        {
+          kind: "system",
+          id: "sys_drain",
+          path: "/Drain.system",
+          definition: {
+            id: "sys_drain",
+            name: "Drain",
+            code: `import Health from "@base/States/Health.koko";
+export default system({ query: { with: [Health] }, onUpdate(e) { e.get(Health).hp -= 1; } });`,
+          },
+        },
+      ],
+      dependencies: [{ ...dep, alias: "base" }],
+    },
+  };
+  const DRAIN = packageResourceId(lib2Dep, "sys_drain");
+
+  function usesLib2(): ProjectSnapshot {
+    const s = project();
+    s.systems = [];
+    s.dependencies = [dep, lib2Dep];
+    const out = s.outputs[0];
+    if (out) out.systems = [{ id: DRAIN, enabled: true }];
+    return s;
+  }
+
+  it("ライブラリの System の @別名 は、そのライブラリの依存で解決する", async () => {
+    // pool の Lib1 は、Lib2 の依存としての別名（base）でも、使う側の別名（combat）でもよい（lock で照らす）
+    sim = await Simulation.create(usesLib2(), "out", {
+      realm: "ws",
+      packages: [lib2, ...ready],
+    });
+    expect(sim.systemStatus().map((s) => [s.name, s.error])).toEqual([["@arms/Drain", null]]);
+    sim.step(1 / 60);
+    expect(sim.world.get("ent", HEALTH)?.f_hp).toBe(4);
+  });
+
+  it("依存の依存が届いていなければ、理由つきで止まる", async () => {
+    sim = await Simulation.create(usesLib2(), "out", { realm: "ws", packages: [lib2] });
+    expect(sim.systemStatus()[0]?.error).toContain("中身が届いていません");
+  });
+
+  it("依存の依存の KokoState は、使う側が直接の依存にしていなくても登録する（別の版とも共存する）", async () => {
+    const v3 = { ...dep, version: 3, contentHash: "h3" };
+    const s = usesLib2();
+    s.dependencies = [v3, lib2Dep];
+    const ent = s.entities[0];
+    if (ent) ent.states = {};
+    sim = await Simulation.create(s, "out", {
+      realm: "ws",
+      packages: [lib2, ...ready, { status: "ready", dependency: v3, manifest }],
+    });
+    expect(sim.registry.get(HEALTH)?.name).toBe("Health");
+    expect(sim.registry.get(packageResourceId(v3, "ks_health"))?.name).toBe("Health");
+  });
+});

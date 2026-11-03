@@ -93,4 +93,46 @@ describe("Library Package（ADR 0015）", () => {
     });
     expect(await repos.resolveDependencies({}, bob)).toEqual([]);
   });
+
+  it("依存の依存は、間のライブラリの作者の許可で取り出す。自分に依存するライブラリは出せない", async () => {
+    const { store, repos, work: lib1 } = await setup();
+    const r1 = await repos.release(alice, lib1.id);
+    // Lib1 は誰にも使わせない（持ち主の alice だけ）
+    await store.saveWork({ ...lib1, perms: { ...lib1.perms, use: false } });
+    const base = {
+      alias: "base",
+      packageId: lib1.id,
+      version: 1,
+      contentHash: r1.contentHash ?? "",
+    };
+    // alice の Lib2 は Lib1 に依存する
+    const snap2 = library();
+    snap2.dependencies = [base];
+    const repo2 = await repos.create(alice, { name: "武器2", snapshot: snap2 });
+    const lib2 = await repos.publish(alice, repo2.id, "out_range");
+    const r2 = await repos.release(alice, lib2.id);
+    const top = {
+      alias: "arms",
+      packageId: lib2.id,
+      version: 1,
+      contentHash: r2.contentHash ?? "",
+    };
+
+    // bob は Lib1 を直接は使えないが、Lib2 を通してなら届く
+    await expect(repos.packageVersion(bob, lib1.id, 1)).rejects.toMatchObject({ status: 403 });
+    const pool = await repos.resolveDependencies({ dependencies: [top] }, bob);
+    expect(pool.map((r) => [r.dependency.packageId, r.status])).toEqual([
+      [lib2.id, "ready"],
+      [lib1.id, "ready"],
+    ]);
+    const pkg = await repos.packageVersion(bob, lib2.id, 1);
+    expect(pkg.manifest.dependencies).toEqual([base]);
+    expect(pkg.dependencies.map((r) => r.status)).toEqual(["ready"]);
+
+    // Lib1 が Lib2 に依存しようとすると輪になるので、リリースを拒む
+    const snap1 = await repos.snapshot(lib1.repoId);
+    snap1.dependencies = [top];
+    await repos.commit(lib1.repoId, snap1, "輪", alice, []);
+    await expect(repos.release(alice, lib1.id)).rejects.toMatchObject({ status: 409 });
+  });
 });

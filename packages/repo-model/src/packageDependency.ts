@@ -1,4 +1,5 @@
 import type { KokoStateDef } from "@tukurium/eks";
+import { type Diagnostic, makeDiagnostic, PROJECT_REF } from "./diagnostics/types";
 import type { PackageExport, PackageManifest } from "./packageManifest";
 import { BUILTIN_PREFIX, normalizeName, validateName } from "./resourcePath";
 import type { FolderDef, PackageDependency, ProjectSnapshot } from "./schema";
@@ -92,9 +93,14 @@ export function packageKokoStates(resolutions: Iterable<PackageResolution>): Kok
 const sameLock = (a: PackageDependency, b: PackageDependency) =>
   a.packageId === b.packageId && a.version === b.version && a.contentHash === b.contentHash;
 
+/** lock（Package・版・hash）を一つの文字列にする */
+export const lockKey = (d: PackageDependency): string =>
+  `${d.packageId}@${d.version}#${d.contentHash}`;
+
 /**
- * 制作データの依存ごとの解決（別名 → 結果）。実行するときに使う。
- * 届いた結果が lock と違う（別の版・別の hash）か、届いていなければ、使えないものにする。
+ * 依存ごとの解決（別名 → 結果）。実行するときに使う。`resolutions` は、依存の依存も含めて
+ * 届いた中身の集まり（pool）で、lock（Package・版・hash）で照らし合わせる（別名は依存を書いた側ごとに違う）。
+ * 届いていない依存は、使えないものにする。
  */
 export function resolutionMap(
   deps: readonly PackageDependency[] | undefined,
@@ -102,14 +108,58 @@ export function resolutionMap(
 ): Map<string, PackageResolution> {
   const out = new Map<string, PackageResolution>();
   for (const dep of deps ?? []) {
-    const r = resolutions?.find((x) => x.dependency.alias === dep.alias);
+    const r = resolutions?.find((x) => sameLock(x.dependency, dep));
     out.set(
       dep.alias,
-      r && sameLock(r.dependency, dep)
-        ? r
+      r
+        ? ({ ...r, dependency: dep } as PackageResolution)
         : { status: "unavailable", dependency: dep, message: "ライブラリの中身が届いていません" },
     );
   }
+  return out;
+}
+
+/**
+ * 直接の依存から、依存の依存をたどって使える中身を集める（lock ごとに一つ）。
+ * 同じライブラリの別の版は共存する（ID が版で区切られているので、ぶつからない。ADR 0015）。
+ */
+export function reachablePackages(
+  deps: readonly PackageDependency[] | undefined,
+  resolutions: readonly PackageResolution[] | undefined,
+): Extract<PackageResolution, { status: "ready" }>[] {
+  const out = new Map<string, Extract<PackageResolution, { status: "ready" }>>();
+  const visit = (list: readonly PackageDependency[] | undefined) => {
+    for (const r of resolutionMap(list, resolutions).values()) {
+      if (r.status !== "ready" || out.has(lockKey(r.dependency))) continue;
+      out.set(lockKey(r.dependency), r);
+      visit(r.manifest.dependencies);
+    }
+  };
+  visit(deps);
+  return [...out.values()];
+}
+
+/**
+ * 依存をたどると、同じライブラリの別の版が混ざっているか（注意。別の版の KokoState は別の型になる）。
+ * Package ID → 混ざっている版
+ */
+export function mixedPackageVersions(
+  deps: readonly PackageDependency[] | undefined,
+  resolutions: readonly PackageResolution[] | undefined,
+): Map<string, number[]> {
+  const versions = new Map<string, Set<number>>();
+  for (const r of reachablePackages(deps, resolutions)) {
+    const set = versions.get(r.dependency.packageId) ?? new Set<number>();
+    set.add(r.dependency.version);
+    versions.set(r.dependency.packageId, set);
+  }
+  const out = new Map<string, number[]>();
+  for (const [id, set] of versions)
+    if (set.size > 1)
+      out.set(
+        id,
+        [...set].sort((a, b) => a - b),
+      );
   return out;
 }
 
@@ -194,4 +244,26 @@ export function librarySnapshot(
   }
   snap.folders = [...folders.values()];
   return snap;
+}
+
+/** 依存をたどると同じライブラリの別の版が混ざっている、の注意（共存はする。ADR 0015） */
+export function checkPackageVersions(
+  deps: readonly PackageDependency[] | undefined,
+  resolutions: readonly PackageResolution[] | undefined,
+): Diagnostic[] {
+  return [...mixedPackageVersions(deps, resolutions)].map(([packageId, versions]) => {
+    const alias = deps?.find((d) => d.packageId === packageId)?.alias;
+    const name = alias ? `@${alias}` : packageId;
+    return makeDiagnostic({
+      code: "package-versions-mixed",
+      severity: "warning",
+      phase: "authoring",
+      provider: "packages",
+      subject: PROJECT_REF,
+      location: null,
+      related: [],
+      message: `ライブラリ「${name}」の ${versions.map((v) => `v${v}`).join("・")} が、依存をたどると混ざっています（版が違う KokoState は別の型になります）`,
+      detail: `Package ID: ${packageId}`,
+    });
+  });
 }

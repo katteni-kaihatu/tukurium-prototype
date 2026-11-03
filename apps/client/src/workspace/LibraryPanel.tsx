@@ -23,6 +23,9 @@ export function LibraryPanel() {
   const { client, session, me } = useApp();
   const placePoint = useWorkspace((s) => s.placePoint);
   const project = useWorkspace((s) => s.project);
+  const workspaceId = useWorkspace((s) => s.workspaceId);
+  // 開いているプロジェクトのリポジトリ（自分のライブラリには依存できない：輪になる）
+  const repoId = session?.workspaces.find((w) => w.id === workspaceId)?.repoId ?? null;
   useWorkspace((s) => s.rev);
   const canEdit = useCanEdit();
   const [works, setWorks] = useState<Work[]>([]);
@@ -133,6 +136,7 @@ export function LibraryPanel() {
             const isLibrary = w.outputKind === "library";
             const kind = w.outputKind ? KIND_LABEL[w.outputKind] : null;
             const used = deps.some((d) => d.packageId === w.id);
+            const own = repoId !== null && w.repoId === repoId;
             return (
               <Fragment key={w.id}>
                 <li className={ui.item} style={{ cursor: "default" }}>
@@ -156,13 +160,15 @@ export function LibraryPanel() {
                         type="button"
                         className={ui.btn}
                         style={{ height: 26 }}
-                        disabled={!w.latest || !canUse || used}
+                        disabled={!w.latest || !canUse || used || own}
                         title={
                           used
                             ? "もう使っています"
-                            : !canUse
-                              ? "利用の権限がありません"
-                              : "このプロジェクトの依存に足します（今の最新の版に固定します）"
+                            : own
+                              ? "このプロジェクト自身のライブラリは使えません（依存が輪になります）"
+                              : !canUse
+                                ? "利用の権限がありません"
+                                : "このプロジェクトの依存に足します（今の最新の版に固定します）"
                         }
                         onClick={() => {
                           setError(null);
