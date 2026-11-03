@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
 import { api, type RepoMeta } from "../net/api";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { SessionBelongings } from "../session/SessionBelongings";
 import type { SessionEngine } from "../session/SessionEngine";
 import { DetailPanel } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
@@ -71,6 +72,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const saveOpen = useWorkspace((s) => s.saveOpen);
   const saveSeq = useWorkspace((s) => s.saveSeq);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
+  const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
   const sessionOpen = useWorkspace((s) => s.sessionOpen);
   const inspectorOpen = useWorkspace((s) => s.inspectorOpen);
   const resourcesOpen = useWorkspace((s) => s.resourcesOpen);
@@ -198,6 +200,18 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
         onClose: () => setMembers(false),
       });
     }
+  }
+  if (belongingsOpen) {
+    panels.push({
+      id: "session-belongings",
+      title: "セッション",
+      // メインパネルの右。ワークスペースを開いていなくても、セッションに置いてあるものを出せる
+      initial: { x: 600, y: 96, width: 460, height: 480 },
+      // ワークスペースのパネルが後から出ても、開いている一覧が後ろに隠れない
+      focusKey: ready ? "workspace" : "session",
+      render: () => <SessionBelongings />,
+      onClose: () => useWorkspace.setState({ belongingsOpen: false }),
+    });
   }
 
   usePublishPanels(engine, panels, hidden);

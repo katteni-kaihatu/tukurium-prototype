@@ -16,6 +16,10 @@ const fmt = (v: unknown): string => {
  * 入力途中の文字やスクロール位置は共有しない（要件 §6 の未決定事項。初版は要約のみ）。
  */
 export function summarize(panelId: string): string[] {
+  if (panelId === "session-belongings") {
+    const world = useApp.getState().session?.placements.find((p) => p.outputKind === "world");
+    return world ? [`開いているワールド: ${world.outputName}`] : ["ワールドはまだ開いていません"];
+  }
   const ws = useWorkspace.getState();
   const project = ws.project;
   if (!project) return [];

@@ -228,6 +228,8 @@ export class Hub {
         return this.commit(conn, msg.workspaceId, msg.message);
       case "placeRelease":
         return this.placeRelease(conn, msg);
+      case "session.openWorld":
+        return this.openWorld(conn, msg.releaseId);
       case "apply": {
         const s = conn.session;
         const w = this.workspaceFor(conn, msg.workspaceId);
@@ -550,9 +552,8 @@ export class Hub {
       owner: s.owner,
       host: s.host?.user?.id ?? null,
       placements: [...s.placements.values()].map((p) => {
-        const snap = (
-          p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot
-        ) as { outputs?: { id: string; name: string }[] } | undefined;
+        const snap = this.placementSnapshot(s, p);
+        const output = snap?.outputs?.find((o) => o.id === p.outputId);
         return {
           id: p.id,
           workspaceId: p.workspaceId,
@@ -565,7 +566,8 @@ export class Hub {
           workspaceName: p.workspaceId
             ? (this.workspaces.get(p.workspaceId)?.meta.name ?? "（閉じたワークスペース）")
             : (p.label ?? "作品"),
-          outputName: snap?.outputs?.find((o) => o.id === p.outputId)?.name ?? p.outputId,
+          outputName: output?.name ?? p.outputId,
+          outputKind: this.placementKind(s, p),
         };
       }),
       participants: [...users.values()].map((u) => ({ id: u.id, name: u.name })),
@@ -793,28 +795,95 @@ export class Hub {
     const s = conn.session;
     const user = conn.user;
     if (!s || !user || !this.repos) return;
-    const release = await this.store.release(msg.releaseId);
-    const work = release ? await this.store.work(release.workId) : null;
-    if (!release || !work) return this.deny(conn, "リリースが見つかりません");
-    if (!work.perms.use && work.owner !== user.id) {
+    const loaded = await this.loadRelease(msg.releaseId);
+    if (!loaded) return this.deny(conn, "リリースが見つかりません");
+    if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
       return this.deny(conn, "この作品を利用する権限がありません");
     }
+    this.addReleasePlacement(s, user.id, loaded, msg.position, msg.yaw);
+    this.broadcastSession(s);
+  }
+
+  /**
+   * 公開されたワールドを、このセッションで開く（ADR 0014）。
+   * 開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
+   */
+  private async openWorld(conn: Conn, releaseId: string): Promise<void> {
+    const s = conn.session;
+    const user = conn.user;
+    if (!s || !user || !this.repos) return;
+    const loaded = await this.loadRelease(releaseId);
+    if (!loaded) return this.deny(conn, "リリースが見つかりません");
+    if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
+      return this.deny(conn, "この作品を利用する権限がありません");
+    }
+    const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
+    if (kind !== "world") return this.deny(conn, "ワールドではありません");
+    const worlds = [...s.placements.values()].filter((p) => this.placementKind(s, p) === "world");
+    if (worlds.length === 1 && worlds[0]?.releaseId === loaded.release.id) {
+      this.broadcastSession(s);
+      return;
+    }
+    for (const p of worlds) {
+      s.placements.delete(p.id);
+      if (s.host) this.send(s.host, { t: "host.removePart", id: p.id });
+    }
+    this.addReleasePlacement(s, user.id, loaded, [0, 0, 0], 0);
+    this.broadcastSession(s);
+  }
+
+  private async loadRelease(releaseId: string): Promise<{
+    release: { id: string; version: number };
+    work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
+    snapshot: { outputs: { id: string; name?: string; kind?: string }[] };
+  } | null> {
+    if (!this.repos) return null;
+    const release = await this.store.release(releaseId);
+    const work = release ? await this.store.work(release.workId) : null;
+    if (!release || !work) return null;
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
+    return { release, work, snapshot };
+  }
+
+  private addReleasePlacement(
+    s: Session,
+    userId: string,
+    loaded: {
+      release: { id: string; version: number };
+      work: { name: string; outputId: string };
+      snapshot: unknown;
+    },
+    position: [number, number, number],
+    yaw: number,
+  ): void {
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: null,
-      releaseId: release.id,
-      snapshot,
-      label: `${work.name} v${release.version}`,
-      outputId: work.outputId,
-      position: msg.position,
-      yaw: msg.yaw,
-      placedBy: user.id,
+      releaseId: loaded.release.id,
+      snapshot: loaded.snapshot,
+      label: `${loaded.work.name} v${loaded.release.version}`,
+      outputId: loaded.work.outputId,
+      position,
+      yaw,
+      placedBy: userId,
       grants: null,
     };
     s.placements.set(p.id, p);
     if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
-    this.broadcastSession(s);
+  }
+
+  private placementSnapshot(
+    s: Session,
+    p: Placement,
+  ): { outputs?: { id: string; name?: string; kind?: string }[] } | undefined {
+    return (p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot) as
+      | { outputs?: { id: string; name?: string; kind?: string }[] }
+      | undefined;
+  }
+
+  private placementKind(s: Session, p: Placement): "item" | "world" | "library" | null {
+    const kind = this.placementSnapshot(s, p)?.outputs?.find((o) => o.id === p.outputId)?.kind;
+    return kind === "item" || kind === "world" || kind === "library" ? kind : null;
   }
 
   private async load(meta: WorkspaceMeta, session: Session, doc?: Y.Doc): Promise<Workspace> {
