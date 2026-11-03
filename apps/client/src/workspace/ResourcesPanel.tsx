@@ -14,7 +14,7 @@ import {
 } from "./resourceItems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems } from "./useProblems";
+import { useProblems, useProjectDiagnostics } from "./useProblems";
 
 type View = "icon" | "list" | "detail";
 const VIEWS: { id: View; label: string }[] = [
@@ -47,6 +47,7 @@ export function ResourcesPanel() {
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
+  const { summary } = useProjectDiagnostics();
   const rev = useWorkspace((s) => s.rev);
   const [cwd, setCwd] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(loadView);
@@ -108,8 +109,30 @@ export function ResourcesPanel() {
     if (id) setOpened((o) => ({ ...o, [id]: true }));
   };
 
-  const hasError = (it: ResItem) =>
-    it.kind === "system" && problems.some((p) => p.systemId === it.id);
+  /**
+   * 問題の印。自分の問題（塗りつぶし）と、中や関係するものの問題（輪郭）を分ける。
+   * スクリプトの問題（構文など）は System 自身の問題に数える。
+   */
+  const badgeOf = (it: ResItem): Badge | null => {
+    const s = summary.get(it.id);
+    const script = it.kind === "system" ? problems.filter((p) => p.subject.id === it.id).length : 0;
+    const errors = (s?.errors ?? 0) + script;
+    if (errors > 0) return { tone: "error", label: `エラー ${errors} 件` };
+    if (s?.warnings) return { tone: "warning", label: `注意 ${s.warnings} 件` };
+    if (s?.nestedErrors)
+      return { tone: "nestedError", label: `中や関係するものにエラー ${s.nestedErrors} 件` };
+    if (s?.nestedWarnings)
+      return { tone: "nestedWarning", label: `中や関係するものに注意 ${s.nestedWarnings} 件` };
+    return null;
+  };
+  const kindText = (it: ResItem) => {
+    const b = badgeOf(it);
+    return b?.tone === "error"
+      ? "エラー"
+      : b?.tone === "warning"
+        ? "注意"
+        : KIND_META[it.kind].label;
+  };
 
   /** このパネルが 3D なら詳細も 3D、2D なら 2D で開く */
   const showDetail = (kind: "koko" | "system" | "material", id: string) => {
@@ -146,24 +169,33 @@ export function ResourcesPanel() {
   const create = (kind: "folder" | "koko" | "script" | "material") => {
     setNewOpen(false);
     setError(null);
+    // 作ったものを入れるフォルダ。そこで空いている名前を付ける（同じ場所で名前がぶつからないように）
+    const target = readOnlyHere ? null : here;
+    const numbered = (b: string, n: number) => `${b}${n}`;
     try {
       if (kind === "folder") {
-        const id = project.addFolder("新しいフォルダ", readOnlyHere ? null : here);
+        const id = project.addFolder(project.freeName("新しいフォルダ", target), target);
         setSel(id);
         setRenaming(id);
       } else if (kind === "koko") {
+        // KokoState の名前は、いまはプロジェクト全体でも一つ（Registry の決まり）
         let n = 1;
-        while (project.registry().idOf(`NewKokoState${n}`) !== undefined) n++;
+        const taken = (name: string) =>
+          project.registry().idOf(name) !== undefined || project.siblingNameTaken(name, target);
+        while (taken(`NewKokoState${n}`)) n++;
         const id = project.addKokoState(`NewKokoState${n}`);
         placeHere(id);
         pick({ id, kind: "koko", name: "", parent: here });
       } else if (kind === "script") {
-        const id = project.addSystem(`NewSystem${project.systems().length + 1}`, NEW_SYSTEM_CODE);
+        const id = project.addSystem(
+          project.freeName("NewSystem", target, numbered),
+          NEW_SYSTEM_CODE,
+        );
         placeHere(id);
         pick({ id, kind: "system", name: "", parent: here });
         openCode(id);
       } else {
-        const id = project.addMaterial(`Material${project.materials().length + 1}`);
+        const id = project.addMaterial(project.freeName("Material", target, numbered));
         placeHere(id);
         pick({ id, kind: "material", name: "", parent: here });
       }
@@ -178,7 +210,12 @@ export function ResourcesPanel() {
     setError(null);
     try {
       for (const f of Array.from(files)) {
-        const asset = await uploadAsset(f);
+        const uploaded = await uploadAsset(f);
+        const target = readOnlyHere ? null : here;
+        // 同じ場所に同じ名前があれば、空いている名前にする
+        const asset = project.siblingNameTaken(uploaded.name, target, uploaded.id)
+          ? { ...uploaded, name: project.freeName(uploaded.name, target) }
+          : uploaded;
         project.addAsset(asset);
         placeHere(asset.id);
       }
@@ -195,6 +232,11 @@ export function ResourcesPanel() {
   const moveInto = (id: string, folder: string | null) => {
     const it = byId.get(id);
     if (!it || !canMove(it) || folder === BUILTIN_FOLDER || folder === id) return;
+    if (project.siblingNameTaken(it.name, folder, id)) {
+      setError(`移す先に「${it.name}」という名前があります`);
+      return;
+    }
+    setError(null);
     if (it.kind === "folder") project.moveFolder(id, folder);
     else project.moveResource(id, folder);
   };
@@ -237,6 +279,7 @@ export function ResourcesPanel() {
     const key = id ?? "__root";
     const isOpen = opened[key] ?? (id === null || ancestors.has(id));
     const current = here === id;
+    const folderItem = id ? byId.get(id) : undefined;
     tree.push(
       <div
         key={key}
@@ -267,6 +310,7 @@ export function ResourcesPanel() {
         >
           <FolderIcon size={15} filled={current} />
           <span className={styles.treeLabel}>{name}</span>
+          {folderItem && <BadgeDot badge={badgeOf(folderItem)} inline />}
         </button>
       </div>,
     );
@@ -429,12 +473,10 @@ export function ResourcesPanel() {
                     style={{ background: KIND_META[it.kind].bg, color: KIND_META[it.kind].fg }}
                   >
                     <KindIcon item={it} size={30} large />
-                    {hasError(it) && <span className={styles.errorDot} title="エラー" />}
+                    <BadgeDot badge={badgeOf(it)} />
                   </span>
                   <span className={styles.tileName}>{it.name}</span>
-                  <span className={styles.tileKind}>
-                    {hasError(it) ? "エラー" : KIND_META[it.kind].label}
-                  </span>
+                  <span className={styles.tileKind}>{kindText(it)}</span>
                 </button>
               ))}
             </div>
@@ -461,9 +503,7 @@ export function ResourcesPanel() {
                       in {it.parent ? (byId.get(it.parent)?.name ?? "") : project.name}
                     </span>
                   )}
-                  <span className={styles.rowKind}>
-                    {hasError(it) ? "エラー" : KIND_META[it.kind].label}
-                  </span>
+                  <span className={styles.rowKind}>{kindText(it)}</span>
                 </button>
               ))}
             </div>
@@ -491,7 +531,7 @@ export function ResourcesPanel() {
                     <SmallIcon item={it} />
                     <span className={styles.rowName}>{it.name}</span>
                   </span>
-                  <span>{hasError(it) ? "エラー" : KIND_META[it.kind].label}</span>
+                  <span>{kindText(it)}</span>
                   <span className={styles.usage}>{usageOf(project, it, all)}</span>
                 </button>
               ))}
@@ -520,7 +560,12 @@ export function ResourcesPanel() {
             autoFocus
             style={{ height: 26, width: 160 }}
             onBlur={(e) => {
-              project.renameFolder(selected.id, e.target.value);
+              try {
+                setError(null);
+                project.renameFolder(selected.id, e.target.value);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
               setRenaming(null);
             }}
             onKeyDown={(e) => {
@@ -718,4 +763,23 @@ function KindIcon({ item, size, large }: { item: ResItem; size: number; large?: 
         </svg>
       );
   }
+}
+
+interface Badge {
+  tone: "error" | "warning" | "nestedError" | "nestedWarning";
+  label: string;
+}
+
+/** 問題の印（色だけに頼らず、title と aria-label で件数を伝える） */
+function BadgeDot({ badge, inline }: { badge: Badge | null; inline?: boolean }) {
+  if (!badge) return null;
+  return (
+    <span
+      className={inline ? styles.badgeInline : styles.errorDot}
+      data-tone={badge.tone}
+      role="img"
+      aria-label={badge.label}
+      title={badge.label}
+    />
+  );
 }

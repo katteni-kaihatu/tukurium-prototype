@@ -6,7 +6,8 @@ import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
 import { useProject } from "./hooks";
-import { problemPlace } from "./ProblemsList";
+import { problemKind, problemPlace } from "./ProblemsList";
+import { scriptLine } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems } from "./useProblems";
@@ -22,7 +23,7 @@ export function EditorPanel() {
   const project = useProject();
   useWorkspace((s) => s.rev);
   const allProblems = useProblems();
-  const problems = allProblems.filter((p) => p.systemId === activeSystem);
+  const problems = allProblems.filter((p) => p.subject.id === activeSystem);
 
   return (
     <div
@@ -40,7 +41,7 @@ export function EditorPanel() {
                 onClick={() => openSystem(id)}
               >
                 {project.system(id)?.name ?? id}.js
-                {allProblems.some((p) => p.systemId === id) && (
+                {allProblems.some((p) => p.subject.id === id && p.freshness === "current") && (
                   <span className={ui.badgeError} style={{ marginLeft: 6 }}>
                     !
                   </span>
@@ -61,13 +62,15 @@ export function EditorPanel() {
           <section aria-label="このコードの問題">
             {problems.map((p) => (
               <button
-                key={`${p.source}:${p.message}`}
+                key={`${p.freshness}:${p.id}`}
                 type="button"
                 className={ui.problem}
+                data-fresh={p.freshness}
                 onClick={() => showProblem(p)}
               >
                 <span className={ui.problemPlace}>
-                  {problemPlace(project.system(p.systemId)?.name ?? "", p)}
+                  {problemPlace(project.system(p.subject.id)?.name ?? "", p)}
+                  <span className={ui.problemKind}>{problemKind(p)}</span>
                 </span>
                 <span>{p.message}</span>
               </button>
@@ -107,8 +110,8 @@ function CodeView({ systemId }: { systemId: string }) {
   const viewRef = useRef<EditorView | null>(null);
   const marks = useRef(new Compartment());
   const lines = useProblems()
-    .filter((p) => p.systemId === systemId && p.line)
-    .map((p) => p.line as number);
+    .map((p) => (p.subject.id === systemId ? scriptLine(p) : null))
+    .filter((n): n is number => n !== null);
   const linesKey = lines.join(",");
   const jumpTo = useWorkspace((s) => s.jumpTo);
   const project = useProject();

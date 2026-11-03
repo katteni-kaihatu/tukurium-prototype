@@ -2,8 +2,8 @@
 
 - 状態: **Active**
 - 対象: M0〜M6 完了後のリソース参照・型・診断の再設計
-- 実装状況: Phase 0 未着手
-- 関連 ADR: 未作成。Phase 0 で決定案を正式化する
+- 実装状況: Phase 0 完了。Phase 1 完了。Phase 2 完了（構造・リソース参照・スクリプト・実行の Provider、`summarizeDiagnostics`、`viewDiagnostics` による current / stale、`GenerationGate`）。stale の判定はまだ「制作データのどこかが変わったか」で、依存先だけに絞るのは Phase 3
+- 関連 ADR: [0010](../adr/0010-resource-identity-paths-diagnostics.md)（Phase 0 の決定：仮想 import、種類をまたぐ名前の一意性、版ごとの realm、作っている途中の問題では Play を止めない）
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 
 対象: `tukurium-prototype` main (`af08920c9b79d4063264c4bb36fe664c1d4e3fae`)

@@ -3,7 +3,7 @@ import { newId, type OutputDef } from "@tukurium/repo-model";
 import { useState } from "react";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
-import { problemPlace } from "./ProblemsList";
+import { problemKind, problemPlace } from "./ProblemsList";
 import { parseQuery } from "./queryInfo";
 import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -420,7 +420,8 @@ function KokoDefProperties({ id }: { id: string }) {
 
 function SystemProperties({ id }: { id: string }) {
   const { openSystem, select, showProblem, closeDetail } = useWorkspace();
-  const problems = useProblems().filter((p) => p.systemId === id);
+  const { error, safely } = useSafe();
+  const problems = useProblems().filter((p) => p.subject.id === id);
   const project = useProject();
   const canEdit = useCanEdit();
   const def = project.system(id);
@@ -440,16 +441,21 @@ function SystemProperties({ id }: { id: string }) {
           id={id}
           value={def.name}
           disabled={!editing}
-          onCommit={(name) => project.renameSystem(id, name)}
+          onCommit={(name) => safely(() => project.renameSystem(id, name))}
         />
+        {error && <p className={ui.error}>{error}</p>}
         {problems.map((p) => (
           <button
-            key={p.message}
+            key={`${p.freshness}:${p.id}`}
             type="button"
             className={ui.problem}
+            data-fresh={p.freshness}
             onClick={() => showProblem(p)}
           >
-            <span className={ui.problemPlace}>{problemPlace(def.name, p)}</span>
+            <span className={ui.problemPlace}>
+              {problemPlace(def.name, p)}
+              <span className={ui.problemKind}>{problemKind(p)}</span>
+            </span>
             <span>{p.message}</span>
           </button>
         ))}
@@ -541,6 +547,7 @@ function SystemProperties({ id }: { id: string }) {
 
 function MaterialProperties({ id }: { id: string }) {
   const { closeDetail } = useWorkspace();
+  const { error, safely } = useSafe();
   const project = useProject();
   const canEdit = useCanEdit();
   const m = project.material(id);
@@ -578,8 +585,9 @@ function MaterialProperties({ id }: { id: string }) {
           id={id}
           value={m.name}
           disabled={!editing}
-          onCommit={(name) => project.updateMaterial({ ...m, name })}
+          onCommit={(name) => safely(() => project.updateMaterial({ ...m, name }))}
         />
+        {error && <p className={ui.error}>{error}</p>}
         <div className={ui.row}>
           <span className={ui.label}>Shader</span>
           <span className={ui.toolbar}>

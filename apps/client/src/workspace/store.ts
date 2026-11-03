@@ -1,5 +1,11 @@
 import { type EntityId, World } from "@tukurium/eks";
-import { buildRegistry, ProjectDoc, type ProjectSnapshot } from "@tukurium/repo-model";
+import {
+  buildRegistry,
+  type Diagnostic,
+  type ObservedDiagnostics,
+  ProjectDoc,
+  type ProjectSnapshot,
+} from "@tukurium/repo-model";
 import {
   type InputEvent,
   type LogEntry,
@@ -13,7 +19,7 @@ import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
 import type { WorkspaceAnchor } from "./anchor";
-import { mergeProblems, type Problem, runProblems } from "./problems";
+import { mergeRun, runDiagnostics, scriptLine } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
 /** Hierarchy で選んだもの。Inspector の右側に出る */
@@ -21,6 +27,8 @@ export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: s
 
 /** KokoState・マテリアル・スクリプト。Inspector とは別の詳細パネルで開く */
 export type DetailTarget = { kind: "koko" | "system" | "material"; id: string };
+
+const NO_DIAGNOSTICS: ObservedDiagnostics = { diagnostics: [], observedVersion: 0 };
 
 export type Mode = PlayMode;
 export type WorkspaceLog = LogEntry & { seq: number };
@@ -55,14 +63,14 @@ interface WorkspaceState {
   remote: { world: World; names: Record<string, string> } | null;
   simRev: number;
   systemStatus: SystemStatus[];
-  /** 編集中の確認で見つかった問題（構文など） */
-  checkProblems: Problem[];
-  /** 実行して止まった System（次の Play まで残す。Stop しても消さない） */
-  runProblems: Problem[];
+  /** 編集中の確認で見つかった問題（構文など）と、調べたときの版（rev） */
+  checkProblems: ObservedDiagnostics;
+  /** 実行して止まった System と、Play を始めたときの版（次の Play まで残す。Stop しても消さない） */
+  runProblems: ObservedDiagnostics;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
   jumpTo: { systemId: string; line: number | null; seq: number } | null;
   /** 問題の場所をエディタで開く */
-  showProblem(p: Problem): void;
+  showProblem(p: Diagnostic): void;
   logs: WorkspaceLog[];
   openSystems: string[];
   activeSystem: string | null;
@@ -149,13 +157,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     remote: null,
     simRev: 0,
     systemStatus: [],
-    checkProblems: [],
-    runProblems: [],
+    checkProblems: NO_DIAGNOSTICS,
+    runProblems: NO_DIAGNOSTICS,
     jumpTo: null,
     showProblem: (p) => {
-      get().openSystem(p.systemId);
+      if (p.subject.kind !== "system") return;
+      const systemId = p.subject.id;
+      get().openSystem(systemId);
       set((s) => ({
-        jumpTo: { systemId: p.systemId, line: p.line, seq: (s.jumpTo?.seq ?? 0) + 1 },
+        jumpTo: { systemId, line: scriptLine(p), seq: (s.jumpTo?.seq ?? 0) + 1 },
       }));
     },
     logs: [],
@@ -217,8 +227,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         activeSystem: null,
         editorPlace: null,
         detailPlace: null,
-        checkProblems: [],
-        runProblems: [],
+        checkProblems: NO_DIAGNOSTICS,
+        runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
       });
       client().send({ t: "ws.open", workspaceId });
@@ -246,8 +256,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         mode: "edit",
         selection: null,
         detail: null,
-        checkProblems: [],
-        runProblems: [],
+        checkProblems: NO_DIAGNOSTICS,
+        runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
         openSystems: [],
         activeSystem: null,
@@ -513,11 +523,21 @@ if (import.meta.env.DEV)
   (window as { __workspace?: typeof useWorkspace }).__workspace = useWorkspace;
 
 // 実行して止まった System を、Stop した後も「問題」に残す。次の Play で消す
+// Play を始めた後に制作データを変えると、実行の問題は stale（編集前の結果）になる
 useWorkspace.subscribe((s, prev) => {
   if (s.mode !== "edit" && prev.mode === "edit") {
-    useWorkspace.setState({ runProblems: runProblems(s.systemStatus) });
+    useWorkspace.setState({
+      runProblems: { diagnostics: runDiagnostics(s.systemStatus), observedVersion: s.rev },
+    });
   } else if (s.systemStatus !== prev.systemStatus && s.systemStatus.some((x) => x.error)) {
-    const merged = mergeProblems(runProblems(s.systemStatus), s.runProblems);
-    if (merged.length !== s.runProblems.length) useWorkspace.setState({ runProblems: merged });
+    const next = runDiagnostics(s.systemStatus);
+    const prevRun = s.runProblems.diagnostics;
+    const changed = next.some(
+      (d) => !prevRun.some((q) => q.fingerprint === d.fingerprint && q.message === d.message),
+    );
+    if (changed)
+      useWorkspace.setState({
+        runProblems: { ...s.runProblems, diagnostics: mergeRun(prevRun, next) },
+      });
   }
 });
