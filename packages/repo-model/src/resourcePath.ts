@@ -161,6 +161,40 @@ export class ResourcePathIndex {
     return this.entries.get(id);
   }
 
+  /** 入っているフォルダの ID を、いちばん上から順に並べたもの（輪の中なら null） */
+  private folderChain(folder: string | null): string[] | null {
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    for (let f = folder; f !== null; f = this.entries.get(f)?.parent ?? null) {
+      if (seen.has(f) || this.inCycle.has(f)) return null;
+      seen.add(f);
+      chain.unshift(f);
+    }
+    return chain;
+  }
+
+  /**
+   * リソースを指す書き方を作る（import のリファクタリング用）。relative は `from` のリソースが
+   * 入っているフォルダからの相対パス、absolute はいちばん上からのパス。Built-in は `@builtin/`。
+   */
+  spellingFor(id: string, from: string, style: "relative" | "absolute"): string | null {
+    const builtin = this.builtinName.get(id);
+    if (builtin) return `${BUILTIN_PREFIX}${builtin}.koko`;
+    const target = this.entries.get(id);
+    const absolute = this.pathOf(id);
+    if (!target || absolute === null) return null;
+    if (style === "absolute") return absolute;
+    const base = this.folderChain(this.entries.get(from)?.parent ?? null);
+    const dest = this.folderChain(target.parent);
+    if (!base || !dest) return null;
+    let common = 0;
+    while (common < base.length && common < dest.length && base[common] === dest[common]) common++;
+    const ups = base.length - common;
+    const downs = dest.slice(common).map((f) => this.entries.get(f)?.name ?? f);
+    const leaf = target.name + target.ext;
+    return [ups === 0 ? "." : Array(ups).fill("..").join("/"), ...downs, leaf].join("/");
+  }
+
   /**
    * 表示名で書かれた KokoState（移行の間の書き方）の ID。Built-in と利用者定義を通して、
    * ちょうど一つだけ当てはまるときに返す。

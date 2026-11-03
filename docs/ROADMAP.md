@@ -16,7 +16,7 @@
 - [x] ResourcePathIndex と snapshot validation（名前の衝突・フォルダの輪・置き場所。UI で作る・名前を変える・移すときは衝突を避ける）
 - [x] 汎用 Diagnostic model と最小 Provider（構造・リソース参照・スクリプト・実行の問題を一つの形にした。編集前の結果は stale、非同期の確認は世代で古い結果を捨てる）
 - [x] ProjectDependencyGraph と増分無効化（スクリプトの確認は影響を受ける System だけ。System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。`usageOf()`・抽出への統合は残り）
-- [ ] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存は済み。名前の変更や移動に合わせて import を書き換えるリファクタリングが残り）
+- [x] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。古い結び付けの診断は、結び付けを覚えておく仕組みと合わせて後で）
 - [ ] runtime を alias / stable ID ベースへ移行
 - [ ] 独立した Problems パネル、全 resource / folder / hierarchy の集計表示
 - [ ] Snapshot v2、migration、extract / fork の更新
@@ -33,11 +33,11 @@
 
 ### 3. UGC API・権限・Library Package
 
-詳細計画（Draft）: [`plans/ugc-api-library-permissions.md`](plans/ugc-api-library-permissions.md)
+詳細計画（Active）: [`plans/ugc-api-library-permissions.md`](plans/ugc-api-library-permissions.md)
 
 現在の dependency graph の次から設計判断を始め、System binding と Runtime Host API を固定する前に権限境界を組み込む。Library の検索・共有 UI より、実行時に強制できる安全な API と最小 package model を先に作る。
 
-- [ ] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する
+- [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
 - [ ] schema-first の Capability 定義と、すべての UGC Host API が通る runtime gateway を作る
 - [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する
 - [ ] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する

@@ -19,6 +19,7 @@ import {
   type ProjectSnapshot,
   type SystemDef,
 } from "./schema";
+import { planImportRefactor } from "./systemCompiler";
 
 const clone = <T>(v: T): T => structuredClone(v);
 
@@ -113,6 +114,11 @@ export class ProjectDoc {
   }
   /** 定義を書き換える。フィールドを消した・型を変えた場合、Entity の値も合わせる。 */
   updateKokoState(def: KokoStateDef): void {
+    const renamed = this.kokoMap.get(def.id)?.name !== def.name;
+    if (renamed) this.refactoring(() => this.updateKokoStateNow(def));
+    else this.updateKokoStateNow(def);
+  }
+  private updateKokoStateNow(def: KokoStateDef): void {
     if (isBuiltin(def.id)) throw new Error("Built-in の KokoState は変更できません");
     this.assertKokoName(def.name, def.id);
     const ids = new Set<string>();
@@ -440,7 +446,25 @@ export class ProjectDoc {
     const next = name.trim();
     if (!f || !next || f.name === next) return;
     this.assertSiblingName(next, id);
-    this.folderMap.set(id, { ...f, name: next });
+    this.refactoring(() => this.folderMap.set(id, { ...f, name: next }));
+  }
+
+  /**
+   * 名前の変更・移動をして、import のパスを新しい場所に合わせて書き直す（ADR 0010 §3）。
+   * 変更と書き直しは一つの transaction にする（共同編集の相手にも一度に届く）。
+   */
+  private refactoring(change: () => void): void {
+    const prev = this.snapshot();
+    this.transact(() => {
+      change();
+      const edits = planImportRefactor(prev, this.snapshot()).sort((a, b) => b.start - a.start);
+      for (const e of edits) {
+        const text = this.codeMap.get(e.systemId);
+        if (!text) continue;
+        text.delete(e.start, e.end - e.start);
+        text.insert(e.start, e.text);
+      }
+    });
   }
 
   /** フォルダ・リソースが入っている親（フォルダは親のフォルダ、リソースは置き場所） */
@@ -498,7 +522,7 @@ export class ProjectDoc {
   removeFolder(id: string): void {
     const f = this.folderMap.get(id);
     if (!f) return;
-    this.transact(() => {
+    this.refactoring(() => {
       for (const c of this.folderMap.values())
         if (c.parent === id) this.folderMap.set(c.id, { ...c, parent: f.parent });
       for (const [r, fid] of this.placementMap.entries()) {
@@ -515,7 +539,7 @@ export class ProjectDoc {
     const f = this.folderMap.get(id);
     if (!f) return;
     for (let p = parent; p; p = this.folderMap.get(p)?.parent ?? null) if (p === id) return;
-    this.folderMap.set(id, { ...f, parent });
+    this.refactoring(() => this.folderMap.set(id, { ...f, parent }));
   }
 
   /** リソースが入っているフォルダ（null はいちばん上） */
@@ -526,8 +550,12 @@ export class ProjectDoc {
 
   /** リソースをフォルダへ移す（null はいちばん上） */
   moveResource(resourceId: string, folder: string | null): void {
-    if (folder && this.folderMap.has(folder)) this.placementMap.set(resourceId, folder);
-    else this.placementMap.delete(resourceId);
+    const target = folder && this.folderMap.has(folder) ? folder : null;
+    if (this.folderOf(resourceId) === target) return;
+    this.refactoring(() => {
+      if (target) this.placementMap.set(resourceId, target);
+      else this.placementMap.delete(resourceId);
+    });
   }
 
   private descendants(id: EntityId): EntityId[] {
