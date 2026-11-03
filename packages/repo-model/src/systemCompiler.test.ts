@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN } from "./builtins";
 import { ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
-import { compileSystem, readSystemQuery } from "./systemCompiler";
+import { compileSystem, planImportRefactor, readSystemQuery } from "./systemCompiler";
 
 const snap: ProjectSnapshot = {
   version: 1,
@@ -41,6 +41,7 @@ describe("compileSystem", () => {
         resourceId: "ks_gun",
         name: "Gun",
         line: 1,
+        range: [16, 36],
       },
     ]);
     expect(out.javascript).toContain('const Gun = __koko("ks_gun", "Gun");');
@@ -145,5 +146,90 @@ describe("readSystemQuery", () => {
       with: [],
       without: [],
     });
+  });
+});
+
+describe("planImportRefactor（名前の変更・移動に合わせて import を書き直す）", () => {
+  function project(code: string, over: Partial<ProjectSnapshot> = {}): ProjectSnapshot {
+    return {
+      ...snap,
+      kokostates: [
+        { id: "ks_gun", name: "Gun", fields: [] },
+        { id: "ks_hp", name: "Health", fields: [] },
+      ],
+      systems: [{ id: "sys", name: "Shoot", code }],
+      materials: [],
+      placement: { ks_gun: "f_states", ks_hp: "f_states", sys: "f_sys" },
+      ...over,
+    };
+  }
+  const apply = (code: string, edits: ReturnType<typeof planImportRefactor>) => {
+    let out = code;
+    for (const e of [...edits].sort((a, b) => b.start - a.start))
+      out = out.slice(0, e.start) + e.text + out.slice(e.end);
+    return out;
+  };
+  const CODE = `import Gun from "../States/Gun.koko";\nimport T from "@builtin/Transform.koko";\nimport Hp from "/Combat/States/Health.koko";\nexport default system({});`;
+
+  it("KokoState の名前を変えると、それを指す import だけを書き直す（相対は相対、絶対は絶対のまま）", () => {
+    const prev = project(CODE);
+    const next = project(CODE, {
+      kokostates: [
+        { id: "ks_gun", name: "Rifle", fields: [] },
+        { id: "ks_hp", name: "Life", fields: [] },
+      ],
+    });
+    const edits = planImportRefactor(prev, next);
+    expect(edits.every((e) => e.systemId === "sys")).toBe(true);
+    expect(apply(CODE, edits)).toBe(
+      `import Gun from "../States/Rifle.koko";\nimport T from "@builtin/Transform.koko";\nimport Hp from "/Combat/States/Life.koko";\nexport default system({});`,
+    );
+  });
+
+  it("KokoState を別のフォルダへ移すと、System からの新しい相対パスにする", () => {
+    const prev = project(CODE);
+    const next = project(CODE, { placement: { ks_gun: "f_sys", ks_hp: "f_states", sys: "f_sys" } });
+    expect(apply(CODE, planImportRefactor(prev, next)).split("\n")[0]).toBe(
+      'import Gun from "./Gun.koko";',
+    );
+  });
+
+  it("System を移すと、その System の相対パスを書き直す", () => {
+    const prev = project(CODE);
+    const next = project(CODE, {
+      placement: { ks_gun: "f_states", ks_hp: "f_states", sys: "f_combat" },
+    });
+    expect(apply(CODE, planImportRefactor(prev, next)).split("\n")[0]).toBe(
+      'import Gun from "./States/Gun.koko";',
+    );
+  });
+
+  it("フォルダの名前を変えると、そのフォルダを通るパスを書き直す", () => {
+    const prev = project(CODE);
+    const next = project(CODE, {
+      folders: (snap.folders ?? []).map((f) => (f.id === "f_states" ? { ...f, name: "Parts" } : f)),
+    });
+    const out = apply(CODE, planImportRefactor(prev, next));
+    expect(out).toContain('"../Parts/Gun.koko"');
+    expect(out).toContain('"/Combat/Parts/Health.koko"');
+  });
+
+  it("関係のない変更・もともと解決できない import には手を付けない", () => {
+    const broken = `import X from "./Nope.koko";\n${CODE}`;
+    const prev = project(broken);
+    expect(planImportRefactor(prev, project(broken))).toEqual([]);
+    const next = project(broken, {
+      kokostates: [
+        { id: "ks_gun", name: "Rifle", fields: [] },
+        { id: "ks_hp", name: "Health", fields: [] },
+      ],
+    });
+    expect(planImportRefactor(prev, next).map((e) => e.text)).toEqual(['"../States/Rifle.koko"']);
+  });
+
+  it("書き直した先が消えていたら（削除）手を付けない", () => {
+    const prev = project(CODE);
+    const next = project(CODE, { kokostates: [{ id: "ks_hp", name: "Health", fields: [] }] });
+    expect(planImportRefactor(prev, next)).toEqual([]);
   });
 });

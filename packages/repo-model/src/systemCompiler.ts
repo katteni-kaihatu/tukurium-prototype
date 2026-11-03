@@ -1,6 +1,7 @@
 import { type Expression, type ImportDeclaration, parse } from "acorn";
 import { type Diagnostic, makeDiagnostic } from "./diagnostics/types";
-import type { ResourcePathIndex } from "./resourcePath";
+import { BUILTIN_PREFIX, ResourcePathIndex } from "./resourcePath";
+import type { ProjectSnapshot } from "./schema";
 
 /**
  * System スクリプトのコンパイル（ADR 0010 §3、計画 Phase 4）。
@@ -24,6 +25,8 @@ export interface SystemBinding {
   name: string;
   /** import が書かれた行 */
   line: number;
+  /** パスの文字列（引用符を含む）がソースのどこにあるか [始め, 終わり) */
+  range: [number, number];
 }
 
 export interface CompiledSystem {
@@ -100,6 +103,7 @@ export function compileSystem(
           resourceId: r.id,
           name,
           line,
+          range: [node.source.start, node.source.end],
         });
         replacement = `const ${only.local.name} = __koko(${JSON.stringify(r.id)}, ${JSON.stringify(name)});`;
       } else if (!r.ok && r.reason === "ambiguous") {
@@ -190,4 +194,51 @@ export function readSystemQuery(
     return out;
   };
   return { with: list("with"), without: list("without") };
+}
+
+/** import のパスの書き直し（Y.Text のこの範囲を text に置き換える） */
+export interface ImportEdit {
+  systemId: string;
+  start: number;
+  end: number;
+  /** 引用符を含む新しいパス */
+  text: string;
+}
+
+/**
+ * 名前の変更・移動の前後の制作データを比べ、import のパスの書き直しを求める（ADR 0010 §3）。
+ * 前の構造で結び付いていた ID を基準にし、今の構造でその ID を指す書き方に直す。
+ * - 相対パスは相対パス、いちばん上からのパスはいちばん上からのまま。Built-in はそのまま。
+ * - 今の構造でも同じ ID に解決できる import、前から解決できない import、
+ *   指していたものが消えた import には手を付けない（勝手に別のものへ付け替えない）。
+ * - 書き換えるのはパスの文字列の範囲だけ（正規表現や文字列の置換は使わない）。
+ */
+export function planImportRefactor(prev: ProjectSnapshot, next: ProjectSnapshot): ImportEdit[] {
+  const edits: ImportEdit[] = [];
+  let before: ResourcePathIndex | null = null;
+  let after: ResourcePathIndex | null = null;
+  for (const s of next.systems) {
+    if (!s.code.includes("import")) continue;
+    before ??= ResourcePathIndex.fromSnapshot(prev);
+    after ??= ResourcePathIndex.fromSnapshot(next);
+    for (const b of compileSystem(s.id, s.code, before).bindings) {
+      if (b.spelling.startsWith(BUILTIN_PREFIX)) continue;
+      const now = after.resolve(b.spelling, s.id);
+      if (now.ok && now.id === b.resourceId) continue;
+      if (!after.entry(b.resourceId)) continue;
+      const spelling = after.spellingFor(
+        b.resourceId,
+        s.id,
+        b.spelling.startsWith("/") ? "absolute" : "relative",
+      );
+      if (spelling === null || spelling === b.spelling) continue;
+      edits.push({
+        systemId: s.id,
+        start: b.range[0],
+        end: b.range[1],
+        text: JSON.stringify(spelling),
+      });
+    }
+  }
+  return edits;
 }

@@ -162,4 +162,36 @@ describe("ProjectDoc", () => {
     expect(p.freeName("New", f)).toBe("New");
     expect(p.freeName("NewKokoState", null, (b, n) => `${b}${n}`)).toBe("NewKokoState1");
   });
+  it("名前の変更・移動に合わせて import のパスを書き直す（一つの transaction で）", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const gun = p.kokostates().find((k) => k.name === "Gun");
+    if (!gun) throw new Error("Gun がありません");
+    const states = p.addFolder("States", null);
+    const systems = p.addFolder("Systems", null);
+    p.moveResource(gun.id, states);
+    p.moveResource("sys_shoot", systems);
+    const text = p.code("sys_shoot");
+    if (!text) throw new Error("コードがありません");
+    text.delete(0, text.length);
+    text.insert(0, 'import Gun from "../States/Gun.koko";\nexport default system({});');
+    const line = () => p.code("sys_shoot")?.toString().split("\n")[0];
+
+    let updates = 0;
+    p.doc.on("update", () => updates++);
+    p.renameFolder(states, "Parts");
+    expect(line()).toBe('import Gun from "../Parts/Gun.koko";');
+    expect(updates).toBe(1);
+
+    p.updateKokoState({ ...gun, name: "Rifle" });
+    expect(line()).toBe('import Gun from "../Parts/Rifle.koko";');
+    p.moveResource(gun.id, systems);
+    expect(line()).toBe('import Gun from "./Rifle.koko";');
+    p.moveResource("sys_shoot", null);
+    expect(line()).toBe('import Gun from "./Systems/Rifle.koko";');
+    p.moveFolder(systems, states);
+    expect(line()).toBe('import Gun from "./Parts/Systems/Rifle.koko";');
+    p.removeFolder(systems);
+    expect(line()).toBe('import Gun from "./Parts/Rifle.koko";');
+  });
 });

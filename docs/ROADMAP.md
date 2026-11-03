@@ -16,7 +16,7 @@
 - [x] ResourcePathIndex と snapshot validation（名前の衝突・フォルダの輪・置き場所。UI で作る・名前を変える・移すときは衝突を避ける）
 - [x] 汎用 Diagnostic model と最小 Provider（構造・リソース参照・スクリプト・実行の問題を一つの形にした。編集前の結果は stale、非同期の確認は世代で古い結果を捨てる）
 - [x] ProjectDependencyGraph と増分無効化（スクリプトの確認は影響を受ける System だけ。System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。`usageOf()`・抽出への統合は残り）
-- [ ] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存は済み。名前の変更や移動に合わせて import を書き換えるリファクタリングが残り）
+- [x] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。古い結び付けの診断は、結び付けを覚えておく仕組みと合わせて後で）
 - [ ] runtime を alias / stable ID ベースへ移行
 - [ ] 独立した Problems パネル、全 resource / folder / hierarchy の集計表示
 - [ ] Snapshot v2、migration、extract / fork の更新
