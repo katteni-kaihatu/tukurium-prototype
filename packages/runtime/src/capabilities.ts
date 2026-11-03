@@ -3,7 +3,9 @@ import type { HostName } from "./simulation";
 /**
  * UGC の権限の型と、今の Host API の棚卸し（計画 UGC U0、ADR 0011〜0013）。
  *
- * ここにあるのは型と表だけで、まだ実行時には強制しない（U1 で Capability gateway を作る）。
+ * U1 / U2 で Host API の schema 検証、配置の既定境界、opaque handle、公開 Contract を実行時に強制するようにした。
+ * HOST_API_POLICY はまだ棚卸し metadata で、要求 Capability と effective grant の強制は未実装。
+ * server-revalidate / server-execute の操作も協調セッション向けで、Server authority は未実装。
  * 新しい Host API を足すときは、必ず HOST_API_POLICY にも分類を足す（テストで検査する）。
  */
 
