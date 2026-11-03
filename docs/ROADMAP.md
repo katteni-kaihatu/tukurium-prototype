@@ -60,7 +60,18 @@ UGC の制作体験、表現、配布を広げる機能を、実装順を固定�
 - **License / provenance**: U3 の出所保持を前提に、Package の依存・install・fork・公開でライセンス表記を失わない metadata と表示
 - **Sample UGC の充実**: U4 の Reference UGC 実装とは分けて、検証作品を学習・改造できる Sample へ育てる循環
 
-Video player、Particle、Timeline animation、Localization、Post processing、Brush も Candidate として保持する。関連 Active plan の phase 完了、ROADMAP の numbered section 完了、重大な前提変更、Focus の昇格時に最大 5 件を見直す。
+Video player、Particle、Timeline animation、Localization、Post processing、Brush、HUD（UGC が出す 2D の画面）も Candidate として保持する。関連 Active plan の phase 完了、ROADMAP の numbered section 完了、重大な前提変更、Focus の昇格時に最大 5 件を見直す。
+
+### 5. Server authority（改変したホストからの保護）
+
+今のセッションは、参加者のブラウザがホスト（Simulation を動かす人）になる協調セッションで、ホストを信頼している。権限の判定（ADR 0012）は正規のクライアント上の UGC からは守れるが、ホスト自身が改変されていると、別の持ち主の状態・バッグ・勝敗を書き換えられる。authority matrix（`HOST_API_SPEC` の `authority`）で `server-revalidate` / `server-execute` とした操作を、サーバーで確かめる（または実行する）。これがそろうまでは「保護済み」と表示しない。
+
+- [x] 入力のプレイヤー ID を、サーバーが接続の本人で上書きする（[ADR 0018](adr/0018-player-bag.md)）
+- [ ] 最小の縦切りを ADR で決める：どの操作から始めるか（例：`bag.add / take`、`world.destroy`、Contract の受け渡し）、サーバーが何を持てば確かめられるか（世界の状態をサーバーでも持つか、操作の記録だけを確かめるか）、ホストが替わったときの扱い
+- [ ] 入力の表示名（`playerName`）もサーバーが入れる（今はクライアントの申告。[ADR 0017](adr/0017-label-and-player-name.md)）
+- [ ] 別の参加者へ配る一時的な effect・音の数と大きさ（quota）を、サーバーで確かめる
+- [ ] U2 の対象側の判定（公開 Contract・opaque handle・World の上限）をサーバーでも行う
+- [ ] 「協調セッション（ホストを信頼）」か「保護済み」かを、画面と文書で示す
 
 ## 後で判断するもの
 

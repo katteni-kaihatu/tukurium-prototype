@@ -1,6 +1,6 @@
 import type { FileChange } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
-import { buildDiffTree } from "./diffTree";
+import { buildDiffTree } from "./diffTreeModel";
 
 const file = (path: string, change: FileChange["change"] = "modified"): FileChange => ({
   path,

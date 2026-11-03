@@ -1,6 +1,6 @@
 import type { FileChange } from "@tukurium/repo-model";
 import { useMemo, useState } from "react";
-import { buildDiffTree, type DiffNode } from "./diffTree";
+import { buildDiffTree, type DiffNode } from "./diffTreeModel";
 import styles from "./history.module.css";
 
 const CHANGE_LABEL = { added: "新しい", removed: "消えた", modified: "変わった" } as const;

@@ -86,7 +86,7 @@ Focus は、次の観点を文章で比較して選ぶ。見栄えだけの点�
 4. **License / provenance** — Package の依存・install・fork・公開が進む前に、出所と継承を失わないデータモデルが必要
 5. **Sample UGC の充実** — Reference UGC から公式 API を育て、利用者が学習・改造できる検証ループを作る
 
-Particle、Timeline、Brush、Post processing は上記の基盤から利益を受けるため Candidate に置く。Video と多言語化も重要だが、媒体・配布範囲を決めてから縦切りを選ぶ。
+Particle、Timeline、Brush、Post processing は上記の基盤から利益を受けるため Candidate に置く。Video と多言語化も重要だが、媒体・配布範囲を決めてから縦切りを選ぶ。HUD（10.1）は多くの UGC が要るが、DOM を公開しない宣言的な形と、別の作者の表示が重なったときの規則を決めてから縦切りを選ぶ。
 
 ## 5. 制作基盤
 
@@ -222,3 +222,17 @@ Particle、Timeline、Brush、Post processing は上記の基盤から利益を�
 - 未決定: reference、tutorial、showcase の公開 UI 上の区別、サンプルの保守 owner と互換性期間
 
 Reference UGC は API と境界の必要性を検証する作品、Sample UGC は学習と改造を主目的にした作品として区別する。同じ作品が両方を兼ねてもよいが、作品が成功するだけで conformance を満たしたとは扱わない。
+
+## 10. 画面・UI
+
+### 10.1 HUD（UGC が出す 2D の画面）
+
+- 状態: **Candidate**
+- 価値と例: 残弾・体力・スコア・目標の表示、ちょっとした案内やメニュー。ゲーム性のある UGC のほとんどが要る。今は 3D の Label（ADR 0017）とログしかない
+- 主な層・利用時点: Runtime Built-in の宣言的な HUD の記述（文字・数値・ゲージ・アイコン程度）、表示を求める Host Capability、client の描画。実行時。Editor では preview
+- 境界・前提: DOM・任意の HTML・CSS は UGC に公開しない（計画 U4「UI は別 ADR を実装条件とする」）。HUD request / owner（配置・Player）identity を持ち、表示には Capability grant と画面の上限（数・面積・更新頻度）を要求する。だれの画面に出すか（その Player だけ・全員）、別の作者の HUD と重なったときの優先と配置、Player が消せること（アクセシビリティ・なりすまし対策：システムの画面に見せかけない）を決める。表示内容は非永続とし、同期の範囲は未決定
+- 最小スコープ: 置いた物の System が、E で押した・撃ったなどの Player に対して、文字と数値のゲージを一つ、決まった位置（画面の隅）に期限付きで出す。消える条件（期限・配置を外す・Player が閉じる）を先に決める
+- 後回し: 自由な配置・レイアウト、ボタンなどの入力付きメニュー、アニメーション、画像、ワールド空間の 3D パネルへの表示
+- 検証 UGC: 銃の残弾ゲージと、鍵と扉の「鍵を持っている」表示。別の作者の物を二つ置いたとき、重ならず、どちらの表示かが分かり、Player が閉じられることを確かめる
+- 未決定: 宣言的な記述の形（KokoState か Host API か）、Player ごとの表示とフレームの配り方（ほかの人に見せない）、ローカライズ、3D の Label との使い分け
+
