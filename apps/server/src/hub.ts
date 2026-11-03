@@ -800,6 +800,10 @@ export class Hub {
     if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
       return this.deny(conn, "この作品を利用する権限がありません");
     }
+    const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
+    if (kind === "library") {
+      return this.deny(conn, "ライブラリは置けません。ほかのプロジェクトから import して使います");
+    }
     this.addReleasePlacement(s, user.id, loaded, msg.position, msg.yaw);
     this.broadcastSession(s);
   }

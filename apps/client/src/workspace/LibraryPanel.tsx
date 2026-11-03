@@ -41,6 +41,8 @@ export function LibraryPanel() {
         <ul className={ui.list} aria-label="作品">
           {works.map((w) => {
             const canUse = w.perms.use || w.owner === me?.id;
+            // ライブラリは置くものではなく、ほかのプロジェクトから import して使う（ADR 0015）
+            const isLibrary = w.outputKind === "library";
             const kind = w.outputKind ? KIND_LABEL[w.outputKind] : null;
             return (
               <li key={w.id} className={ui.item} style={{ cursor: "default" }}>
@@ -61,13 +63,15 @@ export function LibraryPanel() {
                   type="button"
                   className={ui.btn}
                   style={{ height: 26 }}
-                  disabled={!w.latest || !canUse}
+                  disabled={!w.latest || !canUse || isLibrary}
                   title={
-                    !canUse
-                      ? "利用の権限がありません"
-                      : w.outputKind === "world"
-                        ? "セッションの原点に置きます"
-                        : "視線の先に置きます"
+                    isLibrary
+                      ? "ライブラリは置けません。ほかのプロジェクトから import して使います"
+                      : !canUse
+                        ? "利用の権限がありません"
+                        : w.outputKind === "world"
+                          ? "セッションの原点に置きます"
+                          : "視線の先に置きます"
                   }
                   onClick={() => place(w)}
                 >

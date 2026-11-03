@@ -147,9 +147,7 @@ function OutputProperties({ id }: { id: string }) {
           >
             <option value="item">アイテム</option>
             <option value="world">ワールド</option>
-            <option value="library" disabled>
-              ライブラリ（準備中）
-            </option>
+            <option value="library">ライブラリ</option>
           </select>
         </div>
         <div className={ui.row}>

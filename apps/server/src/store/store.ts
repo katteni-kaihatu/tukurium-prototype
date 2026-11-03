@@ -45,6 +45,11 @@ export interface Release {
   version: number;
   commit: string;
   createdAt: string;
+  /**
+   * ライブラリの作品だけ：公開したもの（manifest）の content hash（sha256）。
+   * サーバーが計算する。同じ作品・同じ版の hash は変えない（ADR 0013・0015）
+   */
+  contentHash?: string;
 }
 
 export interface WorkspaceMeta {
