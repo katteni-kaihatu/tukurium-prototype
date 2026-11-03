@@ -461,7 +461,7 @@ export class Simulation {
 
   /**
    * 組み込みの入力。処理したら true（スクリプトの onInput には渡さない）。
-   * - grab：右クリックで Grabbable を持つ・放す。持った瞬間の位置と角度は変えない
+   * - grab：右クリックを押している間、Grabbable を持つ。離すと放す。持った瞬間の位置と角度は変えない
    * - hold：持っている物を、視点との位置関係を保ったまま動かす
    * - align：傾きを直し、上下の軸（Y）の向きだけ残す
    * - twist：マウスの動きで、持っている物の角度を変える
@@ -487,8 +487,7 @@ export class Simulation {
       for (const id of mine) this.twistHeld(id, ev);
       return true;
     }
-    if (ev.phase !== "down") return true;
-    if (mine.length > 0) {
+    if (ev.phase === "up") {
       // 放す：見えている位置に置いてから手を放す（動く剛体なら落ちる）
       for (const id of mine) {
         this.placeHeld(id, ev);
@@ -498,6 +497,7 @@ export class Simulation {
       }
       return true;
     }
+    if (ev.phase !== "down" || mine.length > 0) return true;
     const hit = this.physics.raycast(ev.origin, ev.direction, GRAB_REACH, []);
     // 当たった物か、その親のうち、Grabbable を持ついちばん近いもの（持てるのはいちばん上の Entity だけ）
     let target: EntityId | null = hit?.entity ?? null;

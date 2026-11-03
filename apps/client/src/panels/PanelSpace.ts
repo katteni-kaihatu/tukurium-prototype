@@ -1,3 +1,5 @@
+import type { Vec3 } from "@tukurium/eks";
+import { placeFromView, poseInView, straightenRotation } from "@tukurium/runtime";
 import * as THREE from "three";
 import { CSS3DObject, type CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 
@@ -25,8 +27,16 @@ interface Placed {
  */
 export class PanelSpace {
   private readonly placed = new Map<string, Placed>();
-  /** 右ドラッグで動かしているパネル */
-  private moving: { id: string; distance: number; pointer: () => THREE.Vector2 } | null = null;
+  /**
+   * 右クリックを押している間、持っているパネル。
+   * 物を持つときと同じく、持った瞬間の位置と角度を視点からの差で覚える。
+   */
+  private moving: {
+    id: string;
+    offset: Vec3;
+    rotation: Vec3;
+    pointer: () => THREE.Vector2;
+  } | null = null;
   private readonly raycaster = new THREE.Raycaster();
   /** 動かし終えたときに呼ぶ（置き場所を保存する側へ知らせる） */
   onMoved: ((id: string, transform: PanelTransform) => void) | null = null;
@@ -79,14 +89,21 @@ export class PanelSpace {
   }
 
   /**
-   * 右ドラッグでパネルを動かし始める。距離は今のまま、ポインターの先（照準なら画面の中央）へ動かす。
-   * pointer は画面上の位置（-1〜1 の正規化座標）を返す。
+   * 右クリックでパネルを持ち始める。位置も角度も、その場から動かさない。
+   * pointer は画面上の位置（-1〜1 の正規化座標）を返す。照準なら画面の中央。
    */
   startMove(id: string, camera: THREE.Camera, pointer: () => THREE.Vector2): void {
     const p = this.placed.get(id);
     if (!p) return;
-    const eye = camera.getWorldPosition(new THREE.Vector3());
-    this.moving = { id, distance: eye.distanceTo(p.object.position), pointer };
+    const { origin, direction } = this.viewRay(camera, pointer());
+    const yaw = (p.object.rotation.y * 180) / Math.PI;
+    const pose = poseInView(
+      origin,
+      direction,
+      [p.object.position.x, p.object.position.y, p.object.position.z],
+      [0, yaw, 0],
+    );
+    this.moving = { id, offset: pose.offset, rotation: pose.rotation, pointer };
   }
 
   endMove(): void {
@@ -119,14 +136,15 @@ export class PanelSpace {
    */
   update(camera: THREE.Camera): void {
     if (this.placed.size === 0) return;
-    const m = this.moving ? this.placed.get(this.moving.id) : undefined;
-    if (this.moving && m) {
-      this.raycaster.setFromCamera(this.moving.pointer(), camera);
-      const pos = this.raycaster.ray.at(this.moving.distance, new THREE.Vector3());
-      const forward = camera.getWorldDirection(new THREE.Vector3());
-      m.object.position.copy(pos);
-      // こちらを向ける（カメラの向きの水平成分）
-      m.object.rotation.set(0, Math.atan2(-forward.x, -forward.z), 0);
+    const held = this.moving;
+    const m = held ? this.placed.get(held.id) : undefined;
+    if (held && m) {
+      const { origin, direction } = this.viewRay(camera, held.pointer());
+      const placed = placeFromView(origin, direction, held.offset, held.rotation);
+      m.object.position.set(placed.position[0], placed.position[1], placed.position[2]);
+      // パネルが覚える角度は上下の軸まわりだけ。傾きは付けない
+      const upright = straightenRotation(placed.rotation);
+      m.object.rotation.set(0, ((upright[1] ?? 0) * Math.PI) / 180, 0);
       m.occluder.position.copy(m.object.position);
       m.occluder.rotation.copy(m.object.rotation);
     }
@@ -151,6 +169,17 @@ export class PanelSpace {
   dispose(): void {
     for (const id of [...this.placed.keys()]) this.remove(id);
     this.occluderMaterial.dispose();
+  }
+
+  /** ポインターの先（照準なら視線）を、物を持つときと同じ視点の向きとして使う */
+  private viewRay(camera: THREE.Camera, pointer: THREE.Vector2): { origin: Vec3; direction: Vec3 } {
+    camera.updateMatrixWorld();
+    this.raycaster.setFromCamera(pointer, camera);
+    const { origin, direction } = this.raycaster.ray;
+    return {
+      origin: [origin.x, origin.y, origin.z],
+      direction: [direction.x, direction.y, direction.z],
+    };
   }
 
   private fitOccluder(id: string): void {

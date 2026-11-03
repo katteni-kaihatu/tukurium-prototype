@@ -31,6 +31,8 @@ export class SessionEngine {
   private readonly clock = new THREE.Clock();
   private readonly frameListeners = new Set<(dt: number) => void>();
   private readonly pointerListeners = new Set<(button: number, phase: "down" | "up") => void>();
+  /** 右クリックを押しているか。離すか、空間から出たら手を放す */
+  private rightButton = false;
   private readonly resizeObserver: ResizeObserver;
   private frame = 0;
   private disposed = false;
@@ -60,6 +62,7 @@ export class SessionEngine {
     container.addEventListener("click", this.onContainerClick);
     document.addEventListener("mousedown", this.onMouseDown);
     document.addEventListener("mouseup", this.onMouseUp);
+    document.addEventListener("pointerlockchange", this.onLockChange);
     document.addEventListener("mousemove", this.onMouseMove);
     document.addEventListener("contextmenu", this.onContextMenu);
     document.addEventListener("wheel", this.onWheel, { passive: false });
@@ -113,6 +116,7 @@ export class SessionEngine {
     this.container.removeEventListener("click", this.onContainerClick);
     document.removeEventListener("mousedown", this.onMouseDown);
     document.removeEventListener("mouseup", this.onMouseUp);
+    document.removeEventListener("pointerlockchange", this.onLockChange);
     document.removeEventListener("mousemove", this.onMouseMove);
     document.removeEventListener("contextmenu", this.onContextMenu);
     document.removeEventListener("wheel", this.onWheel);
@@ -154,9 +158,9 @@ export class SessionEngine {
 
   // ---------------------------------------------------------------------------
   // マウス：空間に入っている（ポインターロック中）ときは照準（画面の中央）で操作する。
-  // - 照準の先が 3D のパネルなら、左クリックはパネルへ渡し、右ドラッグでパネルを動かす
-  // - それ以外は、左右のボタンを空間の入力として渡す（左：撃つ・選ぶ、右：持つ）
-  // 空間に入っていないときは、パネルを直接クリックでき、右ドラッグで動かせる。
+  // - 照準の先が 3D のパネルなら、左クリックはパネルへ渡し、右クリックを押している間パネルを持つ
+  // - それ以外は、左右のボタンを空間の入力として渡す（左：撃つ・選ぶ、右：押している間持つ）
+  // 空間に入っていないときは、パネルを直接クリックでき、右クリックを押している間動かせる。
 
   /** ポインターの位置（ロック中は画面の中央） */
   private mouse = { x: 0, y: 0 };
@@ -187,8 +191,9 @@ export class SessionEngine {
   private onMouseDown = (e: MouseEvent): void => {
     // パネルへ渡すために自分で出したイベントは扱わない（自分に返ってきて繰り返さないように）
     if (!e.isTrusted) return;
+    if (e.button === 2) this.rightButton = true;
     if (!this.controller.locked) {
-      // 3D のパネルを右ドラッグで動かす
+      // 3D のパネルを、右クリックを押している間持つ
       if (e.button === 2) {
         const id = this.panels.idOf(e.target as Element);
         if (id) {
@@ -220,10 +225,27 @@ export class SessionEngine {
     for (const fn of this.pointerListeners) fn(e.button, "down");
   };
 
+  /** 右クリックを離した。パネルか、持っている物を、見えている位置に置く */
+  private releaseRight(): void {
+    if (!this.rightButton) return;
+    this.rightButton = false;
+    if (this.panels.isMoving) {
+      this.panels.endMove();
+      return;
+    }
+    if (!this.controller.locked) return;
+    for (const fn of this.pointerListeners) fn(2, "up");
+  }
+
+  /** 空間から出たとき、押しっぱなしの右クリックを離したことにする */
+  private onLockChange = (): void => {
+    if (!this.controller.locked) this.releaseRight();
+  };
+
   private onMouseUp = (e: MouseEvent): void => {
     if (!e.isTrusted) return;
-    if (e.button === 2 && this.panels.isMoving) {
-      this.panels.endMove();
+    if (e.button === 2) {
+      this.releaseRight();
       return;
     }
     if (!this.controller.locked) return;

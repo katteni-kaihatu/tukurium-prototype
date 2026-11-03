@@ -281,7 +281,11 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     sim.step(1 / 60);
     const still = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(still[2]).toBeCloseTo(-3, 4);
+    // 押したままもう一度 down が来ても、離すまでは持ったまま
     sim.input(fire([0, 0, -1], "grab"));
+    sim.step(1 / 60);
+    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(true);
+    sim.input({ ...fire([0, 0, -1], "grab"), phase: "up" });
     sim.step(1 / 60);
     expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
     const after = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
@@ -291,7 +295,7 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     // 向きを変えてから離すと、見えていた位置に残る（追従の送信を待たない）
     sim.input(fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    sim.input(fire([1, 0, 0], "grab"));
+    sim.input({ ...fire([1, 0, 0], "grab"), phase: "up" });
     sim.step(1 / 60);
     const left = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
@@ -315,7 +319,7 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     sim.input({ ...fire([1, 0, 0], "grab"), player: "p2" });
     sim.step(1 / 60);
     expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
-    sim.input(fire([1, 0, 0], "grab"));
+    sim.input({ ...fire([1, 0, 0], "grab"), phase: "up" });
     for (let i = 0; i < 30; i++) sim.step(1 / 60);
     expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
     const dropped = sim.world.get("box", BUILTIN.Transform)?.position as Vec3 | undefined;
