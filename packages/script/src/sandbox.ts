@@ -11,7 +11,10 @@ export type Json = null | boolean | number | string | Json[] | { [k: string]: Js
 /** スクリプトから見える Entity。KokoState 名 → フィールド名 → 値。 */
 export interface ScriptEntity {
   id: string;
+  /** KokoState の ID（その領域の中の ID）→ フィールド名 → 値。names がなければ、キーは名前として扱う */
   states: Record<string, Record<string, Json>>;
+  /** 名前 → states のキー。名前が一つに決まる KokoState だけ（移行の間の e.Gun のため。ADR 0010） */
+  names?: Record<string, string>;
 }
 
 /** スクリプトが宣言した System の情報（Query は KokoState 名で書かれる）。 */
@@ -74,13 +77,18 @@ globalThis.system = (def) => {
   return def;
 };
 // import した KokoState（コンパイラが const X = __koko(ID, 名前) に書き換える。ADR 0010）
-// 移行の間は、名前としても使えるようにしておく（Query の with に入れる・e[X]・world.get(id, X)）
+// 文字列としては ID になる（Query の with に入れる・e[X]・world.get(id, X) で ID として届く）
 globalThis.__koko = (id, name) => Object.freeze({
   id, name,
-  toString() { return name; },
-  toJSON() { return name; },
+  toString() { return id; },
+  toJSON() { return id; },
 });
-const __kokoName = (k) => (k !== null && typeof k === "object" && typeof k.name === "string") ? k.name : String(k);
+// KokoState を指すもの（import した値・ID・名前）を、その Entity の states のキーにする
+const __kokoKey = (k, names) => {
+  if (k !== null && typeof k === "object" && typeof k.id === "string") return k.id;
+  const s = String(k);
+  return names && Object.hasOwn(names, s) ? names[s] : s;
+};
 globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
 globalThis.console = { log: globalThis.log, warn: globalThis.log, error: globalThis.log };
 const __ns = {};
@@ -133,11 +141,18 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
   try {
     for (const e of entities) {
       __entity = e.id;
-      const view = { id: e.id, ...e.states };
-      // entity.get(Gun)：import した KokoState（または名前）でその値を取る
-      Object.defineProperty(view, "get", { value: (k) => view[__kokoName(k)], enumerable: false });
+      const st = e.states;
+      // names がないとき（古い形）は、states のキーをそのまま名前として扱う
+      const names = e.names ?? Object.fromEntries(Object.keys(st).map((k) => [k, k]));
+      const view = { id: e.id };
+      const slot = (key) => ({ get: () => st[key], set: (v) => { st[key] = v; }, configurable: true });
+      // ID でも引ける（e[Gun]）。一覧には出さない
+      for (const key of Object.keys(st)) Object.defineProperty(view, key, { ...slot(key), enumerable: false });
+      // 名前が一つに決まる KokoState は、名前でも使える（e.Gun。移行の間の書き方）
+      for (const [name, key] of Object.entries(names)) Object.defineProperty(view, name, { ...slot(key), enumerable: true });
+      // entity.get(Gun)：import した KokoState（または ID・名前）でその値を取る
+      Object.defineProperty(view, "get", { value: (k) => st[__kokoKey(k, names)], enumerable: false });
       fn.call(handler.startsWith("contract:") ? def.contracts : def, view, ...args);
-      for (const k of Object.keys(e.states)) e.states[k] = view[k];
     }
   } finally {
     __current = null;

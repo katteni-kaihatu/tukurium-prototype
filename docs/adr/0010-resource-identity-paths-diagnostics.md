@@ -77,5 +77,5 @@ export default system({
 
 - `packages/repo-model` に、論理パスの索引（`ResourcePathIndex`）、汎用の `Diagnostic`、構造の検査（`ProjectStructureValidator`）を置く。どれも UI に依存しない。
 - コンパイラ（`compileSystem`）は import 文の範囲だけを `const Gun = __koko("<ID>", "<名前>");` に書き換え、行の数を保つ（source map を使わずに、実行時のエラーの行番号をそのまま使える）。`entity.get(Gun)` で値を取る。
-- runtime を ID ベースへ移すまでの間、`__koko` が返す値は文字列としては KokoState の名前になる（Query の with・`e[Gun]`・`world.get(id, Gun)` がそのまま動く）。
-- System の書き方と runtime の移行（§3・§4）、Snapshot の版上げは、計画の Phase 4〜7 で行う。それまでは今の表示名での参照が動き続ける。Registry が同じ realm の中で名前の重複を拒むため、同じ名前の KokoState を実際に作れるようにするのは runtime の移行のあととする。
+- Phase 5 で runtime を ID ベースにした。`__koko` が返す値は文字列としては KokoState の ID になり、System に渡す状態も「領域の中の KokoState ID」をキーにする。名前が一つに決まる KokoState だけ、移行の間の書き方（`e.Gun`・`with: ["Gun"]`）でも引ける。Registry は同じ名前を許し、名前で引くと曖昧なものは見つからない。別の領域の KokoState は System に見せない。Built-in と同じ名前の KokoState は、移行の間の書き方が曖昧になるので作れない。
+- System の書き方と runtime の移行（§3・§4）、Snapshot の版上げは、計画の Phase 4〜7 で行う。それまでは今の表示名での参照が動き続ける。同じ名前の KokoState は、Phase 5 から別のフォルダに作れる。

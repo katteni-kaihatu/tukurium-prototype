@@ -535,6 +535,28 @@ export class Simulation {
     return this.multi ? realm : "";
   }
 
+  /** 実行時の KokoState の ID を、その領域のスクリプトに見せるキー（領域の中の ID）にする */
+  private localKey(koko: KokoStateId, realm: string): string {
+    const prefix = `${realm}:`;
+    return this.multi && !isBuiltin(koko) && koko.startsWith(prefix)
+      ? koko.slice(prefix.length)
+      : koko;
+  }
+
+  /**
+   * スクリプトが指した KokoState（import した ID・Built-in の ID・移行の間の名前）を、実行時の ID にする。
+   * 名前が同じ領域の中で一つに決まらないときは undefined（ADR 0010）。
+   */
+  private resolveKoko(ref: string, realm: string): KokoStateId | undefined {
+    const scoped = this.kid(realm, ref);
+    if (
+      this.registry.get(scoped) &&
+      (isBuiltin(scoped) || this.registry.scopeOf(scoped) === this.scopeOfRealm(realm))
+    )
+      return scoped;
+    return this.registry.idOf(ref, this.scopeOfRealm(realm));
+  }
+
   /** リポジトリの KokoState 定義とマテリアルを登録し直す */
   private registerRealm(realm: string, snapshot: ProjectSnapshot): void {
     const scope = this.scopeOfRealm(realm);
@@ -769,11 +791,17 @@ export class Simulation {
           );
         const meta = this.sandbox.loadSystem(id, compiled.javascript, part.realm);
         const scope = this.scopeOfRealm(part.realm);
-        const resolve = (names: string[]) =>
-          names.map((n) => {
-            const k = this.registry.idOf(n, scope);
-            if (!k) throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, id, "load");
-            return k;
+        const resolve = (refs: string[]) =>
+          refs.map((n) => {
+            const k = this.resolveKoko(n, part.realm);
+            if (k) return k;
+            if (this.registry.isAmbiguous(n, scope))
+              throw new ScriptError(
+                `Query の KokoState「${n}」は同じ名前が複数あります（import で読み込んでください）`,
+                id,
+                "load",
+              );
+            throw new ScriptError(`Query の KokoState「${n}」が見つかりません`, id, "load");
           });
         sys.with = resolve(meta.query.with);
         sys.without = resolve(meta.query.without);
@@ -854,7 +882,6 @@ export class Simulation {
    * 別の配置へは、Raycast の opaque handle と公開 Contract（contract.send）だけで届く（U2）。
    */
   private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
-    const scope = this.scopeOfRealm(ctx.realm);
     const callers = this.callerParts(ctx);
     const own = (id: string | undefined): id is EntityId =>
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
@@ -941,12 +968,12 @@ export class Simulation {
         return true;
       },
       "world.get": ([id, kokoName]) => {
-        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko)) return null;
         return this.toNamed(koko, this.world.get(id, koko) ?? {});
       },
       "world.set": ([id, kokoName, values]) => {
-        const koko = kokoName ? this.registry.idOf(kokoName, scope) : undefined;
+        const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
         this.writeNamed(id, koko, values as Record<string, Json>, null);
         return true;
@@ -962,7 +989,7 @@ export class Simulation {
         // 作った Entity は、呼んだ System の配置のものにする
         callers[0]?.entities.add(id);
         for (const [kokoName, values] of Object.entries(desc?.states ?? {})) {
-          const koko = this.registry.idOf(kokoName, scope);
+          const koko = this.resolveKoko(kokoName, ctx.realm);
           if (!koko) continue;
           this.world.add(id, koko);
           if (values && typeof values === "object" && !Array.isArray(values)) {
@@ -1029,24 +1056,17 @@ export class Simulation {
 
   private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Json[]): void {
     if (ids.length === 0 || !sys.enabled) return;
-    const before = ids.map((id) => this.toScriptEntity(id));
+    const before = ids.map((id) => this.toScriptEntity(id, sys.realm));
     try {
       const after = this.sandbox.run(sys.id, handler, before, args);
       after.forEach((e, i) => {
         const prev = before[i];
         if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
-        for (const [kokoName, values] of Object.entries(e.states)) {
-          // 名前は、その Entity が持っている KokoState の中から引く（別リポジトリの Entity でも正しく書ける）
-          const koko = this.world
-            .statesOf(e.id)
-            .find((k) => this.registry.get(k)?.name === kokoName);
-          if (!koko || !values || typeof values !== "object") continue;
-          this.writeNamed(
-            e.id,
-            koko,
-            values as Record<string, Json>,
-            prev.states[kokoName] ?? null,
-          );
+        for (const [key, values] of Object.entries(e.states)) {
+          // キーは領域の中の ID（ADR 0010）。その Entity が持っている KokoState だけに書く
+          const koko = isBuiltin(key) ? key : this.kid(sys.realm, key);
+          if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
+          this.writeNamed(e.id, koko, values as Record<string, Json>, prev.states[key] ?? null);
         }
       });
     } catch (e) {
@@ -1055,13 +1075,29 @@ export class Simulation {
     }
   }
 
-  private toScriptEntity(id: EntityId): ScriptEntity {
+  /**
+   * スクリプトに渡す Entity。状態は領域の中の KokoState ID をキーにし、名前が一つに決まるものだけ
+   * 名前でも引けるようにする（移行の間の e.Gun）。別の領域の KokoState は見せない（ADR 0012）。
+   */
+  private toScriptEntity(id: EntityId, realm: string): ScriptEntity {
     const states: ScriptEntity["states"] = {};
+    const byName = new Map<string, string[]>();
+    const scope = this.scopeOfRealm(realm);
     for (const koko of this.world.statesOf(id)) {
       const def = this.registry.get(koko);
-      if (def) states[def.name] = this.toNamed(koko, this.world.get(id, koko) ?? {});
+      if (!def) continue;
+      if (this.multi && !isBuiltin(koko) && this.registry.scopeOf(koko) !== scope) continue;
+      const key = this.localKey(koko, realm);
+      states[key] = this.toNamed(koko, this.world.get(id, koko) ?? {});
+      byName.set(def.name, [...(byName.get(def.name) ?? []), koko]);
     }
-    return { id, states };
+    const names: Record<string, string> = {};
+    for (const [name, kokos] of byName) {
+      const only = kokos.length === 1 ? kokos[0] : undefined;
+      if (only && this.registry.idOf(name, scope) === only)
+        names[name] = this.localKey(only, realm);
+    }
+    return { id, states, names };
   }
 
   private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Json> {

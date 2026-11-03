@@ -103,18 +103,21 @@ export async function checkScripts(
     try {
       const meta = sb.loadSystem(def.id, compiled.javascript, CHECK_REALM);
       for (const name of [...meta.query.with, ...meta.query.without]) {
-        if (!registry.idOf(name)) {
-          problems.push(
-            scriptDiagnostic(
-              def.id,
-              "query-kokostate-missing",
-              `Query の KokoState「${name}」が見つかりません`,
-              lineOf(code, name),
-              "authoring",
-              name,
-            ),
-          );
-        }
+        // import した KokoState は ID で届く。移行の間の書き方は名前で届く（ADR 0010）
+        if (registry.get(name) || registry.idOf(name)) continue;
+        const ambiguous = registry.isAmbiguous(name);
+        problems.push(
+          scriptDiagnostic(
+            def.id,
+            ambiguous ? "query-kokostate-ambiguous" : "query-kokostate-missing",
+            ambiguous
+              ? `Query の KokoState「${name}」は同じ名前が複数あります（import で読み込んでください）`
+              : `Query の KokoState「${name}」が見つかりません`,
+            lineOf(code, name),
+            "authoring",
+            name,
+          ),
+        );
       }
     } catch (e) {
       problems.push(
