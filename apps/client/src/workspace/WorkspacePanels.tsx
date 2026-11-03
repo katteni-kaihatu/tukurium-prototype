@@ -311,7 +311,7 @@ function WorkspaceStart() {
             );
           }}
         >
-          ＋ サンプル「銃と的（公式ライブラリ）」
+          ＋ サンプル「銃と的（公式）」
         </button>
         <button
           type="button"
