@@ -751,7 +751,12 @@ describe("リポジトリ・コミット・作品", () => {
     const r2 = (await A.post(`/api/works/${work.id}/releases`)).json();
     expect([r1.version, r2.version]).toEqual([1, 2]);
     const list = (await B.get("/api/works")).json();
-    expect(list[0]).toMatchObject({ name: "射撃場", repoName: "銃と的", latest: { version: 2 } });
+    expect(list[0]).toMatchObject({
+      name: "射撃場",
+      repoName: "銃と的",
+      latest: { version: 2 },
+      outputKind: "item",
+    });
 
     // 非公開のリポジトリでも、作品の「閲覧」権限があれば見られる。外せば見られない
     await A.patch(`/api/repos/${src.id}`, { visibility: "private" });

@@ -98,9 +98,13 @@ interface WorkspaceState {
   historyOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
-  /** 問題のパネルを開いているか */
+  /** Inspector を開いているか。ワークスペースを開いたときは開いている */
+  inspectorOpen: boolean;
+  /** Resources を開いているか。ワークスペースを開いたときは開いている */
+  resourcesOpen: boolean;
+  /** エラーのパネルを開いているか */
   problemsOpen: boolean;
-  /** 新しいエラーが出たときに問題パネルを前に出すための合図（増えるたびに前に出る） */
+  /** 新しいエラーが出たときにエラーパネルを前に出すための合図（増えるたびに前に出る） */
   problemsFocus: number;
   /** ログ・保存のパネルを開いているか */
   logOpen: boolean;
@@ -201,6 +205,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     libraryOpen: false,
     historyOpen: false,
     sessionOpen: false,
+    inspectorOpen: true,
+    resourcesOpen: true,
     problemsOpen: false,
     problemsFocus: 0,
     logOpen: false,
@@ -255,6 +261,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
         sessionOpen: false,
+        inspectorOpen: true,
+        resourcesOpen: true,
         problemsOpen: false,
         problemsFocus: 0,
         logOpen: false,
@@ -292,6 +300,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         editorPlace: null,
         detailPlace: null,
         sessionOpen: false,
+        inspectorOpen: true,
+        resourcesOpen: true,
         problemsOpen: false,
         problemsFocus: 0,
         logOpen: false,

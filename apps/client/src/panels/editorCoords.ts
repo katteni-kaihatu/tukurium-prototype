@@ -3,8 +3,14 @@
  * 回転でゆがんだ外接矩形になり、コードエディタはその矩形でカーソル位置と行の高さを
  * 計算する。斜めから見ると、カーソルが文字からずれ、行番号も行と揃わない。
  *
- * エディタの中だけ、変形を含まない配置（offset）の矩形を返す。マウスの位置も、
- * ブラウザが当たり判定した文字の位置へ置き換える。2D のパネルはそのまま。
+ * エディタの中は、変形を含まない配置（offset）の矩形を返す。マウスの位置も、
+ * ブラウザが当たり判定した文字の位置へ置き換える。
+ *
+ * エディタの外にあるスクロール枠（パネルの中身など）まで画面上の矩形のままだと、
+ * 配置の座標と交差しすぎて、見える範囲が欠けたり空になったりする。スクロールすると
+ * 別の行が出たり消えたりする。エディタを含む枠には、配置の原点を覆う矩形を返す。
+ * パネルの入れ物そのもの（data-mode）は、ピン留めや大きさの計算に使うのでそのまま。
+ * 2D のパネルもそのまま。
  */
 
 const rewritten = new WeakSet<Event>();
@@ -41,6 +47,21 @@ function in3dEditor(node: Node | null): HTMLElement | null {
 
 function scrollerOf(editor: HTMLElement): HTMLElement | null {
   return editor.querySelector(".cm-scroller");
+}
+
+/**
+ * 3D パネルの中で、エディタを包んでいる要素。
+ * 画面上の位置ではなく、エディタの表示範囲（スクロール枠）を配置の座標で返す。
+ */
+function editorCover(el: HTMLElement): DOMRect | null {
+  if (in3dEditor(el)) return null;
+  const host = el.closest<HTMLElement>("[data-mode='3d']");
+  if (!host || el === host) return null;
+  const editor = el.querySelector(".cm-editor");
+  if (!(editor instanceof HTMLElement)) return null;
+  const scroller = scrollerOf(editor);
+  if (!scroller) return null;
+  return new DOMRect(0, 0, Math.max(scroller.clientWidth, 1), Math.max(scroller.clientHeight, 1));
 }
 
 /** スクロール後の、エディタの左上を原点にした矩形 */
@@ -214,19 +235,19 @@ export function installFlatEditorCoords(): void {
 
   const rect = Element.prototype.getBoundingClientRect;
   Element.prototype.getBoundingClientRect = function () {
-    if (
-      this instanceof HTMLElement &&
-      in3dEditor(this) &&
-      (this.offsetWidth > 0 || this.offsetHeight > 0)
-    ) {
-      return layoutBox(this);
+    if (this instanceof HTMLElement) {
+      if (in3dEditor(this) && (this.offsetWidth > 0 || this.offsetHeight > 0)) {
+        return layoutBox(this);
+      }
+      const cover = editorCover(this);
+      if (cover) return cover;
     }
     return rect.call(this);
   };
 
   const rects = Element.prototype.getClientRects;
   Element.prototype.getClientRects = function () {
-    if (this instanceof HTMLElement && in3dEditor(this)) {
+    if (this instanceof HTMLElement && (in3dEditor(this) || editorCover(this))) {
       return [this.getBoundingClientRect()] as unknown as DOMRectList;
     }
     return rects.call(this);
