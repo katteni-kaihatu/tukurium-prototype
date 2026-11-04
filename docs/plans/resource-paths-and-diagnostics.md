@@ -2,8 +2,22 @@
 
 - 状態: **Active**
 - 対象: M0〜M6 完了後のリソース参照・型・診断の再設計
-- 実装状況: Phase 0 完了。Phase 1 完了。Phase 2 完了（構造・リソース参照・スクリプト・実行の Provider、`summarizeDiagnostics`、`viewDiagnostics` による current / stale、`GenerationGate`）。Phase 3 は依存グラフ（`ProjectDependencyGraph`・`changedRefs`・`dirtyRefs`）と、スクリプトの確認の増分化（`IncrementalCheck`）まで。System → KokoState は Query の表示名を `name:kokostate/<名前>` の節でつなぐ暫定の辺。`usageOf()` の統合、実行の問題の依存による stale 判定は残り。Phase 4 は `compileSystem`（acorn で import を読み、安定 ID の `__koko(ID, 名前)` に行の数を保って書き換える）、`readSystemQuery`、runtime・編集中の確認での利用、抽出の依存集めまで。名前の変更・移動に合わせた import のリファクタリング（`planImportRefactor`。ProjectDoc の名前の変更・移動の操作が、変更と同じ transaction でパスの文字列の範囲だけを書き直す）も済み。古い結び付け（stale binding）の診断は残り（結び付けを保存しないため、マージなどで壊れた import は今は「見つからない」として出る）。source map の代わりに行の数を保つ書き換えにした。Phase 5 は ID ベースの受け渡し（`ScriptEntity.states` は領域の中の ID、`names` は名前が一つに決まるものだけ）・Registry の同じ名前の許可・Query と Host API の `resolveKoko`・版ごとの realm（「リポジトリ@版」）と、対象の配置だけを新しい版へまとめて移す適用。Phase 5 完了
-- 関連 ADR: [0010](../adr/0010-resource-identity-paths-diagnostics.md)（Phase 0 の決定：仮想 import、種類をまたぐ名前の一意性、版ごとの realm、作っている途中の問題では Play を止めない）
+- 実装状況:
+  - Phase 0: 完了。
+  - Phase 1: 完了。
+  - Phase 2: 完了。構造・リソース参照・スクリプト・実行の Provider、`summarizeDiagnostics`、`viewDiagnostics` による current / stale、`GenerationGate`。
+  - Phase 3: 依存グラフ（`ProjectDependencyGraph`・`changedRefs`・`dirtyRefs`）と、スクリプトの確認の増分化（`IncrementalCheck`）まで。
+
+    System → KokoState は Query の表示名を `name:kokostate/<名前>` の節でつなぐ暫定の辺。`usageOf()` の統合、実行の問題の依存による stale 判定は残り。
+  - Phase 4: `compileSystem`、`readSystemQuery`、runtime・編集中の確認での利用、抽出の依存集めまで。
+
+    `compileSystem` は acorn で import を読み、安定 ID の `__koko(ID, 名前)` に行の数を保って書き換える。source map の代わりに行の数を保つ書き換えにした。
+
+    名前の変更・移動に合わせた import のリファクタリング（`planImportRefactor`）も済み。ProjectDoc の名前の変更・移動の操作が、変更と同じ transaction でパスの文字列の範囲だけを書き直す。
+
+    古い結び付け（stale binding）の診断は残り。結び付けを保存しないため、マージなどで壊れた import は今は「見つからない」として出る。
+  - Phase 5: 完了。ID ベースの受け渡し（`ScriptEntity.states` は領域の中の ID、`names` は名前が一つに決まるものだけ）・Registry の同じ名前の許可・Query と Host API の `resolveKoko`・バージョンごとの realm（「リポジトリ@版」）と、対象の配置だけを新しいバージョンへまとめて移す適用。
+- 関連 ADR: [0010](../adr/0010-resource-identity-paths-diagnostics.md)（Phase 0 の決定：仮想 import、種類をまたぐ名前の一意性、バージョンごとの realm、作っている途中の問題では Play を止めない）
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 
 対象: `tukurium-prototype` main (`af08920c9b79d4063264c4bb36fe664c1d4e3fae`)
@@ -20,9 +34,9 @@
 
 ## 2. 自己レビュー後の設計判断
 
-### 2.1 パスは識別子ではなく、人間向けの参照表記にする
+### 2.1 パスと識別子の使い分け
 
-KokoState の恒久的な同一性は、現在の安定 ID (`KokoStateId`) のまま維持する。リソースパスは locator として扱う。
+KokoState の恒久的な同一性は、現在の安定 ID (`KokoStateId`) のまま維持する。リソースパスは識別子ではなく、人間向けの参照表記（locator）として扱う。
 
 理由:
 
@@ -39,11 +53,11 @@ KokoState の恒久的な同一性は、現在の安定 ID (`KokoStateId`) の�
 実行時:          realm + KokoStateId
 ```
 
-### 2.2 System は名前ではなく、解決済みリソース参照を使う
+### 2.2 System のリソース参照
 
-現行の `query.with: ["Gun"]` と `e.Gun` は、KokoState の表示名を実行 API に直接露出しているため、同名状態を一つの System で扱えない。
+System は名前ではなく、解決済みリソース参照を使う。現行の `query.with: ["Gun"]` と `e.Gun` は KokoState の表示名を実行 API に直接露出しているため、同名状態を一つの System で扱えない。
 
-最終形の候補は、仮想リソース import とする。
+最終形の候補は仮想リソース import とする。
 
 ```js
 import Gun from "../States/Gun.koko";
@@ -68,7 +82,7 @@ export default system({
 
 仮想 import の実装負荷が大きい場合は、先に `koko("../States/Gun")` 形式で resolver と binding table を検証してよい。ただし、正式構文を二重に残さず、スパイク後に ADR で一つへ決める。
 
-### 2.3 authored data と derived data を分ける
+### 2.3 authored data と derived data
 
 正本:
 
@@ -89,7 +103,7 @@ export default system({
 
 `SystemDef` に binding を保存する場合も、それはコンパイラ生成物として source hash と組にし、手編集可能な別の正本にしない。
 
-### 2.4 「問題」と「ログ」を分離する
+### 2.4 「問題」と「ログ」の区別
 
 - **Problems / 問題**: 現在の制作データまたは直前の実行に対する、重複排除された状態ベースの診断。
 - **Logs / ログ**: `log()`、実行イベント、時系列の観測情報。
@@ -114,7 +128,7 @@ Git 内の実ファイルパスとは別の「論理リソースパス」とす�
 - 異なるフォルダなら同名を許可する。
   - `/Player/Gun.koko`
   - `/Enemy/Gun.koko`
-- 同じ親の直下では、folder と全 resource kind を通して名前を一意にする。
+- 同じ親の直下では folder と全 resource kind を通して名前を一意にする。
 - `/`、NUL、`.`、`..`、予約 prefix `@builtin` は名前に使えない。
 - Unicode は NFC に正規化する。
 - Windows・Git・URL での混乱を避けるため、同一親で case-fold 後に衝突する名前も拒否する。
@@ -255,7 +269,7 @@ provider + code + subject(kind,id) + stable location + related IDs
 
 message や行番号だけをキーにしない。前の行への追記や表示名変更で別問題にならないようにする。
 
-### 5.3 原因と影響を分ける
+### 5.3 原因と影響の区別
 
 - `subject`: 実際に直すべきリソース。
 - `related`: 原因、参照先、影響先。
@@ -430,7 +444,7 @@ interface DiagnosticFix {
 
 ## 10. 共同編集と永続化
 
-### 永続化しない
+### 永続化しない情報
 
 - diagnostics 本体
 - current / stale / checking
@@ -442,7 +456,7 @@ Authoring diagnostics は各クライアントが同じ Y.Doc から決定的に
 
 Runtime diagnostics は host の結果を正とし、`runId / outputId / snapshotVersion` と一緒に配信する。
 
-### localStorage のみ
+### localStorage にのみ保存する情報
 
 - filter
 - grouping
@@ -453,7 +467,7 @@ Runtime diagnostics は host の結果を正とし、`runId / outputId / snapsho
 
 ## 11. 段階的実装計画
 
-すべて縦の小さなスライスで TDD (`RED -> GREEN -> REFACTOR`) を行う。production code より先に、その振る舞いを示す failing test を作り、実際に期待理由で失敗することを確認する。
+すべて縦の小さなスライスで TDD (`RED -> GREEN -> REFACTOR`) を行う。production code より先に、その振る舞いを示す failing test を作り、実際に期待した理由で失敗することを確認する。
 
 ### Phase 0: ADR と現行挙動の固定
 

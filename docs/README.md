@@ -1,6 +1,6 @@
 # Tukurium ドキュメント
 
-このディレクトリでは、現在使う文書と歴史資料を分けて管理する。
+このディレクトリでは現在使う文書と歴史資料を分けて管理する。
 
 ## まず読む
 
@@ -14,15 +14,15 @@
 | 文書 | 役割 |
 | --- | --- |
 | [ROADMAP.md](ROADMAP.md) | 現在以降の作業と、詳細計画への入口 |
-| [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画 |
-| [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件 |
-| [adr/](adr/) | 採用・変更・廃止した設計判断の記録 |
+| [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md) |
+| [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件。[Creator Platform 機能候補](discovery/creator-platform-capabilities.md) |
+| [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |
 | [DEPLOY.md](DEPLOY.md) | VPS / Coolify への設置・更新・バックアップ |
 
 ## 歴史資料
 
-[archive/](archive/) には、初期要件や完了済みロードマップを残す。経緯を調べるための資料であり、現在の仕様や実装指示としては使わない。
+[archive/](archive/) には[初期要件](archive/requirements-v0.1.md)や[完了済みロードマップ](archive/PLAN-v0.2.md)を残す。経緯を調べるための資料であり、現在の仕様や実装指示としては使わない。
 
 ## 情報が食い違うときの優先順位
 
@@ -40,6 +40,6 @@
 - 設計を決めたら ADR に残す。既存 ADR を無言で書き換えず、変更した ADR から置き換え元を示す。
 - 詳細計画には `Draft / Active / Completed` の状態と実装状況を書く。
 - `discovery/` は `Candidate / Focus / Promoted / Parked` で運用する。Focus は最大 5 件とし、実装順や実装の約束として扱わない。昇格条件を満たした候補だけを Active plan へ移す。
-- 完了した計画は、現在必要な結果を ADR・README・DEVELOPMENT に移してから `archive/` へ移す。
+- 完了した計画は現在必要な結果を ADR・README・DEVELOPMENT に移してから `archive/` へ移す。
 - 診断結果、生成物、一時的な調査ログは文書としてコミットしない。
-- 同じ説明を複数文書へ複製せず、正本へリンクする。
+- 同じ説明を複数文書へ複製せず、その内容を管理する文書へリンクする。

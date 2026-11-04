@@ -2,15 +2,15 @@
 
 - 状態: **Discovery**
 - 実装順: **未決定**
-- 正本の範囲: UGC の制作・表現・配布を広げる候補の比較と昇格判断
+- この文書で管理する範囲: UGC の制作・表現・配布を広げる候補の比較と昇格判断
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 - 関連する Active 計画: [`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md)
 
 ## 1. この文書の位置付け
 
-ここには、価値がありそうだが実装時期・仕様・採用可否をまだ決めていない機能を置く。名前だけのアイデア集にはせず、利用者価値、責務を置く層、最小の縦切り、前提、検証方法までは整理する。一方、ここへの掲載や Focus 選定は、実装、公開 API の安定化、互換性維持を約束しない。
+ここには、価値がありそうだが実装時期・仕様・採用可否をまだ決めていない機能を置く。名前だけのアイデア集にはせず、利用者価値、責務を置く層、最小の縦切り、前提、検証方法までは整理する。一方、ここへの掲載や Focus 選定は実装、公開 API の安定化、互換性維持を約束しない。
 
-採用済みの設計は ADR、着手する仕事と受け入れ条件は Active plan、現在利用できる機能は README を正本とする。この文書と実装が食い違う場合は実装を優先し、候補を無言で現在仕様として扱わない。
+採用済みの設計は ADR、着手する仕事と受け入れ条件は Active plan、現在利用できる機能は README で管理する。この文書と実装が食い違う場合は実装を優先し、候補を無言で現在仕様として扱わない。
 
 ## 2. 層と利用時点
 
@@ -31,10 +31,10 @@
 
 候補は次の状態で管理する。API の `experimental / preview / stable / deprecated` lifecycle とは別の、企画上の状態である。
 
-- **Candidate**: 調査対象として記録済み。着手時期と採否は未決定
-- **Focus**: 次に解像度を上げる対象。常時最大 5 件とし、実装順は表さない
-- **Promoted**: 昇格条件を満たし、個別の Active plan または既存計画の明示的な slice へ移した
-- **Parked**: 現時点では追わない。理由と再検討条件を残す
+- Candidate: 調査対象として記録済み。着手時期と採否は未決定
+- Focus: 次に内容を具体化する対象。常時最大 5 件とし、実装順は表さない
+- Promoted: 昇格条件を満たし、個別の Active plan または既存計画の明示的な slice へ移した
+- Parked: 現時点では追わない。理由と再検討条件を残す
 
 ### 3.2 候補の追加
 
@@ -51,9 +51,9 @@
 
 ### 3.3 Focus の選定と見直し
 
-Focus は、次の観点を文章で比較して選ぶ。見栄えだけの点数付けや、根拠の薄い合計点で固定しない。
+Focus は次の観点を文章で比較して選ぶ。見栄えだけの点数付けや、根拠の薄い合計点で固定しない。
 
-- 他の候補を解放する基盤性
+- 他の候補を実現するための基盤になるか
 - 複数の UGC での再利用性と利用者価値
 - 現在の Active plan、Package、権限、Diagnostic との接続
 - 小さな end-to-end slice で検証できるか
@@ -78,13 +78,13 @@ Focus は、次の観点を文章で比較して選ぶ。見栄えだけの点�
 
 ## 4. 現在の Focus 5件
 
-この 5 件は優先順位順ではない。制作の安全性、現在進行中の Package / UGC API 基盤との接続、後続候補を解放する度合いを重視して選んだ。
+この 5 件は優先順位順ではない。制作の安全性、現在進行中の Package / UGC API 基盤との接続、後続候補の実現につながる度合いを重視して選んだ。
 
-1. **Undo / Redo** — Brush と Timeline を含む制作ツール全体の安全な編集 transaction の前提
-2. **Animation** — キャラクター、装置、演出で再利用され、Timeline などの基礎になる表現 primitive
-3. **Camera** — Player の視点へ作用するため、権限・競合・アクセシビリティを API 固定前に検証する必要がある
-4. **License / provenance** — Package の依存・install・fork・公開が進む前に、出所と継承を失わないデータモデルが必要
-5. **Sample UGC の充実** — Reference UGC から公式 API を育て、利用者が学習・改造できる検証ループを作る
+1. Undo / Redo: Brush と Timeline を含む制作ツール全体の安全な編集 transaction の前提
+2. Animation: キャラクター、装置、演出で再利用され、Timeline などの基礎になる表現 primitive
+3. Camera: Player の視点へ作用するため、権限・競合・アクセシビリティを API 固定前に検証する必要がある
+4. License / provenance: Package の依存・install・fork・公開が進む前に、出所と継承を失わないデータモデルが必要
+5. Sample UGC の充実: Reference UGC から公式 API を育て、利用者が学習・改造できる検証ループを作る
 
 Particle、Timeline、Brush、Post processing は上記の基盤から利益を受けるため Candidate に置く。Video と多言語化も重要だが、媒体・配布範囲を決めてから縦切りを選ぶ。HUD（10.1）は多くの UGC が要るが、DOM を公開しない宣言的な形と、別の作者の表示が重なったときの規則を決めてから縦切りを選ぶ。
 
@@ -153,7 +153,7 @@ Particle、Timeline、Brush、Post processing は上記の基盤から利益を�
 - 価値と例: 一人称 / 三人称、会話、乗り物、カットシーン、shake を安全に表現する
 - 主な層・利用時点: Editor camera は Editor 機能。Player camera への作用は Host Capability と Runtime の request / arbitration。制作時と実行時を分離する
 - 境界・前提: Player / camera request / owner identity を持つ。Player camera への作用には Capability grant と必要に応じた利用者同意を要求し、client の arbiter が priority / lifetime / release を強制する。request は非永続、演出の開始状態を同期するかは未決定。API schema は Runtime 内部表現から分離し、Camera rig asset の要否と schema / format は未決定
-- 最小スコープ: 配置された UGC が、明示的な期間を持つ camera request を開始・解除し、cut または短い blend を選べる。競合時の優先規則と強制解除を実装前に定義する
+- 最小スコープ: 配置された UGC が明示的な期間を持つ camera request を開始・解除し、cut または短い blend を選べる。競合時の優先規則と強制解除を実装前に定義する
 - 後回し: cinematic rig、path editor、advanced shake、splitscreen、portal / render texture、自由な projection matrix
 - 検証 UGC: 三人称切替と、扉を調べた時だけ再生される短い注視演出。退出・権限拒否・競合・酔い軽減設定を確認する
 - 未決定: World、Item、Player 自身の request 優先順位、ユーザー同意が必要な作用、client-local と同期演出の境界

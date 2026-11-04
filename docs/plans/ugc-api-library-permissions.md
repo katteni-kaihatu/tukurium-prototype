@@ -2,8 +2,16 @@
 
 - 状態: **Active**
 - 対象: ResourcePathIndex / Diagnostic core 後、System binding と Runtime Host API を固定する前から段階的に着手
-- 実装状況: U0 完了（ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`）。U1 は途中（`HOST_API_ARGS`、呼び出し主体の配置、別の配置を「見つからない」にする既定境界は完了。PackageExecutionContext、要求 Capability、effective grant の強制は未実装）。U2 は最初の縦の一本まで（Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`、拒否の知らせ（`SystemStatus.warnings`）。書き方・初期値・Item の所属（最初の World）は利用者と決めた）
-- U0 で利用者と決めたこと: 権限は置いた物（Placement）に与える／今は協調セッションに限り、サーバーの判定は U2 以降／境界はセッションに置いた World ごと／非公開の対象は「見つからない」
+- 実装状況:
+  - U0: 完了。ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`。
+  - U1: 途中。`HOST_API_ARGS`、呼び出し主体の配置、別の配置を「見つからない」にする既定境界は完了。PackageExecutionContext、要求 Capability、effective grant の強制は未実装。
+  - U2: 最初の一連の操作を通す実装まで。Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`、拒否の知らせ（`SystemStatus.warnings`）。
+    書き方・初期値・Item の所属（最初の World）は利用者と決めた。
+- U0 で利用者と決めたこと:
+  - 権限は置いた物（Placement）に与える。
+  - 今は協調セッションに限り、サーバーの判定は U2 以降。
+  - 境界はセッションに置いた World ごと。
+  - 非公開の対象は「見つからない」。
 - 関連 ADR: [0001](../adr/0001-script-runtime-quickjs.md)、[0006](../adr/0006-session-world-apply-assets.md)、[0008](../adr/0008-private-work-world-editing.md)、[0010](../adr/0010-resource-identity-paths-diagnostics.md)
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 
@@ -36,7 +44,7 @@ UGC が Item / World / Player の境界を越えて安全に相互作用し、�
 
 ## 3. 不変条件
 
-### 3.1 KokoState は継続する状態
+### 3.1 KokoState の対象
 
 KokoState にするのは、保存・同期・復元・Inspector 表示の対象になる継続的なデータとする。
 
@@ -45,9 +53,9 @@ KokoState にするのは、保存・同期・復元・Inspector 表示の対象
 - raycast / audio.play / effects.spawn は Host Capability とする。
 - 入力の押下を KokoState の boolean として立て、誰かが後で消す設計を標準にしない。
 
-### 3.2 実効権限は複数の許可の共通部分
+### 3.2 実効権限
 
-操作を許可するには、少なくとも次をすべて満たす。
+実効権限は複数の許可の共通部分とする。操作を許可するには、少なくとも次をすべて満たす。
 
 1. 呼び出し Package / System が Capability を宣言している。
 2. Item の配置または実行 context が Capability を grant されている。
@@ -57,9 +65,9 @@ KokoState にするのは、保存・同期・復元・Inspector 表示の対象
 
 利用者スクリプトが申告した `player`、target ID、permission は信用しない。Runtime gateway は実際の接続、配置、System、Package から context を組み立てる。ただし、現在のセッション Host は参加者のブラウザであり、改変クライアントに対する信頼境界にはならない。別所有者の state、永続操作、競争結果を保護する最終判定は Server authority が必要である。
 
-### 3.3 権限強制は Runtime / Server authority 境界で行う
+### 3.3 権限を強制する場所
 
-公式 Library は使いやすい API・型・標準 Contract を提供するが、セキュリティ境界にはしない。
+権限の強制は Runtime / Server authority 境界で行う。公式 Library は使いやすい API・型・標準 Contract を提供するが、セキュリティ境界にはしない。
 
 ```text
 UGC System
@@ -71,7 +79,7 @@ UGC System
 
 利用者が公式 wrapper を使わなくても、Runtime gateway を迂回できない構造にする。honest Host 上の sandboxed UGC を隔離する保証と、改変 Host client から他作者・他参加者を守る保証を区別し、後者を必要とする操作は Server で再検証または実行する。
 
-### 3.4 発見と操作を分ける
+### 3.4 発見と操作の区別
 
 対象の存在、Entity ID、内部 state を知れること自体が権限である。
 
@@ -79,11 +87,11 @@ UGC System
 - Raycast の結果は原則として生の Entity API を持たない opaque handle にする。利用者へ渡す handle ref は Host / Server 管理テーブルを指す推測困難な token とし、同じ形の JSON を作るだけでは利用できないようにする。
 - position / normal / distance / 公開 surface のような衝突結果と、state.read / state.write を分ける。
 
-### 3.5 別 World は既定で分離する
+### 3.5 World 間の分離
 
-別 security domain の World との通信は Portal / Bridge / Message channel / Shared service のような明示的な接続だけにする。`world.getById()` や全体列挙から別 World へ暗黙に到達させない。現行は一つの Session Simulation と物理空間へ複数の World / Item output を置けるため、U0 で canonical `WorldInstanceId`、World output と Session の関係、各 Collider が従う policy scope を決めるまで、座標上の距離だけを security boundary とみなさない。
+別 World は既定で分離する。別 security domain の World との通信は Portal / Bridge / Message channel / Shared service のような明示的な接続だけにする。`world.getById()` や全体列挙から別 World へ暗黙に到達させない。現行は一つの Session Simulation と物理空間へ複数の World / Item output を置けるため、U0 で canonical `WorldInstanceId`、World output と Session の関係、各 Collider が従う policy scope を決めるまで、座標上の距離だけを security boundary とみなさない。
 
-### 3.6 Package の version は不変
+### 3.6 Package の version
 
 同じ package ID / version の内容を後から置き換えない。実行時には解決済み version と content hash を固定し、自動で最新版へ切り替えない。
 
@@ -287,13 +295,13 @@ Placement grant の保存形式と effective permission の計算も U1 の runt
 進み具合（[ADR 0015](../adr/0015-library-package-minimal.md)）：
 
 - [x] Output の Kind「ライブラリ」、公開の印（`exports`）、manifest（`packageManifest`・`stableStringify`）
-- [x] リリースのときにサーバーが content hash を計算して残す。同じ版の違う hash を拒む。版の中身を取り出す API
+- [x] リリースのときにサーバーが content hash を計算して残す。同じバージョンの違う hash を拒む。バージョンの中身を取り出す API
 - [x] プロジェクトの依存（別名・Package ID・版・hash の lock）と `@別名/...` の import（KokoState。依存を足す・外す最小の画面はライブラリの欄）
 - [x] 依存の診断（依存にない別名・見つからない／公開されていない（区別しない）・hash の不一致・取り出せない）と依存グラフの辺（System → 別名）
-- [x] 依存の依存と輪の検出（manifest に依存を入れる。依存の依存は間のライブラリの作者の許可で取り出す。別の版は共存し注意にする。使う側から見えるのは直接の依存だけ。自分自身への依存はリリースで拒む）
-- [x] 実行時の取り込み：KokoState（Entity に付けて再生で動く。同じ版は置いた物どうしで共有。セッションではサーバーが持ち主の許可で中身を添える）
-- [x] ライブラリの System をアウトプットで使い、PackageExecutionContext を付ける（import は同じライブラリの公開したものと Built-in だけ。VM は使うプロジェクトとライブラリの版ごと）
-- [x] 抽出／フォークで出所と結び付けを保つ（フォークはそのまま残る。抽出は依存・フォルダを持ってきて import を書き直す。同じライブラリの別の版は別の別名で共存できる）
+- [x] 依存の依存と輪の検出（manifest に依存を入れる。依存の依存は間のライブラリの作者の許可で取り出す。別のバージョンは共存し注意にする。使う側から見えるのは直接の依存だけ。自分自身への依存はリリースで拒む）
+- [x] 実行時の取り込み：KokoState（Entity に付けて再生で動く。同じバージョンは置いた物どうしで共有。セッションではサーバーが持ち主の許可で中身を添える）
+- [x] ライブラリの System をアウトプットで使い、PackageExecutionContext を付ける（import は同じライブラリの公開したものと Built-in だけ。VM は使うプロジェクトとライブラリのバージョンごと）
+- [x] 抽出／フォークで出所と結び付けを保つ（フォークはそのまま残る。抽出は依存・フォルダを持ってきて import を書き直す。同じライブラリの別のバージョンは別の別名で共存できる）
 
 ### U4: 公式 Platform Primitive / Library と reference UGC
 
@@ -301,7 +309,7 @@ UGC の種類を増やすため、Runtime Built-in、Host Capability、公式 Li
 
 進み具合（[ADR 0016](../adr/0016-official-library-reference-ugc.md)）：
 
-- [x] 公式の発行者（決まった ID。公式の印は発行者で決まる）と、サーバーに同梱して起動のときに登録する公式ライブラリ（決まった Package ID。中身が変われば新しい版）
+- [x] 公式の発行者（決まった ID。公式の印は発行者で決まる）と、サーバーに同梱して起動のときに登録する公式ライブラリ（決まった Package ID。中身が変われば新しいバージョン）
 - [x] 公式「combat」（Health と Damageable）と、それを使う reference UGC「銃と的（公式ライブラリ）」。今の銃からの Damage も公式の Damageable が受ける
 - [x] API の安定度（[ADR 0019](../adr/0019-api-stability-all-experimental.md)：今は Host API・Built-in の Contract をすべて experimental。公式ライブラリは公式アカウントの UGC として扱い印を付けない。知らせるのはエディタの説明と入力補完だけ。上げるのはワークショップができてから）
 - [x] 扉とスイッチ（E で見ている物に Built-in の Interact v1。公式「interaction」（Toggle・Toggleable）と、それを使う reference UGC「扉とスイッチ」）
@@ -381,8 +389,8 @@ Health、Inventory、Equipment のようなドメインモデルは、Runtime �
 - `experimental`: API identity に実験 revision を含め、Package は exact revision を固定する。互換性なく変更できるが、共有する stable Package からは依存できず、利用箇所へ Diagnostic を出す。
 - `preview`: stable 候補の identity と major version を持つ。昇格条件、authority、schema、quota、conformance test が揃った段階で入り、既知のブロッカーを解消して reference UGC で実測する。Runtime が実行を保証するのは各 API identity の最新 preview major だけとする。破壊的変更は preview major を上げ、旧 preview major の利用箇所に migration と Diagnostic を用意してから置き換える。
 - `stable`: Capability / Contract は exact major、公式 Library は解決済みの exact semver と content hash を Package lock に固定する。同じ major の schema と意味は後方互換にする。Runtime は API identity ごとに最新と直前の stable major を同時にサポートする。
-- `deprecated`: stable major `N` は、後継の `N+1` を stable にした時点で代替 API と migration を示して deprecated にできる。`N` は直前の stable major として実行を保ち、さらに `N+2` を stable にするときにだけサポート対象から外せる。
-- Runtime は未対応 version / revision を構造化 Diagnostic にし、暗黙に近い版へ読み替えない。
+- `deprecated`: stable major `N` は後継の `N+1` を stable にした時点で代替 API と migration を示して deprecated にできる。`N` は直前の stable major として実行を保ち、さらに `N+2` を stable にするときにだけサポート対象から外せる。
+- Runtime は未対応 version / revision を構造化 Diagnostic にし、暗黙に近いバージョンへ読み替えない。
 - `server-revalidate` / `server-execute` が必要な API は、Server authority を実装するまで協調セッション向けの experimental とし、保護済みの stable API として公開しない。
 
 #### U4 の完了条件
