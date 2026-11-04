@@ -14,17 +14,26 @@
 
 - [x] Phase 0: identity / path / binding / diagnostics の判断を ADR で固定する（[ADR 0010](adr/0010-resource-identity-paths-diagnostics.md)）
 - [x] ResourcePathIndex と snapshot validation（名前の衝突・フォルダの輪・置き場所。UI で作る・名前を変える・移すときは衝突を避ける）
-- [x] 汎用 Diagnostic model と最小 Provider（構造・リソース参照・スクリプト・実行の問題を一つの形にした。編集前の結果は stale、非同期の確認は世代で古い結果を捨てる）
-- [x] ProjectDependencyGraph と増分無効化（スクリプトの確認は影響を受ける System だけ。System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。`usageOf()`・抽出への統合は残り）
-- [x] System の構造化された resource binding（仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。古い結び付けの診断は、結び付けを覚えておく仕組みと合わせて後で）
-- [x] runtime を alias / stable ID ベースへ移行（状態の受け渡し・Query・world.get/set/spawn を ID ベースにし、別のフォルダの同じ名前の KokoState を使えるようにした。セッションの realm は「リポジトリ@版」で、適用は対象の配置だけを新しい版へまとめて移す）
+- [x] 汎用 Diagnostic model と最小 Provider
+  - 構造・リソース参照・スクリプト・実行の問題を一つの形にした。
+  - 編集前の結果は stale、非同期の確認は世代で古い結果を捨てる。
+- [x] ProjectDependencyGraph と増分無効化
+  - スクリプトの確認は影響を受ける System だけ。
+  - System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。
+  - `usageOf()`・抽出への統合は残り。
+- [x] System の構造化された resource binding
+  - 仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。
+  - 古い結び付けの診断は結び付けを覚えておく仕組みと合わせて後で。
+- [x] runtime を alias / stable ID ベースへ移行
+  - 状態の受け渡し・Query・world.get/set/spawn を ID ベースにし、別のフォルダの同じ名前の KokoState を使えるようにした。
+  - セッションの realm は「リポジトリ@版」で、適用は対象の配置だけを新しいバージョンへまとめて移す。
 - [ ] 独立した Problems パネル、全 resource / folder / hierarchy の集計表示
 - [ ] Snapshot v2、migration、extract / fork の更新
 - [ ] 型付き JavaScript。その必要性を確認後に TypeScript 対応
 
 ### 2. スクリプト境界の堅牢化
 
-上の計画と同じ土台で進める。
+リソースパスと全体診断の計画と同じ基盤で進める。
 
 - [ ] QuickJS との全境界を `unknown` から検証する
 - [x] Host API の型・validator・利用者向け宣言を一つの定義から生成する（`HOST_API_SPEC`。`hostApiDeclarations` と `hostApiCompletions`）
@@ -39,10 +48,26 @@
 
 - [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
 - [x] schema-first の Host API 引数検証と既定の配置境界を作る（引数を一つの定義で検証し、別の配置へは opaque handle と公開 Contract だけで届くようにした）
-- [x] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する（要る Capability はコードから読み取り、セッションでは「宣言 ∩ 付与」で全 Host API に強制。ワークスペースの再生では強制しない（利用者と決めた）。付与はサーバーの配置の台帳に保存し、setGrants で変えられる。`HOST_API_SPEC` から検証・権限の分類・拒んだときの値・利用者向けの型の宣言・エディタの入力補完を作る）
-- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する（最初の縦の一本：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。土台の World の上限（guestPolicy のプリセット）も済み、拒否の知らせ（contract-denied）も済み。呼び出し側 grant の強制は上の gateway 項目、対象側はサーバーでの判定が残り。設定 UI は U5）
-- [x] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する（[ADR 0015](adr/0015-library-package-minimal.md)。Kind「ライブラリ」・公開の印・リリースのときにサーバーが計算する content hash・版の中身を取り出す API・依存の lock・`@別名` の import（KokoState）・その診断・依存グラフの辺・依存を足す最小の画面・依存の KokoState の実行時の取り込み（Entity に付けて再生で動く。同じ版は置いた物どうしで共有）・ライブラリの System をアウトプットで動かすこと（PackageExecutionContext を付け、VM は使うプロジェクトごと）・依存の依存と輪の検出・抽出／フォークでの出所と結び付けの保持）
-- [x] 公式 Platform Primitive / Library カタログを整備する。銃と的、扉とスイッチ、収集物と Inventory を reference UGC として縦に実装し、複数用途で共通する機能、Host 境界でしか安全に提供できない機能、Package 間相互運用に必要な機能だけを Runtime Built-in・Host Capability・公式 Library へ段階的に昇格させる（[ADR 0016](adr/0016-official-library-reference-ugc.md)。公式の発行者・同梱の公式ライブラリ「combat」（Health・Damageable）と「interaction」（Toggle・Toggleable）・それを使う reference UGC「銃と的（公式ライブラリ）」「扉とスイッチ」・E で押す Built-in の Interact・プレイヤーが持ち歩くバッグ（[ADR 0018](adr/0018-player-bag.md)。公式「items」と reference UGC「鍵と扉」）は済み。三本で実測した結果、API は今はすべて experimental とした（[ADR 0019](adr/0019-api-stability-all-experimental.md)）。preview / stable へ上げるのはワークショップができてから）
+- [x] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する
+  - 要る Capability はコードから読み取り、セッションでは「宣言 ∩ 付与」で全 Host API に強制する。
+  - ワークスペースの再生では強制しない（利用者と決めた）。
+  - 付与はサーバーの配置の記録に保存し、setGrants で変えられる。
+  - `HOST_API_SPEC` から検証・権限の分類・拒んだときの値・利用者向けの型の宣言・エディタの入力補完を作る。
+- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する
+  - 最初の縦の一本で通す操作：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。
+  - 土台の World の上限（guestPolicy のプリセット）と拒否の知らせ（contract-denied）も済み。
+  - 呼び出し側 grant の強制は上の gateway 項目。対象側はサーバーでの判定が残り。
+  - 設定 UI は U5。
+- [x] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する（[ADR 0015](adr/0015-library-package-minimal.md)）
+  - Kind「ライブラリ」・公開の印・リリースのときにサーバーが計算する content hash・バージョンの中身を取り出す API・依存の lock。
+  - `@別名` の import（KokoState）・その診断・依存グラフの辺・依存を足す最小の画面。
+  - 依存の KokoState の実行時の取り込み。Entity に付けて再生で動く。同じバージョンは置いた物どうしで共有。
+  - ライブラリの System をアウトプットで動かす。PackageExecutionContext を付け、VM は使うプロジェクトごと。
+  - 依存の依存と輪の検出・抽出／フォークでの出所と結び付けの保持。
+- [x] 公式 Platform Primitive / Library カタログを整備する。銃と的、扉とスイッチ、収集物と Inventory を reference UGC として一連の操作を通す形で実装し、複数用途で共通する機能、Host 境界でしか安全に提供できない機能、Package 間相互運用に必要な機能だけを Runtime Built-in・Host Capability・公式 Library へ段階的に昇格させる（[ADR 0016](adr/0016-official-library-reference-ugc.md)）
+  - 公式の発行者・同梱の公式ライブラリ「combat」（Health・Damageable）と「interaction」（Toggle・Toggleable）・それを使う reference UGC「銃と的（公式ライブラリ）」「扉とスイッチ」は済み。
+  - E で押す Built-in の Interact・プレイヤーが持ち歩くバッグ（[ADR 0018](adr/0018-player-bag.md)）・公式「items」と reference UGC「鍵と扉」も済み。
+  - 三本で実測した結果、API は今はすべて experimental とした（[ADR 0019](adr/0019-api-stability-all-experimental.md)）。preview / stable へ上げるのはワークショップができてから。
 - [ ] Dependencies / Placement grant・World / Item 権限プリセット / Problems の UI を追加する（実効権限の runtime model と強制は U1 の gateway で先に完成させる）
 - [ ] 基盤の実測後、ユーザー間の公開・検索・install・fork・更新へ広げる
 
@@ -90,4 +115,4 @@ Video player、Particle、Timeline animation、Localization、Post processing、
 - 一度に全 Phase を実装せず、小さな end-to-end slice で進める。
 - production code より先に失敗するテストを書き、RED → GREEN → REFACTOR を確認する。
 - Phase 完了時に、決定事項は ADR、再利用できる注意点は DEVELOPMENT、現在できることは README へ反映する。
-- Active な詳細計画が完了したら、結果を正本へ移して計画自体は archive へ移す。
+- Active な詳細計画が完了したら、結果をその内容を管理する文書へ移して計画自体は archive へ移す。
