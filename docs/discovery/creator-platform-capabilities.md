@@ -59,7 +59,7 @@ Focus は次の観点を文章で比較して選ぶ。見栄えだけの点数�
 - 小さな end-to-end slice で検証できるか
 - 後から変更すると互換性、安全性、データ移行へ与える影響
 
-関連する Active plan の phase 完了時、ROADMAP の numbered section 完了時、重大な前提変更時、または候補を Active plan へ昇格した時に見直す。Focus が 5 件を超える場合は、何を外すかと理由を同じ変更で記録する。
+関連する Active plan の Phase 完了時、ROADMAP にある機能項目の完了時、重大な前提変更時、または候補を Active plan へ昇格した時に見直す。Focus が 5 件を超える場合は、何を外すかと理由を同じ変更で記録する。
 
 候補の一部が既に Active plan に含まれる場合は、Active な slice へのリンクと Discovery に残す範囲を候補内で分ける。同じ受け入れ条件を Focus と Active の両方で管理しない。残りの探索範囲がなくなった時だけ候補全体を Promoted にする。
 

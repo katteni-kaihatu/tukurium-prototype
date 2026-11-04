@@ -6,14 +6,14 @@
 
 - [プロジェクトの README](../README.md)：現在できること、必要なもの、起動方法
 - [開発の約束](../CLAUDE.md)：実装・テスト・文言について守ること
-- [現在のロードマップ](ROADMAP.md)：これから取り組むテーマと優先順
+- [現在のロードマップ](ROADMAP.md)：利用者向けの機能ごとの実装済み・これから実装するもの・検討中の候補
 - [設計判断の記録](adr/README.md)：採用済みの設計と、その理由
 
 ## 現在使う文書
 
 | 文書 | 役割 |
 | --- | --- |
-| [ROADMAP.md](ROADMAP.md) | 現在以降の作業と、詳細計画への入口 |
+| [ROADMAP.md](ROADMAP.md) | 機能ごとの実装状況と残作業、検討中の候補、詳細計画への入口。分野の並びは優先順位を表さない |
 | [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md) |
 | [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件。[Creator Platform 機能候補](discovery/creator-platform-capabilities.md) |
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |

@@ -8,7 +8,7 @@
   - Phase 2: 完了。構造・リソース参照・スクリプト・実行の Provider、`summarizeDiagnostics`、`viewDiagnostics` による current / stale、`GenerationGate`。
   - Phase 3: 依存グラフ（`ProjectDependencyGraph`・`changedRefs`・`dirtyRefs`）と、スクリプトの確認の増分化（`IncrementalCheck`）まで。
 
-    System → KokoState は Query の表示名を `name:kokostate/<名前>` の節でつなぐ暫定の辺。`usageOf()` の統合、実行の問題の依存による stale 判定は残り。
+    System → KokoState は、import では安定 ID、従来の Query の表示名では `name:kokostate/<名前>` の節でつなぐ。抽出する System の KokoState 収集にも統合済み。`usageOf()` と残る抽出処理の統合、実行の問題の依存による stale 判定は残り。
   - Phase 4: `compileSystem`、`readSystemQuery`、runtime・編集中の確認での利用、抽出の依存集めまで。
 
     `compileSystem` は acorn で import を読み、安定 ID の `__koko(ID, 名前)` に行の数を保って書き換える。source map の代わりに行の数を保つ書き換えにした。
@@ -17,6 +17,9 @@
 
     古い結び付け（stale binding）の診断は残り。結び付けを保存しないため、マージなどで壊れた import は今は「見つからない」として出る。
   - Phase 5: 完了。ID ベースの受け渡し（`ScriptEntity.states` は領域の中の ID、`names` は名前が一つに決まるものだけ）・Registry の同じ名前の許可・Query と Host API の `resolveKoko`・バージョンごとの realm（「リポジトリ@版」）と、対象の配置だけを新しいバージョンへまとめて移す適用。
+  - Phase 6: 一部実装済み。独立した「エラー」パネル、メインパネルの件数表示、Resources のリソース・フォルダの印、コードの行・定義・Entity への移動はある。検索・絞り込み・グループ化、全診断の集計、Hierarchy の件数、詳細な場所への移動、修正操作は残り。
+  - Phase 7: Snapshot v2 と旧データの移行は未実装。現在の Snapshot v1 で、抽出時のフォルダ・依存・出所の保持と import の書き換えは実装済み。
+  - Phase 8: Host API の型の宣言と入力補完は実装済み。KokoState の型を含めた JavaScript の型チェックは残り。TypeScript を正式なスクリプト形式にするかは、その後に判断する。
 - 関連 ADR: [0010](../adr/0010-resource-identity-paths-diagnostics.md)（Phase 0 の決定：仮想 import、種類をまたぐ名前の一意性、バージョンごとの realm、作っている途中の問題では Play を止めない）
 - ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
 

@@ -1,118 +1,172 @@
 # Tukurium ロードマップ
 
 - 状態: **Active**
-- M0〜M6: 完了
-- 詳細な完了記録: [`archive/PLAN-v0.2.md`](archive/PLAN-v0.2.md)
+- M0〜M6: 完了。制作・共同編集・再生・公開・再利用までの一周は実装済み。
+- 初期プロトタイプの完了記録: [`archive/PLAN-v0.2.md`](archive/PLAN-v0.2.md)
 
-## 現在
+Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、その場で試して遊べる制作環境。作る人と遊ぶ人が同じセッションにいて、作業を見たり、一緒に編集したり、別々に作った作品を組み合わせたりできる。
 
-プロトタイプの一周は完成している。次は制作規模を増やす前に、リソース参照、System の型と境界、プロジェクト全体の診断を整理する。あわせて、UGC が他の Item / World と安全に相互作用するための Capability・権限・Library Package の基盤を、公開 API が固定される前に設計する。
+## 状態の見方
 
-### 1. リソースパスと全体診断
+機能を利用者の行動ごとに整理する。分野の番号や項目の並びは、実装の優先順位を表さない。
 
-詳細計画: [`plans/resource-paths-and-diagnostics.md`](plans/resource-paths-and-diagnostics.md)
+| 状態 | 意味 |
+| --- | --- |
+| 実装済み | 現在のプロトタイプで使える範囲。制約や残作業がある場合は分けて記載する。 |
+| これから実装するもの | Active な計画にある残作業。着手前に設計判断が必要なものも含み、実装時期は未定。 |
+| 検討中 | 採用・範囲・実装順が決まっていない候補。Focus は重点的な検討対象で、実装の約束ではない。 |
 
-- [x] Phase 0: identity / path / binding / diagnostics の判断を ADR で固定する（[ADR 0010](adr/0010-resource-identity-paths-diagnostics.md)）
-- [x] ResourcePathIndex と snapshot validation（名前の衝突・フォルダの輪・置き場所。UI で作る・名前を変える・移すときは衝突を避ける）
-- [x] 汎用 Diagnostic model と最小 Provider
-  - 構造・リソース参照・スクリプト・実行の問題を一つの形にした。
-  - 編集前の結果は stale、非同期の確認は世代で古い結果を捨てる。
-- [x] ProjectDependencyGraph と増分無効化
-  - スクリプトの確認は影響を受ける System だけ。
-  - System → KokoState は Query の名前を介した辺で、Phase 4 で安定 ID に置き換える。
-  - `usageOf()`・抽出への統合は残り。
-- [x] System の構造化された resource binding
-  - 仮想 import の解決・書き換え・Query の AST 読み取り・抽出の依存・名前の変更や移動に合わせた import のリファクタリング。
-  - 古い結び付けの診断は結び付けを覚えておく仕組みと合わせて後で。
-- [x] runtime を alias / stable ID ベースへ移行
-  - 状態の受け渡し・Query・world.get/set/spawn を ID ベースにし、別のフォルダの同じ名前の KokoState を使えるようにした。
-  - セッションの realm は「リポジトリ@版」で、適用は対象の配置だけを新しいバージョンへまとめて移す。
-- [ ] 独立した Problems パネル、全 resource / folder / hierarchy の集計表示
-- [ ] Snapshot v2、migration、extract / fork の更新
-- [ ] 型付き JavaScript。その必要性を確認後に TypeScript 対応
+実装済みは `[x]`、これから実装するものは `[ ]` で示す。検討中の候補にはチェックボックスを付けない。実装の詳細と判断の経緯は、各分野からリンクした計画・ADR で管理する。
 
-### 2. スクリプト境界の堅牢化
+## 1. 集まる・作業を見る
 
-リソースパスと全体診断の計画と同じ基盤で進める。
+### 実装済み
 
-- [ ] QuickJS との全境界を `unknown` から検証する
-- [x] Host API の型・validator・利用者向け宣言を一つの定義から生成する（`HOST_API_SPEC`。`hostApiDeclarations` と `hostApiCompletions`）
-- [ ] 構造化された ScriptDiagnostic を Runtime・通信・Problems UI まで保つ
-- [ ] メモリ超過時の復旧動作と ADR 0001 を一致させる
+- [x] セッションを作る・参加する・退出する。持ち主はセッションを閉じられる。
+- [x] 3D 空間を歩き、他の参加者の位置や作業の様子を見る。作業内容は閲覧権限の範囲で見える。
+- [x] 編集パネルを画面内の 2D 表示と空間内の 3D 表示で切り替える。
+- [x] 公開されたワールドをセッションで開く。ワークスペースを開いていなくても利用できる。
 
-### 3. UGC API・権限・Library Package
+セッションの安全性の表示と、実行役を信頼する方式の制約は「5. 作品を組み合わせる」で扱う。この分野だけを対象とする新機能は、現時点の Active な計画にはない。
 
-詳細計画（Active）: [`plans/ugc-api-library-permissions.md`](plans/ugc-api-library-permissions.md)
+## 2. アイテムやワールドを作る
 
-現在の dependency graph の次から設計判断を始め、System binding と Runtime Host API を固定する前に権限境界を組み込む。Library の検索・共有 UI より、実行時に強制できる安全な API と最小 package model を先に作る。
+### 実装済み
 
-- [x] U0: KokoState / Event / Capability / Package の責務と、Player / System / Item / World / Host の権限主体を ADR と characterization test で固定する（[ADR 0011](adr/0011-kokostate-event-capability-package.md)〜[0013](adr/0013-package-identity-version.md)、`HOST_API_POLICY`）
-- [x] schema-first の Host API 引数検証と既定の配置境界を作る（引数を一つの定義で検証し、別の配置へは opaque handle と公開 Contract だけで届くようにした）
-- [x] PackageExecutionContext、要求 Capability、Placement grant、World policy から実効権限を計算し、すべての UGC Host API で deny-by-default に強制する。利用者向け型・Diagnostic metadata も同じ定義から生成する
-  - 要る Capability はコードから読み取り、セッションでは「宣言 ∩ 付与」で全 Host API に強制する。
-  - ワークスペースの再生では強制しない（利用者と決めた）。
-  - 付与はサーバーの配置の記録に保存し、setGrants で変えられる。
-  - `HOST_API_SPEC` から検証・権限の分類・拒んだときの値・利用者向けの型の宣言・エディタの入力補完を作る。
-- [ ] 呼び出し側 grant と対象側 policy、公開 Contract、opaque handle を使った境界越しの相互作用を実装する
-  - 最初の縦の一本で通す操作：Raycast の opaque handle → `hit.effect("spark")` と `hit.send("Damage")` → 的の `contracts.Damage`、出力の exposure。
-  - 土台の World の上限（guestPolicy のプリセット）と拒否の知らせ（contract-denied）も済み。
-  - 呼び出し側 grant の強制は上の gateway 項目。対象側はサーバーでの判定が残り。
-  - 設定 UI は U5。
-- [x] stable package ID / version / exports / dependencies / capability requirements を持つ最小のローカル Library Package を実装する（[ADR 0015](adr/0015-library-package-minimal.md)）
-  - Kind「ライブラリ」・公開の印・リリースのときにサーバーが計算する content hash・バージョンの中身を取り出す API・依存の lock。
-  - `@別名` の import（KokoState）・その診断・依存グラフの辺・依存を足す最小の画面。
-  - 依存の KokoState の実行時の取り込み。Entity に付けて再生で動く。同じバージョンは置いた物どうしで共有。
-  - ライブラリの System をアウトプットで動かす。PackageExecutionContext を付け、VM は使うプロジェクトごと。
-  - 依存の依存と輪の検出・抽出／フォークでの出所と結び付けの保持。
-- [x] 公式 Platform Primitive / Library カタログを整備する。銃と的、扉とスイッチ、収集物と Inventory を reference UGC として一連の操作を通す形で実装し、複数用途で共通する機能、Host 境界でしか安全に提供できない機能、Package 間相互運用に必要な機能だけを Runtime Built-in・Host Capability・公式 Library へ段階的に昇格させる（[ADR 0016](adr/0016-official-library-reference-ugc.md)）
-  - 公式の発行者・同梱の公式ライブラリ「combat」（Health・Damageable）と「interaction」（Toggle・Toggleable）・それを使う reference UGC「銃と的（公式ライブラリ）」「扉とスイッチ」は済み。
-  - E で押す Built-in の Interact・プレイヤーが持ち歩くバッグ（[ADR 0018](adr/0018-player-bag.md)）・公式「items」と reference UGC「鍵と扉」も済み。
-  - 三本で実測した結果、API は今はすべて experimental とした（[ADR 0019](adr/0019-api-stability-all-experimental.md)）。preview / stable へ上げるのはワークショップができてから。
-- [ ] Dependencies / Placement grant・World / Item 権限プリセット / Problems の UI を追加する（実効権限の runtime model と強制は U1 の gateway で先に完成させる）
-- [ ] 基盤の実測後、ユーザー間の公開・検索・install・fork・更新へ広げる
+- [x] アイテムとワールドを作る。基本形状・マテリアル・GLB・画像・音声・3D の文字表示を使う。
+- [x] 独自のデータを KokoState、処理を JavaScript の System として定義する。状態の受け渡し・Query・world.get/set/spawn は安定 ID で扱う。入力・衝突・イベント・音声再生を扱う。
+- [x] リソースをフォルダで整理し、相対パス・絶対パス・Built-in の import で参照する。別のフォルダの同名 KokoState も使える。
+- [x] 名前の変更や移動に合わせて import を書き換える。同じフォルダ内の名前の衝突を防ぐ。
+- [x] 構造・参照・スクリプト・実行の問題を独立した「エラー」パネルに表示する。コードの行、定義、Entity などへ移動できる範囲もある。
+- [x] Resources にリソース自身やフォルダ内の問題を表示する。編集前の診断結果は区別し、非同期の古い結果を捨てる。
+- [x] 依存関係から影響を受ける System を選び、スクリプトを確認し直す。import は安定 ID、従来の名前で書いた Query は名前を介してたどる。
+- [x] Host API の引数検証・権限の分類・拒否時の値・型の宣言・入力補完を `HOST_API_SPEC` から生成する。
 
-### 4. Creator Platform の探索候補
+### これから実装するもの
 
-候補と運用方法（Discovery）: [`discovery/creator-platform-capabilities.md`](discovery/creator-platform-capabilities.md)
+- [ ] 問題一覧の検索・絞り込み・グループ化、詳細表示、再検査を追加する。
+- [ ] 全リソース・フォルダ・階層の診断集計をそろえる。スクリプトの問題も含め、直接の問題と依存先の影響、編集中・編集前の結果を区別する。
+- [ ] 問題のあるフィールドや設定まで移動できるようにし、安全に直せる問題の修正操作を追加する。
+- [ ] `usageOf()` などの使用箇所表示を依存グラフに統合する。
+- [ ] import の結び付けを保持し、同じパスが別のリソースを指すようになった場合も診断できるようにする。
+- [ ] Host API と KokoState の型を使い、JavaScript の型チェック結果を問題一覧へ表示する。
 
-UGC の制作体験、表現、配布を広げる機能を、実装順を固定する前に比較・検証する。候補への掲載や Focus 選定は実装の約束ではなく、最小の縦切り、層、権限、保存・同期、依存、Reference UGC による検証方法が揃ったものだけを Active plan へ昇格させる。
+### 検討中
 
-現在の Focus は最大 5 件で、次の並びは優先順位を表さない。
+- Undo / Redo（Focus）: 自分の Entity 作成・削除・移動・値の変更を操作単位で戻す。他の参加者の変更を保つことから検証する。
+- Animation（Focus）: モデルのアニメーションを選び、再生・一時停止・停止・ループ・速度変更を扱う。
+- Camera（Focus）: 作品からプレイヤーの視点を切り替える。競合、解除、同意、酔いへの配慮を先に決める。
+- Brush（Candidate）: 木や岩などを連続して配置する。Undo / Redo との関係を含めて検討する。
+- Timeline animation / Particle / Post processing（Candidate）: 時間軸での演出、再利用できる火花や煙、画面効果を作る。
+- Video player / HUD（Candidate）: 動画を面に表示する。残弾・体力・スコアなどを 2D の画面に表示する。現在の音声・3D の文字・一時的な火花とは別の機能として検討する。
+- TypeScript を正式な利用者スクリプト形式にするかは、型付き JavaScript の必要性を確かめてから判断する。
 
-- **Undo / Redo**: Brush と Timeline に先立つ、安全な編集 transaction の基盤
-- **Animation**: キャラクター、装置、演出で共通する再生・asset binding の基盤
-- **Camera**: Player の視点に作用する権限・競合・解除・アクセシビリティの境界
-- **License / provenance**: U3 の出所保持を前提に、Package の依存・install・fork・公開でライセンス表記を失わない metadata と表示
-- **Sample UGC の充実**: U4 の Reference UGC 実装とは分けて、検証作品を学習・改造できる Sample へ育てる循環
+詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)、[ADR 0010](adr/0010-resource-identity-paths-diagnostics.md)、[機能候補](discovery/creator-platform-capabilities.md)
 
-Video player、Particle、Timeline animation、Localization、Post processing、Brush、HUD（UGC が出す 2D の画面）も Candidate として保持する。関連 Active plan の phase 完了、ROADMAP の numbered section 完了、重大な前提変更、Focus の昇格時に最大 5 件を見直す。
+## 3. 一緒に編集する
 
-### 5. Server authority（改変したホストからの保護）
+### 実装済み
 
-今のセッションは、参加者のブラウザがホスト（Simulation を動かす人）になる協調セッションで、ホストを信頼している。権限の判定（ADR 0012）は正規のクライアント上の UGC からは守れるが、ホスト自身が改変されていると、別の持ち主の状態・バッグ・勝敗を書き換えられる。authority matrix（`HOST_API_SPEC` の `authority`）で `server-revalidate` / `server-execute` とした操作を、サーバーで確かめる（または実行する）。これがそろうまでは「保護済み」と表示しない。
+- [x] 同じワークスペースを複数人で編集する。コードのカーソルを共有し、作業内容を自動保存する。
+- [x] 閲覧・共同編集・管理の権限と、参加者の初期権限を設定する。
+- [x] 非公開の作業を独立した空間で編集・再生する。権限のない人には内容を配信せず、作業中であることだけを見せる。
+- [x] アイテムやワールドの編集空間を、セッション内の実行状態と分けて扱う。
 
-- [x] 入力のプレイヤー ID を、サーバーが接続の本人で上書きする（[ADR 0018](adr/0018-player-bag.md)）
-- [ ] 最小の縦切りを ADR で決める：どの操作から始めるか（例：`bag.add / take`、`world.destroy`、Contract の受け渡し）、サーバーが何を持てば確かめられるか（世界の状態をサーバーでも持つか、操作の記録だけを確かめるか）、ホストが替わったときの扱い
-- [ ] 入力の表示名（`playerName`）もサーバーが入れる（今はクライアントの申告。[ADR 0017](adr/0017-label-and-player-name.md)）
-- [ ] 別の参加者へ配る一時的な effect・音の数と大きさ（quota）を、サーバーで確かめる
-- [ ] U2 の対象側の判定（公開 Contract・opaque handle・World の上限）をサーバーでも行う
-- [ ] 「協調セッション（ホストを信頼）」か「保護済み」かを、画面と文書で示す
+共同編集で自分の操作を戻す機能は「2. アイテムやワールドを作る」の Undo / Redo 候補で扱う。それ以外の共同編集機能は現時点の Active な計画には追加していない。
 
-## 後で判断するもの
+## 4. 試す・更新する
 
-実測や利用経験が必要なため、先回りして作り込まない。
+### 実装済み
 
-- 公式 API の昇格（experimental → preview → stable → deprecated の運用）。ワークショップができ、利用者の作品で実際に使われてから（[ADR 0019](adr/0019-api-stability-all-experimental.md)）
-- QuickJS の Worker 化
-- Entity / field の差分転送
-- Library marketplace のランキング・評価・収益化・自動推薦
-- commit 単位のサーバー診断・CIキャッシュ
-- 診断 suppression policy
-- TypeScript を正式な利用者スクリプト形式にするか
+- [x] ワークスペースで再生し、結果を共有する。ホストが退出した場合は別の管理者が引き継ぐ。
+- [x] 編集した作品をセッションに出す。遊んでいる人がいる状態で、リンク先すべてに変更を適用する。
+- [x] 「維持」を指定したフィールドの実行値を引き継ぐ。実行状態をリセットする。
+- [x] リポジトリとバージョンごとに実行領域を分け、適用時は対象の配置だけを新しいバージョンへまとめて移す。
+- [x] 実行して停止した System の問題を停止後も残し、次の再生で更新する。
+
+### これから実装するもの
+
+- [ ] 構造化した `ScriptDiagnostic` を Runtime・通信・問題一覧まで保持し、原因や発生場所を失わずに表示する。
+- [ ] 実行時の問題が編集前の結果になったかを、依存関係に基づいて判定する。
+- [ ] QuickJS とやり取りするすべての境界で、入力・出力を `unknown` から検証する。
+- [ ] メモリ超過時の復旧動作を [ADR 0001](adr/0001-script-runtime-quickjs.md) と一致させる。
+
+詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)
+
+## 5. 作品を組み合わせる
+
+### 実装済み
+
+- [x] 別々のプロジェクトで作った銃と射撃場などを、同じセッションで組み合わせる。
+- [x] 他の配置の内部データを直接操作せず、公開された Contract を通じてやり取りする。Raycast の結果から `hit.send("Damage")` や `hit.effect("spark")` を使う。
+- [x] 作品の「外からの見え方」と、World が外から来た Item に許す範囲をプリセットで設定する。
+- [x] System が要求する権限をコードから読み取り、セッションでは配置への付与と照合して全 Host API に適用する。付与はサーバーの配置情報に保存し、`setGrants` で変更できる。ワークスペースの再生ではこの制限を強制しない。
+- [x] ライブラリをプロジェクトに追加し、公開された KokoState と System を使う。Package の安定 ID・バージョン・公開項目・依存・要求権限を持ち、content hash と依存先のバージョンを固定する。
+- [x] ライブラリの依存先も読み込み、依存の循環を検出する。同じライブラリの同じバージョンの型を配置間で共有し、System は使うプロジェクトの実行領域で動かす。
+- [x] 公式の発行者と「combat」「interaction」「items」を用意する。「銃と的」「扉とスイッチ」「鍵と扉」で一連の操作を試せる。
+- [x] E キーでの操作と、プレイヤーごとのバッグを使う。バッグはセッション中だけ保持し、ホスト交代後も引き継ぐ。
+- [x] 拒否された操作を System の注意として知らせる。入力のプレイヤー ID はサーバーが接続の本人で上書きする。
+
+### これから実装するもの
+
+- [ ] 配置ごとに要求・付与・拒否された権限を確認し、変更できる画面を追加する。既存の World / Item プリセットと合わせて、実際に許される操作が分かるようにする。
+- [ ] 使用中のライブラリの発行者・公開項目・使用箇所を表示する。依存不足、権限拒否、不正な引数、回数制限などの診断を問題一覧に統合する。
+- [ ] 改変したホストからも他の人の状態を守るため、サーバーで検証・実行する最初の操作と、世界の状態を持つか操作記録だけを検証するか、ホスト交代時の扱いを ADR で決める。候補は `bag.add / take`、`world.destroy`、Contract の受け渡し。
+- [ ] サーバーでも公開 Contract・opaque handle・World の上限に基づいて対象側の許可を判定する。これは U2 の残作業。
+- [ ] 他の参加者へ配る一時的な effect・音の数と大きさを、サーバーで検証する。
+- [ ] 入力の表示名 `playerName` もサーバーが設定する。
+- [ ] 「協調セッション（ホストを信頼）」か「保護済み」かを画面と文書に示す。
+
+現在は参加者のブラウザが実行役になる協調セッションで、ホストを信頼している。通常のクライアント上の UGC に対する権限制限はあるが、改変したホストからの保護は未実装。`HOST_API_SPEC` の `authority` が `server-revalidate` / `server-execute` の操作をサーバーで検証・実行できるまでは、「保護済み」と表示しない。
+
+### 検討中
+
+- 公式 API の experimental → preview → stable → deprecated の運用。上の三つの検証作品で実測した段階では、すべて experimental。ワークショップができ、利用者の作品で使われてから昇格を判断する。
+
+詳細: [UGC API・権限・Library Package の計画](plans/ugc-api-library-permissions.md)、[ADR 0011](adr/0011-kokostate-event-capability-package.md)・[0012](adr/0012-runtime-authority-target-policy.md)・[0013](adr/0013-package-identity-version.md)・[0015](adr/0015-library-package-minimal.md)・[0016](adr/0016-official-library-reference-ugc.md)・[0017](adr/0017-label-and-player-name.md)・[0018](adr/0018-player-bag.md)・[0019](adr/0019-api-stability-all-experimental.md)
+
+## 6. 残す・渡す・作り直す
+
+### 実装済み
+
+- [x] 制作データをメッセージ付きで保存し、履歴と差分を見る。
+- [x] 作品をバージョンごとに公開する。利用・元データの閲覧・フォーク／抽出の権限を分ける。
+- [x] 公開された作品を見つけてセッションに置く。ライブラリをプロジェクトに追加して使う。
+- [x] プロジェクトをフォークする。選んだアウトプットやリソースを、新しいプロジェクトや既存のプロジェクトへ抽出する。
+- [x] 抽出時に必要なフォルダとライブラリの依存を引き継ぎ、import を取り込み先に合わせて書き換える。元のリポジトリ・コミット・リソース・依存の出所を保持する。
+- [x] 抽出する System が使う KokoState を依存グラフから集める。
+
+### これから実装するもの
+
+- [ ] `Snapshot v2` と旧データの移行を実装する。結び付け・言語・API バージョンを保存できるようにし、解決できない旧参照を勝手に別の対象へ結び付けない。
+- [ ] Snapshot v2 に合わせて抽出・フォークを更新する。残る依存の収集を共通のグラフへ統合し、ID を付け直した後も結び付けと参照パスを保つ。
+- [ ] ライブラリを更新する前に、変更内容と互換性の問題を確認できるようにする。
+- [ ] 基盤の実測後、利用者間の公開・検索・導入・フォーク・バージョン選択・明示的な更新を広げる。既存の公開・導入機能を拡張する。
+- [ ] 配布時にライセンス・出所・依存を表示する。記録する項目と継承ルールは、下の検討を経て決める。
+
+### 検討中
+
+- License / provenance（Focus）: 現在保持している出所情報をもとに、ライセンスや作者の表記を依存・フォーク・抽出後も引き継ぐルールを決める。配布画面の実装は U6 で扱う。
+- Sample UGC の充実（Focus）: 既存の検証作品を、遊び方・構成・要求権限・改造手順が分かる学習用サンプルへ育てる。U4 の検証作品の実装とは分けて扱う。
+- Localization（Candidate）: Tukurium 本体と作品のタイトル・説明・字幕・ゲーム内テキストを多言語化する。
+- Library marketplace のランキング・評価・収益化・自動推薦は、実測や利用経験を得てから判断する。
+
+詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package の計画](plans/ugc-api-library-permissions.md)、[機能候補](discovery/creator-platform-capabilities.md)
+
+## 共通基盤で後から判断するもの
+
+次の技術項目も実測や利用経験を得てから判断する。現時点で実装を約束する項目には含めない。
+
+- QuickJS の Worker 化。
+- Entity / field の差分転送。
+- commit 単位のサーバー診断・CI キャッシュ。
+- 診断の抑制ルール（suppression policy）。
 
 ## 進め方
 
-- 一度に全 Phase を実装せず、小さな end-to-end slice で進める。
+- 一度に全 Phase を実装せず、小さな一連の操作を通す単位で進める。
 - production code より先に失敗するテストを書き、RED → GREEN → REFACTOR を確認する。
+- 完了した機能はこの文書の「実装済み」へ移す。一部だけ完了した場合は、使える範囲と残作業を分ける。
 - Phase 完了時に、決定事項は ADR、再利用できる注意点は DEVELOPMENT、現在できることは README へ反映する。
 - Active な詳細計画が完了したら、結果をその内容を管理する文書へ移して計画自体は archive へ移す。
+- 機能候補の仕様・比較・昇格条件は [Discovery](discovery/creator-platform-capabilities.md) で管理する。Focus は最大 5 件とし、Active な計画の Phase やロードマップの機能項目の完了、重大な前提変更、Focus の昇格時に見直す。
