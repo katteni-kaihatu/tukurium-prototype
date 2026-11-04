@@ -4,9 +4,13 @@
 - 対象: ResourcePathIndex / Diagnostic core 後、System binding と Runtime Host API を固定する前から段階的に着手
 - 実装状況:
   - U0: 完了。ADR 0011〜0013、`packages/runtime/src/capabilities.ts` の型と Host API の棚卸し、`ugcBoundary.characterization.test.ts`。
-  - U1: 途中。`HOST_API_ARGS`、呼び出し主体の配置、別の配置を「見つからない」にする既定境界は完了。PackageExecutionContext、要求 Capability、effective grant の強制は未実装。
-  - U2: 最初の一連の操作を通す実装まで。Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`、拒否の知らせ（`SystemStatus.warnings`）。
+  - U1: 完了。`HOST_API_SPEC` からの引数検証・権限の分類・型の宣言・入力補完、PackageExecutionContext、要求 Capability と Placement grant の照合を実装済み。セッションの全 Host API で強制し、ワークスペースの再生では強制しない。
+  - U2: 協調セッションでの一連の操作は実装済み。Raycast の opaque handle、`hit.send`、`hit.effect`、System の `contracts`、Built-in の Damage v1、出力の `exposure`、土台の World の `guestPolicy`、拒否の知らせ（`SystemStatus.warnings`）。改変したホストからも守るためのサーバーでの判定は残る。
     書き方・初期値・Item の所属（最初の World）は利用者と決めた。
+  - U3: 完了。最小のローカル Library Package、依存の固定と読み込み、ライブラリの System 実行、依存の循環検出、抽出／フォークでの出所と結び付けの保持。
+  - U4: 最初の三つの検証作品と公式ライブラリは実装済み。API はすべて experimental とし、preview / stable への昇格は利用者の作品で実測してから判断する（ADR 0019）。
+  - U5: 一部実装済み。ライブラリを追加する画面、World / Item の公開範囲のプリセット、問題と拒否の表示はある。配置ごとの権限変更、詳細な依存・使用箇所・更新の確認、診断の統合は残る。
+  - U6: 基盤の実測後に広げる段階。既存の作品公開・ライブラリ導入・フォークをもとに、利用者間の配布と明示的な更新を整える。
 - U0 で利用者と決めたこと:
   - 権限は置いた物（Placement）に与える。
   - 今は協調セッションに限り、サーバーの判定は U2 以降。
