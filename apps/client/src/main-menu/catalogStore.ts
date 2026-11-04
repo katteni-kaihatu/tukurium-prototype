@@ -27,6 +27,9 @@ interface CatalogState {
   message: string | null;
   actionError: string | null;
   retry: Attempt | null;
+  recent: Work[];
+  recentLoading: boolean;
+  recentError: string | null;
 }
 const initial: CatalogState = {
   owner: null,
@@ -42,10 +45,14 @@ const initial: CatalogState = {
   message: null,
   actionError: null,
   retry: null,
+  recent: [],
+  recentLoading: false,
+  recentError: null,
 };
 export const useCatalog = create<CatalogState>(() => initial);
 let marketRequest = 0;
 let ownedRequest = 0;
+let recentRequest = 0;
 let marketAbort: AbortController | null = null;
 
 export function useCatalogConnection() {
@@ -57,6 +64,7 @@ export function useCatalogConnection() {
     marketAbort?.abort();
     marketRequest++;
     ownedRequest++;
+    recentRequest++;
     const previous = useCatalog.getState().owner;
     useCatalog.setState({ ...initial, owner: id });
     if (previous)
@@ -64,6 +72,7 @@ export function useCatalogConnection() {
         queries: { home: "", friends: "", sessions: "", items: "", market: "" },
         selected: {},
         scroll: {},
+        returnAfterJoin: null,
       });
   }, [id]);
   useEffect(() => {
@@ -138,6 +147,10 @@ export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {
   const state = useCatalog.getState();
   if (state.busy) return;
   if (!session) {
+    useMainMenu.setState((s) => ({
+      returnAfterJoin: "items",
+      selected: { ...s.selected, items: item.workId },
+    }));
     useMainMenu.getState().selectPage("sessions");
     return;
   }
@@ -226,4 +239,19 @@ export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "取得できませんでした。もう一度お試しください。";
+}
+
+export async function refreshRecent() {
+  const seq = ++recentRequest;
+  const owner = useCatalog.getState().owner;
+  useCatalog.setState({ recentLoading: true, recentError: null });
+  try {
+    const page = await api.market();
+    if (seq === recentRequest && owner === useCatalog.getState().owner)
+      useCatalog.setState({ recent: page.items.slice(0, 4) });
+  } catch (e) {
+    if (seq === recentRequest) useCatalog.setState({ recentError: errorMessage(e) });
+  } finally {
+    if (seq === recentRequest) useCatalog.setState({ recentLoading: false });
+  }
 }

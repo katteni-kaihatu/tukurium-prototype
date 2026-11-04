@@ -39,6 +39,8 @@ export interface PanelSpec {
   onClose?: () => void;
   /** 開き直したとき、画面内に呼び戻す */
   recallKey?: number;
+  /** ウィンドウ全体のキー入力を空間操作へ流さない */
+  containKeys?: boolean;
 }
 
 interface PanelState {
@@ -296,6 +298,7 @@ export function PanelLayer({
         return createPortal(
           <PanelWindow
             title={p.title}
+            containKeys={p.containKeys}
             pinned={!engine || st.pinned}
             fixedHeight={st.height != null}
             maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
@@ -374,6 +377,7 @@ function placeInFront(
 
 function PanelWindow(props: {
   title: string;
+  containKeys?: boolean;
   pinned: boolean;
   /** 高さを指定済み（中身では変えない） */
   fixedHeight: boolean;
@@ -399,6 +403,10 @@ function PanelWindow(props: {
     <section
       className={`glass ${styles.window}`}
       aria-label={props.title}
+      role={props.containKeys ? "dialog" : undefined}
+      tabIndex={props.containKeys ? -1 : undefined}
+      onKeyDown={props.containKeys ? (event) => event.stopPropagation() : undefined}
+      onKeyUp={props.containKeys ? (event) => event.stopPropagation() : undefined}
       data-fixed={props.fixedHeight || undefined}
       style={{ maxHeight: props.fixedHeight ? undefined : props.maxHeight }}
     >

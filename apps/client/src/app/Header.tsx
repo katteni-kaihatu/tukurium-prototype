@@ -37,18 +37,25 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
         <span className={styles.wordmark}>ツクリウム</span>
       </button>
       <nav aria-label="メイン" className={styles.nav}>
-        <Link
-          to="/"
+        <button
+          type="button"
           className={location.pathname === "/" || inSession ? styles.navActive : styles.navItem}
+          onClick={() => {
+            if (inSession) {
+              useWorkspace.setState({ panelsHidden: false });
+              useMainMenu.getState().close();
+            } else useMainMenu.getState().show("home");
+          }}
         >
           作る
-        </Link>
-        <Link
-          to="/explore"
+        </button>
+        <button
+          type="button"
           className={location.pathname === "/explore" ? styles.navActive : styles.navItem}
+          onClick={() => useMainMenu.getState().show("market")}
         >
           探す
-        </Link>
+        </button>
         {inSession ? (
           <button
             type="button"
@@ -74,7 +81,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
             title="開くワールドを選ぶ"
             onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
           >
-            セッション
+            ワールド
             <span className={styles.navCount}>{placedCount}</span>
           </button>
         )}

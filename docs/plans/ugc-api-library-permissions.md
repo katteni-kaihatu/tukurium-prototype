@@ -427,7 +427,7 @@ Health、Inventory、Equipment のようなドメインモデルは、Runtime �
 
 ランキング、評価、収益化、自動推薦は別判断にする。
 
-公開アイテムの検索・入手、所持一覧からの取り出し、参加先を選ぶ画面は、[メインメニューの UI/UX](social-workshop-experience.md)と[実装計画（Draft）](main-menu-implementation.md)で扱う。作品・リリースを同じ正本として使い、U6 の配布・導入・更新の基盤へ接続する。所持一覧の追加を、ライブラリの導入や版の更新と同じ操作にしない。メニューの計画を加えても、U6 の完了状況は変わらない。
+公開アイテムの検索・入手、所持一覧からの取り出し、参加先を選ぶ画面は実装済み（[メインメニューの UI/UX](social-workshop-experience.md)、[完了記録](../archive/main-menu-implementation.md)）。作品・リリースを同じ正本として使う。ライブラリの配布・導入・更新とは別の操作であり、U6の残作業は引き続きこの計画で扱う。
 
 ## 8. 最初の acceptance criteria
 

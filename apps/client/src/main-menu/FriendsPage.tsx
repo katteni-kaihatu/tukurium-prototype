@@ -248,7 +248,7 @@ export function FriendsPage({ active }: { active: boolean }) {
       </div>
       {loading && !data ? (
         <p role="status">フレンドを読み込んでいます…</p>
-      ) : (
+      ) : !data ? null : (
         <div className={styles.split}>
           <div className={styles.list}>
             {friends.length === 0 && (

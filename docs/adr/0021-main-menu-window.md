@@ -2,7 +2,7 @@
 
 - 状態: 採用（2026-11-05、画面構成と入口）
 - 関連: [ADR 0020](0020-social-workshop-direction.md)の初期UI範囲を具体化する。[ADR 0003](0003-panels-2d-3d.md)のパネル操作を引き継ぐ。
-- 実装計画: [メインメニュー](../plans/main-menu-implementation.md)（Draft）
+- 完了記録: [メインメニュー](../archive/main-menu-implementation.md)。この記録の後に[ADR 0022](0022-main-menu-first-release.md)で実装範囲を確定し、初期版を実装した。
 
 ## 背景
 

@@ -57,6 +57,7 @@
   padding: 20px 12px;
   border-right: 1px solid var(--c-line);
   background: #f7f4ee;
+  overflow: auto;
 }
 .nav button {
   text-align: left;
@@ -65,6 +66,10 @@
   border-radius: 9px;
   background: transparent;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 .nav button[aria-current="page"] {
   background: var(--c-brand-soft);
@@ -381,6 +386,123 @@
   display: grid;
   gap: 4px;
 }
+.navBadge {
+  font-size: 10px;
+  border-radius: 6px;
+  padding: 2px 5px;
+  background: var(--c-paper);
+}
+.shortcuts {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  border-top: 1px solid var(--c-line);
+  padding-top: 14px;
+  gap: 3px;
+}
+.shortcuts > span {
+  padding: 0 12px 5px;
+}
+.shortcuts button {
+  font-size: 11px;
+}
+.homeColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 22px;
+}
+.homeMain,
+.homeAside {
+  display: grid;
+  gap: 26px;
+  align-content: start;
+  min-width: 0;
+}
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.sectionHeader h2 {
+  margin: 0;
+}
+.sectionHeader button {
+  border: 0;
+  padding: 0;
+  color: var(--c-brand);
+  background: transparent;
+  font-size: 11px;
+}
+.roomGrid,
+.homeItems {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.homeItems .itemArt {
+  height: 112px;
+}
+.recentCard {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 12px;
+  border: 1px solid var(--c-line);
+  border-radius: 10px;
+  overflow: hidden;
+  text-align: left;
+  background: var(--c-paper);
+}
+.recentCard > strong,
+.recentCard > span {
+  padding: 0 12px;
+}
+.createRoom {
+  padding: 18px;
+  border: 1px solid var(--c-line);
+  background: #f7f4ee;
+  border-radius: 12px;
+  display: grid;
+  gap: 14px;
+}
+.createRoom h2 {
+  margin: 0;
+}
+.createRoom label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+}
+.createRoom input {
+  min-width: 0;
+  width: 100%;
+}
+.onlineFriend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 0;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+.onlineFriend > span:last-child {
+  display: grid;
+  gap: 4px;
+}
+.onlineFriend small {
+  color: var(--c-ink-3);
+}
+@container (max-width: 740px) {
+  .homeColumns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .homeAside {
+    grid-row: 1;
+  }
+}
 @container (max-width: 720px) {
   .catalogSplit {
     display: flex;
@@ -406,6 +528,9 @@
   .nav {
     flex-direction: row;
     overflow: auto;
+    overflow-y: hidden;
+    align-items: center;
+    height: 52px;
     padding: 6px;
     flex: none;
     border-right: 0;
@@ -414,6 +539,17 @@
   .nav button {
     white-space: nowrap;
     padding: 10px;
+    flex-shrink: 0;
+  }
+  .shortcuts {
+    flex-direction: row;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .shortcuts > span {
+    display: none;
   }
   .content {
     padding: 18px;

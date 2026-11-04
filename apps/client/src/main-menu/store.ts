@@ -20,6 +20,7 @@ interface MenuState {
   scroll: Partial<Record<MenuPage, number>>;
   pendingSession: boolean;
   sessionError: string | null;
+  returnAfterJoin: MenuPage | null;
   show(page?: MenuPage): void;
   close(): void;
   toggle(): void;
@@ -39,6 +40,7 @@ export const useMainMenu = create<MenuState>((set, get) => ({
   scroll: {},
   pendingSession: false,
   sessionError: null,
+  returnAfterJoin: null,
   show: (page) => set((s) => ({ open: true, page: page ?? s.page, recall: s.recall + 1 })),
   close: () => set({ open: false }),
   toggle: () => (get().open ? get().close() : get().show()),

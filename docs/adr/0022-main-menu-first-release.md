@@ -1,7 +1,7 @@
 # ADR 0022：メインメニューの初期範囲と実装単位
 
 - 状態: 採用（2026-11-05）
-- 関連: [ADR 0021](0021-main-menu-window.md)、[実装計画](../plans/main-menu-implementation.md)
+- 関連: [ADR 0021](0021-main-menu-window.md)、[実装計画と完了記録](../archive/main-menu-implementation.md)
 
 ## 決定
 

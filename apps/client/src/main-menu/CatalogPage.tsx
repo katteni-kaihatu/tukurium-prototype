@@ -49,7 +49,11 @@ export function CatalogPage({ kind, active }: { kind: "items" | "market"; active
           </p>
         </div>
         <span className={styles.caption}>
-          {market ? "無料で入手" : `${catalog.owned.length}個の所持アイテム`}
+          {market
+            ? "無料で入手"
+            : catalog.ownedLoaded
+              ? `${catalog.owned.length}個の所持アイテム`
+              : "所持アイテムを確認中"}
         </span>
       </div>
       <div className={styles.toolbar}>
@@ -88,7 +92,7 @@ export function CatalogPage({ kind, active }: { kind: "items" | "market"; active
           {market ? "アイテムを検索しています…" : "所持アイテムを確認しています…"}
         </p>
       )}
-      {!loading && !error && entries.length === 0 && (
+      {!loading && !error && (market || catalog.ownedLoaded) && entries.length === 0 && (
         <div className={styles.empty}>
           <p>
             {query

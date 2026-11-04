@@ -22,7 +22,10 @@ export function Invitations({ compact = false }: { compact?: boolean }) {
   const expires = pending.map((i) => Date.parse(i.expiresAt)).sort((a, b) => a - b)[0];
   useEffect(() => {
     if (!open || expires === undefined) return;
-    const timer = setTimeout(() => void refreshSocial(), Math.max(0, expires - Date.now() + 100));
+    const timer = setTimeout(
+      () => void refreshSocial(),
+      Math.max(1000, expires - Date.now() + 100),
+    );
     return () => clearTimeout(timer);
   }, [expires, open]);
   const show = (invite: InvitationView) => {
@@ -92,6 +95,7 @@ export function Invitations({ compact = false }: { compact?: boolean }) {
   );
   const currentIncoming = incoming.filter((i) => i.status === "pending");
   const currentOutgoing = outgoing.filter((i) => i.status === "pending");
+  if (compact && !currentIncoming.length) return null;
   const history = [
     ...incoming.map((i) => ({ i, received: true })),
     ...outgoing.map((i) => ({ i, received: false })),

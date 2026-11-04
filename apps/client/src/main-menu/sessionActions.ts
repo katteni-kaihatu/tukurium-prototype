@@ -79,7 +79,9 @@ export async function enterSession(
       client.send({ ...request, requestId });
     });
     navigate(`/s/${id}`);
-    useMainMenu.getState().close();
+    const returnPage = useMainMenu.getState().returnAfterJoin;
+    if (returnPage) useMainMenu.setState({ page: returnPage, returnAfterJoin: null });
+    else useMainMenu.getState().close();
     return true;
   } catch (error) {
     useMainMenu.setState({
