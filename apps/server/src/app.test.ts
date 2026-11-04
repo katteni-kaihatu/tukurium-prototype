@@ -104,7 +104,117 @@ async function sessionWithWorkspace(url: string) {
   return { a, b, sessionId: s.id, workspaceId };
 }
 
+const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
+  get: (url: string) => app.inject({ method: "GET", url, headers: { "x-tukurium-token": token } }),
+  post: (url: string, payload: object = {}) =>
+    app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
+  patch: (url: string, payload: object) =>
+    app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
+});
+
 describe("本人識別とセッション", () => {
+  it("アイテムを検索し、入手した版を本人の所持一覧へ固定する", async () => {
+    const { app, url } = await start();
+    const owner = await client(url, "アイテム作者");
+    const buyer = await client(url, "使う人");
+    const A = api(app, owner.token);
+    const B = api(app, buyer.token);
+    const repo = (
+      await A.post("/api/repos", { name: "検索用の銃", kind: "item", template: "gun" })
+    ).json();
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();
+    const r1 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    const r2 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    const secondRepo = (
+      await A.post("/api/repos", { name: "別の銃", kind: "item", template: "gun" })
+    ).json();
+    const secondWork = (
+      await A.post("/api/works", { repoId: secondRepo.id, outputId: "out_gun" })
+    ).json();
+    const secondRelease = (await A.post(`/api/works/${secondWork.id}/releases`)).json();
+    const worldRepo = (
+      await A.post("/api/repos", { name: "ワールド", kind: "world", template: "empty" })
+    ).json();
+    const worldWork = (
+      await A.post("/api/works", { repoId: worldRepo.id, outputId: "out_main" })
+    ).json();
+    const worldRelease = (await A.post(`/api/works/${worldWork.id}/releases`)).json();
+    expect(
+      (await B.get(`/api/market?q=${encodeURIComponent("アイテム作者")}&limit=1`)).json(),
+    ).toMatchObject({ total: 2, items: [{ id: secondWork.id }], nextOffset: 1 });
+    expect(
+      (await B.get(`/api/market?q=${encodeURIComponent("アイテム作者")}&limit=1&offset=1`)).json(),
+    ).toMatchObject({ total: 2, items: [{ id: work.id }], nextOffset: null });
+    expect((await B.get("/api/market?q=nonexistent")).json().items).toEqual([]);
+    expect((await B.get("/api/market?limit=49")).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/api/me/items" })).statusCode).toBe(401);
+    const item = (await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).json();
+    expect(item).toMatchObject({ userId: buyer.me.id, releaseId: r1.id, available: true });
+    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r2.id })).json().releaseId).toBe(
+      r1.id,
+    );
+    expect((await B.get("/api/me/items")).json()).toHaveLength(1);
+    expect((await A.get("/api/me/items")).json()).toEqual([]);
+    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: "missing" })).statusCode).toBe(
+      404,
+    );
+    expect(
+      (await B.post(`/api/me/items/${work.id}`, { releaseId: secondRelease.id })).statusCode,
+    ).toBe(404);
+    expect(
+      (await B.post(`/api/me/items/${worldWork.id}`, { releaseId: worldRelease.id })).statusCode,
+    ).toBe(400);
+    await A.patch(`/api/works/${work.id}`, { perms: { use: false } });
+    expect((await B.get("/api/me/items")).json()[0]).toMatchObject({
+      available: false,
+      releaseId: r1.id,
+    });
+    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+  });
+
+  it("取り出しの再送と同じ人の別接続を一回の配置にまとめ、移動先と権限を確かめる", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "作者");
+    const b = await client(url, "利用者");
+    const A = api(app, a.token);
+    const repo = (await A.post("/api/repos", { name: "銃", kind: "item", template: "gun" })).json();
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();
+    const release = (await A.post(`/api/works/${work.id}/releases`)).json();
+    a.send({ t: "session.create", name: "取り出し先" });
+    const sid = (await a.next("session")).session.id;
+    b.send({ t: "session.join", sessionId: sid });
+    await b.next("session");
+    const tab = await client(url, "利用者", b.token);
+    tab.send({ t: "session.join", sessionId: sid });
+    await tab.next("session");
+    const request = {
+      t: "placeRelease",
+      releaseId: release.id,
+      position: [0, 0, 0],
+      yaw: 0,
+      sessionId: sid,
+      requestId: "same",
+    };
+    b.send(request);
+    tab.send(request);
+    const first = await b.next("placement.result");
+    expect(first.error).toBeNull();
+    expect(await tab.next("placement.result")).toEqual(first);
+    b.send(request);
+    expect(await b.next("placement.result")).toEqual(first);
+    b.send({ ...request, position: [1, 0, 0] });
+    expect((await b.next("placement.result")).error).toMatch(/要求ID/);
+    b.send({ ...request, sessionId: "other", requestId: "wrong-place" });
+    expect((await b.next("placement.result")).error).toMatch(/セッション/);
+    await A.patch(`/api/works/${work.id}`, { perms: { use: false } });
+    b.send({ ...request, requestId: "revoked" });
+    expect((await b.next("placement.result")).error).toMatch(/権限/);
+    b.send({ t: "session.join", sessionId: sid });
+    expect(
+      (await b.next("session", (m) => m.session.placements.length === 1)).session.placements,
+    ).toHaveLength(1);
+  });
+
   it("参加中にも一覧を更新し、複数タブを同じ参加者として数える", async () => {
     const { url } = await start();
     const a = await client(url, "持ち主");
@@ -669,15 +779,6 @@ describe("権限・プライベートな作業", () => {
 });
 
 describe("リポジトリ・コミット・作品", () => {
-  const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
-    get: (url: string) =>
-      app.inject({ method: "GET", url, headers: { "x-tukurium-token": token } }),
-    post: (url: string, payload: object = {}) =>
-      app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
-    patch: (url: string, payload: object) =>
-      app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
-  });
-
   it("リポジトリを作り、履歴・ファイル・差分を見られる。非公開は持ち主だけ", async () => {
     const { app, url } = await start();
     const a = await client(url, "a");

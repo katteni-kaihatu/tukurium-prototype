@@ -11,6 +11,7 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Store, User } from "../store/store";
+import { ItemCatalog } from "./catalog";
 import { HttpError, type RepoService } from "./service";
 
 const TEMPLATES = {
@@ -68,6 +69,33 @@ export function registerRepoRoutes(
     ...x,
     ownerName: await ownerName(x.owner),
   });
+  const catalog = new ItemCatalog(store, repos);
+
+  app.get(
+    "/api/market",
+    handle(async (req) => {
+      const q = z
+        .object({
+          q: z.string().max(100).default(""),
+          offset: z.coerce.number().int().min(0).max(100000).default(0),
+          limit: z.coerce.number().int().min(1).max(48).default(24),
+        })
+        .parse(req.query);
+      return catalog.search(await userOf(req), q.q, q.offset, q.limit);
+    }),
+  );
+  app.get(
+    "/api/me/items",
+    handle(async (req) => catalog.owned(await needUser(req))),
+  );
+  app.post(
+    "/api/me/items/:workId",
+    handle<{ workId: string }>(async (req) => {
+      const user = await needUser(req);
+      const { releaseId } = z.object({ releaseId: z.string().min(1).max(64) }).parse(req.body);
+      return catalog.acquire(user, req.params.workId, releaseId);
+    }),
+  );
 
   app.post(
     "/api/repos",

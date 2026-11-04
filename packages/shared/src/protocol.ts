@@ -296,7 +296,19 @@ export const ClientMessage = z.discriminatedUnion("t", [
   /** コミット（意図的な保存）。メッセージ付き */
   z.object({ t: z.literal("ws.commit"), workspaceId: id, message: z.string().max(500) }),
   /** 作品のリリースをセッションに置く（作品の「利用」権限） */
-  z.object({ t: z.literal("placeRelease"), releaseId: id, position: vec3, yaw: z.number() }),
+  z
+    .object({
+      t: z.literal("placeRelease"),
+      releaseId: id,
+      position: vec3,
+      yaw: z.number(),
+      requestId: id.optional(),
+      sessionId: id.optional(),
+    })
+    .refine(
+      (message) => Boolean(message.requestId) === Boolean(message.sessionId),
+      "要求IDと対象セッションは一緒に指定してください",
+    ),
   /**
    * 公開されたワールドを、このセッションで開く。
    * それまで開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
@@ -323,6 +335,13 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 // サーバー → クライアント
 
 export const ServerMessage = z.discriminatedUnion("t", [
+  z.object({
+    t: z.literal("placement.result"),
+    requestId: id,
+    sessionId: id,
+    placementId: id.nullable(),
+    error: z.string().nullable(),
+  }),
   z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo, token: z.string() }),
   z.object({ t: z.literal("sessions"), sessions: z.array(SessionSummary) }),
   z.object({ t: z.literal("session.entered"), sessionId: id, requestId: id.optional() }),

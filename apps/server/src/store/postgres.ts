@@ -3,6 +3,7 @@ import postgres from "postgres";
 import {
   newToken,
   newUserId,
+  type OwnedItem,
   type Release,
   type RepoMeta,
   type Store,
@@ -43,6 +44,9 @@ export class PostgresStore implements Store {
       .sql`create table if not exists works (id text primary key, repo_id text not null, owner text not null, data jsonb not null)`;
     await this
       .sql`create table if not exists releases (id text primary key, work_id text not null, data jsonb not null)`;
+    await this.sql`create table if not exists owned_items (
+      user_id text not null, work_id text not null, data jsonb not null,
+      primary key (user_id, work_id))`;
   }
 
   async close(): Promise<void> {
@@ -159,5 +163,26 @@ export class PostgresStore implements Store {
     >`select doc from workspaces where id = ${id}`;
     const doc = rows[0]?.doc;
     return doc ? new Uint8Array(doc) : null;
+  }
+
+  async ownedItems(userId: string) {
+    const rows = await this.sql<
+      { data: OwnedItem }[]
+    >`select data from owned_items where user_id = ${userId}`;
+    return rows
+      .map((r) => r.data)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt) || a.workId.localeCompare(b.workId));
+  }
+
+  async acquireItem(item: OwnedItem): Promise<OwnedItem> {
+    await this.sql`insert into owned_items (user_id, work_id, data)
+      values (${item.userId}, ${item.workId}, ${this.sql.json(item as never)})
+      on conflict (user_id, work_id) do nothing`;
+    const rows = await this.sql<
+      { data: OwnedItem }[]
+    >`select data from owned_items where user_id = ${item.userId} and work_id = ${item.workId}`;
+    const saved = rows[0];
+    if (!saved) throw new Error("所持アイテムを保存できませんでした");
+    return saved.data;
   }
 }

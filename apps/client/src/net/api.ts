@@ -61,6 +61,25 @@ export interface Work {
   createdAt: string;
 }
 
+export interface OwnedItem {
+  userId: string;
+  workId: string;
+  releaseId: string;
+  acquiredAt: string;
+  work: Work | null;
+  release: Release | null;
+  available: boolean;
+  reason: string | null;
+}
+
+export interface MarketPage {
+  items: Work[];
+  total: number;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+}
+
 export interface RepoDetail extends RepoMeta {
   head: string | null;
   outputs: { id: string; name: string; kind: string }[];
@@ -96,9 +115,15 @@ function token(): string {
 /** 素材の URL（素材にも権限があるので、本人確認のトークンを付ける） */
 export const assetUrl = (id: string) => `/api/assets/${id}?t=${encodeURIComponent(token())}`;
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const res = await fetch(url, {
     method,
+    signal,
     headers: {
       "x-tukurium-token": token(),
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -112,6 +137,17 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 /** リポジトリ・作品の API（サーバーの repos/routes.ts） */
 export const api = {
+  market: (query = "", offset = 0, signal?: AbortSignal) =>
+    call<MarketPage>(
+      "GET",
+      `/api/market?${new URLSearchParams({ q: query, offset: String(offset) })}`,
+      undefined,
+      signal,
+    ),
+  ownedItems: (signal?: AbortSignal) =>
+    call<OwnedItem[]>("GET", "/api/me/items", undefined, signal),
+  acquireItem: (workId: string, releaseId: string) =>
+    call<OwnedItem>("POST", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
   createRepo: (body: {
     name: string;
     description?: string;

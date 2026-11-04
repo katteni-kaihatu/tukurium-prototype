@@ -74,6 +74,14 @@ interface Session {
   /** セッションの世界を実行する接続（持ち主） */
   host: Conn | null;
   lastFrame: SessionFrame | null;
+  placementRequests: Map<
+    string,
+    {
+      fingerprint: string;
+      result: Promise<Extract<ServerMessage, { t: "placement.result" }>>;
+      until: number;
+    }
+  >;
 }
 
 const buildKey = (workspaceId: string, outputId: string) => `${workspaceId}\u0000${outputId}`;
@@ -463,6 +471,7 @@ export class Hub {
       builds: new Map(),
       host: null,
       lastFrame: null,
+      placementRequests: new Map(),
     };
     this.sessions.set(s.id, s);
     this.opts.log(`session created ${s.id} by ${conn.user.id}`);
@@ -833,6 +842,65 @@ export class Hub {
     conn: Conn,
     msg: Extract<ClientMessage, { t: "placeRelease" }>,
   ): Promise<void> {
+    if (msg.requestId && msg.sessionId) {
+      const requestId = msg.requestId;
+      const sessionId = msg.sessionId;
+      const s = conn.session;
+      const user = conn.user;
+      const failure = (error: string): Extract<ServerMessage, { t: "placement.result" }> => ({
+        t: "placement.result",
+        requestId,
+        sessionId,
+        placementId: null,
+        error,
+      });
+      if (!s || s.id !== sessionId || !user) {
+        this.send(conn, failure("取り出し先のセッションが変わりました"));
+        return;
+      }
+      const key = `${user.id}:${requestId}`;
+      const fingerprint = JSON.stringify([msg.releaseId, msg.position, msg.yaw]);
+      for (const [id, value] of s.placementRequests)
+        if (value.until < Date.now()) s.placementRequests.delete(id);
+      const previous = s.placementRequests.get(key);
+      if (previous) {
+        this.send(
+          conn,
+          previous.fingerprint === fingerprint
+            ? await previous.result
+            : failure("同じ要求IDで内容を変えることはできません"),
+        );
+        return;
+      }
+      if (s.placementRequests.size >= 512) {
+        this.send(conn, failure("取り出しが混み合っています。少し待ってからお試しください"));
+        return;
+      }
+      const result = (async () => {
+        try {
+          const loaded = await this.loadRelease(msg.releaseId);
+          if (!loaded) return failure("リリースが見つかりません");
+          const current = await this.store.work(loaded.work.id);
+          if (!current || (!current.perms.use && current.owner !== user.id))
+            return failure("この作品を利用する権限がありません");
+          if (conn.session !== s || !this.sessions.has(s.id))
+            return failure("取り出し先のセッションが変わりました");
+          if (loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind !== "item")
+            return failure("取り出せるのはアイテムです");
+          const placementId = this.addReleasePlacement(s, user.id, loaded, msg.position, msg.yaw);
+          this.broadcastSession(s);
+          return { t: "placement.result" as const, requestId, sessionId, placementId, error: null };
+        } catch {
+          return failure("アイテムを取り出せませんでした。もう一度お試しください");
+        }
+      })();
+      s.placementRequests.set(key, { fingerprint, result, until: Number.POSITIVE_INFINITY });
+      const response = await result;
+      const entry = s.placementRequests.get(key);
+      if (entry) entry.until = Date.now() + 5 * 60_000;
+      this.send(conn, response);
+      return;
+    }
     const s = conn.session;
     const user = conn.user;
     if (!s || !user || !this.repos) return;
@@ -923,7 +991,7 @@ export class Hub {
     },
     position: [number, number, number],
     yaw: number,
-  ): void {
+  ): string {
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: null,
@@ -938,6 +1006,7 @@ export class Hub {
     };
     s.placements.set(p.id, p);
     if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
+    return p.id;
   }
 
   private placementSnapshot(

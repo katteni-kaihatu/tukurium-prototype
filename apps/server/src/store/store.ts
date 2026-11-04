@@ -52,6 +52,13 @@ export interface Release {
   contentHash?: string;
 }
 
+export interface OwnedItem {
+  userId: string;
+  workId: string;
+  releaseId: string;
+  acquiredAt: string;
+}
+
 export interface WorkspaceMeta {
   id: string;
   name: string;
@@ -89,6 +96,8 @@ export interface Store {
   saveRelease(r: Release): Promise<void>;
   releases(workId: string): Promise<Release[]>;
   release(id: string): Promise<Release | null>;
+  ownedItems(userId: string): Promise<OwnedItem[]>;
+  acquireItem(item: OwnedItem): Promise<OwnedItem>;
 }
 
 export const newToken = () => randomBytes(24).toString("base64url");
@@ -103,6 +112,7 @@ export class MemoryStore implements Store {
   private readonly repoMap = new Map<string, RepoMeta>();
   private readonly workMap = new Map<string, Work>();
   private readonly releaseMap = new Map<string, Release>();
+  private readonly owned = new Map<string, OwnedItem>();
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -184,5 +194,20 @@ export class MemoryStore implements Store {
   async release(id: string) {
     const r = this.releaseMap.get(id);
     return r ? structuredClone(r) : null;
+  }
+
+  async ownedItems(userId: string) {
+    return [...this.owned.values()]
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt) || a.workId.localeCompare(b.workId))
+      .map((item) => ({ ...item }));
+  }
+
+  async acquireItem(item: OwnedItem) {
+    const key = `${item.userId}:${item.workId}`;
+    const existing = this.owned.get(key);
+    if (existing) return { ...existing };
+    this.owned.set(key, { ...item });
+    return { ...item };
   }
 }
