@@ -13,6 +13,9 @@
 }
 
 .brand {
+  border: 0;
+  padding: 0;
+  background: transparent;
   display: flex;
   align-items: center;
   gap: 8px;

@@ -37,6 +37,8 @@ export interface PanelSpec {
   /** この値が変わったらパネルを最前面に出す（コードを開いたときのエディタなど） */
   focusKey?: string | number | null;
   onClose?: () => void;
+  /** 開き直したとき、画面内に呼び戻す */
+  recallKey?: number;
 }
 
 interface PanelState {
@@ -53,13 +55,14 @@ interface PanelState {
 const initialState = (spec: PanelSpec): PanelState => {
   const { x, right, y, width, height } = spec.initial;
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
-  const left = right !== undefined ? vw - right - width : (x ?? 16);
+  const fittedWidth = Math.min(width, Math.max(MIN_PANEL_WIDTH, vw - 16));
+  const left = right !== undefined ? vw - right - fittedWidth : (x ?? 16);
   const top = y;
   return {
     pinned: true,
     x: Math.max(8, left),
     y: top,
-    width,
+    width: fittedWidth,
     height: height == null ? null : fitOnScreen(width, height, Math.max(8, left), top, true).height,
     transform: null,
   };
@@ -94,10 +97,12 @@ export function PanelLayer({
   engine,
   panels,
   hidden = false,
+  layer = 2,
 }: {
-  engine: SessionEngine;
+  engine?: SessionEngine | null;
   panels: PanelSpec[];
   hidden?: boolean;
+  layer?: number;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLDivElement>());
@@ -121,6 +126,7 @@ export function PanelLayer({
   };
 
   const stateOf = (spec: PanelSpec): PanelState => states[spec.id] ?? initialState(spec);
+  const recallKeys = useRef(new Map<string, number>());
   const focusKeys = useRef(new Map<string, PanelSpec["focusKey"]>());
 
   // 状態に合わせて要素を 2D の層か空間に置く
@@ -131,7 +137,7 @@ export function PanelLayer({
     // 閉じたパネルを片付ける
     for (const [id, el] of elements.current) {
       if (ids.has(id)) continue;
-      engine.panels.remove(id);
+      engine?.panels.remove(id);
       el.remove();
       elements.current.delete(id);
     }
@@ -145,8 +151,8 @@ export function PanelLayer({
       el.style.width = `${st.width}px`;
       el.style.height = st.height == null ? "" : `${st.height}px`;
       el.style.display = hidden ? "none" : "";
-      if (st.pinned || !st.transform) {
-        engine.panels.remove(p.id);
+      if (hidden || !engine || st.pinned || !st.transform) {
+        engine?.panels.remove(p.id);
         if (el.parentElement !== overlay) overlay.appendChild(el);
         el.style.left = `${st.x}px`;
         el.style.top = `${st.y}px`;
@@ -162,21 +168,42 @@ export function PanelLayer({
 
   useLayoutEffect(() => {
     // 右ドラッグで動かした置き場所を覚える（覚えないと、次の描画で元の場所に戻る）
-    engine.panels.onMoved = (id, transform) =>
+    const unsubscribe = engine?.panels.subscribeMoved((id, transform) =>
       setStates((prev) => {
         const st = prev[id];
         return st ? { ...prev, [id]: { ...st, transform } } : prev;
-      });
+      }),
+    );
     return () => {
-      engine.panels.onMoved = null;
-      for (const id of elements.current.keys()) engine.panels.remove(id);
+      unsubscribe?.();
+      for (const id of elements.current.keys()) engine?.panels.remove(id);
     };
   }, [engine]);
+
+  useLayoutEffect(() => {
+    const recalled = panels.filter(
+      (p) => p.recallKey !== undefined && recallKeys.current.get(p.id) !== p.recallKey,
+    );
+    if (!recalled.length) return;
+    for (const p of recalled) recallKeys.current.set(p.id, p.recallKey as number);
+    setStates((prev) => {
+      const next = { ...prev };
+      for (const p of recalled) {
+        const st = prev[p.id] ?? initialState(p);
+        const x = Math.max(8, Math.min(st.x, window.innerWidth - MIN_PANEL_WIDTH - 8));
+        const y = Math.max(80, Math.min(st.y, window.innerHeight - MIN_PANEL_HEIGHT - 8));
+        const size = fitOnScreen(st.width, st.height ?? 560, x, y, true);
+        next[p.id] = { ...st, ...size, x, y, pinned: true };
+      }
+      return next;
+    });
+  }, [panels]);
 
   // Resources から開いたコードと詳細は、そのパネルと同じ置き方（2D か 3D）で出す
   const editorPlace = useWorkspace((s) => s.editorPlace);
   const detailPlace = useWorkspace((s) => s.detailPlace);
   useLayoutEffect(() => {
+    if (!engine) return;
     const jobs: { id: string; mode: "2d" | "3d"; key: "editorPlace" | "detailPlace" }[] = [];
     if (editorPlace) jobs.push({ id: "ws-editor", mode: editorPlace.mode, key: "editorPlace" });
     if (detailPlace) jobs.push({ id: "ws-detail", mode: detailPlace.mode, key: "detailPlace" });
@@ -197,6 +224,7 @@ export function PanelLayer({
 
   const togglePin = useCallback(
     (spec: PanelSpec) => {
+      if (!engine) return;
       const id = spec.id;
       // 画面上でいまパネルがある位置の先に置く（どのパネルも正面の同じ場所に重なると、
       // 後ろのパネルがクリックを受け取れなくなるため）
@@ -240,10 +268,10 @@ export function PanelLayer({
     });
   }, []);
 
-  const placed = panels.filter((p) => !stateOf(p).pinned);
+  const placed = engine ? panels.filter((p) => !stateOf(p).pinned) : [];
 
   return (
-    <div ref={overlayRef} className={styles.overlay}>
+    <div ref={overlayRef} className={styles.overlay} style={{ zIndex: layer }}>
       {placed.length > 0 && !hidden && (
         <div className={`glass ${styles.tray}`} role="toolbar" aria-label="空間に置いたパネル">
           <span className={styles.trayLabel}>空間のパネル</span>
@@ -268,12 +296,12 @@ export function PanelLayer({
         return createPortal(
           <PanelWindow
             title={p.title}
-            pinned={st.pinned}
+            pinned={!engine || st.pinned}
             fixedHeight={st.height != null}
             maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
             actions={p.actions}
             onClose={p.onClose}
-            onTogglePin={() => togglePin(p)}
+            onTogglePin={engine ? () => togglePin(p) : undefined}
             onDrag={(dx, dy) => moveTo(p, st.x + dx, st.y + dy)}
             onResize={(width, height) => resizeTo(p, width, height)}
           >
@@ -352,7 +380,7 @@ function PanelWindow(props: {
   maxHeight: string;
   actions?: ReactNode;
   onClose?: () => void;
-  onTogglePin: () => void;
+  onTogglePin?: () => void;
   onDrag: (dx: number, dy: number) => void;
   onResize: (width: number, height: number) => void;
   children: ReactNode;
@@ -392,26 +420,28 @@ function PanelWindow(props: {
       >
         <h2 className={styles.title}>{props.title}</h2>
         {props.actions}
-        <button
-          type="button"
-          className={styles.pin}
-          aria-pressed={props.pinned}
-          aria-label={
-            props.pinned ? "ピン留め: オン（画面に固定）" : "ピン留め: オフ（3D空間に置く）"
-          }
-          title={props.pinned ? "ピン留め: オン（画面に固定）" : "ピン留め: オフ（3D空間に置く）"}
-          onClick={props.onTogglePin}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path
-              d="M9 3h6l-1 6 4 4H6l4-4-1-6zM12 13v8"
-              fill={props.pinned ? "currentColor" : "none"}
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        {props.onTogglePin && (
+          <button
+            type="button"
+            className={styles.pin}
+            aria-pressed={props.pinned}
+            aria-label={
+              props.pinned ? "ピン留め: オン（画面に固定）" : "ピン留め: オフ（3D空間に置く）"
+            }
+            title={props.pinned ? "ピン留め: オン（画面に固定）" : "ピン留め: オフ（3D空間に置く）"}
+            onClick={props.onTogglePin}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              <path
+                d="M9 3h6l-1 6 4 4H6l4-4-1-6zM12 13v8"
+                fill={props.pinned ? "currentColor" : "none"}
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        )}
         {props.onClose && (
           <button
             type="button"

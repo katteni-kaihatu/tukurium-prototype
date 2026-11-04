@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
+import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
@@ -54,6 +55,7 @@ export function SessionView() {
     const engine = new SessionEngine(container);
     engineRef.current = engine;
     setEngine(engine);
+    useMainMenu.setState({ engine });
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const workspace = new WorkspaceController(engine);
     const sessionWorld = new SessionWorldController(engine);
@@ -105,6 +107,7 @@ export function SessionView() {
       workspace.dispose();
       sessionWorld.dispose();
       previews.dispose();
+      useMainMenu.setState({ engine: null });
       engine.dispose();
       engineRef.current = null;
       setEngine(null);

@@ -1,0 +1,117 @@
+.menu {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--c-paper);
+}
+.menu button:focus-visible,
+.menu input:focus-visible,
+.menu textarea:focus-visible,
+.menu select:focus-visible,
+.menu a:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 3px;
+}
+.location {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--c-line);
+}
+.location > div {
+  display: grid;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.location strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.caption,
+.muted {
+  color: var(--c-ink-3);
+}
+.caption {
+  font-size: 11px;
+}
+.profile {
+  font-size: 12px;
+  color: var(--c-brand);
+}
+.layout {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 20px 12px;
+  border-right: 1px solid var(--c-line);
+  background: #f7f4ee;
+}
+.nav button {
+  text-align: left;
+  padding: 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font-weight: 500;
+}
+.nav button[aria-current="page"] {
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+  font-weight: 700;
+}
+.content {
+  overflow: auto;
+  padding: 24px;
+  min-height: 0;
+}
+.content h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.4;
+}
+.content h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.content p {
+  line-height: 1.8;
+}
+@container (max-width: 560px) {
+  .layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .nav {
+    flex-direction: row;
+    overflow: auto;
+    padding: 6px;
+    flex: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--c-line);
+  }
+  .nav button {
+    white-space: nowrap;
+    padding: 10px;
+  }
+  .content {
+    padding: 18px;
+  }
+  .location {
+    padding: 12px 16px;
+  }
+  .profile {
+    display: none;
+  }
+}

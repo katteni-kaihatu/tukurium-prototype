@@ -39,7 +39,11 @@ export class PanelSpace {
   } | null = null;
   private readonly raycaster = new THREE.Raycaster();
   /** 動かし終えたときに呼ぶ（置き場所を保存する側へ知らせる） */
-  onMoved: ((id: string, transform: PanelTransform) => void) | null = null;
+  private readonly moveListeners = new Set<(id: string, transform: PanelTransform) => void>();
+  subscribeMoved(listener: (id: string, transform: PanelTransform) => void): () => void {
+    this.moveListeners.add(listener);
+    return () => this.moveListeners.delete(listener);
+  }
   private readonly occluderMaterial = new THREE.MeshBasicMaterial({
     color: 0x000000,
     opacity: 0,
@@ -111,7 +115,7 @@ export class PanelSpace {
     this.moving = null;
     if (!m) return;
     const t = this.transformOf(m.id);
-    if (t) this.onMoved?.(m.id, t);
+    if (t) for (const listener of this.moveListeners) listener(m.id, t);
   }
 
   get isMoving(): boolean {

@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { MainMenuHost } from "../main-menu/MainMenuHost";
 import { ExplorePage } from "../pages/ExplorePage";
 import { HomePage } from "../pages/HomePage";
 import { NewRepoPage } from "../pages/NewRepoPage";
@@ -17,6 +18,7 @@ export function App() {
         <Route path="/u/:userId" element={<ProfilePage />} />
         <Route path="/explore" element={<ExplorePage />} />
       </Routes>
+      <MainMenuHost />
     </BrowserRouter>
   );
 }

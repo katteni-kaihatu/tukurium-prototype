@@ -8,6 +8,7 @@ import {
 } from "@tukurium/repo-model";
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
 import styles from "./Header.module.css";
 import { useApp } from "./store";
@@ -16,6 +17,7 @@ import { useApp } from "./store";
 export function Header({ inSession = false }: { inSession?: boolean }) {
   const { myName, status, session, me } = useApp();
   const location = useLocation();
+  const menuOpen = useMainMenu((s) => s.open);
   const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
   const bagOpen = useWorkspace((s) => s.bagOpen);
@@ -24,10 +26,16 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
 
   return (
     <header className={`glass ${styles.header}`}>
-      <Link to="/" className={styles.brand} aria-label="ツクリウム ホーム">
+      <button
+        type="button"
+        className={styles.brand}
+        aria-label="ツクリウム メニュー"
+        aria-expanded={menuOpen}
+        onClick={() => useMainMenu.getState().toggle()}
+      >
         <span className={styles.logo} aria-hidden="true" />
         <span className={styles.wordmark}>ツクリウム</span>
-      </Link>
+      </button>
       <nav aria-label="メイン" className={styles.nav}>
         <Link
           to="/"
