@@ -154,6 +154,33 @@ export class Hub {
     };
   }
 
+  presence(userId: string) {
+    return {
+      online: [...this.conns.values()].some((c) => c.user?.id === userId),
+      sessions: this.sessionList().filter((s) => s.participants.some((p) => p.id === userId)),
+    };
+  }
+
+  notifyUsers(userIds: readonly string[]): void {
+    const ids = new Set(userIds);
+    for (const conn of this.conns.values())
+      if (conn.user && ids.has(conn.user.id)) this.send(conn, { t: "social.changed" });
+  }
+
+  notifySocial(userId: string): void {
+    void this.store
+      .friendships(userId)
+      .then((links) =>
+        this.notifyUsers([
+          userId,
+          ...links
+            .filter((f) => f.status === "accepted")
+            .map((f) => (f.from === userId ? f.to : f.from)),
+        ]),
+      )
+      .catch((e) => this.opts.log(`social update: ${e}`));
+  }
+
   connect(peer: Peer): { onMessage(raw: string): void; onClose(): void } {
     const conn: Conn = {
       id: randomUUID(),
@@ -206,6 +233,7 @@ export class Hub {
         await this.store.renameUser(user.id, msg.name);
         if (conn.session) this.broadcastSession(conn.session);
         this.broadcastSessionList();
+        this.notifySocial(user.id);
         return;
       case "sessions.list":
         return this.send(conn, { t: "sessions", sessions: this.sessionList() });
@@ -452,6 +480,7 @@ export class Hub {
       token,
     });
     this.send(conn, { t: "sessions", sessions: this.sessionList() });
+    this.notifySocial(user.id);
   }
 
   // ---------------------------------------------------------------------------
@@ -522,6 +551,7 @@ export class Hub {
     }
     this.sendPreviews(s, conn);
     this.broadcastSessionList();
+    this.notifySocial(conn.user.id);
   }
 
   private leaveSession(conn: Conn): void {
@@ -547,6 +577,7 @@ export class Hub {
       }, this.opts.ownerGraceMs);
     }
     this.broadcastSessionList();
+    this.notifySocial(conn.user.id);
   }
 
   private async closeSession(s: Session, reason: string): Promise<void> {
@@ -564,6 +595,7 @@ export class Hub {
       c.open.clear();
       c.panels = [];
       this.send(c, { t: "session.closed", reason });
+      if (c.user) this.notifySocial(c.user.id);
     }
     s.conns.clear();
     this.opts.log(`session closed ${s.id}: ${reason}`);
@@ -1278,6 +1310,7 @@ export class Hub {
   private async disconnect(conn: Conn): Promise<void> {
     this.leaveSession(conn);
     this.conns.delete(conn.id);
+    if (conn.user) this.notifySocial(conn.user.id);
   }
 
   private toSession(s: Session, msg: ServerMessage, except?: Conn): void {

@@ -21,6 +21,12 @@ export type PlayMode = z.infer<typeof PlayMode>;
 export const UserInfo = z.object({ id, name: z.string() });
 export type UserInfo = z.infer<typeof UserInfo>;
 
+export const SocialProfile = z.object({
+  availability: z.enum(["joinable", "ask", "busy"]),
+  note: z.string().trim().max(120),
+});
+export type SocialProfile = z.infer<typeof SocialProfile>;
+
 export const Participant = z.object({
   id,
   name: z.string(),
@@ -335,6 +341,7 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 // サーバー → クライアント
 
 export const ServerMessage = z.discriminatedUnion("t", [
+  z.object({ t: z.literal("social.changed") }),
   z.object({
     t: z.literal("placement.result"),
     requestId: id,

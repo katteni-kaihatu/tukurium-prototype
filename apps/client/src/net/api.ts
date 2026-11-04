@@ -5,6 +5,7 @@ import type {
   ProjectSnapshot,
   Provenance,
 } from "@tukurium/repo-model";
+import type { SessionSummary, SocialProfile, UserInfo } from "@tukurium/shared";
 
 export interface RepoMeta {
   id: string;
@@ -80,6 +81,22 @@ export interface MarketPage {
   nextOffset: number | null;
 }
 
+export interface FriendEntry {
+  user: UserInfo;
+  profile: SocialProfile;
+  presence: { online: boolean; sessions: SessionSummary[] };
+}
+export interface SocialState {
+  profile: SocialProfile;
+  friends: FriendEntry[];
+  incoming: { user: UserInfo; createdAt: string }[];
+  outgoing: { user: UserInfo; createdAt: string }[];
+}
+export interface PersonResult {
+  user: UserInfo;
+  relation: "none" | "friend" | "incoming" | "outgoing";
+}
+
 export interface RepoDetail extends RepoMeta {
   head: string | null;
   outputs: { id: string; name: string; kind: string }[];
@@ -137,6 +154,15 @@ async function call<T>(
 
 /** リポジトリ・作品の API（サーバーの repos/routes.ts） */
 export const api = {
+  social: () => call<SocialState>("GET", "/api/me/social"),
+  updateSocial: (profile: SocialProfile) => call<SocialProfile>("PATCH", "/api/me/social", profile),
+  people: (query: string, signal?: AbortSignal) =>
+    call<PersonResult[]>("GET", `/api/people?q=${encodeURIComponent(query)}`, undefined, signal),
+  requestFriend: (id: string) =>
+    call("POST", `/api/me/friends/${encodeURIComponent(id)}/request`, {}),
+  acceptFriend: (id: string) =>
+    call("POST", `/api/me/friends/${encodeURIComponent(id)}/accept`, {}),
+  removeFriend: (id: string) => call("DELETE", `/api/me/friends/${encodeURIComponent(id)}`),
   market: (query = "", offset = 0, signal?: AbortSignal) =>
     call<MarketPage>(
       "GET",

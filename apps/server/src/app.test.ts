@@ -113,6 +113,59 @@ const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
 });
 
 describe("本人識別とセッション", () => {
+  it("申請の受け手が承認した相手だけに状態を返し、解除と複数接続を反映する", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "申請する人"),
+      b = await client(url, "承認する人"),
+      c = await client(url, "第三者");
+    const A = api(app, a.token),
+      B = api(app, b.token),
+      C = api(app, c.token);
+    expect((await app.inject({ method: "GET", url: "/api/me/social" })).statusCode).toBe(401);
+    expect((await A.post(`/api/me/friends/${a.me.id}/request`)).statusCode).toBe(400);
+    await A.post(`/api/me/friends/${b.me.id}/request`);
+    await A.post(`/api/me/friends/${b.me.id}/request`);
+    expect((await B.get("/api/me/social")).json()).toMatchObject({
+      friends: [],
+      incoming: [{ user: { id: a.me.id } }],
+    });
+    expect((await A.post(`/api/me/friends/${b.me.id}/accept`)).statusCode).toBe(409);
+    expect((await C.post(`/api/me/friends/${a.me.id}/accept`)).statusCode).toBe(409);
+    expect((await B.post(`/api/me/friends/${a.me.id}/accept`)).statusCode).toBe(200);
+    await B.patch("/api/me/social", { availability: "busy", note: "制作中です" });
+    const info = (await A.get("/api/me/social")).json();
+    expect(info.friends[0]).toMatchObject({
+      user: { id: b.me.id },
+      profile: { availability: "busy", note: "制作中です" },
+      presence: { online: true },
+    });
+    expect((await C.get("/api/me/social")).json().friends).toEqual([]);
+    const tab = await client(url, "承認する人", b.token);
+    b.ws.close();
+    await expect
+      .poll(async () => (await A.get("/api/me/social")).json().friends[0].presence.online)
+      .toBe(true);
+    tab.send({ t: "session.create", name: "フレンドの場所" });
+    const sid = (await tab.next("session")).session.id;
+    await expect
+      .poll(async () =>
+        (await A.get("/api/me/social"))
+          .json()
+          .friends[0].presence.sessions.map((s: { id: string }) => s.id),
+      )
+      .toEqual([sid]);
+    expect(
+      (await A.get(`/api/people?q=${encodeURIComponent("承認する人")}`)).json()[0],
+    ).toMatchObject({ relation: "friend" });
+    await app.inject({
+      method: "DELETE",
+      url: `/api/me/friends/${b.me.id}`,
+      headers: { "x-tukurium-token": a.token },
+    });
+    expect((await A.get("/api/me/social")).json().friends).toEqual([]);
+    expect((await api(app, tab.token).get("/api/me/social")).json().friends).toEqual([]);
+  });
+
   it("アイテムを検索し、入手した版を本人の所持一覧へ固定する", async () => {
     const { app, url } = await start();
     const owner = await client(url, "アイテム作者");

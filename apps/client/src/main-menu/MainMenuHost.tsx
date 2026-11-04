@@ -3,15 +3,18 @@ import { useApp } from "../app/store";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
 import { CatalogPage } from "./CatalogPage";
 import { useCatalogConnection } from "./catalogStore";
+import { FriendsPage } from "./FriendsPage";
 import styles from "./MainMenu.module.css";
 import { SessionsPage } from "./SessionsPage";
 import { useSessionLifecycle } from "./sessionActions";
+import { useSocialConnection } from "./socialStore";
 import { MENU_PAGES, useMainMenu } from "./store";
 
 /** ルート切替の外に置き、同じウィンドウと表示状態を保つ。 */
 export function MainMenuHost() {
   useSessionLifecycle();
   useCatalogConnection();
+  useSocialConnection();
   const { open, engine, recall } = useMainMenu();
   useEffect(() => {
     if (!open) return;
@@ -44,6 +47,7 @@ export function MainMenuHost() {
 
 function MainMenu() {
   const page = useMainMenu((s) => s.page);
+  const owner = useApp((s) => s.me?.id);
   const content = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (content.current) content.current.scrollTop = useMainMenu.getState().scroll[page] ?? 0;
@@ -90,7 +94,9 @@ function MainMenu() {
         >
           {MENU_PAGES.map(([id, title]) => (
             <section key={id} hidden={page !== id} aria-label={title}>
-              {id === "items" || id === "market" ? (
+              {id === "friends" ? (
+                <FriendsPage key={owner} active={page === id} />
+              ) : id === "items" || id === "market" ? (
                 <CatalogPage kind={id} active={page === id} />
               ) : id === "sessions" ? (
                 <SessionsPage />

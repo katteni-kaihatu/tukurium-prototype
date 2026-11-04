@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { WorkspaceRole } from "@tukurium/shared";
+import type { SocialProfile, WorkspaceRole } from "@tukurium/shared";
 
 export interface User {
   id: string;
@@ -59,6 +59,14 @@ export interface OwnedItem {
   acquiredAt: string;
 }
 
+export interface Friendship {
+  from: string;
+  to: string;
+  status: "pending" | "accepted";
+  createdAt: string;
+}
+export const friendshipKey = (a: string, b: string) => [a, b].sort().join(":");
+
 export interface WorkspaceMeta {
   id: string;
   name: string;
@@ -98,6 +106,13 @@ export interface Store {
   release(id: string): Promise<Release | null>;
   ownedItems(userId: string): Promise<OwnedItem[]>;
   acquireItem(item: OwnedItem): Promise<OwnedItem>;
+  searchUsers(query: string, limit: number): Promise<User[]>;
+  friendships(userId: string): Promise<Friendship[]>;
+  requestFriendship(request: Friendship): Promise<Friendship>;
+  acceptFriendship(userId: string, from: string): Promise<Friendship | null>;
+  removeFriendship(userId: string, other: string): Promise<void>;
+  socialProfile(userId: string): Promise<SocialProfile>;
+  saveSocialProfile(userId: string, profile: SocialProfile): Promise<void>;
 }
 
 export const newToken = () => randomBytes(24).toString("base64url");
@@ -113,6 +128,8 @@ export class MemoryStore implements Store {
   private readonly workMap = new Map<string, Work>();
   private readonly releaseMap = new Map<string, Release>();
   private readonly owned = new Map<string, OwnedItem>();
+  private readonly friends = new Map<string, Friendship>();
+  private readonly profiles = new Map<string, SocialProfile>();
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -209,5 +226,42 @@ export class MemoryStore implements Store {
     if (existing) return { ...existing };
     this.owned.set(key, { ...item });
     return { ...item };
+  }
+
+  async searchUsers(query: string, limit: number) {
+    const needle = query.toLocaleLowerCase();
+    return [...this.users.values()]
+      .filter((u) => u.id === query || u.name.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((u) => ({ ...u }));
+  }
+  async friendships(userId: string) {
+    return [...this.friends.values()]
+      .filter((f) => f.from === userId || f.to === userId)
+      .map((f) => ({ ...f }));
+  }
+  async requestFriendship(request: Friendship) {
+    const key = friendshipKey(request.from, request.to);
+    const saved = this.friends.get(key) ?? { ...request };
+    this.friends.set(key, saved);
+    return { ...saved };
+  }
+  async acceptFriendship(userId: string, from: string) {
+    const key = friendshipKey(userId, from);
+    const saved = this.friends.get(key);
+    if (!saved || (saved.status === "pending" && (saved.to !== userId || saved.from !== from)))
+      return null;
+    saved.status = "accepted";
+    return { ...saved };
+  }
+  async removeFriendship(userId: string, other: string) {
+    this.friends.delete(friendshipKey(userId, other));
+  }
+  async socialProfile(userId: string): Promise<SocialProfile> {
+    return { ...(this.profiles.get(userId) ?? { availability: "joinable", note: "" }) };
+  }
+  async saveSocialProfile(userId: string, profile: SocialProfile) {
+    this.profiles.set(userId, { ...profile });
   }
 }

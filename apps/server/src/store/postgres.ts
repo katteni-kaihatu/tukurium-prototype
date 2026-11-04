@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import type { SocialProfile } from "@tukurium/shared";
 import postgres from "postgres";
 import {
+  type Friendship,
   newToken,
   newUserId,
   type OwnedItem,
@@ -47,6 +49,11 @@ export class PostgresStore implements Store {
     await this.sql`create table if not exists owned_items (
       user_id text not null, work_id text not null, data jsonb not null,
       primary key (user_id, work_id))`;
+    await this
+      .sql`create table if not exists friend_links (left_id text not null, right_id text not null, data jsonb not null, primary key(left_id,right_id))`;
+    await this.sql`create index if not exists friend_links_right_id on friend_links(right_id)`;
+    await this
+      .sql`create table if not exists social_profiles (user_id text primary key, data jsonb not null)`;
   }
 
   async close(): Promise<void> {
@@ -184,5 +191,49 @@ export class PostgresStore implements Store {
     const saved = rows[0];
     if (!saved) throw new Error("所持アイテムを保存できませんでした");
     return saved.data;
+  }
+
+  async searchUsers(query: string, limit: number) {
+    return this.sql<
+      User[]
+    >`select id,name from users where id=${query} or position(lower(${query}) in lower(name))>0 order by name,id limit ${limit}`;
+  }
+  async friendships(userId: string) {
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`select data from friend_links where left_id=${userId} or right_id=${userId}`;
+    return rows.map((r) => r.data);
+  }
+  async requestFriendship(request: Friendship) {
+    const [a, b] = [request.from, request.to].sort() as [string, string];
+    await this
+      .sql`insert into friend_links (left_id,right_id,data) values (${a},${b},${this.sql.json(request as never)}) on conflict(left_id,right_id) do nothing`;
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`select data from friend_links where left_id=${a} and right_id=${b}`;
+    const saved = rows[0];
+    if (!saved) throw new Error("申請を保存できませんでした");
+    return saved.data;
+  }
+  async acceptFriendship(userId: string, from: string) {
+    const [a, b] = [userId, from].sort() as [string, string];
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`update friend_links set data=jsonb_set(data,'{status}','"accepted"'::jsonb) where left_id=${a} and right_id=${b} and (data->>'status'='accepted' or (data->>'from'=${from} and data->>'to'=${userId})) returning data`;
+    return rows[0]?.data ?? null;
+  }
+  async removeFriendship(userId: string, other: string) {
+    const [a, b] = [userId, other].sort() as [string, string];
+    await this.sql`delete from friend_links where left_id=${a} and right_id=${b}`;
+  }
+  async socialProfile(userId: string): Promise<SocialProfile> {
+    const rows = await this.sql<
+      { data: SocialProfile }[]
+    >`select data from social_profiles where user_id=${userId}`;
+    return rows[0]?.data ?? { availability: "joinable", note: "" };
+  }
+  async saveSocialProfile(userId: string, profile: SocialProfile) {
+    await this
+      .sql`insert into social_profiles (user_id,data) values (${userId},${this.sql.json(profile as never)}) on conflict(user_id) do update set data=excluded.data`;
   }
 }

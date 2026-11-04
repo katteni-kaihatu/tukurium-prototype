@@ -320,6 +320,52 @@
   gap: 18px;
   align-items: start;
 }
+.profileSettings {
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--c-line);
+  padding-bottom: 12px;
+}
+.profileSettings summary {
+  color: var(--c-brand);
+  cursor: pointer;
+}
+.profileSettings code {
+  overflow-wrap: anywhere;
+}
+.searchPeople {
+  padding: 16px;
+  margin-bottom: 18px;
+  background: #f7f4ee;
+  border-radius: 12px;
+}
+.searchPeople label {
+  display: grid;
+  gap: 8px;
+}
+.personResult {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--c-line);
+  flex-wrap: wrap;
+}
+.personResult > span {
+  display: grid;
+  gap: 4px;
+}
+.personResult small {
+  color: var(--c-ink-3);
+}
+.inlineActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.requests {
+  margin-bottom: 18px;
+}
 @container (max-width: 720px) {
   .catalogSplit {
     display: flex;
