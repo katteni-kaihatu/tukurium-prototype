@@ -161,6 +161,10 @@ export class Hub {
     };
   }
 
+  sessionSummary(sessionId: string) {
+    return this.sessionList().find((s) => s.id === sessionId) ?? null;
+  }
+
   notifyUsers(userIds: readonly string[]): void {
     const ids = new Set(userIds);
     for (const conn of this.conns.values())

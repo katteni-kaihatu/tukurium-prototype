@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 import { api, type PersonResult } from "../net/api";
+import { Invitations } from "./Invitations";
 import styles from "./MainMenu.module.css";
 import { enterSession } from "./sessionActions";
 import { AVAILABILITY, changeSocial, refreshSocial, useSocial } from "./socialStore";
@@ -10,7 +11,7 @@ import { useMainMenu } from "./store";
 
 export function FriendsPage({ active }: { active: boolean }) {
   const { data, loading, error, busy } = useSocial();
-  const { me, status } = useApp();
+  const { me, status, session } = useApp();
   const menu = useMainMenu();
   const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
@@ -228,6 +229,7 @@ export function FriendsPage({ active }: { active: boolean }) {
           ))}
         </section>
       )}
+      <Invitations />
       <div className={styles.toolbar}>
         <input
           aria-label="フレンドを検索"
@@ -312,6 +314,20 @@ export function FriendsPage({ active }: { active: boolean }) {
               >
                 フレンドを解除
               </button>
+              {session && (
+                <button
+                  type="button"
+                  className={styles.primary}
+                  disabled={
+                    busy || !connected || chosen.presence.sessions.some((s) => s.id === session.id)
+                  }
+                  onClick={() => perform(() => api.invite(chosen.user.id, session.id))}
+                >
+                  {chosen.presence.sessions.some((s) => s.id === session.id)
+                    ? "同じセッションに参加中"
+                    : "このセッションへ招待"}
+                </button>
+              )}
             </aside>
           )}
         </div>

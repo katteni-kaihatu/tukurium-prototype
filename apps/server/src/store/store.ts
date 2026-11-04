@@ -67,6 +67,16 @@ export interface Friendship {
 }
 export const friendshipKey = (a: string, b: string) => [a, b].sort().join(":");
 
+export interface SessionInvitation {
+  id: string;
+  from: string;
+  to: string;
+  sessionId: string;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface WorkspaceMeta {
   id: string;
   name: string;
@@ -113,6 +123,14 @@ export interface Store {
   removeFriendship(userId: string, other: string): Promise<void>;
   socialProfile(userId: string): Promise<SocialProfile>;
   saveSocialProfile(userId: string, profile: SocialProfile): Promise<void>;
+  invitations(userId: string): Promise<SessionInvitation[]>;
+  invitation(id: string): Promise<SessionInvitation | null>;
+  createInvitation(invitation: SessionInvitation): Promise<SessionInvitation>;
+  respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ): Promise<SessionInvitation | null>;
 }
 
 export const newToken = () => randomBytes(24).toString("base64url");
@@ -130,6 +148,7 @@ export class MemoryStore implements Store {
   private readonly owned = new Map<string, OwnedItem>();
   private readonly friends = new Map<string, Friendship>();
   private readonly profiles = new Map<string, SocialProfile>();
+  private readonly invites = new Map<string, SessionInvitation>();
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -263,5 +282,40 @@ export class MemoryStore implements Store {
   }
   async saveSocialProfile(userId: string, profile: SocialProfile) {
     this.profiles.set(userId, { ...profile });
+  }
+
+  async invitations(userId: string) {
+    return [...this.invites.values()]
+      .filter((i) => i.from === userId || i.to === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100)
+      .map((i) => ({ ...i }));
+  }
+  async invitation(id: string) {
+    const value = [...this.invites.values()].find((i) => i.id === id);
+    return value ? { ...value } : null;
+  }
+  async createInvitation(invitation: SessionInvitation) {
+    const key = `${invitation.from}:${invitation.to}:${invitation.sessionId}`;
+    const old = this.invites.get(key);
+    if (old?.status === "pending" && old.expiresAt > new Date().toISOString()) return { ...old };
+    this.invites.set(key, { ...invitation });
+    return { ...invitation };
+  }
+  async respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ) {
+    const value = [...this.invites.values()].find((i) => i.id === id);
+    if (
+      !value ||
+      (status === "cancelled" ? value.from !== actor : value.to !== actor) ||
+      value.expiresAt <= new Date().toISOString() ||
+      value.status !== "pending"
+    )
+      return null;
+    value.status = status;
+    return { ...value };
   }
 }

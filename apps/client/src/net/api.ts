@@ -91,6 +91,16 @@ export interface SocialState {
   friends: FriendEntry[];
   incoming: { user: UserInfo; createdAt: string }[];
   outgoing: { user: UserInfo; createdAt: string }[];
+  invitations: { incoming: InvitationView[]; outgoing: InvitationView[] };
+}
+export interface InvitationView {
+  id: string;
+  from: UserInfo | null;
+  to: UserInfo | null;
+  session: SessionSummary | null;
+  status: "pending" | "accepted" | "declined" | "cancelled" | "expired";
+  createdAt: string;
+  expiresAt: string;
 }
 export interface PersonResult {
   user: UserInfo;
@@ -154,6 +164,12 @@ async function call<T>(
 
 /** リポジトリ・作品の API（サーバーの repos/routes.ts） */
 export const api = {
+  invite: (to: string, sessionId: string) =>
+    call<InvitationView>("POST", "/api/me/invitations", { to, sessionId }),
+  respondInvite: (id: string, action: "accept" | "decline" | "cancel") =>
+    call<InvitationView>("POST", `/api/me/invitations/${encodeURIComponent(id)}/respond`, {
+      action,
+    }),
   social: () => call<SocialState>("GET", "/api/me/social"),
   updateSocial: (profile: SocialProfile) => call<SocialProfile>("PATCH", "/api/me/social", profile),
   people: (query: string, signal?: AbortSignal) =>

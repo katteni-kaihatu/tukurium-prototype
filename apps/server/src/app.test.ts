@@ -113,6 +113,66 @@ const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
 });
 
 describe("本人識別とセッション", () => {
+  it("フレンドへの招待は受信者だけが応答し、受け取るだけでは移動しない", async () => {
+    const { app, url, store } = await start();
+    const a = await client(url, "招待する人"),
+      b = await client(url, "受け取る人"),
+      c = await client(url, "第三者");
+    const A = api(app, a.token),
+      B = api(app, b.token),
+      C = api(app, c.token);
+    a.send({ t: "session.create", name: "招待先" });
+    const sid = (await a.next("session")).session.id;
+    expect((await A.post("/api/me/invitations", { to: b.me.id, sessionId: sid })).statusCode).toBe(
+      403,
+    );
+    await A.post(`/api/me/friends/${b.me.id}/request`);
+    await B.post(`/api/me/friends/${a.me.id}/accept`);
+    const invite = (await A.post("/api/me/invitations", { to: b.me.id, sessionId: sid })).json();
+    expect((await A.post("/api/me/invitations", { to: b.me.id, sessionId: sid })).json().id).toBe(
+      invite.id,
+    );
+    expect(
+      (await A.post(`/api/me/invitations/${invite.id}/respond`, { action: "accept" })).statusCode,
+    ).toBe(403);
+    expect(
+      (await C.post(`/api/me/invitations/${invite.id}/respond`, { action: "decline" })).statusCode,
+    ).toBe(403);
+    expect((await B.get("/api/me/social")).json().invitations.incoming[0]).toMatchObject({
+      id: invite.id,
+      status: "pending",
+    });
+    expect(
+      (await B.post(`/api/me/invitations/${invite.id}/respond`, { action: "accept" })).json()
+        .status,
+    ).toBe("accepted");
+    expect((await A.get("/api/me/social")).json().friends[0].presence.sessions).toEqual([]);
+    const next = (await A.post("/api/me/invitations", { to: b.me.id, sessionId: sid })).json();
+    await B.post(`/api/me/invitations/${next.id}/respond`, { action: "decline" });
+    expect(
+      (await B.post(`/api/me/invitations/${next.id}/respond`, { action: "accept" })).statusCode,
+    ).toBe(409);
+    const expired = await store.createInvitation({
+      id: "expired-invite",
+      from: a.me.id,
+      to: b.me.id,
+      sessionId: sid,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      expiresAt: "2020-01-01T00:00:00.000Z",
+    });
+    expect(
+      (await B.post(`/api/me/invitations/${expired.id}/respond`, { action: "accept" })).statusCode,
+    ).toBe(409);
+    const closed = (await A.post("/api/me/invitations", { to: b.me.id, sessionId: sid })).json();
+    a.send({ t: "session.close" });
+    await a.next("session.closed");
+    expect(
+      (await B.post(`/api/me/invitations/${closed.id}/respond`, { action: "accept" })).statusCode,
+    ).toBe(409);
+    expect((await B.get("/api/me/social")).json().invitations.incoming[0].status).toBe("expired");
+  });
+
   it("申請の受け手が承認した相手だけに状態を返し、解除と複数接続を反映する", async () => {
     const { app, url } = await start();
     const a = await client(url, "申請する人"),

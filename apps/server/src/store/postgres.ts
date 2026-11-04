@@ -8,6 +8,7 @@ import {
   type OwnedItem,
   type Release,
   type RepoMeta,
+  type SessionInvitation,
   type Store,
   type User,
   type Work,
@@ -54,6 +55,10 @@ export class PostgresStore implements Store {
     await this.sql`create index if not exists friend_links_right_id on friend_links(right_id)`;
     await this
       .sql`create table if not exists social_profiles (user_id text primary key, data jsonb not null)`;
+    await this
+      .sql`create table if not exists session_invitations (id text unique not null, sender text not null, recipient text not null, session_id text not null, data jsonb not null, primary key(sender,recipient,session_id))`;
+    await this
+      .sql`create index if not exists session_invitations_recipient on session_invitations(recipient)`;
   }
 
   async close(): Promise<void> {
@@ -235,5 +240,39 @@ export class PostgresStore implements Store {
   async saveSocialProfile(userId: string, profile: SocialProfile) {
     await this
       .sql`insert into social_profiles (user_id,data) values (${userId},${this.sql.json(profile as never)}) on conflict(user_id) do update set data=excluded.data`;
+  }
+
+  async invitations(userId: string) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`select data from session_invitations where sender=${userId} or recipient=${userId} order by data->>'createdAt' desc limit 100`;
+    return rows.map((r) => r.data);
+  }
+  async invitation(id: string) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`select data from session_invitations where id=${id}`;
+    return rows[0]?.data ?? null;
+  }
+  async createInvitation(invitation: SessionInvitation) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`insert into session_invitations (id,sender,recipient,session_id,data) values (${invitation.id},${invitation.from},${invitation.to},${invitation.sessionId},${this.sql.json(invitation as never)})
+      on conflict(sender,recipient,session_id) do update set
+      id=case when session_invitations.data->>'status'='pending' and (session_invitations.data->>'expiresAt')::timestamptz>now() then session_invitations.id else excluded.id end,
+      data=case when session_invitations.data->>'status'='pending' and (session_invitations.data->>'expiresAt')::timestamptz>now() then session_invitations.data else excluded.data end returning data`;
+    const saved = rows[0];
+    if (!saved) throw new Error("招待を保存できませんでした");
+    return saved.data;
+  }
+  async respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`update session_invitations set data=jsonb_set(data,'{status}',to_jsonb(${status}::text)) where id=${id} and data->>'status'='pending' and (data->>'expiresAt')::timestamptz>now() and (case when ${status}='cancelled' then sender=${actor} else recipient=${actor} end) returning data`;
+    return rows[0]?.data ?? null;
   }
 }
