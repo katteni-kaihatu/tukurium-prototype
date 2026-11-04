@@ -14,7 +14,7 @@
 | 文書 | 役割 |
 | --- | --- |
 | [ROADMAP.md](ROADMAP.md) | 機能ごとの実装状況と残作業、検討中の候補、詳細計画への入口。分野の並びは優先順位を表さない |
-| [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md) |
+| [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md)、[メインメニュー実装計画（Draft）](plans/main-menu-implementation.md)と[UI/UX](plans/social-workshop-experience.md) |
 | [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件。[Creator Platform 機能候補](discovery/creator-platform-capabilities.md) |
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |

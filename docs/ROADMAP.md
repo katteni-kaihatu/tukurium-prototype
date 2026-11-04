@@ -29,6 +29,12 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 
 セッションの安全性の表示と、実行役を信頼する方式の制約は「5. 作品を組み合わせる」で扱う。この分野だけを対象とする新機能は、現時点の Active な計画にはない。
 
+### 体験の計画（Draft）
+
+[メインメニューの UI/UX](plans/social-workshop-experience.md)では、ホーム・フレンド・セッション・アイテム・マーケットの画面モックを確認した。左上のツクリウムボタンから一つのウィンドウを開き、参加中の場所を変えずに使う（[ADR 0021](adr/0021-main-menu-window.md)）。2D クライアントは追加しない。
+
+`feat/main-menu` の[実装計画](plans/main-menu-implementation.md)に、共通ウィンドウ、セッション、マーケットと所持アイテム、フレンド、ホームの順で作業と完了条件をまとめた。本体への実装は未着手。フレンド関係や所持する版などの詳細仕様は、各段階の着手前に確定する。
+
 ## 2. アイテムやワールドを作る
 
 ### 実装済み
@@ -150,6 +156,8 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - Sample UGC の充実（Focus）: 既存の検証作品を、遊び方・構成・要求権限・改造手順が分かる学習用サンプルへ育てる。U4 の検証作品の実装とは分けて扱う。
 - Localization（Candidate）: Tukurium 本体と作品のタイトル・説明・字幕・ゲーム内テキストを多言語化する。
 - Library marketplace のランキング・評価・収益化・自動推薦は、実測や利用経験を得てから判断する。
+
+公開アイテムの検索・比較・入手と、所持一覧からの取り出しは、[メインメニューの UI/UX](plans/social-workshop-experience.md)と[実装計画（Draft）](plans/main-menu-implementation.md)で扱う。配布・導入・更新の基盤は既存の UGC 計画へ接続する。
 
 詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package の計画](plans/ugc-api-library-permissions.md)、[機能候補](discovery/creator-platform-capabilities.md)
 
