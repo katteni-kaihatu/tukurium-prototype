@@ -105,6 +105,51 @@ async function sessionWithWorkspace(url: string) {
 }
 
 describe("本人識別とセッション", () => {
+  it("参加中にも一覧を更新し、複数タブを同じ参加者として数える", async () => {
+    const { url } = await start();
+    const a = await client(url, "持ち主");
+    a.send({ t: "session.create", name: "一覧確認" });
+    const sid = (await a.next("session")).session.id;
+    const b = await client(url, "参加者");
+    b.send({ t: "session.join", sessionId: sid });
+    await b.next("session");
+    const list = await a.next("sessions", (m) => m.sessions[0]?.count === 2);
+    expect(list.sessions[0]?.participants.map((p) => p.name).sort()).toEqual(["参加者", "持ち主"]);
+    const tab = await client(url, "参加者", b.token);
+    tab.send({ t: "session.join", sessionId: sid });
+    await tab.next("session");
+    a.send({ t: "sessions.list" });
+    expect(
+      (await a.next("sessions", (m) => m.sessions[0]?.count === 2)).sessions[0]?.participants,
+    ).toHaveLength(2);
+    b.ws.close();
+    a.send({ t: "sessions.list" });
+    expect(
+      (await a.next("sessions", (m) => m.sessions[0]?.count === 2)).sessions[0]?.participants,
+    ).toHaveLength(2);
+  });
+
+  it("存在しない移動先を拒んでも現在のセッションを維持する", async () => {
+    const { url } = await start();
+    const a = await client(url, "持ち主");
+    a.send({ t: "session.create", name: "残る部屋", requestId: "create-1" });
+    const s = (await a.next("session")).session;
+    expect(await a.next("session.entered")).toMatchObject({
+      sessionId: s.id,
+      requestId: "create-1",
+    });
+    a.send({ t: "session.join", sessionId: "missing", requestId: "join-1" });
+    expect(await a.next("session.rejected")).toMatchObject({
+      sessionId: "missing",
+      requestId: "join-1",
+    });
+    a.send({ t: "sessions.list" });
+    expect((await a.next("sessions", (m) => m.sessions[0]?.count === 1)).sessions[0]?.id).toBe(
+      s.id,
+    );
+    expect(a.inbox.some((m) => m.t === "session.closed")).toBe(false);
+  });
+
   it("health", async () => {
     const { app } = await start();
     const res = await app.inject({ method: "GET", url: "/api/health" });

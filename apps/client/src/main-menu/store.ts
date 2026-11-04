@@ -18,6 +18,8 @@ interface MenuState {
   queries: Record<MenuPage, string>;
   selected: Partial<Record<MenuPage, string>>;
   scroll: Partial<Record<MenuPage, number>>;
+  pendingSession: boolean;
+  sessionError: string | null;
   show(page?: MenuPage): void;
   close(): void;
   toggle(): void;
@@ -35,6 +37,8 @@ export const useMainMenu = create<MenuState>((set, get) => ({
   queries: { home: "", friends: "", sessions: "", items: "", market: "" },
   selected: {},
   scroll: {},
+  pendingSession: false,
+  sessionError: null,
   show: (page) => set((s) => ({ open: true, page: page ?? s.page, recall: s.recall + 1 })),
   close: () => set({ open: false }),
   toggle: () => (get().open ? get().close() : get().show()),

@@ -197,13 +197,14 @@ export class Hub {
         user.name = msg.name;
         await this.store.renameUser(user.id, msg.name);
         if (conn.session) this.broadcastSession(conn.session);
+        this.broadcastSessionList();
         return;
       case "sessions.list":
         return this.send(conn, { t: "sessions", sessions: this.sessionList() });
       case "session.create":
-        return this.createSession(conn, msg.name);
+        return this.createSession(conn, msg.name, msg.requestId);
       case "session.join":
-        return this.joinSession(conn, msg.sessionId);
+        return this.joinSession(conn, msg.sessionId, msg.requestId);
       case "session.leave":
         return this.leaveSession(conn);
       case "session.close":
@@ -448,7 +449,7 @@ export class Hub {
   // ---------------------------------------------------------------------------
   // セッション
 
-  private createSession(conn: Conn, name: string): void {
+  private createSession(conn: Conn, name: string, requestId?: string): void {
     if (!conn.user) return;
     this.leaveSession(conn);
     const s: Session = {
@@ -465,21 +466,31 @@ export class Hub {
     };
     this.sessions.set(s.id, s);
     this.opts.log(`session created ${s.id} by ${conn.user.id}`);
-    this.joinSession(conn, s.id);
+    this.joinSession(conn, s.id, requestId);
     this.broadcastSessionList();
   }
 
-  private joinSession(conn: Conn, sessionId: string): void {
+  private joinSession(conn: Conn, sessionId: string, requestId?: string): void {
     const s = this.sessions.get(sessionId);
     if (!conn.user) return;
     if (!s) {
       this.send(conn, {
-        t: "session.closed",
-        reason: "セッションが見つかりません（閉じられた可能性があります）",
+        t: "session.rejected",
+        sessionId,
+        requestId,
+        message: "セッションが見つかりません（閉じられた可能性があります）",
       });
       return;
     }
-    if (conn.session === s) return;
+    this.send(conn, { t: "session.entered", sessionId, requestId });
+    if (conn.session === s) {
+      this.send(conn, {
+        t: "session",
+        session: this.sessionInfo(s),
+        participants: this.participants(s),
+      });
+      return;
+    }
     this.leaveSession(conn);
     conn.session = s;
     conn.pose = {
@@ -558,13 +569,14 @@ export class Hub {
         name: s.name,
         owner: { id: s.owner, name: ownerConn?.user?.name ?? "（退出中）" },
         count: new Set([...s.conns].map((c) => c.user?.id)).size,
+        participants: this.participants(s).map(({ id, name }) => ({ id, name })),
       };
     });
   }
 
   private broadcastSessionList(): void {
     const msg: ServerMessage = { t: "sessions", sessions: this.sessionList() };
-    for (const c of this.conns.values()) if (c.user && !c.session) this.send(c, msg);
+    for (const c of this.conns.values()) if (c.user) this.send(c, msg);
   }
 
   private sessionInfo(s: Session): SessionInfo {

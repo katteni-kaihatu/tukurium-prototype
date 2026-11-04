@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
@@ -91,6 +91,7 @@ export const SessionSummary = z.object({
   name: z.string(),
   owner: UserInfo,
   count: z.number(),
+  participants: z.array(UserInfo).default([]),
 });
 export type SessionSummary = z.infer<typeof SessionSummary>;
 
@@ -235,8 +236,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("rename"), name: z.string().min(1).max(32) }),
   z.object({ t: z.literal("sessions.list") }),
-  z.object({ t: z.literal("session.create"), name: z.string().min(1).max(64) }),
-  z.object({ t: z.literal("session.join"), sessionId: id }),
+  z.object({
+    t: z.literal("session.create"),
+    name: z.string().min(1).max(64),
+    requestId: id.optional(),
+  }),
+  z.object({ t: z.literal("session.join"), sessionId: id, requestId: id.optional() }),
   z.object({ t: z.literal("session.leave") }),
   /** 持ち主がセッションを閉じる */
   z.object({ t: z.literal("session.close") }),
@@ -320,6 +325,13 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 export const ServerMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo, token: z.string() }),
   z.object({ t: z.literal("sessions"), sessions: z.array(SessionSummary) }),
+  z.object({ t: z.literal("session.entered"), sessionId: id, requestId: id.optional() }),
+  z.object({
+    t: z.literal("session.rejected"),
+    sessionId: id,
+    requestId: id.optional(),
+    message: z.string(),
+  }),
   z.object({ t: z.literal("session"), session: SessionInfo, participants: z.array(Participant) }),
   z.object({ t: z.literal("session.closed"), reason: z.string() }),
   z.object({ t: z.literal("joined"), participant: Participant }),

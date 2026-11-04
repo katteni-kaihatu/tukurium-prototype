@@ -31,15 +31,20 @@ export function SessionView() {
   // 参加（接続し直したときも参加し直す）と退出
   useEffect(() => {
     useApp.setState({ closedReason: null });
-    const off = client.onWelcome(() => client.send({ t: "session.join", sessionId }));
+    return client.onWelcome(() => {
+      if (client.joinedSessionId !== sessionId) client.send({ t: "session.join", sessionId });
+    });
+  }, [client, sessionId]);
+
+  // 別セッションへの移動では、サーバーの受理前に今の場所を退出しない。
+  useEffect(() => {
     return () => {
-      off();
       useWorkspace.getState().leave();
       resetSessionWorld();
       client.send({ t: "session.leave" });
       useApp.setState({ session: null, participants: {}, remotePanels: {} });
     };
-  }, [client, sessionId]);
+  }, [client]);
 
   // ?open=リポジトリID：セッションに入ったら、そのリポジトリをワークスペースとして開く
   useEffect(() => {

@@ -2,10 +2,13 @@ import { useEffect } from "react";
 import { useApp } from "../app/store";
 import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
 import styles from "./MainMenu.module.css";
+import { SessionsPage } from "./SessionsPage";
+import { useSessionLifecycle } from "./sessionActions";
 import { MENU_PAGES, useMainMenu } from "./store";
 
 /** ルート切替の外に置き、同じウィンドウと表示状態を保つ。 */
 export function MainMenuHost() {
+  useSessionLifecycle();
   const { open, engine, recall } = useMainMenu();
   useEffect(() => {
     if (!open) return;
@@ -72,12 +75,18 @@ function MainMenu() {
         <div className={styles.content}>
           {MENU_PAGES.map(([id, title]) => (
             <section key={id} hidden={page !== id} aria-label={title}>
-              <h1>{title}</h1>
-              <p className={styles.muted}>
-                {id === "home"
-                  ? "集まる場所や、持ち込むアイテムをここから選びます。"
-                  : "この画面は次の実装単位で実データにつなぎます。"}
-              </p>
+              {id === "sessions" ? (
+                <SessionsPage />
+              ) : (
+                <>
+                  <h1>{title}</h1>
+                  <p className={styles.muted}>
+                    {id === "home"
+                      ? "集まる場所や、持ち込むアイテムをここから選びます。"
+                      : "この画面は次の実装単位で実データにつなぎます。"}
+                  </p>
+                </>
+              )}
             </section>
           ))}
         </div>

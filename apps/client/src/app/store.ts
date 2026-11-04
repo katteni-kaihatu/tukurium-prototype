@@ -16,6 +16,7 @@ interface AppState {
   me: UserInfo | null;
   status: ConnectionStatus;
   sessions: SessionSummary[];
+  sessionsLoaded: boolean;
   session: SessionInfo | null;
   participants: Record<string, Participant>;
   /** 他の参加者が開いているパネル（権限に合わせて伏せられたもの） */
@@ -50,6 +51,7 @@ export const useApp = create<AppState>((set) => ({
   me: null,
   status: client.status,
   sessions: [],
+  sessionsLoaded: false,
   session: null,
   participants: {},
   remotePanels: {},
@@ -73,7 +75,7 @@ client.on((msg) => {
       useApp.setState({ me: msg.you, myName: msg.you.name });
       break;
     case "sessions":
-      useApp.setState({ sessions: msg.sessions });
+      useApp.setState({ sessions: msg.sessions, sessionsLoaded: true });
       break;
     case "session":
       useApp.setState({
