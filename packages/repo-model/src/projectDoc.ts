@@ -35,7 +35,7 @@ const clone = <T>(v: T): T => structuredClone(v);
  * - code        : Y.Map<Y.Text>         System のスクリプト（文字単位で共同編集）
  * - materials   : Y.Map<MaterialDef>
  * - outputs     : Y.Map<OutputDef>
- * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<KokoStateValues>)
+ * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<Y.Map<FieldValue>>)
  *
  * 変更はすべて transact でまとめ、利用者の 1 操作が 1 つの更新になるようにする。
  */
@@ -156,16 +156,16 @@ export class ProjectDoc {
       if (!prev) return;
       // Entity が持っている値を新しい定義に合わせる（消えたフィールドは削除、型が変わったら初期値）
       for (const e of this.entityMap.values()) {
-        const states = e.get("states") as Y.Map<KokoStateValues>;
+        const states = e.get("states") as Y.Map<Y.Map<FieldValue>>;
         const values = states.get(def.id);
         if (!values) continue;
-        const next: KokoStateValues = {};
+        for (const field of values.keys()) if (!ids.has(field)) values.delete(field);
         for (const f of def.fields) {
           const old = prev.fields.find((p) => p.id === f.id);
-          const kept = old && old.type === f.type ? values[f.id] : undefined;
-          next[f.id] = kept !== undefined ? kept : clone(f.default);
+          const kept = old && old.type === f.type ? values.get(f.id) : undefined;
+          // 定義の競合と値の競合で勝つ側を揃えるため、同型の値も書き戻す。
+          values.set(f.id, clone(kept !== undefined ? kept : f.default));
         }
-        states.set(def.id, next);
       }
     });
   }
@@ -247,9 +247,9 @@ export class ProjectDoc {
     this.transact(() => {
       this.materialMap.delete(id);
       for (const e of this.entityMap.values()) {
-        const states = e.get("states") as Y.Map<KokoStateValues>;
+        const states = e.get("states") as Y.Map<Y.Map<FieldValue>>;
         const mesh = states.get("builtin.Mesh");
-        if (mesh && mesh.material === id) states.set("builtin.Mesh", { ...mesh, material: null });
+        if (mesh?.get("material") === id) mesh.set("material", null);
       }
     });
   }
@@ -273,11 +273,9 @@ export class ProjectDoc {
         if (m.map === id) this.materialMap.set(m.id, { ...m, map: null });
       }
       for (const e of this.entityMap.values()) {
-        const states = e.get("states") as Y.Map<KokoStateValues>;
-        for (const [k, v] of states.entries()) {
-          const hit = Object.entries(v).filter(([, val]) => val === id);
-          if (hit.length > 0)
-            states.set(k, { ...v, ...Object.fromEntries(hit.map(([f]) => [f, null])) });
+        const states = e.get("states") as Y.Map<Y.Map<FieldValue>>;
+        for (const values of states.values()) {
+          for (const [field, value] of values) if (value === id) values.set(field, null);
         }
       }
     });
@@ -330,9 +328,12 @@ export class ProjectDoc {
       e.set("parent", init.parent ?? null);
       e.set("output", init.output);
       e.set("order", siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1);
-      const states = new Y.Map<KokoStateValues>();
+      const states = new Y.Map<Y.Map<FieldValue>>();
       for (const [koko, values] of Object.entries(init.states ?? {})) {
-        states.set(koko, registry.createValues(koko, values));
+        states.set(
+          koko,
+          new Y.Map<FieldValue>(Object.entries(registry.createValues(koko, values))),
+        );
       }
       e.set("states", states);
       this.entityMap.set(id, e);
@@ -364,7 +365,10 @@ export class ProjectDoc {
   addState(id: EntityId, koko: KokoStateId, values?: KokoStateValues): void {
     const states = this.statesOf(id);
     if (states.has(koko)) return;
-    states.set(koko, this.registry().createValues(koko, values));
+    states.set(
+      koko,
+      new Y.Map<FieldValue>(Object.entries(this.registry().createValues(koko, values))),
+    );
   }
   removeState(id: EntityId, koko: KokoStateId): void {
     this.statesOf(id).delete(koko);
@@ -374,7 +378,7 @@ export class ProjectDoc {
     const states = this.statesOf(id);
     const values = states.get(koko);
     if (!values) throw new Error(`Entity ${id} は ${koko} を持っていません`);
-    states.set(koko, { ...values, [field]: clone(value) });
+    values.set(field, clone(value));
   }
 
   // ---------- 丸ごと ----------
@@ -451,8 +455,9 @@ export class ProjectDoc {
         map.set("parent", e.parent);
         map.set("output", e.output);
         map.set("order", e.order);
-        const states = new Y.Map<KokoStateValues>();
-        for (const [k, v] of Object.entries(e.states)) states.set(k, clone(v));
+        const states = new Y.Map<Y.Map<FieldValue>>();
+        for (const [k, v] of Object.entries(e.states))
+          states.set(k, new Y.Map<FieldValue>(Object.entries(clone(v))));
         map.set("states", states);
         this.entityMap.set(e.id, map);
       }
@@ -634,14 +639,14 @@ export class ProjectDoc {
     return out;
   }
 
-  private statesOf(id: EntityId): Y.Map<KokoStateValues> {
+  private statesOf(id: EntityId): Y.Map<Y.Map<FieldValue>> {
     const e = this.entityMap.get(id);
     if (!e) throw new Error(`Unknown entity: ${id}`);
-    return e.get("states") as Y.Map<KokoStateValues>;
+    return e.get("states") as Y.Map<Y.Map<FieldValue>>;
   }
 
   private toEntityDef(e: Y.Map<unknown>): EntityDef {
-    const states = e.get("states") as Y.Map<KokoStateValues>;
+    const states = e.get("states") as Y.Map<Y.Map<FieldValue>>;
     return {
       id: e.get("id") as string,
       name: e.get("name") as string,

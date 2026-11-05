@@ -113,6 +113,131 @@ describe("ProjectDoc", () => {
     expect(b.snapshot()).toEqual(a.snapshot());
   });
 
+  it("同じKokoStateの別フィールドを同時に編集しても両方を残す (#61)", () => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("共同編集"));
+    const ks = a.addKokoState("Stats");
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [
+        { id: "hp", name: "hp", type: "number", default: 10 },
+        { id: "score", name: "score", type: "number", default: 0 },
+      ],
+    });
+    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: {} } });
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    const beforeA = Y.encodeStateVector(a.doc);
+    const beforeB = Y.encodeStateVector(b.doc);
+    a.setField(entity, ks, "hp", 8);
+    b.setField(entity, ks, "score", 3);
+    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+    Y.applyUpdate(a.doc, fromB);
+    Y.applyUpdate(b.doc, fromA);
+    expect(a.entity(entity)?.states[ks]).toEqual({ hp: 8, score: 3 });
+    expect(b.snapshot()).toEqual(a.snapshot());
+    const restored = new ProjectDoc();
+    Y.applyUpdate(restored.doc, Y.encodeStateAsUpdate(a.doc));
+    expect(restored.snapshot()).toEqual(a.snapshot());
+    const loaded = new ProjectDoc();
+    loaded.load(a.snapshot());
+    expect(loaded.snapshot()).toEqual(a.snapshot());
+
+    const vectorA = Y.encodeStateVector(a.doc),
+      vectorB = Y.encodeStateVector(b.doc);
+    a.setField(entity, ks, "hp", 5);
+    b.setField(entity, ks, "hp", 6);
+    const changeA = Y.encodeStateAsUpdate(a.doc, vectorA);
+    const changeB = Y.encodeStateAsUpdate(b.doc, vectorB);
+    Y.applyUpdate(a.doc, changeB);
+    Y.applyUpdate(b.doc, changeA);
+    expect([5, 6]).toContain(a.entity(entity)?.states[ks]?.hp);
+    expect(a.snapshot()).toEqual(b.snapshot());
+  });
+
+  it.each([
+    {
+      winner: "フィールド追加側",
+      typeChangeClient: 1,
+      additionClient: 2,
+      type: "number",
+      value: 7,
+    },
+    { winner: "型変更側", typeChangeClient: 2, additionClient: 1, type: "boolean", value: false },
+  ])("定義の同時編集で $winner が勝つと、値の型も定義に合わせる (#61)", (testCase) => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("共同編集"));
+    const ks = a.addKokoState("Stats");
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "number", default: 10 }],
+    });
+    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: { hp: 7 } } });
+    const initial = Y.encodeStateAsUpdate(a.doc);
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, initial);
+    a.doc.clientID = testCase.typeChangeClient;
+    b.doc.clientID = testCase.additionClient;
+    const beforeA = Y.encodeStateVector(a.doc);
+    const beforeB = Y.encodeStateVector(b.doc);
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "boolean", default: false }],
+    });
+    b.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [
+        { id: "hp", name: "hp", type: "number", default: 10 },
+        { id: "score", name: "score", type: "number", default: 0 },
+      ],
+    });
+    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+    const first = new ProjectDoc();
+    const second = new ProjectDoc();
+    for (const [merged, updates] of [
+      [first, [fromA, fromB]],
+      [second, [fromB, fromA]],
+    ] as const) {
+      Y.applyUpdate(merged.doc, initial);
+      for (const update of updates) Y.applyUpdate(merged.doc, update);
+      expect(merged.kokostate(ks)?.fields.find((f) => f.id === "hp")?.type).toBe(testCase.type);
+      expect(merged.entity(entity)?.states[ks]?.hp).toBe(testCase.value);
+    }
+    expect(second.snapshot()).toEqual(first.snapshot());
+  });
+
+  it("フィールド単位の編集を、定義変更と状態・Entityの削除時に片付ける (#61)", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    p.setField("ent_gun", "ks_gun", "f_ammo", 3);
+    const gun = p.kokostate("ks_gun");
+    if (!gun) throw new Error("Gunがありません");
+    p.updateKokoState({
+      ...gun,
+      fields: gun.fields.map((f) =>
+        f.id === "f_ammo" ? { ...f, type: "boolean", default: false } : f,
+      ),
+    });
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(false);
+    p.setField("ent_gun", "ks_gun", "f_ammo", true);
+    p.removeState("ent_gun", "ks_gun");
+    p.addState("ent_gun", "ks_gun");
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(false);
+    p.setField("ent_gun", "ks_gun", "f_ammo", true);
+    p.removeEntity("ent_gun");
+    expect(p.entity("ent_gun")).toBeUndefined();
+    p.load(gunAndTargetSample());
+    p.setField("ent_gun", "ks_gun", "f_ammo", 1);
+    p.load(gunAndTargetSample());
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(12);
+  });
+
   it("フォルダを作り、リソースを入れ・移し、フォルダを消すと中身はひとつ上へ移る", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());
