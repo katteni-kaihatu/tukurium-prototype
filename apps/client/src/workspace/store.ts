@@ -159,6 +159,11 @@ const MAX_LOGS = 200;
 let seq = 0;
 let sync: WorkspaceSync | null = null;
 let unobserve: (() => void) | null = null;
+// Stop や出力切替の後に、待機中だった Play が再生を戻さないようにする。
+let playGeneration = 0;
+const cancelPendingPlay = () => {
+  playGeneration++;
+};
 
 const client = () => useApp.getState().client;
 
@@ -180,6 +185,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
   const command = (cmd: "play" | "pause" | "resume" | "stop") => {
     const { workspaceId, outputId } = get();
     if (!workspaceId) return;
+    if (cmd === "stop") cancelPendingPlay();
     client().send({ t: "ws.cmd", workspaceId, cmd, outputId });
   };
 
@@ -497,6 +503,7 @@ async function hostCommand(cmd: "play" | "pause" | "resume" | "stop", outputId?:
       sendFrame();
       return;
     case "stop":
+      cancelPendingPlay();
       s.sim?.dispose();
       set({ sim: null, mode: "edit", systemStatus: [] });
       sendFrame();
@@ -507,21 +514,30 @@ async function hostCommand(cmd: "play" | "pause" | "resume" | "stop", outputId?:
 async function startSim(outputId: string, resume: PlayFrame | null) {
   const s = ws();
   if (!s.project || !s.workspaceId) return;
+  const generation = ++playGeneration;
   s.sim?.dispose();
   const workspaceId = s.workspaceId;
+  const current = () =>
+    generation === playGeneration &&
+    ws().workspaceId === workspaceId &&
+    ws().project === s.project &&
+    ws().isHost;
+  let started = false;
   const snapshot = s.project.snapshot();
   // 依存の中身（依存の依存も。ADR 0015）。取り出せない依存は、それを import した System が理由つきで止まる
   const packages = await resolvePackagePool(snapshot.dependencies ?? []);
+  if (!current()) return;
   const sim = await Simulation.create(snapshot, outputId, {
     // 同じワークスペース（＝同じリポジトリ）の System は同じ領域で動かす
     realm: workspaceId,
     packages,
     onLog: (entry) => {
+      if (!started && !current()) return;
       pushLog(entry);
       client().send({ t: "ws.log", workspaceId, message: entry.message, level: entry.level });
     },
   });
-  if (ws().workspaceId !== workspaceId || !ws().isHost) {
+  if (!current()) {
     sim.dispose();
     return;
   }
@@ -529,6 +545,7 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     sim.restore(resume.world as Parameters<Simulation["restore"]>[0], resume.names, resume.time);
     sim.restoreBags(resume.bags as Record<string, BagItem[]> | undefined);
   }
+  started = true;
   set({
     sim,
     outputId,
@@ -614,6 +631,14 @@ if (import.meta.env.DEV)
 // 実行して止まった System を、Stop した後も「問題」に残す。次の Play で消す
 // Play を始めた後に制作データを変えると、実行の問題は stale（編集前の結果）になる
 useWorkspace.subscribe((s, prev) => {
+  if (
+    s.workspaceId !== prev.workspaceId ||
+    s.project !== prev.project ||
+    s.isHost !== prev.isHost ||
+    s.outputId !== prev.outputId ||
+    s.rev !== prev.rev
+  )
+    cancelPendingPlay();
   if (s.mode !== "edit" && prev.mode === "edit") {
     useWorkspace.setState({
       runProblems: { diagnostics: runDiagnostics(s.systemStatus), observedVersion: s.rev },
