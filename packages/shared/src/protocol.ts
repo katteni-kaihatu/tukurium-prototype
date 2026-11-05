@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
