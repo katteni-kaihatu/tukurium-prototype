@@ -565,6 +565,16 @@ export class Simulation {
     }));
   }
 
+  /** 実行中に作った物も含め、どの配置がEntityを持つかをフレームへ記録する。 */
+  partEntitiesSnapshot(): Record<string, EntityId[]> {
+    return Object.fromEntries(
+      [...this.parts.values()].map((part) => [
+        part.id,
+        [...part.entities].filter((id) => this.world.has(id)),
+      ]),
+    );
+  }
+
   /**
    * 適用：同じリポジトリ・アウトプットの配置を、新しい制作データで作り直す（要件 §7）。
    * 状態維持のマークがあり、型が変わっていないフィールドだけ、現在の実行値を引き継ぐ。
@@ -712,10 +722,19 @@ export class Simulation {
   /**
    * 別のホストから引き継いだ状態にする（ADR 0002）。物理ワールドは EKS の値（Transform・速度）から作り直す。
    */
-  restore(world: WorldSnapshot, names: Record<string, string>, time: number): void {
+  restore(
+    world: WorldSnapshot,
+    names: Record<string, string>,
+    time: number,
+    partEntities: Record<string, EntityId[]>,
+  ): void {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     this.world.restore(world);
+    for (const part of this.parts.values()) {
+      const entities = partEntities[part.id] ?? [];
+      part.entities = new Set(entities.filter((id) => this.world.has(id)));
+    }
     this.names.clear();
     for (const [id, n] of Object.entries(names)) this.names.set(id, n);
     this.time = time;

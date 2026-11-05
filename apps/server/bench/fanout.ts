@@ -3,7 +3,7 @@
 //   pnpm bench:server ws://localhost:8799/ws
 // 全員が位置を 10Hz で送り、持ち主（セッションのホスト）が世界の状態（約 40KB ≒ 100 Entity）を 15Hz で配る。
 // 位置が他の全員に届くまでの時間（中央値・95 パーセンタイル）を出す。
-import { PROTOCOL_VERSION } from "@tukurium/shared";
+import { ClientMessage, PROTOCOL_VERSION } from "@tukurium/shared";
 import WebSocket from "ws";
 
 const url = process.argv[2] ?? "ws://localhost:8799/ws";
@@ -53,6 +53,18 @@ async function run(n: number) {
       if (m.t === "pose") lat.push(performance.now() - t0 - (m.yaw as number));
     });
   const world = { pad: "x".repeat(FRAME_BYTES) };
+  const frame = ClientMessage.parse({
+    t: "session.frame",
+    frame: {
+      time: 0,
+      world,
+      names: {},
+      materials: [],
+      status: [],
+      sounds: [],
+      partEntities: {},
+    },
+  });
   const timers = [
     ...all.map((c) =>
       setInterval(
@@ -60,14 +72,7 @@ async function run(n: number) {
         100,
       ),
     ),
-    setInterval(
-      () =>
-        owner.send({
-          t: "session.frame",
-          frame: { time: 0, world, names: {}, materials: [], status: [], sounds: [] },
-        }),
-      1000 / 15,
-    ),
+    setInterval(() => owner.send(frame), 1000 / 15),
   ];
   await new Promise((r) => setTimeout(r, SECONDS * 1000));
   for (const t of timers) clearInterval(t);

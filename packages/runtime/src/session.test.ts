@@ -50,6 +50,72 @@ const ammo = (s: Simulation) =>
   s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_ammo;
 
 describe("セッションの世界（複数の配置）", () => {
+  it("ホストを引き継いでも生成物が動き、配置のリセット・削除で片付く (#64)", async () => {
+    const snapshot = emptyProject("counter");
+    snapshot.kokostates = [
+      {
+        id: "counter",
+        name: "Counter",
+        fields: [{ id: "n", name: "n", type: "number", default: 0 }],
+      },
+    ];
+    snapshot.systems = [
+      {
+        id: "step",
+        name: "Step",
+        code: 'export default system({query:{with:["Counter"]},onInput(e,input){if(input.action==="spawn") world.spawn({name:"generated",states:{Counter:{n:0}}});},onUpdate(e){e.Counter.n+=1;}});',
+      },
+    ];
+    snapshot.outputs = [
+      { id: "out", name: "out", kind: "item", systems: [{ id: "step", enabled: true }], keep: [] },
+    ];
+    snapshot.entities = [
+      {
+        id: "original",
+        name: "original",
+        parent: null,
+        output: "out",
+        order: 0,
+        states: { counter: { n: 0 } },
+      },
+    ];
+    const part = {
+      id: "p",
+      realm: "source",
+      outputId: "out",
+      snapshot,
+      position: [0, 0, 0] as Vec3,
+      yaw: 0,
+    };
+    sim = await Simulation.createSession();
+    sim.addPart(part);
+    sim.input(fire([0, 0, 0], [0, 0, -1], "spawn"));
+    sim.step(1 / 60);
+    const world = sim.world.snapshot();
+    const names = Object.fromEntries(
+      sim.world.entityIds().map((id) => [id, sim?.nameOf(id) ?? id]),
+    );
+    const time = sim.time;
+    const ownership = sim.partEntitiesSnapshot();
+    expect(world.entities).toHaveLength(2);
+    sim.dispose();
+    sim = await Simulation.createSession();
+    sim.addPart(part);
+    sim.restore(world, names, time, ownership);
+    sim.step(1 / 60);
+    const stateId = sim.stateIdOf("p", "counter") ?? "";
+    expect(
+      sim.world.query({ with: [stateId] }).map((id) => sim?.world.get(id, stateId)?.n),
+    ).toEqual([2, 2]);
+    sim.removePart("p");
+    expect(sim.world.entityIds()).toEqual([]);
+    sim.addPart(part);
+    sim.restore(world, names, time, ownership);
+    sim.resetPart("p");
+    expect(sim.world.entityIds()).toEqual(["p/original"]);
+    sim.removePart("p");
+    expect(sim.world.entityIds()).toEqual([]);
+  });
   it("同じ出力の全配置へ適用し、別の出力と維持マークを保つ (#63)", async () => {
     const snapshot = emptyProject("counter");
     snapshot.kokostates = [
