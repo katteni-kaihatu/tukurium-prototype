@@ -633,8 +633,14 @@ export class ProjectDoc {
   private descendants(id: EntityId): EntityId[] {
     const all = this.entities();
     const out = [id];
+    const visited = new Set<EntityId>(out);
     for (let i = 0; i < out.length; i++) {
-      for (const e of all) if (e.parent === out[i]) out.push(e.id);
+      for (const e of all) {
+        if (e.parent === out[i] && !visited.has(e.id)) {
+          visited.add(e.id);
+          out.push(e.id);
+        }
+      }
     }
     return out;
   }

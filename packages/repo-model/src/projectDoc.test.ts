@@ -1,10 +1,66 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
 import { ProjectDoc } from "./projectDoc";
 import { emptyProject, gunAndTargetSample } from "./samples";
 
 describe("ProjectDoc", () => {
+  it("同時編集で親子が輪になっても、削除が終わり子孫と維持マークを片付ける (#65)", () => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("輪"));
+    const x = a.addEntity({ name: "a", output: "out_main" });
+    const y = a.addEntity({ name: "b", output: "out_main" });
+    const child = a.addEntity({ name: "child", output: "out_main", parent: x });
+    const other = a.addEntity({ name: "outside", output: "out_main" });
+    const output = a.output("out_main");
+    if (!output) throw new Error("出力がありません");
+    a.updateOutput({
+      ...output,
+      keep: [x, y, child, other].map((entity) => ({
+        entity,
+        koko: BUILTIN.Transform,
+        field: "position",
+      })),
+    });
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    const va = Y.encodeStateVector(a.doc),
+      vb = Y.encodeStateVector(b.doc);
+    a.setParent(x, y);
+    b.setParent(y, x);
+    const ua = Y.encodeStateAsUpdate(a.doc, va),
+      ub = Y.encodeStateAsUpdate(b.doc, vb);
+    Y.applyUpdate(a.doc, ub);
+    Y.applyUpdate(b.doc, ua);
+    expect(a.entity(x)?.parent).toBe(y);
+    expect(a.entity(y)?.parent).toBe(x);
+    // 再発してもテスト自体を無限ループさせず、Entity数を超える再走査で失敗させる。
+    let scans = 0;
+    const guarded = new Proxy(a.entities(), {
+      get(target, key, receiver) {
+        if (key === Symbol.iterator)
+          return function* () {
+            if (++scans > target.length) throw new Error("子孫の走査が循環しました");
+            yield* target;
+          };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const listing = vi.spyOn(a, "entities").mockReturnValue(guarded);
+    try {
+      a.removeEntity(x);
+    } finally {
+      listing.mockRestore();
+    }
+    expect(a.entities().map((e) => e.id)).toEqual([other]);
+    expect(a.output("out_main")?.keep.map((k) => k.entity)).toEqual([other]);
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    expect(b.snapshot()).toEqual(a.snapshot());
+    const root = a.addEntity({ name: "root", output: "out_main" });
+    a.addEntity({ name: "normal child", output: "out_main", parent: root });
+    a.removeEntity(root);
+    expect(a.entities().map((e) => e.id)).toEqual([other]);
+  });
   it("スナップショットを読み込んで、同じ内容を取り出せる", () => {
     const p = new ProjectDoc();
     const sample = gunAndTargetSample();
