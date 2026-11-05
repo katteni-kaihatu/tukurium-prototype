@@ -1,5 +1,11 @@
 import type { Vec3 } from "@tukurium/eks";
-import { BUILTIN, gunSample, type ProjectSnapshot, targetRangeSample } from "@tukurium/repo-model";
+import {
+  BUILTIN,
+  emptyProject,
+  gunSample,
+  type ProjectSnapshot,
+  targetRangeSample,
+} from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
 
@@ -44,6 +50,63 @@ const ammo = (s: Simulation) =>
   s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_ammo;
 
 describe("セッションの世界（複数の配置）", () => {
+  it("同じ出力の全配置へ適用し、別の出力と維持マークを保つ (#63)", async () => {
+    const snapshot = emptyProject("counter");
+    snapshot.kokostates = [
+      {
+        id: "counter",
+        name: "Counter",
+        fields: [{ id: "n", name: "n", type: "number", default: 0 }],
+      },
+    ];
+    snapshot.systems = [
+      {
+        id: "step",
+        name: "Step",
+        code: 'export default system({query:{with:["Counter"]},onUpdate(e){e.Counter.n += 1;}});',
+      },
+    ];
+    snapshot.outputs = ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      kind: "item",
+      systems: [{ id: "step", enabled: true }],
+      keep: [{ entity: id, koko: "counter", field: "n" }],
+    }));
+    snapshot.entities = ["a", "b"].map((id) => ({
+      id,
+      name: id,
+      parent: null,
+      output: id,
+      order: 0,
+      states: { counter: { n: 0 } },
+    }));
+    sim = await Simulation.createSession();
+    const placements = [
+      ["a1", "a"],
+      ["a2", "a"],
+      ["b1", "b"],
+    ] as const;
+    for (const [id, outputId] of placements)
+      sim.addPart({ id, outputId, realm: "source", snapshot, position: [0, 0, 0], yaw: 0 });
+    const counts = () =>
+      placements.map(
+        ([id, entity]) => sim?.world.get(`${id}/${entity}`, sim.stateIdOf(id, "counter") ?? "")?.n,
+      );
+    sim.step(1 / 60);
+    const next = structuredClone(snapshot);
+    const system = next.systems[0];
+    if (!system) throw new Error("Systemがありません");
+    system.code = system.code.replace("+= 1", "+= 2");
+    expect(sim.applyPart("source", "a", next).instances).toBe(2);
+    sim.step(1 / 60);
+    expect(counts()).toEqual([3, 3, 2]);
+    // すでに同じ版で動くaのSystemも、bへの適用で取り除かない。
+    sim.applyPart("source", "b", next);
+    sim.step(1 / 60);
+    expect(counts()).toEqual([5, 5, 4]);
+    expect(sim.systemStatus().every((s) => s.enabled && s.error === null)).toBe(true);
+  });
   it("別のリポジトリの銃で、別のリポジトリの的を撃てる。配置の位置が反映される", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
