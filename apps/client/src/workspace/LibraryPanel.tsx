@@ -19,8 +19,8 @@ const aliasFrom = (name: string) =>
  * ライブラリ：公開されたワールドとアイテム（最新のリリース）をセッションに置く。
  * ライブラリの作品は、開いているプロジェクトの依存に足して import で使う（ADR 0015）。
  */
-export function LibraryPanel() {
-  const { client, session, me } = useApp();
+export function LibraryPanel({ active = true }: { active?: boolean }) {
+  const { client, session, me, status } = useApp();
   const placePoint = useWorkspace((s) => s.placePoint);
   const project = useWorkspace((s) => s.project);
   const workspaceId = useWorkspace((s) => s.workspaceId);
@@ -47,11 +47,26 @@ export function LibraryPanel() {
       : [],
   )[0];
   useEffect(() => {
-    api.works().then(setWorks, (e: Error) => setError(e.message));
-  }, []);
+    if (!active || !me || status !== "online") return;
+    let current = true;
+    api.works().then(
+      (value) => {
+        if (current) {
+          setWorks(value);
+          setError(null);
+        }
+      },
+      (e: Error) => {
+        if (current) setError(e.message);
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [active, me, status]);
   const placed = (session?.placements ?? []).filter((p) => p.releaseId);
   const place = (w: Work) => {
-    if (!w.latest) return;
+    if (!w.latest || !session) return;
     // ワールドはセッションの原点。アイテムは視線の先の床（セッションに出すときと同じ）
     const origin = { position: [0, 0, 0] as [number, number, number], yaw: 0 };
     const at = w.outputKind === "world" ? origin : (placePoint?.() ?? origin);
@@ -136,6 +151,11 @@ export function LibraryPanel() {
       )}
       <div className={ui.section}>
         <h3 className={ui.sectionTitle}>公開された作品</h3>
+        {!session && (
+          <p className={ui.notice}>
+            作品の閲覧はここでできます。配置するときはセッションに参加してください。
+          </p>
+        )}
         <p className={ui.muted}>
           ワールドは原点に、アイテムは視線の先に置きます。置いたあとは、作っているワークスペースとは別です。
         </p>
@@ -204,13 +224,15 @@ export function LibraryPanel() {
                       type="button"
                       className={ui.btn}
                       style={{ height: 26 }}
-                      disabled={!w.latest || !canUse}
+                      disabled={!w.latest || !canUse || !session}
                       title={
-                        !canUse
-                          ? "利用の権限がありません"
-                          : w.outputKind === "world"
-                            ? "セッションの原点に置きます"
-                            : "視線の先に置きます"
+                        !session
+                          ? "セッションに参加すると置けます"
+                          : !canUse
+                            ? "利用の権限がありません"
+                            : w.outputKind === "world"
+                              ? "セッションの原点に置きます"
+                              : "視線の先に置きます"
                       }
                       onClick={() => place(w)}
                     >
@@ -250,36 +272,38 @@ export function LibraryPanel() {
           })}
         </ul>
       </div>
-      <div className={ui.section}>
-        <h3 className={ui.sectionTitle}>置いた作品</h3>
-        {placed.length === 0 ? (
-          <p className={ui.muted}>まだありません</p>
-        ) : (
-          <ul className={ui.list} aria-label="置いた作品">
-            {placed.map((p) => (
-              <li key={p.id} className={ui.item} style={{ cursor: "default" }}>
-                <span className={ui.itemName}>{p.workspaceName}</span>
-                <button
-                  type="button"
-                  className={ui.btn}
-                  style={{ height: 26 }}
-                  onClick={() => client.send({ t: "resetPart", placementId: p.id })}
-                >
-                  リセット
-                </button>
-                <button
-                  type="button"
-                  className={ui.iconBtn}
-                  aria-label={`${p.workspaceName} を外す`}
-                  onClick={() => client.send({ t: "unplace", placementId: p.id })}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {session && (
+        <div className={ui.section}>
+          <h3 className={ui.sectionTitle}>置いた作品</h3>
+          {placed.length === 0 ? (
+            <p className={ui.muted}>まだありません</p>
+          ) : (
+            <ul className={ui.list} aria-label="置いた作品">
+              {placed.map((p) => (
+                <li key={p.id} className={ui.item} style={{ cursor: "default" }}>
+                  <span className={ui.itemName}>{p.workspaceName}</span>
+                  <button
+                    type="button"
+                    className={ui.btn}
+                    style={{ height: 26 }}
+                    onClick={() => client.send({ t: "resetPart", placementId: p.id })}
+                  >
+                    リセット
+                  </button>
+                  <button
+                    type="button"
+                    className={ui.iconBtn}
+                    aria-label={`${p.workspaceName} を外す`}
+                    onClick={() => client.send({ t: "unplace", placementId: p.id })}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </>
   );
 }

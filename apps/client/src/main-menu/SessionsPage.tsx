@@ -7,7 +7,7 @@ import { useMainMenu } from "./store";
 
 export function SessionsPage() {
   const { sessions, sessionsLoaded, session, status, myName, client, me } = useApp();
-  const { queries, selected, pendingSession, sessionError } = useMainMenu();
+  const { queries, selected, pendingSession, sessionError, editAfterJoin } = useMainMenu();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState(`${myName} の作業部屋`);
   const navigate = useNavigate();
@@ -29,6 +29,18 @@ export function SessionsPage() {
           セッションを作る
         </button>
       </div>
+      {editAfterJoin && (
+        <p className={styles.notice}>
+          編集する場所を選んでください。参加後にワークスペースを開きます。
+          <button
+            type="button"
+            className={styles.button}
+            onClick={() => useMainMenu.setState({ editAfterJoin: null })}
+          >
+            編集を取り消す
+          </button>
+        </p>
+      )}
       {creating && (
         <form
           className={styles.form}

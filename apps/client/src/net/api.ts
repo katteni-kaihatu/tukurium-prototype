@@ -51,6 +51,8 @@ export interface Work {
   outputId: string;
   name: string;
   owner: string;
+  /** 作者が付ける公開タグ。旧データでは省略されている。 */
+  tags?: string[];
   ownerName?: string;
   repoName?: string;
   perms: WorkPerms;
@@ -179,13 +181,11 @@ export const api = {
   acceptFriend: (id: string) =>
     call("POST", `/api/me/friends/${encodeURIComponent(id)}/accept`, {}),
   removeFriend: (id: string) => call("DELETE", `/api/me/friends/${encodeURIComponent(id)}`),
-  market: (query = "", offset = 0, signal?: AbortSignal) =>
-    call<MarketPage>(
-      "GET",
-      `/api/market?${new URLSearchParams({ q: query, offset: String(offset) })}`,
-      undefined,
-      signal,
-    ),
+  market: (query = "", offset = 0, signal?: AbortSignal, tags: string[] = []) => {
+    const params = new URLSearchParams({ q: query, offset: String(offset) });
+    for (const tag of tags) params.append("tag", tag);
+    return call<MarketPage>("GET", `/api/market?${params}`, undefined, signal);
+  },
   ownedItems: (signal?: AbortSignal) =>
     call<OwnedItem[]>("GET", "/api/me/items", undefined, signal),
   acquireItem: (workId: string, releaseId: string) =>
@@ -224,11 +224,11 @@ export const api = {
       selection,
       target,
     }),
-  publish: (repoId: string, outputId: string) =>
-    call<Work>("POST", "/api/works", { repoId, outputId }),
+  publish: (repoId: string, outputId: string, tags?: string[]) =>
+    call<Work>("POST", "/api/works", { repoId, outputId, tags }),
   works: (owner?: string) =>
     call<Work[]>("GET", owner ? `/api/works?owner=${encodeURIComponent(owner)}` : "/api/works"),
-  updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms> }) =>
+  updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms>; tags?: string[] }) =>
     call<Work>("PATCH", `/api/works/${id}`, body),
   release: (workId: string) => call<Release>("POST", `/api/works/${workId}/releases`, {}),
   packageVersion: (workId: string, version: number) =>

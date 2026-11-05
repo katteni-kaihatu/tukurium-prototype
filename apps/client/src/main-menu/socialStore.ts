@@ -74,4 +74,9 @@ export async function changeSocial(action: () => Promise<unknown>): Promise<bool
   }
 }
 
-export const AVAILABILITY = { joinable: "参加 OK", ask: "声かけて", busy: "取り込み中" } as const;
+export const AVAILABILITY = {
+  joinable: "参加 OK",
+  online: "オンライン",
+  ask: "声かけて",
+  busy: "取り込み中",
+} as const;

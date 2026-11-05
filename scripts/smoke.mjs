@@ -30,6 +30,7 @@ try {
   await page.getByRole("button", { name: "セッションを作って入る" }).click();
   await page.waitForURL(/\/s\/s_/, { timeout: 15_000 });
   step("セッションを作った（WebSocket OK）");
+  await page.getByRole("button", { name: "ワークスペース", exact: true }).click();
   await page.getByRole("button", { name: /サンプル「銃と的」で作る/ }).click();
   await page.locator('section[aria-label="Inspector"]').waitFor({ timeout: 15_000 });
   step("ワークスペースを作った（保存先・Git OK）");

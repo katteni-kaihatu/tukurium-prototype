@@ -1,4 +1,5 @@
 import { useApp } from "../app/store";
+import { useMainMenu } from "../main-menu/store";
 import { useSessionWorld } from "../session/sessionWorld";
 import { useProject } from "./hooks";
 import { useWorkspace } from "./store";
@@ -96,7 +97,7 @@ export function SessionLinks() {
         <button
           type="button"
           className={ui.btn}
-          onClick={() => useWorkspace.setState({ libraryOpen: true })}
+          onClick={() => useMainMenu.getState().showWindow("library")}
         >
           公開された作品
         </button>

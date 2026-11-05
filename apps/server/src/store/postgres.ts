@@ -235,7 +235,7 @@ export class PostgresStore implements Store {
     const rows = await this.sql<
       { data: SocialProfile }[]
     >`select data from social_profiles where user_id=${userId}`;
-    return rows[0]?.data ?? { availability: "joinable", note: "" };
+    return rows[0]?.data ?? { availability: "online", note: "" };
   }
   async saveSocialProfile(userId: string, profile: SocialProfile) {
     await this

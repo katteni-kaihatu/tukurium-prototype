@@ -182,6 +182,10 @@ describe("本人識別とセッション", () => {
       B = api(app, b.token),
       C = api(app, c.token);
     expect((await app.inject({ method: "GET", url: "/api/me/social" })).statusCode).toBe(401);
+    expect((await B.get("/api/me/social")).json().profile).toEqual({
+      availability: "online",
+      note: "",
+    });
     expect((await A.post(`/api/me/friends/${a.me.id}/request`)).statusCode).toBe(400);
     await A.post(`/api/me/friends/${b.me.id}/request`);
     await A.post(`/api/me/friends/${b.me.id}/request`);
@@ -200,6 +204,15 @@ describe("本人識別とセッション", () => {
       presence: { online: true },
     });
     expect((await C.get("/api/me/social")).json().friends).toEqual([]);
+    for (const availability of ["online", "joinable", "ask", "busy"]) {
+      const profile = { availability, note: "ひとやすみ" };
+      expect((await B.patch("/api/me/social", profile)).statusCode).toBe(200);
+      expect((await B.get("/api/me/social")).json().profile).toEqual(profile);
+      expect((await A.get("/api/me/social")).json().friends[0].profile).toEqual(profile);
+    }
+    expect(
+      (await B.patch("/api/me/social", { availability: "unknown", note: "" })).statusCode,
+    ).toBe(400);
     const tab = await client(url, "承認する人", b.token);
     b.ws.close();
     await expect
@@ -1186,5 +1199,60 @@ describe("リポジトリ・コミット・作品", () => {
     await b.next("session");
     b.send({ t: "session.openWorld", releaseId: night.releaseId });
     expect((await b.next("error")).message).toMatch(/利用する権限/);
+  });
+});
+
+describe("公開タグ", () => {
+  it("作者のタグを検索と所持品へ共有し、作者以外の変更と不正なタグを拒否する", async () => {
+    const { app, store } = await start();
+    const author = await store.createUser("作者");
+    const reader = await store.createUser("利用者");
+    const A = api(app, author.token),
+      B = api(app, reader.token);
+    const repo = (
+      await A.post("/api/repos", { name: "タグ付きの銃", kind: "item", template: "gun" })
+    ).json();
+    const detail = (await A.get(`/api/repos/${repo.id}`)).json();
+    const published = await A.post("/api/works", {
+      repoId: repo.id,
+      outputId: detail.outputs[0].id,
+      tags: ["ゲーム", " 複数人 ", "ゲーム"],
+    });
+    expect(published.statusCode).toBe(200);
+    const work = published.json();
+    expect(work.tags).toEqual(["ゲーム", "複数人"]);
+    const release = (await A.post(`/api/works/${work.id}/releases`)).json();
+    await B.post(`/api/me/items/${work.id}`, { releaseId: release.id });
+    const search = (await B.get("/api/market?q=複数人&tag=ゲーム&tag=複数人&limit=1")).json();
+    expect(search.total).toBe(1);
+    expect(search.items[0].tags).toEqual(["ゲーム", "複数人"]);
+    expect((await B.get("/api/market?tag=ゲーム大好き")).json().items).toEqual([]);
+    expect((await B.patch(`/api/works/${work.id}`, { tags: ["書き換え"] })).statusCode).toBe(403);
+    expect((await A.patch(`/api/works/${work.id}`, { tags: ["a".repeat(25)] })).statusCode).toBe(
+      400,
+    );
+    expect(
+      (
+        await A.patch(`/api/works/${work.id}`, {
+          tags: Array.from({ length: 13 }, (_, i) => `tag${i}`),
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect((await A.patch(`/api/works/${work.id}`, { tags: [" "] })).statusCode).toBe(400);
+    expect((await A.patch(`/api/works/${work.id}`, { tags: ["道具"] })).statusCode).toBe(200);
+    expect((await B.get("/api/market?tag=複数人")).json().total).toBe(0);
+    const found = (await app.inject({ method: "GET", url: "/api/market?q=道具" })).json();
+    expect(found.items.map((item: { id: string }) => item.id)).toContain(work.id);
+    const owned = (await B.get("/api/me/items")).json()[0];
+    expect(owned.work.tags).toEqual(["道具"]);
+    expect(owned.releaseId).toBe(release.id);
+    expect(owned.release.version).toBe(1);
+    await A.patch(`/api/works/${work.id}`, { tags: [] });
+    expect((await B.get("/api/me/items")).json()[0].work.tags).toEqual([]);
+    const saved = await store.work(work.id);
+    if (!saved) throw new Error("作品がありません");
+    const { tags: _tags, ...legacy } = saved;
+    await store.saveWork(legacy);
+    expect((await B.get("/api/market")).json().items[0].tags).toEqual([]);
   });
 });

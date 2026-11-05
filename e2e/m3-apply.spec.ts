@@ -20,7 +20,8 @@ const panel = (page: Page, name: string) => page.locator(`section[aria-label="${
 async function join(browser: Browser, path: string, name: string) {
   const page = await newPerson(browser, name);
   await page.goto(path);
-  await page.locator('section[aria-label="ワークスペース"]').waitFor();
+  await expect(page.getByRole("button", { name: "ワークスペース", exact: true })).toBeVisible();
+  await expect(panel(page, "Inspector")).toHaveCount(0);
   return page;
 }
 

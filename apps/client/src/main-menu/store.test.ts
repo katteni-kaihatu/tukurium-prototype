@@ -1,22 +1,43 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { useMainMenu } from "./store";
 
-describe("本人のメニュー表示", () => {
-  it("閉じても選択画面・検索・選択対象を保ち、再表示の合図だけを更新する", () => {
+beforeEach(() => useMainMenu.setState(useMainMenu.getInitialState(), true));
+describe("本人のウィンドウ", () => {
+  it("複数を同時に開き、一つ閉じても他の検索・選択・表示を保つ", () => {
     const menu = useMainMenu.getState();
     menu.show("market");
     menu.setQuery("market", "スイッチ");
     menu.select("market", "work-1");
-    const recall = useMainMenu.getState().recall;
-    menu.close();
-    expect(useMainMenu.getState().open).toBe(false);
-    menu.toggle();
+    menu.show("friends");
+    expect(useMainMenu.getState().windows.market.open).toBe(true);
+    menu.close("friends");
     expect(useMainMenu.getState()).toMatchObject({
       open: true,
-      page: "market",
-      recall: recall + 1,
+      activeWindow: "market",
       queries: { market: "スイッチ" },
       selected: { market: "work-1" },
     });
+    expect(useMainMenu.getState().windows.friends.open).toBe(false);
+  });
+  it("プロジェクト内の移動では置き方を変えず、閉じてから開くときだけ呼び戻す", () => {
+    const menu = useMainMenu.getState();
+    menu.showProject("/u/me");
+    const recall = useMainMenu.getState().windows.projects.recall;
+    menu.showProject("/p/project");
+    expect(useMainMenu.getState().windows.projects.recall).toBe(recall);
+    menu.close("projects");
+    menu.showProject("/p/project");
+    expect(useMainMenu.getState().windows.projects.recall).toBe(recall + 1);
+  });
+  it("最後に触ったウィンドウだけを閉じ、最後の一つを閉じたら空間に戻る", () => {
+    const menu = useMainMenu.getState();
+    menu.show("items");
+    menu.show("sessions");
+    menu.activate("items");
+    menu.close();
+    expect(useMainMenu.getState().activeWindow).toBe("sessions");
+    expect(useMainMenu.getState().windows.sessions.open).toBe(true);
+    menu.close();
+    expect(useMainMenu.getState().open).toBe(false);
   });
 });

@@ -25,6 +25,7 @@ for (const [name, create] of [
         createdAt: new Date().toISOString(),
       };
       try {
+        expect(await store.socialProfile(a)).toEqual({ availability: "online", note: "" });
         const [first, second] = await Promise.all([
           store.requestFriendship(request),
           store.requestFriendship(request),
@@ -37,6 +38,11 @@ for (const [name, create] of [
         expect(await store.acceptFriendship(a, b)).toBeNull();
         expect((await store.acceptFriendship(b, a))?.status).toBe("accepted");
         expect((await store.friendships(a))[0]?.status).toBe("accepted");
+        await store.saveSocialProfile(a, { availability: "online", note: "ひとやすみ" });
+        expect(await store.socialProfile(a)).toEqual({
+          availability: "online",
+          note: "ひとやすみ",
+        });
         await store.saveSocialProfile(a, { availability: "busy", note: "制作中" });
         expect(await store.socialProfile(a)).toEqual({ availability: "busy", note: "制作中" });
         await store.removeFriendship(b, a);

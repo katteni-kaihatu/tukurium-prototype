@@ -1,6 +1,8 @@
 # ADR 0027：ホームを共通メニューへ集約する
 
-- 状態: 採用・実装済み（2026-11-05、A7）
+> 単一ウィンドウの構成は [ADR 0029](0029-independent-tool-windows.md) で置き換えた。
+
+- 状態: 採用・実装済み（2026-11-05、A7）。プロジェクト画面への移動は [ADR 0028](0028-session-and-optional-workspace.md) で置き換え。
 - 関連: [ADR 0021](0021-main-menu-window.md)〜[0026](0026-session-invitations.md)
 
 ## 決定

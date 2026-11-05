@@ -1,8 +1,8 @@
 import { useId, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
 import { api } from "../net/api";
+import { useProjectNavigate } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
 const TEMPLATES = [
@@ -15,9 +15,9 @@ const TEMPLATES = [
 ] as const;
 
 /** リポジトリ（画面上は「プロジェクト」）の新規作成 */
-export function NewRepoPage() {
+export function NewRepoPage({ embedded = false }: { embedded?: boolean }) {
   const me = useApp((s) => s.me);
-  const navigate = useNavigate();
+  const navigate = useProjectNavigate();
   const ids = { name: useId(), desc: useId() };
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -46,9 +46,9 @@ export function NewRepoPage() {
   };
 
   return (
-    <div className={styles.page}>
-      <Header />
-      <main className={styles.main} style={{ maxWidth: 760 }}>
+    <div className={embedded ? styles.embedded : styles.page}>
+      {!embedded && <Header />}
+      <main className={embedded ? styles.embeddedMain : styles.main} style={{ maxWidth: 760 }}>
         <section className={styles.card} aria-labelledby="new-title">
           <h1 id="new-title" className={styles.title}>
             新しいプロジェクト

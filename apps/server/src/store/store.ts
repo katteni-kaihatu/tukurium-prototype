@@ -34,6 +34,8 @@ export interface Work {
   outputId: string;
   name: string;
   owner: string;
+  /** 作者が付けた公開タグ。旧データでは省略されている。 */
+  tags?: string[];
   perms: WorkPerms;
   createdAt: string;
 }
@@ -278,7 +280,7 @@ export class MemoryStore implements Store {
     this.friends.delete(friendshipKey(userId, other));
   }
   async socialProfile(userId: string): Promise<SocialProfile> {
-    return { ...(this.profiles.get(userId) ?? { availability: "joinable", note: "" }) };
+    return { ...(this.profiles.get(userId) ?? { availability: "online", note: "" }) };
   }
   async saveSocialProfile(userId: string, profile: SocialProfile) {
     this.profiles.set(userId, { ...profile });

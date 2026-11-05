@@ -1,12 +1,12 @@
-import type { SocialProfile } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 import { api, type PersonResult } from "../net/api";
 import { Invitations } from "./Invitations";
 import styles from "./MainMenu.module.css";
+import { StatusBadge, StatusDialog } from "./StatusDialog";
 import { enterSession } from "./sessionActions";
-import { AVAILABILITY, changeSocial, refreshSocial, useSocial } from "./socialStore";
+import { changeSocial, refreshSocial, useSocial } from "./socialStore";
 import { useMainMenu } from "./store";
 
 export function FriendsPage({ active }: { active: boolean }) {
@@ -19,12 +19,7 @@ export function FriendsPage({ active }: { active: boolean }) {
   const [search, setSearch] = useState("");
   const [finding, setFinding] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [profile, setProfile] = useState<SocialProfile>({ availability: "joinable", note: "" });
-  const savedAvailability = data?.profile.availability ?? "joinable";
-  const savedNote = data?.profile.note ?? "";
-  useEffect(() => {
-    setProfile({ availability: savedAvailability, note: savedNote });
-  }, [savedAvailability, savedNote]);
+  const [editingStatus, setEditingStatus] = useState(false);
   useEffect(() => {
     const query = search.trim();
     if (!active || !adding || !query || !menu.open) {
@@ -77,50 +72,30 @@ export function FriendsPage({ active }: { active: boolean }) {
           フレンドを追加
         </button>
       </div>
-      <details className={styles.profileSettings}>
-        <summary>自分の状態</summary>
-        <form
-          className={styles.form}
-          onSubmit={(e) => {
-            e.preventDefault();
-            perform(() => api.updateSocial(profile));
+      <div className={styles.myStatus}>
+        <div>
+          <span className={styles.caption}>自分の状態</span>
+          <StatusBadge availability={data?.profile.availability ?? "online"} online={connected} />
+          {data?.profile.note && <span>{data.profile.note}</span>}
+        </div>
+        <button
+          className={styles.button}
+          type="button"
+          disabled={!data || !connected}
+          onClick={() => {
+            useSocial.setState({ error: null });
+            setEditingStatus(true);
           }}
         >
-          <label>
-            状態
-            <select
-              aria-label="状態"
-              value={profile.availability}
-              onChange={(e) =>
-                setProfile({
-                  ...profile,
-                  availability: e.target.value as SocialProfile["availability"],
-                })
-              }
-            >
-              {Object.entries(AVAILABILITY).map(([key, label]) => (
-                <option value={key} key={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            ひとこと
-            <input
-              maxLength={120}
-              value={profile.note}
-              onChange={(e) => setProfile({ ...profile, note: e.target.value })}
-            />
-          </label>
-          <button className={styles.button} type="submit" disabled={busy || !connected}>
-            状態を保存
-          </button>
-        </form>
-        <p className={styles.caption}>
-          あなたのユーザーID: <code>{me?.id}</code>
-        </p>
-      </details>
+          ステータスを変更
+        </button>
+      </div>
+      <p className={styles.caption}>
+        あなたのユーザーID: <code>{me?.id}</code>
+      </p>
+      {editingStatus && active && data && (
+        <StatusDialog profile={data.profile} onClose={() => setEditingStatus(false)} />
+      )}
       {adding && (
         <div className={styles.searchPeople}>
           <label>
@@ -266,9 +241,7 @@ export function FriendsPage({ active }: { active: boolean }) {
                 aria-pressed={chosen?.user.id === f.user.id}
                 onClick={() => menu.select("friends", f.user.id)}
               >
-                <span className={styles.eyebrow}>
-                  {f.presence.online ? AVAILABILITY[f.profile.availability] : "オフライン"}
-                </span>
+                <StatusBadge availability={f.profile.availability} online={f.presence.online} />
                 <strong>{f.user.name}</strong>
                 {f.profile.note && <span>{f.profile.note}</span>}
                 <span className={styles.caption}>
@@ -282,9 +255,10 @@ export function FriendsPage({ active }: { active: boolean }) {
             <aside className={styles.detail} aria-label="フレンドの詳細">
               <span className={styles.avatar}>{chosen.user.name.slice(0, 1)}</span>
               <h2>{chosen.user.name}</h2>
-              <span className={styles.eyebrow}>
-                {chosen.presence.online ? AVAILABILITY[chosen.profile.availability] : "オフライン"}
-              </span>
+              <StatusBadge
+                availability={chosen.profile.availability}
+                online={chosen.presence.online}
+              />
               {chosen.profile.note && <p>{chosen.profile.note}</p>}
               <h3>参加中のセッション</h3>
               {chosen.presence.sessions.length === 0 && (

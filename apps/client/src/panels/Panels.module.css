@@ -1,7 +1,7 @@
 .overlay {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: auto;
   pointer-events: none;
 }
 
@@ -26,6 +26,11 @@
   color: var(--c-ink);
   font-size: 13px;
   position: relative;
+}
+
+/* 開いた直後にフォーカスする外枠には、ブラウザ標準の輪郭を出さない。 */
+.window[role="dialog"]:focus {
+  outline: none;
 }
 
 .body {

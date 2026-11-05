@@ -1,4 +1,5 @@
 import { useApp } from "../app/store";
+import { useMainMenu } from "../main-menu/store";
 import { useProject } from "./hooks";
 import styles from "./MainPanel.module.css";
 import { useWorkspace } from "./store";
@@ -239,8 +240,10 @@ function ProjectName({ repoId, name }: { repoId: string | null; name: string }) 
     <a
       className={`${styles.repo} ${styles.repoLink}`}
       href={`/p/${repoId}`}
-      target="_blank"
-      rel="noreferrer"
+      onClick={(event) => {
+        event.preventDefault();
+        useMainMenu.getState().showProject(`/p/${repoId}`);
+      }}
     >
       {name}
     </a>

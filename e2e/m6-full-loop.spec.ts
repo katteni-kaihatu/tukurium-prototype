@@ -18,7 +18,8 @@ const panel = (page: Page, name: string) => page.locator(`section[aria-label="${
 async function join(browser: Browser, path: string, name: string) {
   const page = await newPerson(browser, name);
   await page.goto(path);
-  await panel(page, "ワークスペース").waitFor();
+  await expect(page.getByRole("button", { name: "ワークスペース", exact: true })).toBeVisible();
+  await expect(panel(page, "Inspector")).toHaveCount(0);
   return page;
 }
 
@@ -26,7 +27,10 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   // 1. れにうむがサンプルから作り、ここあが一緒に編集する
   const path = await createSessionAndWorkspace(a, "れにうむ", "sample");
   const b = await join(browser, path, "ここあ");
-  await panel(b, "ワークスペース")
+  await b.getByRole("button", { name: "ワークスペース", exact: true }).click();
+  await b
+    .getByRole("region", { name: "制作を始める" })
+    .getByRole("list", { name: "このセッションのワークスペース" })
     .getByRole("button", { name: /^銃と的/ })
     .first()
     .click();
@@ -93,7 +97,7 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   await web.close();
 
   // 7. かかおがライブラリから、公開された作品を同じセッションに置く
-  await c.getByRole("button", { name: "ライブラリ" }).click();
+  await c.getByRole("button", { name: "ライブラリ", exact: true }).click();
   const lib = panel(c, "ライブラリ");
   await lib.getByLabel("作品").getByRole("button", { name: "セッションに置く" }).first().click();
   await expect(lib.getByLabel("置いた作品")).toContainText("射撃場 v1");

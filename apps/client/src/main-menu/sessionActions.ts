@@ -36,7 +36,7 @@ export async function enterSession(
   const { client, session, me, status } = useApp.getState();
   if (menu.pendingSession) return false;
   if (request.t === "session.join" && session?.id === request.sessionId) {
-    menu.close();
+    menu.close(menu.activeWindow ?? undefined);
     return true;
   }
   if (status !== "online") {
@@ -79,9 +79,18 @@ export async function enterSession(
       client.send({ ...request, requestId });
     });
     navigate(`/s/${id}`);
+    const edit = useMainMenu.getState().editAfterJoin;
+    if (edit) {
+      useMainMenu.setState({ returnAfterJoin: null });
+      useMainMenu.getState().showProject("/workspaces");
+      return true;
+    }
     const returnPage = useMainMenu.getState().returnAfterJoin;
-    if (returnPage) useMainMenu.setState({ page: returnPage, returnAfterJoin: null });
-    else useMainMenu.getState().close();
+    if (returnPage) {
+      useMainMenu.setState({ returnAfterJoin: null });
+      if (menu.activeWindow) useMainMenu.getState().close(menu.activeWindow);
+      useMainMenu.getState().showWindow(returnPage, false);
+    } else if (menu.activeWindow) useMainMenu.getState().close(menu.activeWindow);
     return true;
   } catch (error) {
     useMainMenu.setState({

@@ -21,6 +21,7 @@ interface CatalogState {
   ownedError: string | null;
   market: MarketPage | null;
   marketQuery: string;
+  marketTags: string[];
   marketLoading: boolean;
   marketError: string | null;
   busy: string | null;
@@ -39,6 +40,7 @@ const initial: CatalogState = {
   ownedError: null,
   market: null,
   marketQuery: "",
+  marketTags: [],
   marketLoading: false,
   marketError: null,
   busy: null,
@@ -57,15 +59,16 @@ let marketAbort: AbortController | null = null;
 
 export function useCatalogConnection() {
   const id = useApp((s) => s.me?.id ?? null);
+  const owner = useCatalog((s) => s.owner);
   const status = useApp((s) => s.status);
   const open = useMainMenu((s) => s.open);
   useEffect(() => {
-    if (useCatalog.getState().owner === id) return;
+    if (owner === id) return;
     marketAbort?.abort();
     marketRequest++;
     ownedRequest++;
     recentRequest++;
-    const previous = useCatalog.getState().owner;
+    const previous = owner;
     useCatalog.setState({ ...initial, owner: id });
     if (previous)
       useMainMenu.setState({
@@ -74,10 +77,10 @@ export function useCatalogConnection() {
         scroll: {},
         returnAfterJoin: null,
       });
-  }, [id]);
+  }, [id, owner]);
   useEffect(() => {
-    if (open && id && status === "online") void refreshOwned();
-  }, [id, status, open]);
+    if (open && id && owner === id && status === "online") void refreshOwned();
+  }, [id, status, open, owner]);
 }
 
 export async function refreshOwned() {
@@ -96,14 +99,23 @@ export async function refreshOwned() {
   }
 }
 
-export async function searchMarket(query: string, offset = 0) {
+export async function searchMarket(query: string, offset = 0, tags: string[] = []) {
   marketAbort?.abort();
   const abort = new AbortController();
   marketAbort = abort;
   const seq = ++marketRequest;
-  useCatalog.setState({ marketLoading: true, marketQuery: query, marketError: null });
+  const cached = useCatalog.getState();
+  const sameSearch =
+    cached.marketQuery === query && JSON.stringify(cached.marketTags) === JSON.stringify(tags);
+  useCatalog.setState({
+    marketLoading: true,
+    marketQuery: query,
+    marketTags: tags,
+    market: sameSearch ? cached.market : null,
+    marketError: null,
+  });
   try {
-    const market = await api.market(query, offset, abort.signal);
+    const market = await api.market(query, offset, abort.signal, tags);
     if (seq !== marketRequest) return;
     const previous = useCatalog.getState().market;
     const items =
@@ -140,6 +152,22 @@ export async function acquire(work: Work) {
   } finally {
     if (owner === useCatalog.getState().owner) useCatalog.setState({ busy: null });
   }
+}
+
+/** タグは公開作品の情報。所持している版には手を加えない。 */
+export async function saveWorkTags(workId: string, tags: string[]) {
+  const owner = useCatalog.getState().owner;
+  const updated = await api.updateWork(workId, { tags });
+  if (owner !== useCatalog.getState().owner) return;
+  const merge = (work: Work) => (work.id === workId ? { ...work, ...updated } : work);
+  useCatalog.setState((s) => ({
+    owned: s.owned.map((item) => (item.work ? { ...item, work: merge(item.work) } : item)),
+    market: s.market ? { ...s.market, items: s.market.items.map(merge) } : null,
+    recent: s.recent.map(merge),
+  }));
+  void refreshOwned();
+  const state = useCatalog.getState();
+  if (state.market) void searchMarket(state.marketQuery, 0, state.marketTags);
 }
 
 export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {

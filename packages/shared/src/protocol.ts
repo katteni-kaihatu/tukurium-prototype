@@ -22,7 +22,7 @@ export const UserInfo = z.object({ id, name: z.string() });
 export type UserInfo = z.infer<typeof UserInfo>;
 
 export const SocialProfile = z.object({
-  availability: z.enum(["joinable", "ask", "busy"]),
+  availability: z.enum(["joinable", "online", "ask", "busy"]),
   note: z.string().trim().max(120),
 });
 export type SocialProfile = z.infer<typeof SocialProfile>;

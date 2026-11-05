@@ -14,6 +14,7 @@ import {
   stableStringify,
   toFiles,
 } from "@tukurium/repo-model";
+import { workTagsSchema } from "@tukurium/shared";
 import type { Release, RepoMeta, Store, User, Work, WorkPerms } from "../store/store";
 import { type Author, GitStore } from "./gitStore";
 
@@ -191,7 +192,13 @@ export class RepoService {
     return { repo, commit: (await this.git.head(repo.id)) as string };
   }
 
-  async publish(user: User, repoId: string, outputId: string, name?: string): Promise<Work> {
+  async publish(
+    user: User,
+    repoId: string,
+    outputId: string,
+    name?: string,
+    tags: string[] = [],
+  ): Promise<Work> {
     const repo = await this.require(repoId);
     if (repo.owner !== user.id)
       throw new HttpError(403, "作品として公開できるのはリポジトリの持ち主です");
@@ -207,6 +214,7 @@ export class RepoService {
       outputId,
       name: name ?? output.name,
       owner: user.id,
+      tags: workTagsSchema.parse(tags),
       perms: { use: true, view: true, fork: true },
       createdAt: new Date().toISOString(),
     };

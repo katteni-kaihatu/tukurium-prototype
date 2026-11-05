@@ -21,6 +21,7 @@ export interface PanelPlacement {
 }
 
 /** これより小さくはできない。タイトルと、中身が少し残る大きさ。 */
+let front = 10;
 const MIN_PANEL_WIDTH = 280;
 const MIN_PANEL_HEIGHT = 160;
 /** ドラッグで際限なく大きくならないようにする上限 */
@@ -41,6 +42,8 @@ export interface PanelSpec {
   recallKey?: number;
   /** ウィンドウ全体のキー入力を空間操作へ流さない */
   containKeys?: boolean;
+  hidden?: boolean;
+  onActivate?: () => void;
 }
 
 interface PanelState {
@@ -54,18 +57,36 @@ interface PanelState {
   transform: PanelTransform | null;
 }
 
+/** 左のナビゲーションと上のセッションバーを避ける、画面の作業領域。 */
+export function panelViewportInsets() {
+  if (typeof window === "undefined") return { left: 16, top: 80 };
+  const vars = getComputedStyle(document.documentElement);
+  return {
+    left: Number.parseFloat(vars.getPropertyValue("--app-content-left")) || 16,
+    top: Number.parseFloat(vars.getPropertyValue("--app-panel-top")) || 80,
+  };
+}
+
 const initialState = (spec: PanelSpec): PanelState => {
   const { x, right, y, width, height } = spec.initial;
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
-  const fittedWidth = Math.min(width, Math.max(MIN_PANEL_WIDTH, vw - 16));
-  const left = right !== undefined ? vw - right - fittedWidth : (x ?? 16);
-  const top = y;
+  const insets = panelViewportInsets();
+  const availableWidth = Math.min(width, Math.max(MIN_PANEL_WIDTH, vw - insets.left - 8));
+  const left = Math.max(
+    insets.left,
+    Math.min(
+      right !== undefined ? vw - right - availableWidth : (x ?? insets.left),
+      vw - MIN_PANEL_WIDTH - 8,
+    ),
+  );
+  const fittedWidth = Math.min(availableWidth, Math.max(MIN_PANEL_WIDTH, vw - left - 8));
+  const top = Math.max(y, insets.top);
   return {
     pinned: true,
-    x: Math.max(8, left),
+    x: left,
     y: top,
     width: fittedWidth,
-    height: height == null ? null : fitOnScreen(width, height, Math.max(8, left), top, true).height,
+    height: height == null ? null : fitOnScreen(fittedWidth, height, left, top, true).height,
     transform: null,
   };
 };
@@ -99,18 +120,17 @@ export function PanelLayer({
   engine,
   panels,
   hidden = false,
-  layer = 2,
 }: {
   engine?: SessionEngine | null;
   panels: PanelSpec[];
   hidden?: boolean;
-  layer?: number;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const elements = useRef(new Map<string, HTMLDivElement>());
+  const specs = useRef(panels);
+  specs.current = panels;
   const [states, setStates] = useState<Record<string, PanelState>>({});
 
-  const front = useRef(1);
   const elementFor = (id: string): HTMLDivElement => {
     let el = elements.current.get(id);
     if (!el) {
@@ -118,9 +138,14 @@ export function PanelLayer({
       created.className = styles.host ?? "";
       // 触ったパネルを最前面に出す
       created.addEventListener("pointerdown", () => {
-        created.style.zIndex = String(++front.current);
+        created.style.zIndex = String(++front);
+        specs.current.find((p) => p.id === id)?.onActivate?.();
       });
-      created.style.zIndex = String(++front.current);
+      created.addEventListener("focusin", () => {
+        created.style.zIndex = String(++front);
+        specs.current.find((p) => p.id === id)?.onActivate?.();
+      });
+      created.style.zIndex = String(++front);
       elements.current.set(id, created);
       el = created;
     }
@@ -148,12 +173,13 @@ export function PanelLayer({
       const el = elementFor(p.id);
       if (p.focusKey !== undefined && focusKeys.current.get(p.id) !== p.focusKey) {
         focusKeys.current.set(p.id, p.focusKey);
-        el.style.zIndex = String(++front.current);
+        el.style.zIndex = String(++front);
       }
       el.style.width = `${st.width}px`;
       el.style.height = st.height == null ? "" : `${st.height}px`;
-      el.style.display = hidden ? "none" : "";
-      if (hidden || !engine || st.pinned || !st.transform) {
+      const concealed = hidden || p.hidden;
+      el.style.display = concealed ? "none" : "";
+      if (concealed || !engine || st.pinned || !st.transform) {
         engine?.panels.remove(p.id);
         if (el.parentElement !== overlay) overlay.appendChild(el);
         el.style.left = `${st.x}px`;
@@ -192,10 +218,19 @@ export function PanelLayer({
       const next = { ...prev };
       for (const p of recalled) {
         const st = prev[p.id] ?? initialState(p);
-        const x = Math.max(8, Math.min(st.x, window.innerWidth - MIN_PANEL_WIDTH - 8));
-        const y = Math.max(80, Math.min(st.y, window.innerHeight - MIN_PANEL_HEIGHT - 8));
-        const size = fitOnScreen(st.width, st.height ?? 560, x, y, true);
-        next[p.id] = { ...st, ...size, x, y, pinned: true };
+        const insets = panelViewportInsets();
+        const x = Math.max(insets.left, Math.min(st.x, window.innerWidth - MIN_PANEL_WIDTH - 8));
+        const y = Math.max(insets.top, Math.min(st.y, window.innerHeight - MIN_PANEL_HEIGHT - 8));
+        const actualHeight = elements.current.get(p.id)?.getBoundingClientRect().height || 560;
+        const size = fitOnScreen(st.width, st.height ?? actualHeight, x, y, true);
+        next[p.id] = {
+          ...st,
+          ...size,
+          height: st.height == null ? null : size.height,
+          x,
+          y,
+          pinned: true,
+        };
       }
       return next;
     });
@@ -255,10 +290,11 @@ export function PanelLayer({
     });
   }, []);
 
-  const moveTo = useCallback((spec: PanelSpec, x: number, y: number) => {
+  const moveBy = useCallback((spec: PanelSpec, dx: number, dy: number) => {
     setStates((prev) => {
       const st = prev[spec.id] ?? initialState(spec);
-      return { ...prev, [spec.id]: { ...st, x, y: Math.max(0, y) } };
+      // 再描画前に複数回届いても、直前の更新結果に移動量を足す。
+      return { ...prev, [spec.id]: { ...st, x: st.x + dx, y: Math.max(0, st.y + dy) } };
     });
   }, []);
 
@@ -270,10 +306,10 @@ export function PanelLayer({
     });
   }, []);
 
-  const placed = engine ? panels.filter((p) => !stateOf(p).pinned) : [];
+  const placed = engine ? panels.filter((p) => !p.hidden && !stateOf(p).pinned) : [];
 
   return (
-    <div ref={overlayRef} className={styles.overlay} style={{ zIndex: layer }}>
+    <div ref={overlayRef} className={styles.overlay}>
       {placed.length > 0 && !hidden && (
         <div className={`glass ${styles.tray}`} role="toolbar" aria-label="空間に置いたパネル">
           <span className={styles.trayLabel}>空間のパネル</span>
@@ -305,7 +341,7 @@ export function PanelLayer({
             actions={p.actions}
             onClose={p.onClose}
             onTogglePin={engine ? () => togglePin(p) : undefined}
-            onDrag={(dx, dy) => moveTo(p, st.x + dx, st.y + dy)}
+            onDrag={(dx, dy) => moveBy(p, dx, dy)}
             onResize={(width, height) => resizeTo(p, width, height)}
           >
             {p.render()}
@@ -413,7 +449,8 @@ function PanelWindow(props: {
       <header
         className={styles.titlebar}
         onPointerDown={(e) => {
-          if (!props.pinned || (e.target as HTMLElement).closest("button")) return;
+          if (e.button !== 0 || !props.pinned || (e.target as HTMLElement).closest("button"))
+            return;
           drag.current = { x: e.clientX, y: e.clientY };
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
@@ -423,6 +460,12 @@ function PanelWindow(props: {
           drag.current = { x: e.clientX, y: e.clientY };
         }}
         onPointerUp={() => {
+          drag.current = null;
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+        }}
+        onLostPointerCapture={() => {
           drag.current = null;
         }}
       >

@@ -76,6 +76,17 @@
   color: var(--c-brand);
   font-weight: 700;
 }
+.navLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.navIcon {
+  display: block;
+  flex-shrink: 0;
+}
 .content {
   overflow: auto;
   padding: 24px;
@@ -325,16 +336,20 @@
   gap: 18px;
   align-items: start;
 }
-.profileSettings {
-  margin-bottom: 18px;
-  border-bottom: 1px solid var(--c-line);
-  padding-bottom: 12px;
+.myStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--c-line);
+  border-radius: 12px;
+  background: #f7f4ee;
 }
-.profileSettings summary {
-  color: var(--c-brand);
-  cursor: pointer;
-}
-.profileSettings code {
+.myStatus > div {
+  display: grid;
+  gap: 6px;
   overflow-wrap: anywhere;
 }
 .searchPeople {
@@ -559,5 +574,80 @@
   }
   .profile {
     display: none;
+  }
+}
+
+.windowContext {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--c-line);
+  color: var(--c-ink-3);
+  font-size: 12px;
+}
+.windowContext > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.windowContext button {
+  border: 0;
+  background: transparent;
+  color: var(--c-brand);
+  white-space: nowrap;
+}
+
+.projectToolbar {
+  flex-wrap: wrap;
+}
+
+.detailTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--c-ink-3);
+  font-size: 11px;
+}
+.detailTop button {
+  border: 0;
+  background: transparent;
+  color: var(--c-ink-3);
+  padding: 2px 6px;
+  font-size: 20px;
+  line-height: 1;
+}
+.detailPlaceholder {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-height: 260px;
+  padding: 24px 18px;
+  gap: 12px;
+  text-align: center;
+  color: var(--c-ink-3);
+}
+.detailPlaceholder h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--c-ink-2);
+}
+.detailPlaceholder p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+}
+@container (max-width: 720px) {
+  .detailPlaceholder {
+    min-height: 140px;
+    padding: 14px;
+    gap: 7px;
+  }
+  .detailPlaceholder svg {
+    width: 28px;
+    height: 28px;
   }
 }

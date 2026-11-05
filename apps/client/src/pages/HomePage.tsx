@@ -3,7 +3,7 @@ import { Header } from "../app/Header";
 import { useMainMenu } from "../main-menu/store";
 import styles from "./HomePage.module.css";
 
-/** 参加前も、左上から開く共通メニューを入口にする。 */
+/** 参加前はホームウィンドウを開く。 */
 export function HomePage() {
   const open = useMainMenu((s) => s.open);
   useEffect(() => {
@@ -22,7 +22,7 @@ export function HomePage() {
               className={styles.primary}
               onClick={() => useMainMenu.getState().show()}
             >
-              メニューを開く
+              ホームを開く
             </button>
           </section>
         </main>

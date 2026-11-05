@@ -1,3 +1,4 @@
+import { tagKey } from "@tukurium/shared";
 import type { OwnedItem, Store, User, Work } from "../store/store";
 import { HttpError, type RepoService } from "./service";
 
@@ -16,6 +17,7 @@ export class ItemCatalog {
       : null;
     return {
       ...work,
+      tags: work.tags ?? [],
       ownerName: (await this.store.user(work.owner))?.name ?? "?",
       repoName: repo?.name ?? "?",
       latest,
@@ -25,8 +27,14 @@ export class ItemCatalog {
     };
   }
 
-  async search(user: User | null, query: string, offset: number, limit: number) {
-    const needle = query.trim().toLocaleLowerCase();
+  async search(
+    user: User | null,
+    query: string,
+    offset: number,
+    limit: number,
+    tags: string[] = [],
+  ) {
+    const words = tagKey(query).split(/\s+/).filter(Boolean);
     const entries = await Promise.all(
       (await this.store.works())
         .filter((w) => w.owner === user?.id || w.perms.use || w.perms.view || w.perms.fork)
@@ -36,7 +44,10 @@ export class ItemCatalog {
       .filter(
         (w) =>
           w.outputKind === "item" &&
-          `${w.name} ${w.ownerName}`.toLocaleLowerCase().includes(needle),
+          words.every((word) =>
+            tagKey(`${w.name} ${w.ownerName} ${w.tags.join(" ")}`).includes(word),
+          ) &&
+          tags.every((tag) => w.tags.some((value) => tagKey(value) === tagKey(tag))),
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
     const items = filtered.slice(offset, offset + limit);

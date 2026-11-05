@@ -1,122 +1,130 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { useApp } from "../app/store";
-import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/PanelLayer";
+import { LibraryPanel } from "../workspace/LibraryPanel";
 import { CatalogPage } from "./CatalogPage";
-import { useCatalog, useCatalogConnection } from "./catalogStore";
+import { useCatalogConnection } from "./catalogStore";
 import { FriendsPage } from "./FriendsPage";
 import { HomeHub } from "./HomeHub";
 import styles from "./MainMenu.module.css";
-import { MenuShortcuts } from "./MenuShortcuts";
+import { OwnedItemsPage } from "./OwnedItemsPage";
+import { ProjectBrowser } from "./ProjectBrowser";
 import { SessionsPage } from "./SessionsPage";
 import { useSessionLifecycle } from "./sessionActions";
-import { useSocial, useSocialConnection } from "./socialStore";
-import { MENU_PAGES, useMainMenu } from "./store";
+import { useSocialConnection } from "./socialStore";
+import { TOOL_WINDOWS, type ToolWindow, useMainMenu } from "./store";
 
-/** ルート切替の外に置き、同じウィンドウと表示状態を保つ。 */
+/** 独立したウィンドウを同じ層で扱い、前後関係・位置・入力中の内容を保つ。 */
 export function MainMenuHost() {
   useSessionLifecycle();
   useCatalogConnection();
   useSocialConnection();
-  const { open, engine, recall } = useMainMenu();
+  const { windows, engine, open, focusRequest } = useMainMenu();
   useEffect(() => {
-    if (!open) return;
+    const id = focusRequest?.id;
+    if (!id || !useMainMenu.getState().windows[id].open) return;
     if (document.pointerLockElement) document.exitPointerLock();
     engine?.controller.clearInput();
     document
-      .querySelector<HTMLElement>('[role="dialog"][aria-label="ツクリウム メニュー"]')
+      .querySelector<HTMLElement>(`[data-tool-window="${id}"]`)
+      ?.closest<HTMLElement>('[role="dialog"]')
       ?.focus();
+  }, [focusRequest, engine]);
+  useEffect(() => {
+    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (
+        event.key !== "Escape" ||
+        document.querySelector("[data-workspace-popover], dialog[open]")
+      )
+        return;
+      const id = useMainMenu.getState().activeWindow;
+      if (!id) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      useMainMenu.getState().close();
-      document.querySelector<HTMLButtonElement>('[aria-label="ツクリウム メニュー"]')?.focus();
+      if (id) useMainMenu.getState().close(id);
+      document.querySelector<HTMLButtonElement>(`[data-window-button="${id}"]`)?.focus();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, engine]);
-  const panels: PanelSpec[] = [
-    {
-      id: "main-menu",
-      title: "ツクリウム メニュー",
-      containKeys: true,
-      initial: { x: 36, y: 88, width: 1040, height: 650 },
-      recallKey: recall,
-      focusKey: recall,
-      onClose: () => useMainMenu.getState().close(),
-      render: () => <MainMenu />,
+  }, [open]);
+  const insets = panelViewportInsets();
+  const panels: PanelSpec[] = TOOL_WINDOWS.map(([id, title], index) => ({
+    id: `tool-${id}`,
+    title,
+    containKeys: true,
+    hidden: !windows[id].open,
+    initial: {
+      x: insets.left + index * 20,
+      y: insets.top + index * 10,
+      width: id === "friends" ? 720 : 920,
+      height: id === "items" ? 740 : 620,
     },
-  ];
-  return <PanelLayer engine={engine} panels={panels} hidden={!open} layer={4} />;
+    recallKey: windows[id].recall,
+    focusKey: windows[id].focus,
+    onActivate: () => useMainMenu.getState().activate(id),
+    onClose: () => useMainMenu.getState().close(id),
+    render: () => (windows[id].focus > 0 ? <ToolContent id={id} /> : null),
+  }));
+  return <PanelLayer engine={engine} panels={panels} />;
 }
 
-function MainMenu() {
-  const page = useMainMenu((s) => s.page);
+function ToolContent({ id }: { id: ToolWindow }) {
   const owner = useApp((s) => s.me?.id);
-  const ownedCount = useCatalog((s) => s.owned.length);
-  const unread = useSocial(
-    (s) =>
-      (s.data?.incoming.length ?? 0) +
-      (s.data?.invitations.incoming.filter((i) => i.status === "pending").length ?? 0),
-  );
+  const session = useApp((s) => s.session);
+  const visible = useMainMenu((s) => s.windows[id].open);
+  const path = useMainMenu((s) => s.projectPath);
   const content = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (content.current) content.current.scrollTop = useMainMenu.getState().scroll[page] ?? 0;
-  }, [page]);
-  const session = useApp((s) => s.session);
-  const name = useApp((s) => s.myName);
+    if (id !== "projects" && id !== "workspaces" && id !== "library" && content.current)
+      content.current.scrollTop = useMainMenu.getState().scroll[id] ?? 0;
+  }, [id]);
   return (
-    <div className={styles.menu}>
-      <div className={styles.location}>
-        <div>
-          <span className={styles.caption}>現在の場所</span>
-          <strong>{session?.name ?? "セッション未参加"}</strong>
+    <div className={styles.menu} data-tool-window={id}>
+      {id === "home" && (
+        <div className={styles.windowContext}>
+          <span>{session?.name ?? "セッション未参加"}</span>
+          <button type="button" onClick={() => useMainMenu.getState().showProject("/workspaces")}>
+            制作を始める
+          </button>
         </div>
-        <span className={styles.profile}>{name}</span>
-      </div>
-      <div className={styles.layout}>
-        <nav className={styles.nav} aria-label="メニューの画面">
-          {MENU_PAGES.map(([id, title]) => (
-            <button
-              key={id}
-              type="button"
-              aria-label={title}
-              aria-current={page === id ? "page" : undefined}
-              onClick={() => useMainMenu.getState().selectPage(id)}
-            >
-              {title}
-              {(id === "friends" ? unread : id === "items" ? ownedCount : 0) > 0 && (
-                <span className={styles.navBadge} aria-hidden="true">
-                  {id === "friends" ? unread : ownedCount}
-                </span>
-              )}
-            </button>
-          ))}
-          <MenuShortcuts />
-        </nav>
-        <div
-          ref={content}
-          className={styles.content}
-          onScroll={(event) =>
+      )}
+      <div
+        className={styles.content}
+        ref={content}
+        onScroll={(event) => {
+          if (id !== "projects" && id !== "workspaces" && id !== "library")
             useMainMenu.setState((s) => ({
-              scroll: { ...s.scroll, [page]: event.currentTarget.scrollTop },
-            }))
-          }
-        >
-          {MENU_PAGES.map(([id, title]) => (
-            <section key={id} hidden={page !== id} aria-label={title}>
-              {id === "home" ? (
-                <HomeHub key={owner} active={page === id} />
-              ) : id === "friends" ? (
-                <FriendsPage key={owner} active={page === id} />
-              ) : id === "items" || id === "market" ? (
-                <CatalogPage kind={id} active={page === id} />
-              ) : id === "sessions" ? (
-                <SessionsPage />
-              ) : null}
-            </section>
-          ))}
-        </div>
+              scroll: { ...s.scroll, [id]: event.currentTarget.scrollTop },
+            }));
+        }}
+      >
+        {id === "home" ? (
+          <HomeHub key={owner} active={visible} />
+        ) : id === "friends" ? (
+          <FriendsPage key={owner} active={visible} />
+        ) : id === "items" ? (
+          <OwnedItemsPage />
+        ) : id === "market" ? (
+          <CatalogPage key={owner} active={visible} />
+        ) : id === "sessions" ? (
+          <SessionsPage />
+        ) : id === "library" ? (
+          <>
+            <div className={styles.pageHeader}>
+              <div>
+                <h1>ライブラリ</h1>
+                <p className={styles.muted}>公開された作品を、制作やセッションで使う。</p>
+              </div>
+            </div>
+            <LibraryPanel active={visible} />
+          </>
+        ) : (
+          <ProjectBrowser
+            key={owner}
+            path={id === "workspaces" ? "/workspaces" : (path ?? "/u/me")}
+          />
+        )}
       </div>
     </div>
   );

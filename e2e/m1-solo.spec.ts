@@ -73,8 +73,10 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   await newKokoState(page, "Gun", "ammo", "5");
   await newKokoState(page, "Target", "hp", "2");
 
-  // 的：ボックスに Collider と Target
+  // 的：詳細の編集を終え、Inspector を使う。
+  await panel(page, "詳細").getByRole("button", { name: "詳細 を閉じる", exact: true }).click();
   const insp = panel(page, "Inspector");
+  await insp.getByRole("heading", { name: "Inspector", exact: true }).click();
   await insp.getByRole("button", { name: "Entity を追加" }).click();
   await insp.getByRole("button", { name: "ボックス" }).click();
   await commitInput(insp.getByLabel("Name"), "的");

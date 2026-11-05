@@ -42,6 +42,7 @@ await page.addInitScript(() => localStorage.setItem("tukurium.name", "t"));
 await page.goto("http://localhost:5173/");
 await page.getByRole("button", { name: "セッションを作って入る" }).click();
 await page.waitForURL(/\/s\/s_/);
+await page.getByRole("button", { name: "ワークスペース", exact: true }).click();
 await page.getByRole("button", { name: /サンプル「銃と的」で作る/ }).click();
 await page.locator('section[aria-label="Inspector"]').waitFor();
 // ここで操作する。開発ビルドでは window.__tukurium（エンジン）、__workspace、__sessionWorld、

@@ -1,8 +1,6 @@
-import { emptyProject } from "@tukurium/repo-model";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
-import { useWorkspace } from "../workspace/store";
 import { CatalogNotice, ItemAction, ItemArt } from "./CatalogPage";
 import { refreshRecent, useCatalog } from "./catalogStore";
 import { Invitations } from "./Invitations";
@@ -206,20 +204,11 @@ export function HomeHub({ active }: { active: boolean }) {
               <span className={styles.eyebrow}>いまいる場所</span>
               <h2>{session.name}</h2>
               <p className={styles.muted}>{session.participants.length}人が参加中</p>
-              <button type="button" className={styles.primary} onClick={() => menu.close()}>
+              <button type="button" className={styles.primary} onClick={() => menu.close("home")}>
                 このセッションに戻る
               </button>
-              <button
-                type="button"
-                className={styles.button}
-                onClick={() => {
-                  useWorkspace
-                    .getState()
-                    .create("新しいワークスペース", emptyProject("新しいワークスペース"));
-                  menu.close();
-                }}
-              >
-                空のワークスペースを作る
+              <button type="button" className={styles.button} onClick={() => go("/workspaces")}>
+                制作を始める
               </button>
             </section>
           ) : (
