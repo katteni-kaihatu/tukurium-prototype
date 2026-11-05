@@ -784,6 +784,11 @@ export class Hub {
 
   /** リポジトリを開く。同じリポジトリのワークスペースは同時に 1 つだけ（別のセッションで開かれていたら断る） */
   private async openRepo(conn: Conn, repoId: string): Promise<void> {
+    if (!this.repos) return this.deny(conn, "リポジトリを開けません");
+    return this.repos.withRepoLock(repoId, () => this.openRepoLocked(conn, repoId));
+  }
+
+  private async openRepoLocked(conn: Conn, repoId: string): Promise<void> {
     const s = conn.session;
     const user = conn.user;
     if (!s || !user || !this.repos) return this.deny(conn, "セッションに参加していません");
