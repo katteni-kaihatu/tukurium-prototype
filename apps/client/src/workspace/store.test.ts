@@ -55,6 +55,9 @@ function simulation() {
     dispose: vi.fn(),
     systemStatus: () => [],
     bagsSnapshot: () => ({}),
+    partEntitiesSnapshot: () => ({}),
+    restore: vi.fn(),
+    restoreBags: vi.fn(),
     nameOf: (id: string) => id,
   } as unknown as Simulation;
 }
@@ -89,6 +92,47 @@ afterEach(() => {
 });
 
 describe("Play の非同期開始 (#66)", () => {
+  it.each(["dependencies", "simulation"] as const)(
+    "ホスト引き継ぎの %s 待ち中に編集が届いても再生を復元する",
+    async (phase) => {
+      const packages = deferred<Awaited<ReturnType<typeof resolvePackagePool>>>();
+      const building = deferred<Simulation>();
+      const sim = simulation();
+      if (phase === "dependencies")
+        vi.mocked(resolvePackagePool).mockImplementationOnce(() => packages.promise);
+      else vi.mocked(Simulation.create).mockImplementationOnce(() => building.promise);
+      const resume = {
+        mode: "play",
+        outputId: "out1",
+        time: 12,
+        world: { entities: [] },
+        names: {},
+        status: [],
+        bags: {},
+        partEntities: {},
+      };
+      useWorkspace.setState({ isHost: false, mode: "play" });
+      receive({ t: "ws.host", workspaceId: "w_test", resume });
+      await flush();
+      const project = useWorkspace.getState().project;
+      const unobserve = project?.observe(() => useWorkspace.setState((s) => ({ rev: s.rev + 1 })));
+      project?.setName("ホスト引き継ぎ中の編集");
+      unobserve?.();
+      if (phase === "dependencies") {
+        vi.mocked(Simulation.create).mockResolvedValueOnce(sim);
+        packages.resolve([]);
+      } else building.resolve(sim);
+      await flush();
+      expect(useWorkspace.getState()).toMatchObject({ mode: "play", sim, isHost: true });
+      expect(vi.mocked(sim.restore).mock.calls[0]?.slice(0, 3)).toEqual([
+        resume.world,
+        resume.names,
+        12,
+      ]);
+      expect(sim.dispose).not.toHaveBeenCalled();
+    },
+  );
+
   it("遅い旧版の Play が、新版の再生と Stop を上書きしない", async () => {
     const first = deferred<Awaited<ReturnType<typeof resolvePackagePool>>>();
     vi.mocked(resolvePackagePool).mockImplementationOnce(() => first.promise);

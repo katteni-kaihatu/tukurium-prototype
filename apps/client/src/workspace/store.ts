@@ -635,8 +635,7 @@ useWorkspace.subscribe((s, prev) => {
     s.workspaceId !== prev.workspaceId ||
     s.project !== prev.project ||
     s.isHost !== prev.isHost ||
-    s.outputId !== prev.outputId ||
-    s.rev !== prev.rev
+    s.outputId !== prev.outputId
   )
     cancelPendingPlay();
   if (s.mode !== "edit" && prev.mode === "edit") {
