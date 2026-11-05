@@ -176,7 +176,7 @@ describe("ProjectDoc", () => {
     expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(false);
     p.setField("ent_gun", "ks_gun", "f_ammo", true);
     p.removeEntity("ent_gun");
-    expect(p.doc.getMap("fields").size).toBe(0);
+    expect(p.entity("ent_gun")).toBeUndefined();
     p.load(gunAndTargetSample());
     p.setField("ent_gun", "ks_gun", "f_ammo", 1);
     p.load(gunAndTargetSample());
