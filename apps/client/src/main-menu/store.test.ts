@@ -3,6 +3,20 @@ import { useMainMenu } from "./store";
 
 beforeEach(() => useMainMenu.setState(useMainMenu.getInitialState(), true));
 describe("本人のウィンドウ", () => {
+  it("ステータスも独立して開き、フレンドを閉じても入力用の窓を残す", () => {
+    const menu = useMainMenu.getState();
+    menu.show("friends");
+    menu.showWindow("status");
+    expect(useMainMenu.getState()).toMatchObject({
+      page: "friends",
+      activeWindow: "status",
+      windows: { friends: { open: true }, status: { open: true } },
+    });
+    menu.close("friends");
+    expect(useMainMenu.getState().windows.status.open).toBe(true);
+    menu.close("status");
+    expect(useMainMenu.getState().open).toBe(false);
+  });
   it("複数を同時に開き、一つ閉じても他の検索・選択・表示を保つ", () => {
     const menu = useMainMenu.getState();
     menu.show("market");

@@ -2,6 +2,7 @@
 
 - 状態: 採用・実装済み（2026-11-05）
 - 関連: [ADR 0025](0025-friend-requests-and-presence.md)
+- 表示方法は [ADR 0036](0036-status-shared-window.md) で共通ウィンドウに変更した。
 
 ## 理由
 

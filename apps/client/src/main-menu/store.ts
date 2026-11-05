@@ -15,8 +15,11 @@ export const TOOL_WINDOWS = [
   ["projects", "プロジェクト"],
   ["library", "ライブラリ"],
   ["workspaces", "ワークスペースを開く"],
+  ["status", "ステータス"],
 ] as const;
 export type ToolWindow = (typeof TOOL_WINDOWS)[number][0];
+export const isMenuPage = (id: ToolWindow): id is MenuPage =>
+  MENU_PAGES.some(([page]) => page === id);
 type WindowState = { open: boolean; recall: number; focus: number };
 const initialWindows = () =>
   Object.fromEntries(
@@ -86,7 +89,7 @@ export const useMainMenu = create<MenuState>((set, get) => ({
         open: true,
         activeWindow: id,
         focusRequest: { id, seq: (s.focusRequest?.seq ?? 0) + 1 },
-        page: id === "projects" || id === "workspaces" || id === "library" ? s.page : id,
+        page: isMenuPage(id) ? id : s.page,
         recall: s.recall + (shouldRecall ? 1 : 0),
         order: [...s.order.filter((window) => window !== id), id],
         windows: {

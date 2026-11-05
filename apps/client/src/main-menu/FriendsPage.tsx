@@ -4,7 +4,7 @@ import { useApp } from "../app/store";
 import { api, type PersonResult } from "../net/api";
 import { Invitations } from "./Invitations";
 import styles from "./MainMenu.module.css";
-import { StatusBadge, StatusDialog } from "./StatusDialog";
+import { StatusBadge } from "./StatusPanel";
 import { enterSession } from "./sessionActions";
 import { changeSocial, refreshSocial, useSocial } from "./socialStore";
 import { useMainMenu } from "./store";
@@ -19,7 +19,6 @@ export function FriendsPage({ active }: { active: boolean }) {
   const [search, setSearch] = useState("");
   const [finding, setFinding] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [editingStatus, setEditingStatus] = useState(false);
   useEffect(() => {
     const query = search.trim();
     if (!active || !adding || !query || !menu.open) {
@@ -81,10 +80,12 @@ export function FriendsPage({ active }: { active: boolean }) {
         <button
           className={styles.button}
           type="button"
+          data-window-button="status"
+          aria-haspopup="dialog"
           disabled={!data || !connected}
           onClick={() => {
             useSocial.setState({ error: null });
-            setEditingStatus(true);
+            menu.showWindow("status");
           }}
         >
           ステータスを変更
@@ -93,9 +94,6 @@ export function FriendsPage({ active }: { active: boolean }) {
       <p className={styles.caption}>
         あなたのユーザーID: <code>{me?.id}</code>
       </p>
-      {editingStatus && active && data && (
-        <StatusDialog profile={data.profile} onClose={() => setEditingStatus(false)} />
-      )}
       {adding && (
         <div className={styles.searchPeople}>
           <label>

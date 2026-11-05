@@ -10,9 +10,10 @@ import styles from "./MainMenu.module.css";
 import { OwnedItemsPage } from "./OwnedItemsPage";
 import { ProjectBrowser } from "./ProjectBrowser";
 import { SessionsPage } from "./SessionsPage";
+import { StatusPanel } from "./StatusPanel";
 import { useSessionLifecycle } from "./sessionActions";
 import { useSocialConnection } from "./socialStore";
-import { TOOL_WINDOWS, type ToolWindow, useMainMenu } from "./store";
+import { isMenuPage, TOOL_WINDOWS, type ToolWindow, useMainMenu } from "./store";
 
 /** 独立したウィンドウを同じ層で扱い、前後関係・位置・入力中の内容を保つ。 */
 export function MainMenuHost() {
@@ -33,11 +34,7 @@ export function MainMenuHost() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (
-        event.key !== "Escape" ||
-        document.querySelector("[data-workspace-popover], dialog[open]")
-      )
-        return;
+      if (event.key !== "Escape" || document.querySelector("[data-workspace-popover]")) return;
       const id = useMainMenu.getState().activeWindow;
       if (!id) return;
       event.preventDefault();
@@ -57,8 +54,8 @@ export function MainMenuHost() {
     initial: {
       x: insets.left + index * 20,
       y: insets.top + index * 10,
-      width: id === "friends" ? 720 : 920,
-      height: id === "items" ? 740 : 620,
+      width: id === "status" ? 600 : id === "friends" ? 720 : 920,
+      height: id === "status" ? undefined : id === "items" ? 740 : 620,
     },
     recallKey: windows[id].recall,
     focusKey: windows[id].focus,
@@ -76,9 +73,15 @@ function ToolContent({ id }: { id: ToolWindow }) {
   const path = useMainMenu((s) => s.projectPath);
   const content = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (id !== "projects" && id !== "workspaces" && id !== "library" && content.current)
+    if (isMenuPage(id) && content.current)
       content.current.scrollTop = useMainMenu.getState().scroll[id] ?? 0;
   }, [id]);
+  if (id === "status")
+    return (
+      <div className={styles.menu} data-tool-window={id}>
+        <StatusPanel key={owner} active={visible} />
+      </div>
+    );
   return (
     <div className={styles.menu} data-tool-window={id}>
       {id === "home" && (
@@ -93,7 +96,7 @@ function ToolContent({ id }: { id: ToolWindow }) {
         className={styles.content}
         ref={content}
         onScroll={(event) => {
-          if (id !== "projects" && id !== "workspaces" && id !== "library")
+          if (isMenuPage(id))
             useMainMenu.setState((s) => ({
               scroll: { ...s.scroll, [id]: event.currentTarget.scrollTop },
             }));

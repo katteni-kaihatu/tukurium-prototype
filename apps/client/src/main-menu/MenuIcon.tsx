@@ -8,6 +8,12 @@ const PATHS: Record<ToolWindow, ReactNode> = {
   projects: <path d="M3 7h7l2 2h9v11H3zM3 7V4h7l2 3" />,
   workspaces: <path d="M14 5l5 5M4 20l4-1L21 6l-5-5L3 14zM3 21h18" />,
   home: <path d="M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6" />,
+  status: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+    </>
+  ),
   friends: (
     <>
       <circle cx="9" cy="8" r="3.2" />
