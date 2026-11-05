@@ -157,6 +157,61 @@ describe("ProjectDoc", () => {
     expect(a.snapshot()).toEqual(b.snapshot());
   });
 
+  it.each([
+    {
+      winner: "フィールド追加側",
+      typeChangeClient: 1,
+      additionClient: 2,
+      type: "number",
+      value: 7,
+    },
+    { winner: "型変更側", typeChangeClient: 2, additionClient: 1, type: "boolean", value: false },
+  ])("定義の同時編集で $winner が勝つと、値の型も定義に合わせる (#61)", (testCase) => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("共同編集"));
+    const ks = a.addKokoState("Stats");
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "number", default: 10 }],
+    });
+    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: { hp: 7 } } });
+    const initial = Y.encodeStateAsUpdate(a.doc);
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, initial);
+    a.doc.clientID = testCase.typeChangeClient;
+    b.doc.clientID = testCase.additionClient;
+    const beforeA = Y.encodeStateVector(a.doc);
+    const beforeB = Y.encodeStateVector(b.doc);
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "boolean", default: false }],
+    });
+    b.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [
+        { id: "hp", name: "hp", type: "number", default: 10 },
+        { id: "score", name: "score", type: "number", default: 0 },
+      ],
+    });
+    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+    const first = new ProjectDoc();
+    const second = new ProjectDoc();
+    for (const [merged, updates] of [
+      [first, [fromA, fromB]],
+      [second, [fromB, fromA]],
+    ] as const) {
+      Y.applyUpdate(merged.doc, initial);
+      for (const update of updates) Y.applyUpdate(merged.doc, update);
+      expect(merged.kokostate(ks)?.fields.find((f) => f.id === "hp")?.type).toBe(testCase.type);
+      expect(merged.entity(entity)?.states[ks]?.hp).toBe(testCase.value);
+    }
+    expect(second.snapshot()).toEqual(first.snapshot());
+  });
+
   it("フィールド単位の編集を、定義変更と状態・Entityの削除時に片付ける (#61)", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());

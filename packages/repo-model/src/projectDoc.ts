@@ -162,7 +162,9 @@ export class ProjectDoc {
         for (const field of values.keys()) if (!ids.has(field)) values.delete(field);
         for (const f of def.fields) {
           const old = prev.fields.find((p) => p.id === f.id);
-          if (!old || old.type !== f.type || !values.has(f.id)) values.set(f.id, clone(f.default));
+          const kept = old && old.type === f.type ? values.get(f.id) : undefined;
+          // 定義の競合と値の競合で勝つ側を揃えるため、同型の値も書き戻す。
+          values.set(f.id, clone(kept !== undefined ? kept : f.default));
         }
       }
     });
