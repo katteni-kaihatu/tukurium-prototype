@@ -84,10 +84,11 @@ describe("Simulation：ホストの引き継ぎ", () => {
       sim.world.entityIds().map((id) => [id, sim?.nameOf(id) ?? id]),
     );
     const time = sim.time;
+    const ownership = sim.partEntitiesSnapshot();
     sim.dispose();
 
     sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "b" });
-    sim.restore(snap, names, time);
+    sim.restore(snap, names, time, ownership);
     expect(sim.world.get("ent_target2", "ks_target")?.f_hp).toBe(2);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(11);
     expect(sim.time).toBeCloseTo(1 / 60);

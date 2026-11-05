@@ -570,6 +570,7 @@ describe("ワークスペースのホストと共有再生", () => {
     world: { entities: [] },
     names: {},
     status: [],
+    partEntities: {},
   });
 
   it("作った人がホスト。他の人の操作と入力はホストへ、ホストの状態は他の人へ届く", async () => {
@@ -676,7 +677,14 @@ describe("セッションの世界（配置・適用）", () => {
     });
     expect((await a.next("host.input")).input.action).toBe("fire");
 
-    const frame = { time: 1, world: { entities: [] }, names: {}, materials: [], status: [] };
+    const frame = {
+      time: 1,
+      world: { entities: [] },
+      names: {},
+      materials: [],
+      status: [],
+      partEntities: {},
+    };
     a.send({ t: "session.frame", frame });
     expect((await b.next("session.frame")).frame.time).toBe(1);
     // ホスト以外の世界の状態は受け付けない

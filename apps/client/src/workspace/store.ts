@@ -579,7 +579,15 @@ export function sendFrame(): void {
         bags: sim.bagsSnapshot(),
         partEntities: sim.partEntitiesSnapshot(),
       }
-    : { mode: "edit", outputId: s.outputId, time: 0, world: null, names: {}, status: [] };
+    : {
+        mode: "edit",
+        outputId: s.outputId,
+        time: 0,
+        world: null,
+        names: {},
+        status: [],
+        partEntities: {},
+      };
   client().send({ t: "ws.frame", workspaceId: s.workspaceId, frame });
 }
 

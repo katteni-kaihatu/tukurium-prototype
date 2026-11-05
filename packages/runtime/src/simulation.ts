@@ -724,14 +724,13 @@ export class Simulation {
     world: WorldSnapshot,
     names: Record<string, string>,
     time: number,
-    partEntities?: Record<string, EntityId[]>,
+    partEntities: Record<string, EntityId[]>,
   ): void {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     this.world.restore(world);
     for (const part of this.parts.values()) {
-      // 古いフレームは、制作データから分かる所属だけを維持する。
-      const entities = partEntities?.[part.id] ?? [...part.entities];
+      const entities = partEntities[part.id] ?? [];
       part.entities = new Set(entities.filter((id) => this.world.has(id)));
     }
     this.names.clear();
