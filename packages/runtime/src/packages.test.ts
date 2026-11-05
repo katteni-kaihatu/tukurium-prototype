@@ -91,6 +91,50 @@ describe("依存の KokoState を再生で使う（ADR 0015）", () => {
     expect(sim.systemStatus()[0]?.error).toContain("中身が届いていません");
   });
 
+  it("依存の取得状態を再適用し、共有Systemの全配置の利用者を保つ (#63)", async () => {
+    const snapshot = project();
+    const output = snapshot.outputs[0];
+    const entity = snapshot.entities[0];
+    if (!output || !entity) throw new Error("出力またはEntityがありません");
+    snapshot.outputs = ["a", "b"].map((id) => ({ ...output, id }));
+    snapshot.entities = ["a", "b"].map((id) => ({ ...entity, id, output: id }));
+    const placements = [
+      ["a1", "a"],
+      ["a2", "a"],
+      ["b1", "b"],
+    ] as const;
+    sim = await Simulation.createSession();
+    for (const [id, outputId] of placements)
+      sim.addPart({ id, outputId, realm: "repoA", snapshot, position: [0, 0, 0], yaw: 0 });
+    expect(sim.systemStatus()[0]?.error).toContain("中身が届いていません");
+
+    expect(sim.applyPart("repoA", "a", snapshot, ready).instances).toBe(2);
+    expect(sim.systemStatus().map((s) => [s.enabled, s.error])).toEqual([[true, null]]);
+    sim.step(1 / 60);
+    const health = (id: string, entityId: string) =>
+      sim?.world.get(`${id}/${entityId}`, HEALTH)?.f_hp;
+    expect([health("a1", "a"), health("a2", "a")]).toEqual([4, 4]);
+
+    sim.applyPart("repoA", "b", snapshot, ready);
+    sim.step(1 / 60);
+    expect(placements.map(([id, entityId]) => health(id, entityId))).toEqual([3, 3, 4]);
+
+    sim.applyPart("repoA", "a", snapshot, [
+      { status: "unavailable", dependency: dep, message: "取得失敗" },
+    ]);
+    expect(sim.systemStatus()[0]?.error).toContain("取得失敗");
+    sim.step(1 / 60);
+    expect(health("b1", "b")).toBe(4);
+    sim.applyPart("repoA", "a", snapshot, ready);
+    sim.step(1 / 60);
+    expect(placements.map(([id, entityId]) => health(id, entityId))).toEqual([4, 4, 3]);
+
+    sim.removePart("a1");
+    sim.removePart("a2");
+    sim.step(1 / 60);
+    expect(health("b1", "b")).toBe(2);
+  });
+
   it("lock と違う版の中身は使わない", async () => {
     const other: PackageResolution[] = [
       { status: "ready", dependency: { ...dep, contentHash: "other" }, manifest },

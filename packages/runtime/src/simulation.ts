@@ -646,7 +646,9 @@ export class Simulation {
     }
 
     // 3. System を読み直し、使われなくなった古い版を片付ける
-    for (const part of targets) this.loadSystems(part, true);
+    // 同じSystemは適用ごとに一度だけ読み直し、ほかの配置の利用者も引き継ぐ。
+    const reloaded = new Set<string>();
+    for (const part of targets) this.loadSystems(part, reloaded);
     for (const old of oldRealms) if (old !== realm) this.dropUnusedRealm(old);
     return report;
   }
@@ -1131,7 +1133,7 @@ export class Simulation {
     };
   }
 
-  private loadSystems(part: Part, reload = false): void {
+  private loadSystems(part: Part, reloaded?: Set<string>): void {
     const output = part.snapshot.outputs.find((o) => o.id === part.outputId);
     if (!output) throw new Error(`Unknown output: ${part.outputId}`);
     let index: ResourcePathIndex | null = null;
@@ -1145,18 +1147,21 @@ export class Simulation {
       if (!source) continue;
       const id = this.multi ? `${part.realm}:${ref.id}` : ref.id;
       const existing = this.systems.find((s) => s.id === id);
-      if (existing && !reload) {
+      if (existing && (!reloaded || reloaded.has(id))) {
         existing.users.add(part.id);
         continue;
       }
+      const users = new Set(existing?.users);
       if (existing) this.dropSystem(existing);
+      users.add(part.id);
+      reloaded?.add(id);
       const def = source.ok ? source.def : { id: ref.id, name: source.name, code: "" };
       // ライブラリの System は自分の VM で動き、使う側の KokoState は見えない（Built-in と依存のものだけ）
       const realm = source.ok ? source.realm : part.realm;
       const sys: LoadedSystem = {
         id,
         realm,
-        users: new Set([part.id]),
+        users,
         name: def.name,
         with: [],
         without: [],
