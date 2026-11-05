@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { emptyProject, ProjectDoc } from "@tukurium/repo-model";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -113,6 +114,89 @@ const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
 });
 
 describe("本人識別とセッション", () => {
+  it("未編集の既存先へ同時に抽出しても、両方の取り込みを残す (#62)", async () => {
+    const { app, url } = await start();
+    const user = await client(url, "作者");
+    const A = api(app, user.token);
+    const source = (await A.post("/api/repos", { name: "銃と的", template: "sample" })).json();
+    const target = (await A.post("/api/repos", { name: "取り込み先", template: "empty" })).json();
+    const responses = await Promise.all(
+      ["ks_gun", "ks_target"].map((koko) =>
+        A.post(`/api/repos/${source.id}/extract`, {
+          selection: { kokostates: [koko] },
+          target: { repoId: target.id },
+        }),
+      ),
+    );
+    expect(responses.map((r) => r.statusCode)).toEqual([200, 200]);
+    const snapshot = (await A.get(`/api/repos/${target.id}/snapshot`)).json();
+    expect(snapshot.kokostates.map((k: { name: string }) => k.name).sort()).toEqual([
+      "Gun",
+      "Target",
+    ]);
+  });
+  it("開いている取り込み先には抽出せず、新規の抽出は利用できる (#62)", async () => {
+    const { app, url } = await start();
+    const user = await client(url, "作者");
+    const A = api(app, user.token);
+    const source = (await A.post("/api/repos", { name: "銃", template: "gun" })).json();
+    const target = (await A.post("/api/repos", { name: "取り込み先", template: "empty" })).json();
+    user.send({ t: "session.create", name: "編集中" });
+    await user.next("session");
+    user.send({ t: "ws.openRepo", repoId: target.id });
+    await user.next("ws.created");
+    await user.next("ws.doc");
+    const result = await A.post(`/api/repos/${source.id}/extract`, {
+      selection: { kokostates: ["ks_gun"] },
+      target: { repoId: target.id },
+    });
+    expect(result.statusCode).toBe(409);
+    const fresh = await A.post(`/api/repos/${source.id}/extract`, {
+      selection: { kokostates: ["ks_gun"] },
+      target: { name: "抽出した銃" },
+    });
+    expect(fresh.statusCode).toBe(200);
+    expect(
+      (await A.get(`/api/repos/${fresh.json().repo.id}/snapshot`)).json().kokostates,
+    ).toHaveLength(1);
+  });
+  it("自動保存がある既存先への抽出で、次の編集コミットから取り込み内容を失わない (#62)", async () => {
+    const { app, url, store } = await start();
+    const user = await client(url, "作者");
+    const A = api(app, user.token);
+    const source = (await A.post("/api/repos", { name: "銃", template: "gun" })).json();
+    const target = (await A.post("/api/repos", { name: "取り込み先", template: "empty" })).json();
+    const workspaceId = `w_${target.id}`;
+    const draft = new ProjectDoc();
+    draft.load(emptyProject("取り込み先"));
+    draft.addEntity({ output: "out_main", name: "未コミットの箱" });
+    const saved = Y.encodeStateAsUpdate(draft.doc);
+    await store.saveDoc(workspaceId, saved);
+    const initialCommits = (await A.get(`/api/repos/${target.id}/commits`)).json();
+    const extracted = await A.post(`/api/repos/${source.id}/extract`, {
+      selection: { kokostates: ["ks_gun"] },
+      target: { repoId: target.id },
+    });
+    if (extracted.statusCode === 409) {
+      expect(extracted.json().error).toMatch(/新しいプロジェクト/);
+      expect(await store.loadDoc(workspaceId)).toEqual(saved);
+      expect((await A.get(`/api/repos/${target.id}/commits`)).json()).toEqual(initialCommits);
+      return;
+    }
+    expect(extracted.statusCode).toBe(200);
+    expect((await A.get(`/api/repos/${target.id}/snapshot`)).json().kokostates).toHaveLength(1);
+    user.send({ t: "session.create", name: "確認" });
+    await user.next("session");
+    user.send({ t: "ws.openRepo", repoId: target.id });
+    await user.next("ws.created");
+    const opened = new ProjectDoc();
+    Y.applyUpdate(opened.doc, Buffer.from((await user.next("ws.doc")).update, "base64"));
+    user.send({ t: "ws.commit", workspaceId, message: "抽出後の保存" });
+    await user.next("ws.committed");
+    expect((await A.get(`/api/repos/${target.id}/snapshot`)).json().kokostates).toHaveLength(1);
+    expect(opened.snapshot().kokostates).toHaveLength(1);
+    expect(opened.entities().some((e) => e.name === "未コミットの箱")).toBe(true);
+  });
   it("フレンドへの招待は受信者だけが応答し、受け取るだけでは移動しない", async () => {
     const { app, url, store } = await start();
     const a = await client(url, "招待する人"),

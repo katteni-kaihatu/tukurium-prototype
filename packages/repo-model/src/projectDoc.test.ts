@@ -1,10 +1,66 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
 import { ProjectDoc } from "./projectDoc";
 import { emptyProject, gunAndTargetSample } from "./samples";
 
 describe("ProjectDoc", () => {
+  it("同時編集で親子が輪になっても、削除が終わり子孫と維持マークを片付ける (#65)", () => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("輪"));
+    const x = a.addEntity({ name: "a", output: "out_main" });
+    const y = a.addEntity({ name: "b", output: "out_main" });
+    const child = a.addEntity({ name: "child", output: "out_main", parent: x });
+    const other = a.addEntity({ name: "outside", output: "out_main" });
+    const output = a.output("out_main");
+    if (!output) throw new Error("出力がありません");
+    a.updateOutput({
+      ...output,
+      keep: [x, y, child, other].map((entity) => ({
+        entity,
+        koko: BUILTIN.Transform,
+        field: "position",
+      })),
+    });
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    const va = Y.encodeStateVector(a.doc),
+      vb = Y.encodeStateVector(b.doc);
+    a.setParent(x, y);
+    b.setParent(y, x);
+    const ua = Y.encodeStateAsUpdate(a.doc, va),
+      ub = Y.encodeStateAsUpdate(b.doc, vb);
+    Y.applyUpdate(a.doc, ub);
+    Y.applyUpdate(b.doc, ua);
+    expect(a.entity(x)?.parent).toBe(y);
+    expect(a.entity(y)?.parent).toBe(x);
+    // 再発してもテスト自体を無限ループさせず、Entity数を超える再走査で失敗させる。
+    let scans = 0;
+    const guarded = new Proxy(a.entities(), {
+      get(target, key, receiver) {
+        if (key === Symbol.iterator)
+          return function* () {
+            if (++scans > target.length) throw new Error("子孫の走査が循環しました");
+            yield* target;
+          };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const listing = vi.spyOn(a, "entities").mockReturnValue(guarded);
+    try {
+      a.removeEntity(x);
+    } finally {
+      listing.mockRestore();
+    }
+    expect(a.entities().map((e) => e.id)).toEqual([other]);
+    expect(a.output("out_main")?.keep.map((k) => k.entity)).toEqual([other]);
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    expect(b.snapshot()).toEqual(a.snapshot());
+    const root = a.addEntity({ name: "root", output: "out_main" });
+    a.addEntity({ name: "normal child", output: "out_main", parent: root });
+    a.removeEntity(root);
+    expect(a.entities().map((e) => e.id)).toEqual([other]);
+  });
   it("スナップショットを読み込んで、同じ内容を取り出せる", () => {
     const p = new ProjectDoc();
     const sample = gunAndTargetSample();
@@ -111,6 +167,131 @@ describe("ProjectDoc", () => {
     a.setField("ent_gun", "ks_gun", "f_ammo", 3);
     a.code("sys_shoot")?.insert(0, "// edited\n");
     expect(b.snapshot()).toEqual(a.snapshot());
+  });
+
+  it("同じKokoStateの別フィールドを同時に編集しても両方を残す (#61)", () => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("共同編集"));
+    const ks = a.addKokoState("Stats");
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [
+        { id: "hp", name: "hp", type: "number", default: 10 },
+        { id: "score", name: "score", type: "number", default: 0 },
+      ],
+    });
+    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: {} } });
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+    const beforeA = Y.encodeStateVector(a.doc);
+    const beforeB = Y.encodeStateVector(b.doc);
+    a.setField(entity, ks, "hp", 8);
+    b.setField(entity, ks, "score", 3);
+    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+    Y.applyUpdate(a.doc, fromB);
+    Y.applyUpdate(b.doc, fromA);
+    expect(a.entity(entity)?.states[ks]).toEqual({ hp: 8, score: 3 });
+    expect(b.snapshot()).toEqual(a.snapshot());
+    const restored = new ProjectDoc();
+    Y.applyUpdate(restored.doc, Y.encodeStateAsUpdate(a.doc));
+    expect(restored.snapshot()).toEqual(a.snapshot());
+    const loaded = new ProjectDoc();
+    loaded.load(a.snapshot());
+    expect(loaded.snapshot()).toEqual(a.snapshot());
+
+    const vectorA = Y.encodeStateVector(a.doc),
+      vectorB = Y.encodeStateVector(b.doc);
+    a.setField(entity, ks, "hp", 5);
+    b.setField(entity, ks, "hp", 6);
+    const changeA = Y.encodeStateAsUpdate(a.doc, vectorA);
+    const changeB = Y.encodeStateAsUpdate(b.doc, vectorB);
+    Y.applyUpdate(a.doc, changeB);
+    Y.applyUpdate(b.doc, changeA);
+    expect([5, 6]).toContain(a.entity(entity)?.states[ks]?.hp);
+    expect(a.snapshot()).toEqual(b.snapshot());
+  });
+
+  it.each([
+    {
+      winner: "フィールド追加側",
+      typeChangeClient: 1,
+      additionClient: 2,
+      type: "number",
+      value: 7,
+    },
+    { winner: "型変更側", typeChangeClient: 2, additionClient: 1, type: "boolean", value: false },
+  ])("定義の同時編集で $winner が勝つと、値の型も定義に合わせる (#61)", (testCase) => {
+    const a = new ProjectDoc();
+    a.load(emptyProject("共同編集"));
+    const ks = a.addKokoState("Stats");
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "number", default: 10 }],
+    });
+    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: { hp: 7 } } });
+    const initial = Y.encodeStateAsUpdate(a.doc);
+    const b = new ProjectDoc();
+    Y.applyUpdate(b.doc, initial);
+    a.doc.clientID = testCase.typeChangeClient;
+    b.doc.clientID = testCase.additionClient;
+    const beforeA = Y.encodeStateVector(a.doc);
+    const beforeB = Y.encodeStateVector(b.doc);
+    a.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [{ id: "hp", name: "hp", type: "boolean", default: false }],
+    });
+    b.updateKokoState({
+      id: ks,
+      name: "Stats",
+      fields: [
+        { id: "hp", name: "hp", type: "number", default: 10 },
+        { id: "score", name: "score", type: "number", default: 0 },
+      ],
+    });
+    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+    const first = new ProjectDoc();
+    const second = new ProjectDoc();
+    for (const [merged, updates] of [
+      [first, [fromA, fromB]],
+      [second, [fromB, fromA]],
+    ] as const) {
+      Y.applyUpdate(merged.doc, initial);
+      for (const update of updates) Y.applyUpdate(merged.doc, update);
+      expect(merged.kokostate(ks)?.fields.find((f) => f.id === "hp")?.type).toBe(testCase.type);
+      expect(merged.entity(entity)?.states[ks]?.hp).toBe(testCase.value);
+    }
+    expect(second.snapshot()).toEqual(first.snapshot());
+  });
+
+  it("フィールド単位の編集を、定義変更と状態・Entityの削除時に片付ける (#61)", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    p.setField("ent_gun", "ks_gun", "f_ammo", 3);
+    const gun = p.kokostate("ks_gun");
+    if (!gun) throw new Error("Gunがありません");
+    p.updateKokoState({
+      ...gun,
+      fields: gun.fields.map((f) =>
+        f.id === "f_ammo" ? { ...f, type: "boolean", default: false } : f,
+      ),
+    });
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(false);
+    p.setField("ent_gun", "ks_gun", "f_ammo", true);
+    p.removeState("ent_gun", "ks_gun");
+    p.addState("ent_gun", "ks_gun");
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(false);
+    p.setField("ent_gun", "ks_gun", "f_ammo", true);
+    p.removeEntity("ent_gun");
+    expect(p.entity("ent_gun")).toBeUndefined();
+    p.load(gunAndTargetSample());
+    p.setField("ent_gun", "ks_gun", "f_ammo", 1);
+    p.load(gunAndTargetSample());
+    expect(p.entity("ent_gun")?.states.ks_gun?.f_ammo).toBe(12);
   });
 
   it("フォルダを作り、リソースを入れ・移し、フォルダを消すと中身はひとつ上へ移る", () => {

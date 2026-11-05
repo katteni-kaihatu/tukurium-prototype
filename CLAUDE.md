@@ -31,6 +31,7 @@
 
 ## 守ること（破ると壊れる・検査で落ちる）
 
+- **プロトタイプの保存形式は変更してよい**。既存データの移行や旧形式との互換性維持より、実装の単純さを優先する。必要なら開発用データを破棄し、作り直す。
 - **Host API（`world.*` など）を足したら**、`packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` に一件足す（引数・Capability・判定の場所・拒んだときの値・利用者向けの型と説明）。repo-model の `HOST_CAPABILITIES` にも同じ Capability を足す（テストが一致を検査する。ADR 0012）。
 - **通信の形**は `packages/shared/src/protocol.ts` の zod で決める。互換性がなくなる変更では `PROTOCOL_VERSION` を上げる。
 - **パッケージを足したら**、`docker/Dockerfile` に、その package.json の COPY を足す（`pnpm lint` が検査する）。

@@ -42,12 +42,25 @@ export class RepoService {
   readonly git: GitStore;
   /** リリース ID → その版の中身（版は書き換えないので覚えておける。許可は毎回確かめる） */
   private readonly manifests = new Map<string, PackageManifest>();
+  private readonly repoOperations = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly store: Store,
     gitRoot: string,
   ) {
     this.git = new GitStore(gitRoot);
+  }
+
+  /** 編集を開く操作と既存先への抽出を、同じリポジトリでは順番に処理する。 */
+  async withRepoLock<T>(repoId: string, run: () => Promise<T>): Promise<T> {
+    const previous = this.repoOperations.get(repoId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(run);
+    this.repoOperations.set(repoId, current);
+    try {
+      return await current;
+    } finally {
+      if (this.repoOperations.get(repoId) === current) this.repoOperations.delete(repoId);
+    }
   }
 
   async require(repoId: string): Promise<RepoMeta> {
@@ -180,12 +193,20 @@ export class RepoService {
     const snap = await this.snapshot(repoId, at);
     const source = { repoId: src.id, repoName: src.name, commit: at };
     if ("repoId" in target) {
-      const dst = await this.require(target.repoId);
-      if (dst.owner !== user.id)
-        throw new HttpError(403, "取り込み先は自分のリポジトリにしてください");
-      const merged = extractInto(snap, selection, source, await this.snapshot(dst.id));
-      const oid = await this.commit(dst.id, merged, `${src.name} から抽出して取り込み`, user, []);
-      return { repo: dst, commit: oid };
+      return this.withRepoLock(target.repoId, async () => {
+        const dst = await this.require(target.repoId);
+        if (dst.owner !== user.id)
+          throw new HttpError(403, "取り込み先は自分のリポジトリにしてください");
+        const workspaceId = `w_${dst.id}`;
+        if ((await this.store.workspace(workspaceId)) || (await this.store.loadDoc(workspaceId)))
+          throw new HttpError(
+            409,
+            "このプロジェクトには編集用のデータがあります。新しいプロジェクトへ抽出してください",
+          );
+        const merged = extractInto(snap, selection, source, await this.snapshot(dst.id));
+        const oid = await this.commit(dst.id, merged, `${src.name} から抽出して取り込み`, user, []);
+        return { repo: dst, commit: oid };
+      });
     }
     const extracted = extractInto(snap, selection, source, null, target.name);
     const repo = await this.create(user, { name: target.name, snapshot: extracted });
