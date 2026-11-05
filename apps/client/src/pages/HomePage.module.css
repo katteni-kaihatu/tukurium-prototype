@@ -112,3 +112,10 @@
   color: #6b5310;
   font-size: 13px;
 }
+
+.page {
+  padding-left: var(--app-content-left);
+}
+.main {
+  padding-top: var(--app-panel-top);
+}

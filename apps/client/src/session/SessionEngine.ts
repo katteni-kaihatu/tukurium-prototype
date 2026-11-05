@@ -7,6 +7,7 @@ import { AudioPlayer } from "../render/AudioPlayer";
 import { EffectPlayer } from "../render/EffectPlayer";
 import { Avatars } from "./Avatars";
 import { FpsController } from "./FpsController";
+import { createGridGround } from "./GridGround";
 
 export interface Pose {
   position: [number, number, number];
@@ -410,18 +411,6 @@ export class SessionEngine {
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 60 });
     this.scene.add(sun);
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(400, 400),
-      new THREE.MeshStandardMaterial({ color: "#E9E4D6", roughness: 1 }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-
-    const grid = new THREE.GridHelper(400, 400, "#CFC6B4", "#DCD5C8");
-    grid.position.y = 0.002;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.6;
-    this.scene.add(grid);
+    this.scene.add(createGridGround());
   }
 }

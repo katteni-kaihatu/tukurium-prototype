@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
@@ -20,6 +20,12 @@ export type PlayMode = z.infer<typeof PlayMode>;
 
 export const UserInfo = z.object({ id, name: z.string() });
 export type UserInfo = z.infer<typeof UserInfo>;
+
+export const SocialProfile = z.object({
+  availability: z.enum(["joinable", "online", "ask", "busy"]),
+  note: z.string().trim().max(120),
+});
+export type SocialProfile = z.infer<typeof SocialProfile>;
 
 export const Participant = z.object({
   id,
@@ -91,6 +97,7 @@ export const SessionSummary = z.object({
   name: z.string(),
   owner: UserInfo,
   count: z.number(),
+  participants: z.array(UserInfo).default([]),
 });
 export type SessionSummary = z.infer<typeof SessionSummary>;
 
@@ -235,8 +242,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("rename"), name: z.string().min(1).max(32) }),
   z.object({ t: z.literal("sessions.list") }),
-  z.object({ t: z.literal("session.create"), name: z.string().min(1).max(64) }),
-  z.object({ t: z.literal("session.join"), sessionId: id }),
+  z.object({
+    t: z.literal("session.create"),
+    name: z.string().min(1).max(64),
+    requestId: id.optional(),
+  }),
+  z.object({ t: z.literal("session.join"), sessionId: id, requestId: id.optional() }),
   z.object({ t: z.literal("session.leave") }),
   /** 持ち主がセッションを閉じる */
   z.object({ t: z.literal("session.close") }),
@@ -291,7 +302,19 @@ export const ClientMessage = z.discriminatedUnion("t", [
   /** コミット（意図的な保存）。メッセージ付き */
   z.object({ t: z.literal("ws.commit"), workspaceId: id, message: z.string().max(500) }),
   /** 作品のリリースをセッションに置く（作品の「利用」権限） */
-  z.object({ t: z.literal("placeRelease"), releaseId: id, position: vec3, yaw: z.number() }),
+  z
+    .object({
+      t: z.literal("placeRelease"),
+      releaseId: id,
+      position: vec3,
+      yaw: z.number(),
+      requestId: id.optional(),
+      sessionId: id.optional(),
+    })
+    .refine(
+      (message) => Boolean(message.requestId) === Boolean(message.sessionId),
+      "要求IDと対象セッションは一緒に指定してください",
+    ),
   /**
    * 公開されたワールドを、このセッションで開く。
    * それまで開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
@@ -318,8 +341,23 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 // サーバー → クライアント
 
 export const ServerMessage = z.discriminatedUnion("t", [
+  z.object({ t: z.literal("social.changed") }),
+  z.object({
+    t: z.literal("placement.result"),
+    requestId: id,
+    sessionId: id,
+    placementId: id.nullable(),
+    error: z.string().nullable(),
+  }),
   z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo, token: z.string() }),
   z.object({ t: z.literal("sessions"), sessions: z.array(SessionSummary) }),
+  z.object({ t: z.literal("session.entered"), sessionId: id, requestId: id.optional() }),
+  z.object({
+    t: z.literal("session.rejected"),
+    sessionId: id,
+    requestId: id.optional(),
+    message: z.string(),
+  }),
   z.object({ t: z.literal("session"), session: SessionInfo, participants: z.array(Participant) }),
   z.object({ t: z.literal("session.closed"), reason: z.string() }),
   z.object({ t: z.literal("joined"), participant: Participant }),

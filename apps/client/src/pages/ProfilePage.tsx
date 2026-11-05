@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
 import { api, type RepoMeta, type Work } from "../net/api";
+import { ProjectLink as Link } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
 /** プロフィール：その人のプロジェクトと作品（/u/me は自分） */
-export function ProfilePage() {
-  const { userId = "" } = useParams();
+export function ProfilePage({
+  embedded = false,
+  profileId,
+}: {
+  embedded?: boolean;
+  profileId?: string;
+}) {
+  const params = useParams();
+  const userId = profileId ?? params.userId ?? "";
   const me = useApp((s) => s.me);
   const id = userId === "me" ? me?.id : userId;
   const [user, setUser] = useState<{
@@ -18,19 +26,37 @@ export function ProfilePage() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (id && me) api.user(id).then(setUser, (e: Error) => setError(e.message));
+    let active = true;
+    setUser(null);
+    setError(null);
+    if (id && me)
+      void api.user(id).then(
+        (value) => {
+          if (active) setUser(value);
+        },
+        (e: Error) => {
+          if (active) setError(e.message);
+        },
+      );
+    return () => {
+      active = false;
+    };
   }, [id, me]);
 
   return (
-    <div className={styles.page}>
-      <Header />
-      <main className={styles.main}>
+    <div className={embedded ? styles.embedded : styles.page}>
+      {!embedded && <Header />}
+      <main className={embedded ? styles.embeddedMain : styles.main}>
         {error && <p className={styles.error}>{error}</p>}
         {user && (
-          <div className={styles.grid} style={{ gridTemplateColumns: "260px minmax(0, 1fr)" }}>
+          <div className={`${styles.grid} ${styles.profileGrid}`}>
             <aside className={styles.card}>
               <h1 className={styles.title}>{user.name}</h1>
-              <p className={styles.sub}>[ひとことプロフィールを記入]</p>
+              <p className={styles.sub}>
+                {user.id === me?.id
+                  ? "自分のプロジェクトと公開した作品"
+                  : "プロジェクトと公開した作品"}
+              </p>
               {user.id === me?.id && (
                 <Link to="/new" className={styles.primary}>
                   ＋ 新しいプロジェクト
@@ -69,10 +95,6 @@ export function ProfilePage() {
                     </li>
                   ))}
                 </ul>
-              </section>
-              <section className={styles.card} aria-label="活動">
-                <h2 className={styles.h2}>Contribution activity</h2>
-                <p className={styles.sub}>草グラフ・フォロワーは初版では見た目だけです。</p>
               </section>
             </div>
           </div>

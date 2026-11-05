@@ -8,9 +8,11 @@ import {
   marubatsuSample,
   targetRangeSample,
 } from "@tukurium/repo-model";
+import { workTagsSchema } from "@tukurium/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Store, User } from "../store/store";
+import { ItemCatalog } from "./catalog";
 import { HttpError, type RepoService } from "./service";
 
 const TEMPLATES = {
@@ -68,6 +70,42 @@ export function registerRepoRoutes(
     ...x,
     ownerName: await ownerName(x.owner),
   });
+  const catalog = new ItemCatalog(store, repos);
+
+  app.get(
+    "/api/market",
+    handle(async (req) => {
+      const q = z
+        .object({
+          q: z.string().max(100).default(""),
+          offset: z.coerce.number().int().min(0).max(100000).default(0),
+          limit: z.coerce.number().int().min(1).max(48).default(24),
+          tag: z
+            .union([
+              z
+                .string()
+                .transform((tag) => [tag])
+                .pipe(workTagsSchema),
+              workTagsSchema,
+            ])
+            .default([]),
+        })
+        .parse(req.query);
+      return catalog.search(await userOf(req), q.q, q.offset, q.limit, q.tag);
+    }),
+  );
+  app.get(
+    "/api/me/items",
+    handle(async (req) => catalog.owned(await needUser(req))),
+  );
+  app.post(
+    "/api/me/items/:workId",
+    handle<{ workId: string }>(async (req) => {
+      const user = await needUser(req);
+      const { releaseId } = z.object({ releaseId: z.string().min(1).max(64) }).parse(req.body);
+      return catalog.acquire(user, req.params.workId, releaseId);
+    }),
+  );
 
   app.post(
     "/api/repos",
@@ -232,9 +270,10 @@ export function registerRepoRoutes(
           repoId: z.string(),
           outputId: z.string(),
           name: z.string().min(1).max(64).optional(),
+          tags: workTagsSchema.optional(),
         })
         .parse(req.body);
-      return repos.publish(user, body.repoId, body.outputId, body.name);
+      return repos.publish(user, body.repoId, body.outputId, body.name, body.tags);
     }),
   );
 
@@ -270,10 +309,11 @@ export function registerRepoRoutes(
       const user = await needUser(req);
       const work = await store.work(req.params.id);
       if (!work) throw new HttpError(404, "作品が見つかりません");
-      if (work.owner !== user.id) throw new HttpError(403, "権限を変えられるのは作品の持ち主です");
+      if (work.owner !== user.id) throw new HttpError(403, "作品の情報を変更できるのは作者です");
       const body = z
         .object({
           name: z.string().min(1).max(64).optional(),
+          tags: workTagsSchema.optional(),
           perms: z
             .object({ use: z.boolean(), view: z.boolean(), fork: z.boolean() })
             .partial()
@@ -283,6 +323,7 @@ export function registerRepoRoutes(
       const next = {
         ...work,
         name: body.name ?? work.name,
+        tags: body.tags ?? work.tags ?? [],
         perms: { ...work.perms, ...body.perms },
       };
       await store.saveWork(next);

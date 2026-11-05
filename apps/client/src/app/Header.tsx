@@ -6,115 +6,118 @@ import {
   marubatsuSample,
   targetRangeSample,
 } from "@tukurium/repo-model";
-import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
+import { beginEditing } from "../main-menu/editing";
+import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
+import { AppSidebar } from "./AppSidebar";
 import styles from "./Header.module.css";
 import { useApp } from "./store";
 
-/** 画面上部のバー。セッション中はワークスペースの切り替えと参加者を出す。 */
+/** 上のバーは、今いるセッションの操作と状態だけを表示する。 */
 export function Header({ inSession = false }: { inSession?: boolean }) {
-  const { myName, status, session, me } = useApp();
-  const location = useLocation();
-  const libraryOpen = useWorkspace((s) => s.libraryOpen);
+  const { session, me, status } = useApp();
+  const windows = useMainMenu((s) => s.windows);
+  const bar = useRef<HTMLElement>(null);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
   const bagOpen = useWorkspace((s) => s.bagOpen);
-  const placedCount = session?.placements.length ?? 0;
-  const others = (session?.participants ?? []).filter((p) => p.id !== me?.id);
-
-  return (
-    <header className={`glass ${styles.header}`}>
-      <Link to="/" className={styles.brand} aria-label="ツクリウム ホーム">
-        <span className={styles.logo} aria-hidden="true" />
-        <span className={styles.wordmark}>ツクリウム</span>
-      </Link>
-      <nav aria-label="メイン" className={styles.nav}>
-        <Link
-          to="/"
-          className={location.pathname === "/" || inSession ? styles.navActive : styles.navItem}
+  const present = inSession && session;
+  useLayoutEffect(() => {
+    const element = bar.current;
+    if (!element) return;
+    const update = () => {
+      const bottom = element.getBoundingClientRect().bottom;
+      document.documentElement.style.setProperty("--app-bar-bottom", `${bottom}px`);
+      document.documentElement.style.setProperty("--app-panel-top", `${bottom + 12}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+  return createPortal(
+    <>
+      <AppSidebar />
+      <header ref={bar} className={`glass ${styles.header}`} data-session-bar>
+        <button
+          type="button"
+          className={styles.brand}
+          aria-label="ホーム"
+          title="ホーム"
+          data-window-button="home"
+          aria-pressed={windows.home.open}
+          onClick={() => useMainMenu.getState().show("home")}
         >
-          作る
-        </Link>
-        <Link
-          to="/explore"
-          className={location.pathname === "/explore" ? styles.navActive : styles.navItem}
+          <span className={styles.logo} aria-hidden="true" />
+          <span className={styles.wordmark}>ツクリウム</span>
+        </button>
+        <div className={styles.sessionInfo}>
+          <span className={styles.sessionLabel}>現在のセッション</span>
+          <strong>{present ? session.name : "セッション未参加"}</strong>
+          {present && <span className={styles.memberCount}>{session.participants.length}人</span>}
+        </div>
+        <WorkspaceSwitcher />
+        {present && (
+          <>
+            <nav className={styles.nav} aria-label="セッションの操作">
+              <button
+                type="button"
+                className={belongingsOpen ? styles.navActive : styles.navItem}
+                aria-pressed={belongingsOpen}
+                onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
+              >
+                セッション {session.placements.length}
+              </button>
+              <button
+                type="button"
+                className={bagOpen ? styles.navActive : styles.navItem}
+                aria-pressed={bagOpen}
+                onClick={() => useWorkspace.setState({ bagOpen: !bagOpen })}
+              >
+                バッグ
+              </button>
+            </nav>
+            <ul className={styles.people} aria-label="セッションの参加者">
+              {session.participants.map((person) => (
+                <li key={person.id} className={styles.person}>
+                  <span className={styles.initial}>{person.name.slice(0, 1)}</span>
+                  <span>{person.name}</span>
+                  {(person.id === session.owner || person.id === me?.id) && (
+                    <span className={styles.you}>
+                      {person.id === session.owner ? "持ち主" : "あなた"}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <SessionExit />
+          </>
+        )}
+        <span
+          className={styles.connection}
+          data-status={status}
+          title={
+            status === "online"
+              ? "接続中"
+              : status === "connecting"
+                ? "接続しています…"
+                : "オフライン"
+          }
         >
-          探す
-        </Link>
-        {inSession ? (
-          <button
-            type="button"
-            className={libraryOpen ? styles.navActive : styles.navItem}
-            aria-pressed={libraryOpen}
-            onClick={() => useWorkspace.setState({ libraryOpen: !libraryOpen })}
-          >
-            ライブラリ
-          </button>
-        ) : (
-          <Link
-            to="/u/me"
-            className={location.pathname.startsWith("/u/") ? styles.navActive : styles.navItem}
-          >
-            ライブラリ
-          </Link>
-        )}
-        {inSession && (
-          <button
-            type="button"
-            className={belongingsOpen ? styles.navActive : styles.navItem}
-            aria-pressed={belongingsOpen}
-            title="開くワールドを選ぶ"
-            onClick={() => useWorkspace.setState({ belongingsOpen: !belongingsOpen })}
-          >
-            セッション
-            <span className={styles.navCount}>{placedCount}</span>
-          </button>
-        )}
-        {inSession && (
-          <button
-            type="button"
-            className={bagOpen ? styles.navActive : styles.navItem}
-            aria-pressed={bagOpen}
-            title="自分のバッグ（E で拾った物）"
-            onClick={() => useWorkspace.setState({ bagOpen: !bagOpen })}
-          >
-            バッグ
-          </button>
-        )}
-      </nav>
-      {inSession && session && (
-        <>
-          <span className={styles.divider} />
-          <WorkspaceSwitcher />
-        </>
-      )}
-      <div className={styles.spacer} />
-      <ul className={styles.people} aria-label="セッションの参加者">
-        <li className={styles.person}>
-          <span className={styles.initial}>{myName.slice(0, 1)}</span>
-          <span>{myName}</span>
-          <span className={styles.you}>{session?.owner === me?.id ? "持ち主" : "あなた"}</span>
-        </li>
-        {inSession &&
-          others.map((p) => (
-            <li key={p.id} className={styles.person}>
-              <span className={`${styles.initial} ${styles.initialOther}`}>
-                {p.name.slice(0, 1)}
-              </span>
-              <span>{p.name}</span>
-              {session?.owner === p.id && <span className={styles.you}>持ち主</span>}
-            </li>
-          ))}
-      </ul>
-      {inSession && session && <SessionExit />}
-      <span className={styles.status} data-status={status} title="サーバーとの接続">
-        {status === "online"
-          ? "接続中"
-          : status === "connecting"
-            ? "接続しています…"
-            : "オフライン"}
-      </span>
-    </header>
+          <span className={styles.connectionDot} />
+          <span className={styles.connectionText}>
+            {status === "online" ? "接続中" : status === "connecting" ? "接続中…" : "オフライン"}
+          </span>
+        </span>
+      </header>
+    </>,
+    document.body,
   );
 }
 
@@ -154,22 +157,65 @@ function SessionExit() {
   );
 }
 
+/** 旧表示の、現在の名前と数を示すワークスペース切り替え。 */
 function WorkspaceSwitcher() {
   const session = useApp((s) => s.session);
   const workspaceId = useWorkspace((s) => s.workspaceId);
+  const ready = useWorkspace((s) => s.ready);
+  const { editingPending, editingError } = useMainMenu();
   const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const wasPending = useRef(false);
   const current = session?.workspaces.find((w) => w.id === workspaceId);
-  const ws = useWorkspace.getState();
-
+  useEffect(() => {
+    if (editingPending) wasPending.current = true;
+    else if (wasPending.current) {
+      wasPending.current = false;
+      if (!editingError && ready) setOpen(false);
+    }
+  }, [editingPending, editingError, ready]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false);
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setOpen(false);
+      root.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", onEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", onEscape, true);
+    };
+  }, [open]);
+  const returnToEditing = () => {
+    useWorkspace.setState({ panelsHidden: false });
+    useMainMenu.setState((s) => ({ workspaceRecall: s.workspaceRecall + 1, activeWindow: null }));
+    setOpen(false);
+  };
   return (
-    <div className={styles.switcher}>
+    <div className={styles.switcher} ref={root}>
       <button
         type="button"
         className={styles.switchBtn}
+        data-window-button="workspaces"
+        aria-label="ワークスペース"
         aria-haspopup="dialog"
         aria-expanded={open}
         title="このセッションのワークスペース"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!session) {
+            useMainMenu.getState().showProject("/workspaces");
+            return;
+          }
+          useMainMenu.setState({ activeWindow: null });
+          setOpen((value) => !value);
+        }}
       >
         <span className={styles.switchText}>
           <span className={styles.switchLabel}>ワークスペース</span>
@@ -180,107 +226,94 @@ function WorkspaceSwitcher() {
         </span>
       </button>
       {open && session && (
-        <div className={`glass ${styles.popover}`} role="dialog" aria-label="ワークスペース">
+        <div
+          className={`glass ${styles.popover}`}
+          role="dialog"
+          aria-label="ワークスペース"
+          data-workspace-popover
+        >
           <p className={styles.popTitle}>
             セッション: {session.name} · {session.workspaces.length}つ開いています
           </p>
-          <ul className={styles.wsList}>
-            {session.workspaces.map((w) => (
-              <li key={w.id}>
+          {ready && (
+            <button type="button" className={styles.popBtn} onClick={returnToEditing}>
+              編集画面に戻る
+            </button>
+          )}
+          {editingPending && <p role="status">ワークスペースを開いています…</p>}
+          {editingError && <p role="alert">{editingError}</p>}
+          <section aria-label="制作を始める">
+            <ul className={styles.wsList} aria-label="このセッションのワークスペース">
+              {session.workspaces.map((workspace) => (
+                <li key={workspace.id}>
+                  <button
+                    type="button"
+                    className={styles.wsItem}
+                    aria-current={workspace.id === workspaceId || undefined}
+                    disabled={editingPending}
+                    onClick={() =>
+                      beginEditing(() => useWorkspace.getState().open(workspace.id), workspace.id)
+                    }
+                  >
+                    <b>{workspace.name}</b>
+                    <span className={styles.wsMeta}>
+                      {workspace.present.length}人 ·{" "}
+                      {workspace.mode === "edit" ? "編集中" : "再生中"}
+                      {workspace.defaultRole === null && " · 非公開"}
+                    </span>
+                    {workspace.id === workspaceId && <span className={styles.here}>いまここ</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className={styles.popActions}>
+              {(
+                [
+                  ["空のワークスペース", () => emptyProject("新しいワークスペース")],
+                  ["サンプル「銃と的」で作る", gunAndTargetSample],
+                  ["サンプル「銃」", gunSample],
+                  ["サンプル「射撃場」", targetRangeSample],
+                  ["サンプル「森」", forestSample],
+                  ["サンプル「マルバツ」", marubatsuSample],
+                ] as const
+              ).map(([label, create]) => (
                 <button
+                  key={label}
                   type="button"
-                  className={styles.wsItem}
-                  aria-current={w.id === workspaceId || undefined}
-                  onClick={() => {
-                    ws.open(w.id);
-                    setOpen(false);
-                  }}
+                  className={styles.popBtn}
+                  disabled={editingPending}
+                  onClick={() =>
+                    beginEditing(() => {
+                      const project = create();
+                      useWorkspace.getState().create(project.name, project);
+                    })
+                  }
                 >
-                  <b>{w.name}</b>
-                  <span className={styles.wsMeta}>
-                    {w.present.length}人 · {w.mode === "edit" ? "編集中" : "再生中"}
-                    {w.defaultRole === null && " · 非公開"}
-                  </span>
-                  {w.id === workspaceId && <span className={styles.here}>いまここ</span>}
+                  ＋ {label}
                 </button>
-              </li>
-            ))}
-          </ul>
-          <div className={styles.popActions}>
-            <button
-              type="button"
-              className={styles.popBtn}
-              onClick={() => {
-                ws.create("新しいワークスペース", emptyProject("新しいワークスペース"));
-                setOpen(false);
-              }}
-            >
-              ＋ 空のワークスペース
-            </button>
-            <button
-              type="button"
-              className={styles.popBtn}
-              onClick={() => {
-                ws.create("銃と的", gunAndTargetSample());
-                setOpen(false);
-              }}
-            >
-              ＋ サンプル「銃と的」
-            </button>
-            <button
-              type="button"
-              className={styles.popBtn}
-              onClick={() => {
-                ws.create("銃", gunSample());
-                setOpen(false);
-              }}
-            >
-              ＋ サンプル「銃」
-            </button>
-            <button
-              type="button"
-              className={styles.popBtn}
-              onClick={() => {
-                ws.create("射撃場", targetRangeSample());
-                setOpen(false);
-              }}
-            >
-              ＋ サンプル「射撃場」
-            </button>
-            <button
-              type="button"
-              className={styles.popBtn}
-              onClick={() => {
-                ws.create("森", forestSample());
-                setOpen(false);
-              }}
-            >
-              ＋ サンプル「森」
-            </button>
-            <button
-              type="button"
-              className={styles.popBtn}
-              title="クリックで○×。近くで E を押すと最初から"
-              onClick={() => {
-                ws.create("マルバツ", marubatsuSample());
-                setOpen(false);
-              }}
-            >
-              ＋ サンプル「マルバツ」
-            </button>
-            {workspaceId && (
+              ))}
               <button
                 type="button"
                 className={styles.popBtn}
                 onClick={() => {
-                  ws.leave();
                   setOpen(false);
+                  useMainMenu.getState().showProject("/workspaces");
                 }}
               >
-                ワークスペースを閉じる
+                プロジェクト・ほかのサンプルから開く
               </button>
-            )}
-          </div>
+              {workspaceId && (
+                <button
+                  type="button"
+                  className={styles.popBtn}
+                  disabled={editingPending}
+                  onClick={() => useWorkspace.getState().leave()}
+                >
+                  ワークスペースを閉じる
+                </button>
+              )}
+            </div>
+          </section>
         </div>
       )}
     </div>

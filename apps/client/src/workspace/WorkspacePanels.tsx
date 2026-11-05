@@ -9,8 +9,10 @@ import {
 import type { PanelPublic } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
+import { beginEditing } from "../main-menu/editing";
+import { useMainMenu } from "../main-menu/store";
 import { api, type RepoMeta } from "../net/api";
-import { PanelLayer, type PanelSpec } from "../panels/PanelLayer";
+import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/PanelLayer";
 import { BagPanel } from "../session/BagPanel";
 import { SessionBelongings } from "../session/SessionBelongings";
 import type { SessionEngine } from "../session/SessionEngine";
@@ -18,7 +20,6 @@ import { DetailPanel } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { InspectorPanel } from "./InspectorPanel";
-import { LibraryPanel } from "./LibraryPanel";
 import { LogPanel } from "./LogPanel";
 import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
@@ -54,15 +55,9 @@ const RESOURCES: PanelSpec = {
   render: () => <ResourcesPanel />,
 };
 
-const START: PanelSpec = {
-  id: "ws-start",
-  title: "ワークスペース",
-  initial: { x: 16, y: 84, width: 420 },
-  render: () => <WorkspaceStart />,
-};
-
-/** セッション中のパネル一式。ワークスペースを開いていなければ、開く・作るためのパネルだけ出す。 */
+/** 編集パネルは、本人がワークスペースを開いている間だけ出す。 */
 export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
+  const workspaceRecall = useMainMenu((s) => s.workspaceRecall);
   const ready = useWorkspace((s) => s.ready && s.project !== null);
   const hasEditor = useWorkspace((s) => s.openSystems.length > 0);
   // コードを開いた・問題の行へ移ったときは、エディタを前に出す
@@ -76,7 +71,6 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const historyOpen = useWorkspace((s) => s.historyOpen);
   const saveOpen = useWorkspace((s) => s.saveOpen);
   const saveSeq = useWorkspace((s) => s.saveSeq);
-  const libraryOpen = useWorkspace((s) => s.libraryOpen);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
   const bagOpen = useWorkspace((s) => s.bagOpen);
   const sessionOpen = useWorkspace((s) => s.sessionOpen);
@@ -87,18 +81,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const logOpen = useWorkspace((s) => s.logOpen);
   const detail = useWorkspace((s) => s.detail);
   const panels: PanelSpec[] = [];
-  if (libraryOpen) {
-    panels.push({
-      id: "ws-library",
-      title: "ライブラリ",
-      initial: { right: 16, y: 84, width: 420 },
-      render: () => <LibraryPanel />,
-      onClose: () => useWorkspace.setState({ libraryOpen: false }),
-    });
-  }
-  if (!ready) {
-    panels.push(START);
-  } else {
+  if (ready) {
     if (saveOpen) {
       panels.push({
         id: "ws-save",
@@ -120,6 +103,8 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
     }
     panels.push({
       ...MAIN,
+      recallKey: workspaceRecall || undefined,
+      focusKey: workspaceRecall || undefined,
       actions: (
         <button
           type="button"
@@ -232,8 +217,22 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   }
 
   usePublishPanels(engine, panels, hidden);
+  const leftOffset = panelViewportInsets().left - 16;
 
-  return <PanelLayer engine={engine} panels={panels} hidden={hidden} />;
+  return (
+    <PanelLayer
+      engine={engine}
+      panels={panels.map((panel) => ({
+        ...panel,
+        initial: {
+          ...panel.initial,
+          ...(panel.initial.x == null ? {} : { x: panel.initial.x + leftOffset }),
+        },
+        onActivate: () => useMainMenu.setState({ activeWindow: null }),
+      }))}
+      hidden={hidden}
+    />
+  );
 }
 
 /**
@@ -279,25 +278,38 @@ function usePublishPanels(engine: SessionEngine, panels: PanelSpec[], hidden: bo
   }, [engine, client, ids, hidden]);
 }
 
-function WorkspaceStart() {
+export function WorkspaceStart() {
   const session = useApp((s) => s.session);
   const error = useWorkspace((s) => s.error);
   const workspaceId = useWorkspace((s) => s.workspaceId);
   const ws = useWorkspace.getState();
+  const pending = useMainMenu((s) => s.editingPending);
   const list = session?.workspaces ?? [];
 
   return (
-    <div className={ui.section}>
-      {workspaceId && <p className={ui.muted}>ワークスペースを受け取っています…</p>}
+    <fieldset
+      className={ui.section}
+      disabled={pending}
+      style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+    >
+      {workspaceId && (
+        <button type="button" className={ui.btn} onClick={() => ws.leave()}>
+          ワークスペースを閉じる
+        </button>
+      )}
       {error && <p className={ui.error}>{error}</p>}
       <h3 className={ui.sectionTitle}>このセッションのワークスペース</h3>
       {list.length === 0 ? (
         <p className={ui.muted}>まだありません。作るとほかの参加者も開けます。</p>
       ) : (
-        <ul className={ui.list}>
+        <ul className={ui.list} aria-label="このセッションのワークスペース">
           {list.map((w) => (
             <li key={w.id}>
-              <button type="button" className={ui.item} onClick={() => ws.open(w.id)}>
+              <button
+                type="button"
+                className={ui.item}
+                onClick={() => beginEditing(() => ws.open(w.id), w.id)}
+              >
                 <span className={ui.itemName}>{w.name}</span>
                 <span className={ui.badge}>
                   {w.present.length}人{w.defaultRole === null ? " · 非公開" : ""}
@@ -312,7 +324,7 @@ function WorkspaceStart() {
         <button
           type="button"
           className={ui.btnPrimary}
-          onClick={() => ws.create("銃と的", gunAndTargetSample())}
+          onClick={() => beginEditing(() => ws.create("銃と的", gunAndTargetSample()))}
         >
           ＋ サンプル「銃と的」で作る
         </button>
@@ -321,9 +333,7 @@ function WorkspaceStart() {
           className={ui.btn}
           title="的の hp と Damage の受け取りを、公式ライブラリ「combat」に任せた銃と的"
           onClick={() => {
-            void createReferenceSample("gunAndTarget").catch((e: Error) =>
-              useWorkspace.setState({ error: e.message }),
-            );
+            beginEditing(() => createReferenceSample("gunAndTarget"));
           }}
         >
           ＋ サンプル「銃と的（公式）」
@@ -333,9 +343,7 @@ function WorkspaceStart() {
           className={ui.btn}
           title="E で押すと扉が開くスイッチ。押されて切り替わる仕組みは公式ライブラリ「interaction」"
           onClick={() => {
-            void createReferenceSample("doorAndSwitch").catch((e: Error) =>
-              useWorkspace.setState({ error: e.message }),
-            );
+            beginEditing(() => createReferenceSample("doorAndSwitch"));
           }}
         >
           ＋ サンプル「扉とスイッチ」
@@ -345,43 +353,53 @@ function WorkspaceStart() {
           className={ui.btn}
           title="E で鍵を拾ってバッグに入れ、鍵のかかった扉を開ける。拾う仕組みと鍵の種類は公式ライブラリ「items」"
           onClick={() => {
-            void createReferenceSample("keyAndDoor").catch((e: Error) =>
-              useWorkspace.setState({ error: e.message }),
-            );
+            beginEditing(() => createReferenceSample("keyAndDoor"));
           }}
         >
           ＋ サンプル「鍵と扉」
         </button>
-        <button type="button" className={ui.btn} onClick={() => ws.create("銃", gunSample())}>
+        <button
+          type="button"
+          className={ui.btn}
+          onClick={() => beginEditing(() => ws.create("銃", gunSample()))}
+        >
           ＋ サンプル「銃」
         </button>
         <button
           type="button"
           className={ui.btn}
-          onClick={() => ws.create("射撃場", targetRangeSample())}
+          onClick={() => beginEditing(() => ws.create("射撃場", targetRangeSample()))}
         >
           ＋ サンプル「射撃場」
         </button>
-        <button type="button" className={ui.btn} onClick={() => ws.create("森", forestSample())}>
+        <button
+          type="button"
+          className={ui.btn}
+          onClick={() => beginEditing(() => ws.create("森", forestSample()))}
+        >
           ＋ サンプル「森」
         </button>
         <button
           type="button"
           className={ui.btn}
           title="クリックで○×。近くで E を押すと最初から"
-          onClick={() => ws.create("マルバツ", marubatsuSample())}
+          onClick={() => beginEditing(() => ws.create("マルバツ", marubatsuSample()))}
         >
           ＋ サンプル「マルバツ」
         </button>
         <button
           type="button"
           className={ui.btn}
-          onClick={() => ws.create("新しいワークスペース", emptyProject("新しいワークスペース"))}
+          onClick={() =>
+            beginEditing(() =>
+              ws.create("新しいワークスペース", emptyProject("新しいワークスペース")),
+            )
+          }
         >
           ＋ 空のワークスペース
         </button>
       </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -389,9 +407,23 @@ function WorkspaceStart() {
 function OpenFromProject() {
   const me = useApp((s) => s.me);
   const [repos, setRepos] = useState<RepoMeta[]>([]);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (me) void api.repos().then(setRepos);
+    let active = true;
+    if (me)
+      void api.repos().then(
+        (value) => {
+          if (active) setRepos(value);
+        },
+        (reason: Error) => {
+          if (active) setError(reason.message);
+        },
+      );
+    return () => {
+      active = false;
+    };
   }, [me]);
+  if (error) return <p className={ui.error}>{error}</p>;
   if (repos.length === 0) return null;
   const mine = repos.filter((r) => r.owner === me?.id);
   const others = repos.filter((r) => r.owner !== me?.id);
@@ -404,7 +436,7 @@ function OpenFromProject() {
             <button
               type="button"
               className={ui.item}
-              onClick={() => useWorkspace.getState().openRepo(r.id)}
+              onClick={() => beginEditing(() => useWorkspace.getState().openRepo(r.id))}
             >
               <span className={ui.itemName}>{r.name}</span>
               <span className={ui.badge}>{r.owner === me?.id ? "自分" : r.ownerName}</span>

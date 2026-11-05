@@ -6,6 +6,7 @@
 
 - [プロジェクトの README](../README.md)：現在できること、必要なもの、起動方法
 - [開発の約束](../CLAUDE.md)：実装・テスト・文言について守ること
+- [UIデザイン](../design.md)：配色・文字・部品・ウィンドウ配置を、現在の画面にそろえるための基準
 - [現在のロードマップ](ROADMAP.md)：利用者向けの機能ごとの実装済み・これから実装するもの・検討中の候補
 - [設計判断の記録](adr/README.md)：採用済みの設計と、その理由
 
@@ -14,7 +15,7 @@
 | 文書 | 役割 |
 | --- | --- |
 | [ROADMAP.md](ROADMAP.md) | 機能ごとの実装状況と残作業、検討中の候補、詳細計画への入口。分野の並びは優先順位を表さない |
-| [plans/](plans/) | 実装中・検討中のテーマごとの詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md) |
+| [plans/](plans/) | 実装中・検討中の詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md)。メインメニューは[実装済みUI/UX](plans/social-workshop-experience.md)と[完了記録](archive/main-menu-implementation.md)を参照 |
 | [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件。[Creator Platform 機能候補](discovery/creator-platform-capabilities.md) |
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |

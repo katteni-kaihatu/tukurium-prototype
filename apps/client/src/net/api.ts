@@ -5,6 +5,7 @@ import type {
   ProjectSnapshot,
   Provenance,
 } from "@tukurium/repo-model";
+import type { SessionSummary, SocialProfile, UserInfo } from "@tukurium/shared";
 
 export interface RepoMeta {
   id: string;
@@ -50,6 +51,8 @@ export interface Work {
   outputId: string;
   name: string;
   owner: string;
+  /** 作者が付ける公開タグ。旧データでは省略されている。 */
+  tags?: string[];
   ownerName?: string;
   repoName?: string;
   perms: WorkPerms;
@@ -59,6 +62,51 @@ export interface Work {
   /** 公式の発行者の作品か（名前ではなく発行者で決まる。ADR 0016） */
   official?: boolean;
   createdAt: string;
+}
+
+export interface OwnedItem {
+  userId: string;
+  workId: string;
+  releaseId: string;
+  acquiredAt: string;
+  work: Work | null;
+  release: Release | null;
+  available: boolean;
+  reason: string | null;
+}
+
+export interface MarketPage {
+  items: Work[];
+  total: number;
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+}
+
+export interface FriendEntry {
+  user: UserInfo;
+  profile: SocialProfile;
+  presence: { online: boolean; sessions: SessionSummary[] };
+}
+export interface SocialState {
+  profile: SocialProfile;
+  friends: FriendEntry[];
+  incoming: { user: UserInfo; createdAt: string }[];
+  outgoing: { user: UserInfo; createdAt: string }[];
+  invitations: { incoming: InvitationView[]; outgoing: InvitationView[] };
+}
+export interface InvitationView {
+  id: string;
+  from: UserInfo | null;
+  to: UserInfo | null;
+  session: SessionSummary | null;
+  status: "pending" | "accepted" | "declined" | "cancelled" | "expired";
+  createdAt: string;
+  expiresAt: string;
+}
+export interface PersonResult {
+  user: UserInfo;
+  relation: "none" | "friend" | "incoming" | "outgoing";
 }
 
 export interface RepoDetail extends RepoMeta {
@@ -96,9 +144,15 @@ function token(): string {
 /** 素材の URL（素材にも権限があるので、本人確認のトークンを付ける） */
 export const assetUrl = (id: string) => `/api/assets/${id}?t=${encodeURIComponent(token())}`;
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function call<T>(
+  method: string,
+  url: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const res = await fetch(url, {
     method,
+    signal,
     headers: {
       "x-tukurium-token": token(),
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -112,6 +166,30 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 
 /** リポジトリ・作品の API（サーバーの repos/routes.ts） */
 export const api = {
+  invite: (to: string, sessionId: string) =>
+    call<InvitationView>("POST", "/api/me/invitations", { to, sessionId }),
+  respondInvite: (id: string, action: "accept" | "decline" | "cancel") =>
+    call<InvitationView>("POST", `/api/me/invitations/${encodeURIComponent(id)}/respond`, {
+      action,
+    }),
+  social: () => call<SocialState>("GET", "/api/me/social"),
+  updateSocial: (profile: SocialProfile) => call<SocialProfile>("PATCH", "/api/me/social", profile),
+  people: (query: string, signal?: AbortSignal) =>
+    call<PersonResult[]>("GET", `/api/people?q=${encodeURIComponent(query)}`, undefined, signal),
+  requestFriend: (id: string) =>
+    call("POST", `/api/me/friends/${encodeURIComponent(id)}/request`, {}),
+  acceptFriend: (id: string) =>
+    call("POST", `/api/me/friends/${encodeURIComponent(id)}/accept`, {}),
+  removeFriend: (id: string) => call("DELETE", `/api/me/friends/${encodeURIComponent(id)}`),
+  market: (query = "", offset = 0, signal?: AbortSignal, tags: string[] = []) => {
+    const params = new URLSearchParams({ q: query, offset: String(offset) });
+    for (const tag of tags) params.append("tag", tag);
+    return call<MarketPage>("GET", `/api/market?${params}`, undefined, signal);
+  },
+  ownedItems: (signal?: AbortSignal) =>
+    call<OwnedItem[]>("GET", "/api/me/items", undefined, signal),
+  acquireItem: (workId: string, releaseId: string) =>
+    call<OwnedItem>("POST", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
   createRepo: (body: {
     name: string;
     description?: string;
@@ -146,11 +224,11 @@ export const api = {
       selection,
       target,
     }),
-  publish: (repoId: string, outputId: string) =>
-    call<Work>("POST", "/api/works", { repoId, outputId }),
+  publish: (repoId: string, outputId: string, tags?: string[]) =>
+    call<Work>("POST", "/api/works", { repoId, outputId, tags }),
   works: (owner?: string) =>
     call<Work[]>("GET", owner ? `/api/works?owner=${encodeURIComponent(owner)}` : "/api/works"),
-  updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms> }) =>
+  updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms>; tags?: string[] }) =>
     call<Work>("PATCH", `/api/works/${id}`, body),
   release: (workId: string) => call<Release>("POST", `/api/works/${workId}/releases`, {}),
   packageVersion: (workId: string, version: number) =>

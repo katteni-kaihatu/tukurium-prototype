@@ -12,25 +12,8 @@
   border-radius: 18px;
 }
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logo {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--c-brand);
-  box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.15);
-}
-
-.wordmark {
-  font-family: var(--font-logo);
-  font-weight: 700;
-  font-size: 17px;
-  color: var(--c-brand);
+.header:global(.glass) {
+  box-shadow: var(--shadow-navigation);
 }
 
 .nav {
@@ -166,18 +149,6 @@
 .status[data-status="offline"] {
   background: #f6e3e3;
   color: #8a2a2a;
-}
-
-@media (max-width: 720px) {
-  .nav,
-  .divider,
-  .people {
-    display: none;
-  }
-}
-
-.brand {
-  text-decoration: none;
 }
 
 .navItem:disabled {
@@ -332,4 +303,196 @@
 .popBtn:hover {
   background: var(--c-brand-soft);
   color: var(--c-brand);
+}
+
+/* 上のバーはセッション内の操作に限定する。 */
+.header {
+  position: fixed;
+  left: var(--app-content-left);
+  height: 64px;
+  z-index: 1000000;
+  gap: 14px;
+}
+.sessionInfo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 8px;
+  min-width: 120px;
+  max-width: 260px;
+  margin-right: auto;
+}
+.sessionLabel {
+  grid-column: 1 / -1;
+  color: var(--c-ink-4);
+  font-size: 10px;
+}
+.sessionInfo strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memberCount {
+  color: var(--c-ink-3);
+  font-size: 11px;
+  align-self: center;
+}
+.people {
+  max-width: 250px;
+}
+.nav {
+  flex-shrink: 0;
+}
+.navItem,
+.navActive {
+  white-space: nowrap;
+  padding: 0 10px;
+}
+.switcher {
+  flex: 0 1 230px;
+  min-width: 145px;
+}
+.switchBtn {
+  width: 100%;
+}
+.switcher > .popover {
+  background: var(--c-paper);
+  left: auto;
+  right: 0;
+  width: min(380px, calc(100vw - var(--app-content-left) - 24px));
+  max-height: calc(100dvh - var(--app-panel-top) - 32px);
+  overflow: auto;
+}
+@media (max-width: 1300px) {
+  .people {
+    display: none;
+  }
+}
+@media (max-width: 1000px) {
+  .header {
+    height: auto;
+    min-height: 96px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .sessionInfo {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .switcher {
+    flex-grow: 1;
+  }
+  .leave {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+}
+@media (max-width: 600px) {
+  .header {
+    padding: 10px 8px;
+  }
+  .nav {
+    gap: 0;
+  }
+  .navItem,
+  .navActive {
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .switcher {
+    flex-basis: 100%;
+  }
+  .switcher > .popover {
+    left: 0;
+    right: auto;
+  }
+  .leave {
+    margin-left: auto;
+  }
+}
+
+/* 主役の上部バー。補助メニューは独立した島として置く。 */
+.header {
+  left: 16px;
+  border-bottom-left-radius: 18px;
+}
+.brand {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 0 8px 0 0;
+  background: transparent;
+  color: var(--c-brand);
+}
+.logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--c-brand);
+  box-shadow: inset 0 -6px 0 #0002;
+}
+.wordmark {
+  font-family: var(--font-logo);
+  font-size: 17px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  font-size: 11px;
+  color: var(--c-ink-3);
+}
+.connectionDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #999;
+}
+.connection[data-status="online"] .connectionDot {
+  background: var(--c-green);
+}
+.connection[data-status="connecting"] .connectionDot {
+  background: #b98924;
+}
+@media (max-width: 1000px) {
+  .header {
+    min-height: 64px;
+  }
+  .sessionInfo {
+    flex: 1;
+    flex-basis: auto;
+    min-width: 120px;
+  }
+  .switcher {
+    flex: 0 1 210px;
+  }
+  .connection {
+    margin-left: auto;
+  }
+}
+@media (max-width: 600px) {
+  .header {
+    gap: 8px 12px;
+  }
+  .wordmark {
+    font-size: 15px;
+  }
+  .switcher {
+    flex: 1 1 160px;
+  }
+  .connectionText {
+    display: none;
+  }
+  .connection {
+    margin-left: 0;
+  }
+  .switcher > .popover {
+    width: min(350px, calc(100vw - 32px));
+  }
 }

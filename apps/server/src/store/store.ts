@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { WorkspaceRole } from "@tukurium/shared";
+import type { SocialProfile, WorkspaceRole } from "@tukurium/shared";
 
 export interface User {
   id: string;
@@ -34,6 +34,8 @@ export interface Work {
   outputId: string;
   name: string;
   owner: string;
+  /** 作者が付けた公開タグ。旧データでは省略されている。 */
+  tags?: string[];
   perms: WorkPerms;
   createdAt: string;
 }
@@ -50,6 +52,31 @@ export interface Release {
    * サーバーが計算する。同じ作品・同じ版の hash は変えない（ADR 0013・0015）
    */
   contentHash?: string;
+}
+
+export interface OwnedItem {
+  userId: string;
+  workId: string;
+  releaseId: string;
+  acquiredAt: string;
+}
+
+export interface Friendship {
+  from: string;
+  to: string;
+  status: "pending" | "accepted";
+  createdAt: string;
+}
+export const friendshipKey = (a: string, b: string) => [a, b].sort().join(":");
+
+export interface SessionInvitation {
+  id: string;
+  from: string;
+  to: string;
+  sessionId: string;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface WorkspaceMeta {
@@ -89,6 +116,23 @@ export interface Store {
   saveRelease(r: Release): Promise<void>;
   releases(workId: string): Promise<Release[]>;
   release(id: string): Promise<Release | null>;
+  ownedItems(userId: string): Promise<OwnedItem[]>;
+  acquireItem(item: OwnedItem): Promise<OwnedItem>;
+  searchUsers(query: string, limit: number): Promise<User[]>;
+  friendships(userId: string): Promise<Friendship[]>;
+  requestFriendship(request: Friendship): Promise<Friendship>;
+  acceptFriendship(userId: string, from: string): Promise<Friendship | null>;
+  removeFriendship(userId: string, other: string): Promise<void>;
+  socialProfile(userId: string): Promise<SocialProfile>;
+  saveSocialProfile(userId: string, profile: SocialProfile): Promise<void>;
+  invitations(userId: string): Promise<SessionInvitation[]>;
+  invitation(id: string): Promise<SessionInvitation | null>;
+  createInvitation(invitation: SessionInvitation): Promise<SessionInvitation>;
+  respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ): Promise<SessionInvitation | null>;
 }
 
 export const newToken = () => randomBytes(24).toString("base64url");
@@ -103,6 +147,10 @@ export class MemoryStore implements Store {
   private readonly repoMap = new Map<string, RepoMeta>();
   private readonly workMap = new Map<string, Work>();
   private readonly releaseMap = new Map<string, Release>();
+  private readonly owned = new Map<string, OwnedItem>();
+  private readonly friends = new Map<string, Friendship>();
+  private readonly profiles = new Map<string, SocialProfile>();
+  private readonly invites = new Map<string, SessionInvitation>();
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -184,5 +232,92 @@ export class MemoryStore implements Store {
   async release(id: string) {
     const r = this.releaseMap.get(id);
     return r ? structuredClone(r) : null;
+  }
+
+  async ownedItems(userId: string) {
+    return [...this.owned.values()]
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt) || a.workId.localeCompare(b.workId))
+      .map((item) => ({ ...item }));
+  }
+
+  async acquireItem(item: OwnedItem) {
+    const key = `${item.userId}:${item.workId}`;
+    const existing = this.owned.get(key);
+    if (existing) return { ...existing };
+    this.owned.set(key, { ...item });
+    return { ...item };
+  }
+
+  async searchUsers(query: string, limit: number) {
+    const needle = query.toLocaleLowerCase();
+    return [...this.users.values()]
+      .filter((u) => u.id === query || u.name.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((u) => ({ ...u }));
+  }
+  async friendships(userId: string) {
+    return [...this.friends.values()]
+      .filter((f) => f.from === userId || f.to === userId)
+      .map((f) => ({ ...f }));
+  }
+  async requestFriendship(request: Friendship) {
+    const key = friendshipKey(request.from, request.to);
+    const saved = this.friends.get(key) ?? { ...request };
+    this.friends.set(key, saved);
+    return { ...saved };
+  }
+  async acceptFriendship(userId: string, from: string) {
+    const key = friendshipKey(userId, from);
+    const saved = this.friends.get(key);
+    if (!saved || (saved.status === "pending" && (saved.to !== userId || saved.from !== from)))
+      return null;
+    saved.status = "accepted";
+    return { ...saved };
+  }
+  async removeFriendship(userId: string, other: string) {
+    this.friends.delete(friendshipKey(userId, other));
+  }
+  async socialProfile(userId: string): Promise<SocialProfile> {
+    return { ...(this.profiles.get(userId) ?? { availability: "online", note: "" }) };
+  }
+  async saveSocialProfile(userId: string, profile: SocialProfile) {
+    this.profiles.set(userId, { ...profile });
+  }
+
+  async invitations(userId: string) {
+    return [...this.invites.values()]
+      .filter((i) => i.from === userId || i.to === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 100)
+      .map((i) => ({ ...i }));
+  }
+  async invitation(id: string) {
+    const value = [...this.invites.values()].find((i) => i.id === id);
+    return value ? { ...value } : null;
+  }
+  async createInvitation(invitation: SessionInvitation) {
+    const key = `${invitation.from}:${invitation.to}:${invitation.sessionId}`;
+    const old = this.invites.get(key);
+    if (old?.status === "pending" && old.expiresAt > new Date().toISOString()) return { ...old };
+    this.invites.set(key, { ...invitation });
+    return { ...invitation };
+  }
+  async respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ) {
+    const value = [...this.invites.values()].find((i) => i.id === id);
+    if (
+      !value ||
+      (status === "cancelled" ? value.from !== actor : value.to !== actor) ||
+      value.expiresAt <= new Date().toISOString() ||
+      value.status !== "pending"
+    )
+      return null;
+    value.status = status;
+    return { ...value };
   }
 }

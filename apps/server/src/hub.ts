@@ -74,6 +74,14 @@ interface Session {
   /** セッションの世界を実行する接続（持ち主） */
   host: Conn | null;
   lastFrame: SessionFrame | null;
+  placementRequests: Map<
+    string,
+    {
+      fingerprint: string;
+      result: Promise<Extract<ServerMessage, { t: "placement.result" }>>;
+      until: number;
+    }
+  >;
 }
 
 const buildKey = (workspaceId: string, outputId: string) => `${workspaceId}\u0000${outputId}`;
@@ -146,6 +154,37 @@ export class Hub {
     };
   }
 
+  presence(userId: string) {
+    return {
+      online: [...this.conns.values()].some((c) => c.user?.id === userId),
+      sessions: this.sessionList().filter((s) => s.participants.some((p) => p.id === userId)),
+    };
+  }
+
+  sessionSummary(sessionId: string) {
+    return this.sessionList().find((s) => s.id === sessionId) ?? null;
+  }
+
+  notifyUsers(userIds: readonly string[]): void {
+    const ids = new Set(userIds);
+    for (const conn of this.conns.values())
+      if (conn.user && ids.has(conn.user.id)) this.send(conn, { t: "social.changed" });
+  }
+
+  notifySocial(userId: string): void {
+    void this.store
+      .friendships(userId)
+      .then((links) =>
+        this.notifyUsers([
+          userId,
+          ...links
+            .filter((f) => f.status === "accepted")
+            .map((f) => (f.from === userId ? f.to : f.from)),
+        ]),
+      )
+      .catch((e) => this.opts.log(`social update: ${e}`));
+  }
+
   connect(peer: Peer): { onMessage(raw: string): void; onClose(): void } {
     const conn: Conn = {
       id: randomUUID(),
@@ -197,13 +236,15 @@ export class Hub {
         user.name = msg.name;
         await this.store.renameUser(user.id, msg.name);
         if (conn.session) this.broadcastSession(conn.session);
+        this.broadcastSessionList();
+        this.notifySocial(user.id);
         return;
       case "sessions.list":
         return this.send(conn, { t: "sessions", sessions: this.sessionList() });
       case "session.create":
-        return this.createSession(conn, msg.name);
+        return this.createSession(conn, msg.name, msg.requestId);
       case "session.join":
-        return this.joinSession(conn, msg.sessionId);
+        return this.joinSession(conn, msg.sessionId, msg.requestId);
       case "session.leave":
         return this.leaveSession(conn);
       case "session.close":
@@ -443,12 +484,13 @@ export class Hub {
       token,
     });
     this.send(conn, { t: "sessions", sessions: this.sessionList() });
+    this.notifySocial(user.id);
   }
 
   // ---------------------------------------------------------------------------
   // セッション
 
-  private createSession(conn: Conn, name: string): void {
+  private createSession(conn: Conn, name: string, requestId?: string): void {
     if (!conn.user) return;
     this.leaveSession(conn);
     const s: Session = {
@@ -462,24 +504,35 @@ export class Hub {
       builds: new Map(),
       host: null,
       lastFrame: null,
+      placementRequests: new Map(),
     };
     this.sessions.set(s.id, s);
     this.opts.log(`session created ${s.id} by ${conn.user.id}`);
-    this.joinSession(conn, s.id);
+    this.joinSession(conn, s.id, requestId);
     this.broadcastSessionList();
   }
 
-  private joinSession(conn: Conn, sessionId: string): void {
+  private joinSession(conn: Conn, sessionId: string, requestId?: string): void {
     const s = this.sessions.get(sessionId);
     if (!conn.user) return;
     if (!s) {
       this.send(conn, {
-        t: "session.closed",
-        reason: "セッションが見つかりません（閉じられた可能性があります）",
+        t: "session.rejected",
+        sessionId,
+        requestId,
+        message: "セッションが見つかりません（閉じられた可能性があります）",
       });
       return;
     }
-    if (conn.session === s) return;
+    this.send(conn, { t: "session.entered", sessionId, requestId });
+    if (conn.session === s) {
+      this.send(conn, {
+        t: "session",
+        session: this.sessionInfo(s),
+        participants: this.participants(s),
+      });
+      return;
+    }
     this.leaveSession(conn);
     conn.session = s;
     conn.pose = {
@@ -502,6 +555,7 @@ export class Hub {
     }
     this.sendPreviews(s, conn);
     this.broadcastSessionList();
+    this.notifySocial(conn.user.id);
   }
 
   private leaveSession(conn: Conn): void {
@@ -527,6 +581,7 @@ export class Hub {
       }, this.opts.ownerGraceMs);
     }
     this.broadcastSessionList();
+    this.notifySocial(conn.user.id);
   }
 
   private async closeSession(s: Session, reason: string): Promise<void> {
@@ -544,6 +599,7 @@ export class Hub {
       c.open.clear();
       c.panels = [];
       this.send(c, { t: "session.closed", reason });
+      if (c.user) this.notifySocial(c.user.id);
     }
     s.conns.clear();
     this.opts.log(`session closed ${s.id}: ${reason}`);
@@ -558,13 +614,14 @@ export class Hub {
         name: s.name,
         owner: { id: s.owner, name: ownerConn?.user?.name ?? "（退出中）" },
         count: new Set([...s.conns].map((c) => c.user?.id)).size,
+        participants: this.participants(s).map(({ id, name }) => ({ id, name })),
       };
     });
   }
 
   private broadcastSessionList(): void {
     const msg: ServerMessage = { t: "sessions", sessions: this.sessionList() };
-    for (const c of this.conns.values()) if (c.user && !c.session) this.send(c, msg);
+    for (const c of this.conns.values()) if (c.user) this.send(c, msg);
   }
 
   private sessionInfo(s: Session): SessionInfo {
@@ -821,6 +878,65 @@ export class Hub {
     conn: Conn,
     msg: Extract<ClientMessage, { t: "placeRelease" }>,
   ): Promise<void> {
+    if (msg.requestId && msg.sessionId) {
+      const requestId = msg.requestId;
+      const sessionId = msg.sessionId;
+      const s = conn.session;
+      const user = conn.user;
+      const failure = (error: string): Extract<ServerMessage, { t: "placement.result" }> => ({
+        t: "placement.result",
+        requestId,
+        sessionId,
+        placementId: null,
+        error,
+      });
+      if (!s || s.id !== sessionId || !user) {
+        this.send(conn, failure("取り出し先のセッションが変わりました"));
+        return;
+      }
+      const key = `${user.id}:${requestId}`;
+      const fingerprint = JSON.stringify([msg.releaseId, msg.position, msg.yaw]);
+      for (const [id, value] of s.placementRequests)
+        if (value.until < Date.now()) s.placementRequests.delete(id);
+      const previous = s.placementRequests.get(key);
+      if (previous) {
+        this.send(
+          conn,
+          previous.fingerprint === fingerprint
+            ? await previous.result
+            : failure("同じ要求IDで内容を変えることはできません"),
+        );
+        return;
+      }
+      if (s.placementRequests.size >= 512) {
+        this.send(conn, failure("取り出しが混み合っています。少し待ってからお試しください"));
+        return;
+      }
+      const result = (async () => {
+        try {
+          const loaded = await this.loadRelease(msg.releaseId);
+          if (!loaded) return failure("リリースが見つかりません");
+          const current = await this.store.work(loaded.work.id);
+          if (!current || (!current.perms.use && current.owner !== user.id))
+            return failure("この作品を利用する権限がありません");
+          if (conn.session !== s || !this.sessions.has(s.id))
+            return failure("取り出し先のセッションが変わりました");
+          if (loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind !== "item")
+            return failure("取り出せるのはアイテムです");
+          const placementId = this.addReleasePlacement(s, user.id, loaded, msg.position, msg.yaw);
+          this.broadcastSession(s);
+          return { t: "placement.result" as const, requestId, sessionId, placementId, error: null };
+        } catch {
+          return failure("アイテムを取り出せませんでした。もう一度お試しください");
+        }
+      })();
+      s.placementRequests.set(key, { fingerprint, result, until: Number.POSITIVE_INFINITY });
+      const response = await result;
+      const entry = s.placementRequests.get(key);
+      if (entry) entry.until = Date.now() + 5 * 60_000;
+      this.send(conn, response);
+      return;
+    }
     const s = conn.session;
     const user = conn.user;
     if (!s || !user || !this.repos) return;
@@ -911,7 +1027,7 @@ export class Hub {
     },
     position: [number, number, number],
     yaw: number,
-  ): void {
+  ): string {
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: null,
@@ -926,6 +1042,7 @@ export class Hub {
     };
     s.placements.set(p.id, p);
     if (s.host) this.send(s.host, { t: "host.addPart", part: this.hostPart(s, p) });
+    return p.id;
   }
 
   private placementSnapshot(
@@ -1197,6 +1314,7 @@ export class Hub {
   private async disconnect(conn: Conn): Promise<void> {
     this.leaveSession(conn);
     this.conns.delete(conn.id);
+    if (conn.user) this.notifySocial(conn.user.id);
   }
 
   private toSession(s: Session, msg: ServerMessage, except?: Conn): void {

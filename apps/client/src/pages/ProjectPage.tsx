@@ -1,8 +1,12 @@
 import type { FileChange, ProjectSnapshot } from "@tukurium/repo-model";
+import { splitTagDraft, workTagsSchema } from "@tukurium/shared";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
+import { editProject } from "../main-menu/editing";
+import { useMainMenu } from "../main-menu/store";
+import { PublicTagsField, WorkTagsEditor } from "../main-menu/WorkTags";
 import {
   api,
   type CommitInfo,
@@ -10,6 +14,7 @@ import {
   type RepoDetail,
   type RepoMeta,
 } from "../net/api";
+import { ProjectLink as Link, useProjectNavigate } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
 type Tab = "code" | "commits" | "releases" | "settings";
@@ -21,13 +26,20 @@ const shortOid = (oid: string) => oid.slice(0, 7);
 const when = (ts: number) => new Date(ts * 1000).toLocaleString("ja-JP");
 
 /** プロジェクト（リポジトリ）のページ */
-export function ProjectPage() {
-  const { repoId = "" } = useParams();
+export function ProjectPage({
+  embedded = false,
+  projectId,
+}: {
+  embedded?: boolean;
+  projectId?: string;
+}) {
+  const params = useParams();
+  const repoId = projectId ?? params.repoId ?? "";
   const [repo, setRepo] = useState<RepoDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("code");
   const [extracting, setExtracting] = useState(false);
-  const navigate = useNavigate();
+  const navigate = useProjectNavigate();
   const me = useApp((s) => s.me);
 
   const load = useCallback(() => {
@@ -54,9 +66,9 @@ export function ProjectPage() {
   };
 
   return (
-    <div className={styles.page}>
-      <Header />
-      <main className={styles.main}>
+    <div className={embedded ? styles.embedded : styles.page}>
+      {!embedded && <Header />}
+      <main className={embedded ? styles.embeddedMain : styles.main}>
         {error && <p className={styles.error}>{error}</p>}
         {repo && (
           <>
@@ -153,25 +165,30 @@ export function ProjectPage() {
   );
 }
 
-/** 「新しいセッションで開く」：セッションを作り、そのワークスペースとして開く */
-export function OpenInSession({ repoId, repoName }: { repoId: string; repoName: string }) {
-  const { client, session } = useApp();
-  const navigate = useNavigate();
-  const [waiting, setWaiting] = useState(false);
-  useEffect(() => {
-    if (waiting && session) navigate(`/s/${session.id}?open=${repoId}`);
-  }, [waiting, session, navigate, repoId]);
+/** プロジェクトを今いるセッションで編集する。未参加なら先に場所を選ぶ。 */
+export function OpenInSession({ repoId }: { repoId: string; repoName: string }) {
+  const session = useApp((s) => s.session);
+  const { editingPending, editingError } = useMainMenu();
   return (
-    <button
-      type="button"
-      className={styles.primary}
-      onClick={() => {
-        setWaiting(true);
-        client.send({ t: "session.create", name: `${repoName} の作業部屋` });
-      }}
-    >
-      新しいセッションで開く
-    </button>
+    <>
+      <button
+        type="button"
+        className={styles.primary}
+        disabled={editingPending}
+        onClick={() => editProject(repoId)}
+      >
+        {editingPending
+          ? "ワークスペースを開いています…"
+          : session
+            ? "このセッションで編集する"
+            : "セッションを選んで編集する"}
+      </button>
+      {editingError && (
+        <p className={styles.error} role="alert">
+          {editingError}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -301,6 +318,7 @@ function CommitsTab({ repo }: { repo: RepoDetail }) {
 
 function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
   const [outputId, setOutputId] = useState(repo.outputs[0]?.id ?? "");
+  const [publishTags, setPublishTags] = useState("");
   const [error, setError] = useState<string | null>(null);
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -356,6 +374,7 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
               </label>
             ))}
           </fieldset>
+          <WorkTagsEditor work={w} onSaved={onChange} />
           <ul className={styles.list} aria-label={`${w.name} のリリース`}>
             {w.releases.length === 0 && <li className={styles.sub}>リリースはまだありません</li>}
             {w.releases.map((r, i) => (
@@ -371,28 +390,38 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
         </div>
       ))}
       {repo.isOwner && unpublished.length > 0 && (
-        <div className={styles.row}>
-          <select
-            className={styles.select}
-            aria-label="公開するアウトプット"
-            value={outputId}
-            onChange={(e) => setOutputId(e.target.value)}
-          >
-            {unpublished.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className={styles.primary}
-            onClick={() =>
-              void run(() => api.publish(repo.id, outputId || unpublished[0]?.id || ""))
-            }
-          >
-            作品として公開
-          </button>
+        <div>
+          <PublicTagsField value={publishTags} onChange={setPublishTags} />
+          <div className={styles.row}>
+            <select
+              className={styles.select}
+              aria-label="公開するアウトプット"
+              value={outputId}
+              onChange={(e) => setOutputId(e.target.value)}
+            >
+              {unpublished.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className={styles.primary}
+              disabled={!workTagsSchema.safeParse(splitTagDraft(publishTags)).success}
+              onClick={() =>
+                void run(async () => {
+                  const id = unpublished.some((output) => output.id === outputId)
+                    ? outputId
+                    : (unpublished[0]?.id ?? "");
+                  await api.publish(repo.id, id, workTagsSchema.parse(splitTagDraft(publishTags)));
+                  setPublishTags("");
+                })
+              }
+            >
+              作品として公開
+            </button>
+          </div>
         </div>
       )}
     </section>
@@ -482,7 +511,7 @@ function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
 /** 抽出：アウトプットかリソースを選び、新しいプロジェクトか自分の既存のプロジェクトに取り込む */
 function ExtractDialog({ repo, onClose }: { repo: RepoDetail; onClose: () => void }) {
   const me = useApp((s) => s.me);
-  const navigate = useNavigate();
+  const navigate = useProjectNavigate();
   const [snap, setSnap] = useState<ProjectSnapshot | null>(null);
   const [mine, setMine] = useState<RepoMeta[]>([]);
   const [sel, setSel] = useState<ExtractSelection>({

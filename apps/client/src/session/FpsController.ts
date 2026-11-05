@@ -75,6 +75,11 @@ export class FpsController {
     if (this.locked) document.exitPointerLock();
   }
 
+  /** メニューへ操作を渡すとき、押したままの移動キーを残さない。 */
+  clearInput(): void {
+    this.keys.clear();
+  }
+
   update(dt: number): void {
     const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
     const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));

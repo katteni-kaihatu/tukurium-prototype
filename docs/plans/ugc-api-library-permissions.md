@@ -427,6 +427,8 @@ Health、Inventory、Equipment のようなドメインモデルは、Runtime �
 
 ランキング、評価、収益化、自動推薦は別判断にする。
 
+公開アイテムの検索・入手、所持一覧からの取り出し、参加先を選ぶ画面は実装済み（[メインメニューの UI/UX](social-workshop-experience.md)、[完了記録](../archive/main-menu-implementation.md)）。作品・リリースを同じ正本として使う。ライブラリの配布・導入・更新とは別の操作であり、U6の残作業は引き続きこの計画で扱う。
+
 ## 8. 最初の acceptance criteria
 
 ### Boundary / permission

@@ -106,7 +106,6 @@ interface WorkspaceState {
   /** コミットのたびに増える（履歴パネルの再読み込み用） */
   commitRev: number;
   /** セッションのライブラリ（作品を置く）パネルを開いているか */
-  libraryOpen: boolean;
   /** セッションに置いてあるものの一覧を開いているか */
   belongingsOpen: boolean;
   /** 自分のバッグのパネル（ADR 0018） */
@@ -228,7 +227,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     teleport: null,
 
     commitRev: 0,
-    libraryOpen: false,
     belongingsOpen: false,
     bagOpen: false,
     historyOpen: false,

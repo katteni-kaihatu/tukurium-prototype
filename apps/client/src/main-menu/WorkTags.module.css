@@ -1,0 +1,96 @@
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+.tag {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--c-line-2);
+  border-radius: 5px;
+  color: var(--c-ink-3);
+  background: #f6f2eb;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+button.tag:hover {
+  color: var(--c-brand);
+  border-color: var(--c-brand);
+}
+.field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 12px 0;
+}
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.field input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--c-line);
+  border-radius: 7px;
+  color: var(--c-ink);
+  background: var(--c-paper);
+  font: inherit;
+  font-size: 12px;
+}
+.field small,
+.editor small {
+  font-size: 11px;
+  color: var(--c-ink-3);
+}
+.editor {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--c-line-2);
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.heading button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--c-brand);
+  font-size: 11px;
+  text-decoration: underline;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.actions button {
+  padding: 7px 10px;
+  border: 1px solid var(--c-line);
+  border-radius: 7px;
+  background: var(--c-paper);
+  font-size: 11px;
+}
+.actions button[type="submit"] {
+  color: var(--c-paper);
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+}
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.error,
+.field .error {
+  color: #962f3b;
+  font-size: 12px;
+}

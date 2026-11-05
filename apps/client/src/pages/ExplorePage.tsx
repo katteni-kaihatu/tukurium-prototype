@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
 import { api, type RepoMeta, type Work } from "../net/api";
+import { ProjectLink as Link } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
 /** 探す：公開されている作品とプロジェクト */
-export function ExplorePage() {
+export function ExplorePage({ embedded = false }: { embedded?: boolean }) {
   const me = useApp((s) => s.me);
   const [works, setWorks] = useState<Work[]>([]);
   const [repos, setRepos] = useState<RepoMeta[]>([]);
@@ -16,13 +16,13 @@ export function ExplorePage() {
     void api.repos().then(setRepos);
   }, [me]);
   return (
-    <div className={styles.page}>
-      <Header />
-      <main className={styles.main}>
+    <div className={embedded ? styles.embedded : styles.page}>
+      {!embedded && <Header />}
+      <main className={embedded ? styles.embeddedMain : styles.main}>
         <section className={styles.card} aria-label="作品">
           <h1 className={styles.title}>作品</h1>
           <p className={styles.sub}>
-            セッションのヘッダーの「ライブラリ」から、作品をセッションに置けます。
+            作品の中身や制作に使うプロジェクトを見られます。遊ぶアイテムはマーケットから入手できます。
           </p>
           <ul className={styles.list}>
             {works.length === 0 && <li className={styles.sub}>まだ公開された作品はありません</li>}

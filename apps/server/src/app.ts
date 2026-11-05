@@ -14,6 +14,7 @@ import { Hub, type HubOptions } from "./hub";
 import { registerRepoRoutes } from "./repos/routes";
 import { RepoService } from "./repos/service";
 import { seedSampleModels } from "./sampleModels";
+import { registerSocialRoutes } from "./social/routes";
 import { PostgresStore } from "./store/postgres";
 import { MemoryStore, type Store, type User } from "./store/store";
 
@@ -40,6 +41,7 @@ export async function buildApp(
   registerRepoRoutes(app, store, repos, {
     onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
   });
+  registerSocialRoutes(app, store, hub);
 
   app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
 

@@ -92,6 +92,7 @@ export async function createSessionAndWorkspace(
   await page.goto("/");
   await page.getByRole("button", { name: "セッションを作って入る" }).click();
   await page.waitForURL(/\/s\/s_/);
+  await page.getByRole("button", { name: "ワークスペース", exact: true }).click();
   await page
     .getByRole("button", {
       name: kind === "sample" ? /サンプル「銃と的」で作る/ : /空のワークスペース/,

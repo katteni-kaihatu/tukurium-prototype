@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
+import { editProject } from "../main-menu/editing";
+import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
@@ -22,23 +24,29 @@ export function SessionView() {
   const engineRef = useRef<SessionEngine | null>(null);
   const [locked, setLocked] = useState(false);
   const [engine, setEngine] = useState<SessionEngine | null>(null);
-  const mode = useWorkspace((s) => s.mode);
+  const editing = useWorkspace((s) => !!s.project && s.mode === "edit" && !s.panelsHidden);
   const client = useApp((s) => s.client);
   const session = useApp((s) => s.session);
   const closedReason = useApp((s) => s.closedReason);
+  const editAfterJoin = useMainMenu((s) => s.editAfterJoin);
 
   // 参加（接続し直したときも参加し直す）と退出
   useEffect(() => {
     useApp.setState({ closedReason: null });
-    const off = client.onWelcome(() => client.send({ t: "session.join", sessionId }));
+    return client.onWelcome(() => {
+      if (client.joinedSessionId !== sessionId) client.send({ t: "session.join", sessionId });
+    });
+  }, [client, sessionId]);
+
+  // 別セッションへの移動では、サーバーの受理前に今の場所を退出しない。
+  useEffect(() => {
     return () => {
-      off();
       useWorkspace.getState().leave();
       resetSessionWorld();
       client.send({ t: "session.leave" });
       useApp.setState({ session: null, participants: {}, remotePanels: {} });
     };
-  }, [client, sessionId]);
+  }, [client]);
 
   // ?open=リポジトリID：セッションに入ったら、そのリポジトリをワークスペースとして開く
   useEffect(() => {
@@ -54,6 +62,7 @@ export function SessionView() {
     const engine = new SessionEngine(container);
     engineRef.current = engine;
     setEngine(engine);
+    useMainMenu.setState({ engine });
     if (import.meta.env.DEV) (window as { __tukurium?: SessionEngine }).__tukurium = engine;
     const workspace = new WorkspaceController(engine);
     const sessionWorld = new SessionWorldController(engine);
@@ -105,11 +114,25 @@ export function SessionView() {
       workspace.dispose();
       sessionWorld.dispose();
       previews.dispose();
+      useMainMenu.setState({ engine: null });
       engine.dispose();
       engineRef.current = null;
       setEngine(null);
     };
   }, [client]);
+
+  // 参加前に選んだ編集は、空間の初期化が済んでから始める。
+  // StrictMode の初回 cleanup が、新しく開いたワークスペースを閉じないようにする。
+  useEffect(() => {
+    if (!engine || session?.id !== sessionId || !editAfterJoin) return;
+    const timer = setTimeout(() => {
+      if (useMainMenu.getState().editAfterJoin !== editAfterJoin) return;
+      useMainMenu.setState({ editAfterJoin: null });
+      useMainMenu.getState().showProject("/workspaces");
+      if (editAfterJoin !== "chooser") editProject(editAfterJoin);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [engine, session?.id, sessionId, editAfterJoin]);
 
   return (
     <div className={styles.root}>
@@ -138,7 +161,7 @@ export function SessionView() {
         </button>
       )}
       <ul className={`glass ${styles.hints}`} aria-label="操作">
-        {(mode === "edit"
+        {(editing
           ? [
               ["WASD", "移動"],
               ["マウス", "見回す"],
@@ -152,11 +175,11 @@ export function SessionView() {
             ]
           : [
               ["WASD", "移動"],
-              ["クリック", "撃つ（持っているときは傾きを直す）"],
+              ["クリック", "アイテムを使う（持っているときは傾きを直す）"],
               ["右クリック", "押している間、持つ"],
               ["持ってホイール", "前後に動かす"],
-              ["R", "reload"],
-              ["E", "見ている物を押す・use（持っているときは回す）"],
+              ["R", "リロード"],
+              ["E", "見ている物を使う（持っているときは回す）"],
               ["Esc", "マウスを解放"],
             ]
         ).map(([key, label]) => (

@@ -27,6 +27,7 @@ function storage(): Storage | null {
 export class ServerClient {
   status: ConnectionStatus = "connecting";
   me: UserInfo | null = null;
+  joinedSessionId: string | null = null;
   private ws: WebSocket | null = null;
   private retry = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -43,6 +44,7 @@ export class ServerClient {
   }
 
   send(msg: ClientMessage): void {
+    if (msg.t === "session.leave") this.joinedSessionId = null;
     if (this.ws?.readyState === WebSocket.OPEN && this.me) this.ws.send(JSON.stringify(msg));
   }
 
@@ -98,6 +100,8 @@ export class ServerClient {
       const parsed = ServerMessage.safeParse(data);
       if (!parsed.success) return;
       const msg = parsed.data;
+      if (msg.t === "session.entered") this.joinedSessionId = msg.sessionId;
+      if (msg.t === "session.closed") this.joinedSessionId = null;
       if (msg.t === "welcome") {
         this.me = msg.you;
         storage()?.setItem(TOKEN_KEY, msg.token);
@@ -109,6 +113,7 @@ export class ServerClient {
     ws.onclose = () => {
       this.ws = null;
       this.me = null;
+      this.joinedSessionId = null;
       if (this.closed) return;
       this.setStatus("offline");
       const delay = Math.min(10_000, 500 * 2 ** this.retry++);

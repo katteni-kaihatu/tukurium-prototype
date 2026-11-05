@@ -1,10 +1,14 @@
 import { createHash } from "node:crypto";
+import type { SocialProfile } from "@tukurium/shared";
 import postgres from "postgres";
 import {
+  type Friendship,
   newToken,
   newUserId,
+  type OwnedItem,
   type Release,
   type RepoMeta,
+  type SessionInvitation,
   type Store,
   type User,
   type Work,
@@ -43,6 +47,18 @@ export class PostgresStore implements Store {
       .sql`create table if not exists works (id text primary key, repo_id text not null, owner text not null, data jsonb not null)`;
     await this
       .sql`create table if not exists releases (id text primary key, work_id text not null, data jsonb not null)`;
+    await this.sql`create table if not exists owned_items (
+      user_id text not null, work_id text not null, data jsonb not null,
+      primary key (user_id, work_id))`;
+    await this
+      .sql`create table if not exists friend_links (left_id text not null, right_id text not null, data jsonb not null, primary key(left_id,right_id))`;
+    await this.sql`create index if not exists friend_links_right_id on friend_links(right_id)`;
+    await this
+      .sql`create table if not exists social_profiles (user_id text primary key, data jsonb not null)`;
+    await this
+      .sql`create table if not exists session_invitations (id text unique not null, sender text not null, recipient text not null, session_id text not null, data jsonb not null, primary key(sender,recipient,session_id))`;
+    await this
+      .sql`create index if not exists session_invitations_recipient on session_invitations(recipient)`;
   }
 
   async close(): Promise<void> {
@@ -159,5 +175,104 @@ export class PostgresStore implements Store {
     >`select doc from workspaces where id = ${id}`;
     const doc = rows[0]?.doc;
     return doc ? new Uint8Array(doc) : null;
+  }
+
+  async ownedItems(userId: string) {
+    const rows = await this.sql<
+      { data: OwnedItem }[]
+    >`select data from owned_items where user_id = ${userId}`;
+    return rows
+      .map((r) => r.data)
+      .sort((a, b) => b.acquiredAt.localeCompare(a.acquiredAt) || a.workId.localeCompare(b.workId));
+  }
+
+  async acquireItem(item: OwnedItem): Promise<OwnedItem> {
+    await this.sql`insert into owned_items (user_id, work_id, data)
+      values (${item.userId}, ${item.workId}, ${this.sql.json(item as never)})
+      on conflict (user_id, work_id) do nothing`;
+    const rows = await this.sql<
+      { data: OwnedItem }[]
+    >`select data from owned_items where user_id = ${item.userId} and work_id = ${item.workId}`;
+    const saved = rows[0];
+    if (!saved) throw new Error("所持アイテムを保存できませんでした");
+    return saved.data;
+  }
+
+  async searchUsers(query: string, limit: number) {
+    return this.sql<
+      User[]
+    >`select id,name from users where id=${query} or position(lower(${query}) in lower(name))>0 order by name,id limit ${limit}`;
+  }
+  async friendships(userId: string) {
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`select data from friend_links where left_id=${userId} or right_id=${userId}`;
+    return rows.map((r) => r.data);
+  }
+  async requestFriendship(request: Friendship) {
+    const [a, b] = [request.from, request.to].sort() as [string, string];
+    await this
+      .sql`insert into friend_links (left_id,right_id,data) values (${a},${b},${this.sql.json(request as never)}) on conflict(left_id,right_id) do nothing`;
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`select data from friend_links where left_id=${a} and right_id=${b}`;
+    const saved = rows[0];
+    if (!saved) throw new Error("申請を保存できませんでした");
+    return saved.data;
+  }
+  async acceptFriendship(userId: string, from: string) {
+    const [a, b] = [userId, from].sort() as [string, string];
+    const rows = await this.sql<
+      { data: Friendship }[]
+    >`update friend_links set data=jsonb_set(data,'{status}','"accepted"'::jsonb) where left_id=${a} and right_id=${b} and (data->>'status'='accepted' or (data->>'from'=${from} and data->>'to'=${userId})) returning data`;
+    return rows[0]?.data ?? null;
+  }
+  async removeFriendship(userId: string, other: string) {
+    const [a, b] = [userId, other].sort() as [string, string];
+    await this.sql`delete from friend_links where left_id=${a} and right_id=${b}`;
+  }
+  async socialProfile(userId: string): Promise<SocialProfile> {
+    const rows = await this.sql<
+      { data: SocialProfile }[]
+    >`select data from social_profiles where user_id=${userId}`;
+    return rows[0]?.data ?? { availability: "online", note: "" };
+  }
+  async saveSocialProfile(userId: string, profile: SocialProfile) {
+    await this
+      .sql`insert into social_profiles (user_id,data) values (${userId},${this.sql.json(profile as never)}) on conflict(user_id) do update set data=excluded.data`;
+  }
+
+  async invitations(userId: string) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`select data from session_invitations where sender=${userId} or recipient=${userId} order by data->>'createdAt' desc limit 100`;
+    return rows.map((r) => r.data);
+  }
+  async invitation(id: string) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`select data from session_invitations where id=${id}`;
+    return rows[0]?.data ?? null;
+  }
+  async createInvitation(invitation: SessionInvitation) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`insert into session_invitations (id,sender,recipient,session_id,data) values (${invitation.id},${invitation.from},${invitation.to},${invitation.sessionId},${this.sql.json(invitation as never)})
+      on conflict(sender,recipient,session_id) do update set
+      id=case when session_invitations.data->>'status'='pending' and (session_invitations.data->>'expiresAt')::timestamptz>now() then session_invitations.id else excluded.id end,
+      data=case when session_invitations.data->>'status'='pending' and (session_invitations.data->>'expiresAt')::timestamptz>now() then session_invitations.data else excluded.data end returning data`;
+    const saved = rows[0];
+    if (!saved) throw new Error("招待を保存できませんでした");
+    return saved.data;
+  }
+  async respondInvitation(
+    id: string,
+    actor: string,
+    status: "accepted" | "declined" | "cancelled",
+  ) {
+    const rows = await this.sql<
+      { data: SessionInvitation }[]
+    >`update session_invitations set data=jsonb_set(data,'{status}',to_jsonb(${status}::text)) where id=${id} and data->>'status'='pending' and (data->>'expiresAt')::timestamptz>now() and (case when ${status}='cancelled' then sender=${actor} else recipient=${actor} end) returning data`;
+    return rows[0]?.data ?? null;
   }
 }

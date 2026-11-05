@@ -19,7 +19,10 @@ test("2 人で同じワークスペースを編集し、再生を共有し、相
   const b = await join(browser, path, "ここあ");
 
   // b はセッションに入り、ワークスペースを開く（既定の権限＝共同編集）
-  await panel(b, "ワークスペース")
+  await b.getByRole("button", { name: "ワークスペース", exact: true }).click();
+  await b
+    .getByRole("region", { name: "制作を始める" })
+    .getByRole("list", { name: "このセッションのワークスペース" })
     .getByRole("button", { name: /^銃と的/ })
     .click();
   await panel(b, "Inspector").waitFor();
