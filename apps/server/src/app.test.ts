@@ -607,11 +607,13 @@ describe("ワークスペースのホストと共有再生", () => {
     await b.next("ws.doc");
     a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "admin" });
     await b.next("ws.role");
-    a.send({ t: "ws.frame", workspaceId, frame: frame("play", 3.5) });
+    const partEntities = { workspace: ["original", "rt:1"] };
+    a.send({ t: "ws.frame", workspaceId, frame: { ...frame("play", 3.5), partEntities } });
     await b.next("ws.frame");
     a.ws.close();
     const host = await b.next("ws.host");
     expect(host.resume?.time).toBe(3.5);
+    expect(host.resume?.partEntities).toEqual(partEntities);
   });
 
   it("引き継げる人がいなければ再生を止める", async () => {
@@ -752,7 +754,14 @@ describe("セッションの世界（配置・適用）", () => {
       yaw: 0,
     });
     await a.next("host.addPart");
-    const frame = { time: 4.2, world: { entities: [] }, names: {}, materials: [], status: [] };
+    const frame = {
+      time: 4.2,
+      world: { entities: [] },
+      names: {},
+      materials: [],
+      status: [],
+      partEntities: { placement: ["placement/original", "rt:1"] },
+    };
     a.send({ t: "session.frame", frame });
     await b.next("session.frame");
     const pid = (await b.next("session", (m) => m.session.placements.length === 1)).session
@@ -765,6 +774,7 @@ describe("セッションの世界（配置・適用）", () => {
     const host = await a2.next("session.host");
     expect(host.parts.map((p) => p.id)).toEqual([pid]);
     expect(host.resume?.time).toBe(4.2);
+    expect(host.resume?.partEntities).toEqual(frame.partEntities);
 
     a2.send({ t: "resetPart", placementId: pid });
     expect((await a2.next("host.resetPart")).id).toBe(pid);

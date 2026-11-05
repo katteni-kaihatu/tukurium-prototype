@@ -159,6 +159,8 @@ export const BagItem = z.object({
 });
 /** プレイヤー → バッグ。ホストが替わっても引き継げるよう、フレームに入れて配る */
 const Bags = z.record(z.string(), z.array(BagItem).max(64));
+/** 配置 → Entity。実行中に作った物の処理・削除のため、ホスト交代時にも所属を戻す。 */
+const PartEntities = z.record(z.string(), z.array(z.string()));
 
 export const PlayFrame = z.object({
   sounds: z.array(SoundEvent).max(32).optional(),
@@ -170,6 +172,7 @@ export const PlayFrame = z.object({
   names: z.record(z.string(), z.string()),
   status: z.array(SystemStatusInfo),
   bags: Bags.optional(),
+  partEntities: PartEntities.optional(),
 });
 export type PlayFrame = z.infer<typeof PlayFrame>;
 
@@ -184,6 +187,7 @@ export const SessionFrame = z.object({
   materials: z.array(z.unknown()),
   status: z.array(SystemStatusInfo),
   bags: Bags.optional(),
+  partEntities: PartEntities.optional(),
 });
 export type SessionFrame = z.infer<typeof SessionFrame>;
 

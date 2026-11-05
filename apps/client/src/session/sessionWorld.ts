@@ -112,7 +112,12 @@ client().on((msg) => {
         });
         for (const part of msg.parts) addPart(sim, part);
         if (msg.resume?.world) {
-          sim.restore(msg.resume.world as WorldSnapshot, msg.resume.names, msg.resume.time);
+          sim.restore(
+            msg.resume.world as WorldSnapshot,
+            msg.resume.names,
+            msg.resume.time,
+            msg.resume.partEntities,
+          );
           // バッグも引き継ぐ（ADR 0018）
           sim.restoreBags(msg.resume.bags as Record<string, BagItem[]> | undefined);
         }
@@ -229,6 +234,7 @@ export function sendSessionFrame(): void {
       materials: sim.materials(),
       status: sim.systemStatus(),
       bags: sim.bagsSnapshot(),
+      partEntities: sim.partEntitiesSnapshot(),
     },
   });
 }

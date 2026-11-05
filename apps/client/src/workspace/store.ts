@@ -526,7 +526,12 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     return;
   }
   if (resume?.world) {
-    sim.restore(resume.world as Parameters<Simulation["restore"]>[0], resume.names, resume.time);
+    sim.restore(
+      resume.world as Parameters<Simulation["restore"]>[0],
+      resume.names,
+      resume.time,
+      resume.partEntities,
+    );
     sim.restoreBags(resume.bags as Record<string, BagItem[]> | undefined);
   }
   set({
@@ -572,6 +577,7 @@ export function sendFrame(): void {
         names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
         status: sim.systemStatus(),
         bags: sim.bagsSnapshot(),
+        partEntities: sim.partEntitiesSnapshot(),
       }
     : { mode: "edit", outputId: s.outputId, time: 0, world: null, names: {}, status: [] };
   client().send({ t: "ws.frame", workspaceId: s.workspaceId, frame });
