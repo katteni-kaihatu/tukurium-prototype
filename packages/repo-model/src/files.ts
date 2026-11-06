@@ -17,6 +17,26 @@ export type FileMap = Record<string, string>;
 const json = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
 const safe = (id: string) => id.replace(/[^A-Za-z0-9_.-]/g, "_");
 
+/** 保存したファイルのパス。画面の差分表示も同じ場所を見る。 */
+export function entityFilePath(outputId: string, entityId: string): string {
+  return `outputs/${safe(outputId)}/entities/${safe(entityId)}.json`;
+}
+export function kokoFilePath(id: string): string {
+  return `kokostates/${safe(id)}.json`;
+}
+export function systemMetaPath(id: string): string {
+  return `systems/${safe(id)}.json`;
+}
+export function systemCodePath(id: string): string {
+  return `systems/${safe(id)}.js`;
+}
+export function materialFilePath(id: string): string {
+  return `materials/${safe(id)}.json`;
+}
+export function outputFilePath(id: string): string {
+  return `outputs/${safe(id)}/output.json`;
+}
+
 /**
  * 制作データを、人が差分を読めるファイルの集まりにする（計画 §5）。
  * 1 要素 1 ファイルの JSON と、System のスクリプト（.js）。
@@ -28,17 +48,17 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
     name: snap.name,
     dependencies: snap.dependencies ?? [],
   });
-  for (const k of snap.kokostates) files[`kokostates/${safe(k.id)}.json`] = json(k);
+  for (const k of snap.kokostates) files[kokoFilePath(k.id)] = json(k);
   for (const s of snap.systems) {
-    files[`systems/${safe(s.id)}.json`] = json({ id: s.id, name: s.name } satisfies SystemDef);
-    files[`systems/${safe(s.id)}.js`] = s.code;
+    files[systemMetaPath(s.id)] = json({ id: s.id, name: s.name } satisfies SystemDef);
+    files[systemCodePath(s.id)] = s.code;
   }
-  for (const m of snap.materials) files[`materials/${safe(m.id)}.json`] = json(m);
+  for (const m of snap.materials) files[materialFilePath(m.id)] = json(m);
   for (const a of snap.assets ?? []) files[`assets/${safe(a.id)}.json`] = json(a);
-  for (const o of snap.outputs) files[`outputs/${safe(o.id)}/output.json`] = json(o);
+  for (const o of snap.outputs) files[outputFilePath(o.id)] = json(o);
   for (const e of snap.entities) {
     const { output, ...rest } = e;
-    files[`outputs/${safe(output)}/entities/${safe(e.id)}.json`] = json(rest);
+    files[entityFilePath(output, e.id)] = json(rest);
   }
   if (snap.provenance?.length) files["provenance.json"] = json(snap.provenance);
   if (snap.folders?.length)

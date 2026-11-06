@@ -8,12 +8,16 @@ import {
   packageSystems,
 } from "@tukurium/repo-model";
 import { useState } from "react";
+import { ChangeMark, MarkedLine } from "./ChangeMark";
+import type { ChangeKind } from "./changeMarks";
+import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems, useSystemQuery } from "./useProblems";
+import { useSavedFiles } from "./useSavedFiles";
 
 const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
   { type: "number", label: "Number", default: 0 },
@@ -68,23 +72,26 @@ function NameRow(props: {
   id: string;
   value: string;
   disabled?: boolean;
+  mark?: ChangeKind | null;
   onCommit: (v: string) => void;
 }) {
   return (
-    <div className={ui.row}>
-      <label className={ui.label} htmlFor={`n-${props.id}`}>
-        Name
-      </label>
-      <input
-        id={`n-${props.id}`}
-        key={`${props.id}:${props.value}`}
-        className={ui.input}
-        defaultValue={props.value}
-        disabled={props.disabled}
-        onBlur={(e) => e.target.value !== props.value && props.onCommit(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-      />
-    </div>
+    <MarkedLine kind={props.mark ?? null}>
+      <div className={ui.row}>
+        <label className={ui.label} htmlFor={`n-${props.id}`}>
+          Name
+        </label>
+        <input
+          id={`n-${props.id}`}
+          key={`${props.id}:${props.value}`}
+          className={ui.input}
+          defaultValue={props.value}
+          disabled={props.disabled}
+          onBlur={(e) => e.target.value !== props.value && props.onCommit(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        />
+      </div>
+    </MarkedLine>
   );
 }
 
@@ -95,6 +102,7 @@ function OutputProperties({ id }: { id: string }) {
   const packages = useWorkspace((st) => st.packages);
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   const output = project.output(id);
   if (!output) return <p className={ui.empty}>アウトプットが見つかりません</p>;
   const editing = canEdit;
@@ -134,12 +142,14 @@ function OutputProperties({ id }: { id: string }) {
     update({ systems: list });
   };
   const unused = systems.filter((s) => !output.systems.some((o) => o.id === s.id));
+  const changed = outputChange(saved, output);
 
   return (
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>Output</h3>
+          <ChangeMark kind={changed.kind} />
         </div>
         <p className={ui.muted}>
           ルートはアウトプットそのものです。Entity ではないので KokoState や Transform
@@ -148,25 +158,28 @@ function OutputProperties({ id }: { id: string }) {
         <NameRow
           id={id}
           value={output.name}
+          mark={changed.name}
           disabled={!editing}
           onCommit={(name) => update({ name })}
         />
-        <div className={ui.row}>
-          <label className={ui.label} htmlFor={`kind-${id}`}>
-            Kind
-          </label>
-          <select
-            id={`kind-${id}`}
-            className={ui.select}
-            value={output.kind}
-            disabled={!editing}
-            onChange={(e) => update({ kind: e.target.value as OutputDef["kind"] })}
-          >
-            <option value="item">アイテム</option>
-            <option value="world">ワールド</option>
-            <option value="library">ライブラリ</option>
-          </select>
-        </div>
+        <MarkedLine kind={changed.outputKind}>
+          <div className={ui.row}>
+            <label className={ui.label} htmlFor={`kind-${id}`}>
+              Kind
+            </label>
+            <select
+              id={`kind-${id}`}
+              className={ui.select}
+              value={output.kind}
+              disabled={!editing}
+              onChange={(e) => update({ kind: e.target.value as OutputDef["kind"] })}
+            >
+              <option value="item">アイテム</option>
+              <option value="world">ワールド</option>
+              <option value="library">ライブラリ</option>
+            </select>
+          </div>
+        </MarkedLine>
         <div className={ui.row}>
           <span className={ui.label}>使う権限</span>
           <span
@@ -184,46 +197,51 @@ function OutputProperties({ id }: { id: string }) {
             )}
           </span>
         </div>
-        <div className={ui.row}>
-          <label className={ui.label} htmlFor={`exposure-${id}`}>
-            外からの見え方
-          </label>
-          <select
-            id={`exposure-${id}`}
-            className={ui.select}
-            value={output.exposure ?? "interactive"}
-            disabled={!editing}
-            title="セッションで、別の作者の Item / World からどう見えるか。インタラクション可能：公開した Contract を受ける／衝突のみ：Raycast は当たるが Contract は受けない／非公開：Raycast も当たらない"
-            onChange={(e) => update({ exposure: e.target.value as OutputExposure })}
-          >
-            <option value="interactive">インタラクション可能</option>
-            <option value="collision">衝突のみ</option>
-            <option value="private">非公開</option>
-          </select>
-        </div>
-        {output.kind === "world" && (
+        <MarkedLine kind={changed.exposure}>
           <div className={ui.row}>
-            <label className={ui.label} htmlFor={`guest-${id}`}>
-              外から来た Item
+            <label className={ui.label} htmlFor={`exposure-${id}`}>
+              外からの見え方
             </label>
             <select
-              id={`guest-${id}`}
+              id={`exposure-${id}`}
               className={ui.select}
-              value={output.guestPolicy ?? "interactive"}
+              value={output.exposure ?? "interactive"}
               disabled={!editing}
-              title="セッションでこの World が土台（最初に置いた World）のとき、別の作者の Item に許すこと。インタラクション可能：公開された Contract も送れる／衝突のみ：Raycast と一時的な effect まで／許さない：自分の配置の外は見つからない"
-              onChange={(e) => update({ guestPolicy: e.target.value as GuestPolicy })}
+              title="セッションで、別の作者の Item / World からどう見えるか。インタラクション可能：公開した Contract を受ける／衝突のみ：Raycast は当たるが Contract は受けない／非公開：Raycast も当たらない"
+              onChange={(e) => update({ exposure: e.target.value as OutputExposure })}
             >
               <option value="interactive">インタラクション可能</option>
               <option value="collision">衝突のみ</option>
-              <option value="deny">許さない</option>
+              <option value="private">非公開</option>
             </select>
           </div>
+        </MarkedLine>
+        {output.kind === "world" && (
+          <MarkedLine kind={changed.guestPolicy}>
+            <div className={ui.row}>
+              <label className={ui.label} htmlFor={`guest-${id}`}>
+                外から来た Item
+              </label>
+              <select
+                id={`guest-${id}`}
+                className={ui.select}
+                value={output.guestPolicy ?? "interactive"}
+                disabled={!editing}
+                title="セッションでこの World が土台（最初に置いた World）のとき、別の作者の Item に許すこと。インタラクション可能：公開された Contract も送れる／衝突のみ：Raycast と一時的な effect まで／許さない：自分の配置の外は見つからない"
+                onChange={(e) => update({ guestPolicy: e.target.value as GuestPolicy })}
+              >
+                <option value="interactive">インタラクション可能</option>
+                <option value="collision">衝突のみ</option>
+                <option value="deny">許さない</option>
+              </select>
+            </div>
+          </MarkedLine>
         )}
       </div>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>Systems</h3>
+          <ChangeMark kind={changed.systems} />
           <span className={ui.badge}>{output.systems.filter((s) => s.enabled).length} 有効</span>
         </div>
         <p className={ui.muted}>
@@ -235,6 +253,7 @@ function OutputProperties({ id }: { id: string }) {
             const def = systems.find((s) => s.id === ref.id);
             return (
               <li key={ref.id} className={ui.item}>
+                <ChangeMark kind={changed.systemRows[ref.id] ?? null} />
                 <input
                   type="checkbox"
                   aria-label={`${def?.name ?? ref.id} を有効にする`}
@@ -311,6 +330,7 @@ function KokoDefProperties({ id }: { id: string }) {
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   const { error, safely } = useSafe();
   const def = project.registry().get(id);
   if (!def) return <p className={ui.empty}>KokoState が見つかりません</p>;
@@ -323,6 +343,7 @@ function KokoDefProperties({ id }: { id: string }) {
     });
 
   const holders = project.entities().filter((e) => id in e.states);
+  const changed = kokoChange(saved, def);
   const queried = project.systems().filter((s) => {
     const q = queryOf(s.id);
     return [...q.with, ...q.without].some((k) => k.id === def.id);
@@ -333,6 +354,7 @@ function KokoDefProperties({ id }: { id: string }) {
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>KokoState</h3>
+          <ChangeMark kind={changed.kind} />
           {def.builtin && <span className={ui.badge}>Built-in</span>}
         </div>
         {def.builtin && (
@@ -341,6 +363,7 @@ function KokoDefProperties({ id }: { id: string }) {
         <NameRow
           id={id}
           value={def.name}
+          mark={changed.name}
           disabled={!editing}
           onCommit={(name) => save({ ...def, name })}
         />
@@ -361,7 +384,15 @@ function KokoDefProperties({ id }: { id: string }) {
             key={f.id}
             style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 6 }}
           >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 26px", gap: 6 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "8px minmax(0, 1fr) 110px 26px",
+                gap: 6,
+                alignItems: "center",
+              }}
+            >
+              <ChangeMark kind={changed.fields[f.id] ?? null} />
               <input
                 key={`${f.id}:${f.name}`}
                 className={ui.input}
@@ -478,12 +509,11 @@ function KokoDefProperties({ id }: { id: string }) {
               type="button"
               className={ui.btnDanger}
               onClick={() => {
-                if (
-                  holders.length === 0 ||
-                  confirm(
-                    `${def.name} を削除すると、${holders.length} 個の Entity から外れます。削除しますか？`,
-                  )
-                ) {
+                const message =
+                  holders.length === 0
+                    ? `${def.name} を削除しますか？`
+                    : `${def.name} を削除すると、${holders.length} 個の Entity から外れます。削除しますか？`;
+                if (confirm(message)) {
                   project.removeKokoState(id);
                   closeDetail();
                 }
@@ -507,22 +537,26 @@ function SystemProperties({ id }: { id: string }) {
   const problems = useProblems().filter((p) => p.subject.id === id);
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   const def = project.system(id);
   if (!def) return <p className={ui.empty}>System が見つかりません</p>;
   const editing = canEdit;
   const q = queryOf(id);
   const usedBy = project.outputs().filter((o) => o.systems.some((s) => s.id === id));
+  const changed = systemChange(saved, id, def.name, project.code(id)?.toString() ?? "");
 
   return (
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>System</h3>
+          <ChangeMark kind={changed.kind} />
           <span className={ui.badgeBrand}>Script</span>
         </div>
         <NameRow
           id={id}
           value={def.name}
+          mark={changed.name}
           disabled={!editing}
           onCommit={(name) => safely(() => project.renameSystem(id, name))}
         />
@@ -542,11 +576,13 @@ function SystemProperties({ id }: { id: string }) {
             <span>{p.message}</span>
           </button>
         ))}
-        <div className={ui.toolbar}>
-          <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
-            コードを開く
-          </button>
-        </div>
+        <MarkedLine kind={changed.code}>
+          <div className={ui.toolbar}>
+            <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
+              コードを開く
+            </button>
+          </div>
+        </MarkedLine>
       </div>
       <div className={ui.section}>
         <h3 className={ui.sectionTitle}>Query</h3>
@@ -641,10 +677,12 @@ function MaterialProperties({ id }: { id: string }) {
   const { error, safely } = useSafe();
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   const m = project.material(id);
   if (!m) return <p className={ui.empty}>マテリアルが見つかりません</p>;
   const editing = canEdit;
   const users = project.entities().filter((e) => e.states["builtin.Mesh"]?.material === id);
+  const changed = materialChange(saved, m);
   const slider = (key: "roughness" | "metalness", label: string) => (
     <div className={ui.row}>
       <label className={ui.label} htmlFor={`${key}-${id}`}>
@@ -671,10 +709,12 @@ function MaterialProperties({ id }: { id: string }) {
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>Material</h3>
+          <ChangeMark kind={changed.kind} />
         </div>
         <NameRow
           id={id}
           value={m.name}
+          mark={changed.name}
           disabled={!editing}
           onCommit={(name) => safely(() => project.updateMaterial({ ...m, name }))}
         />
@@ -693,38 +733,42 @@ function MaterialProperties({ id }: { id: string }) {
             </button>
           </span>
         </div>
-        <FieldInput
-          koko="material"
-          field={{ id: "color", name: "Color", type: "color", default: "#ffffff" }}
-          value={m.color}
-          choices={{ materials: [], entities: [] }}
-          disabled={!editing}
-          onChange={(v) => project.updateMaterial({ ...m, color: String(v) })}
-        />
-        {slider("roughness", "粗さ")}
-        {slider("metalness", "金属感")}
-        <div className={ui.row}>
-          <label className={ui.label} htmlFor={`map-${id}`}>
-            画像
-          </label>
-          <select
-            id={`map-${id}`}
-            className={ui.select}
-            value={m.map ?? ""}
+        <MarkedLine kind={changed.color}>
+          <FieldInput
+            koko="material"
+            field={{ id: "color", name: "Color", type: "color", default: "#ffffff" }}
+            value={m.color}
+            choices={{ materials: [], entities: [] }}
             disabled={!editing}
-            onChange={(e) => project.updateMaterial({ ...m, map: e.target.value || null })}
-          >
-            <option value="">（なし）</option>
-            {project
-              .assets()
-              .filter((a) => a.kind === "image")
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-          </select>
-        </div>
+            onChange={(v) => project.updateMaterial({ ...m, color: String(v) })}
+          />
+        </MarkedLine>
+        <MarkedLine kind={changed.roughness}>{slider("roughness", "粗さ")}</MarkedLine>
+        <MarkedLine kind={changed.metalness}>{slider("metalness", "金属感")}</MarkedLine>
+        <MarkedLine kind={changed.map}>
+          <div className={ui.row}>
+            <label className={ui.label} htmlFor={`map-${id}`}>
+              画像
+            </label>
+            <select
+              id={`map-${id}`}
+              className={ui.select}
+              value={m.map ?? ""}
+              disabled={!editing}
+              onChange={(e) => project.updateMaterial({ ...m, map: e.target.value || null })}
+            >
+              <option value="">（なし）</option>
+              {project
+                .assets()
+                .filter((a) => a.kind === "image")
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+        </MarkedLine>
         <p className={ui.muted}>
           ここで変えると、このマテリアルを使っているすべてのモノに反映されます（{users.length}{" "}
           個）。

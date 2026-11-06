@@ -1,6 +1,16 @@
 import type { EntityId, FieldValue, KokoStateDef, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { ChangeMark, MarkedLine } from "./ChangeMark";
+import {
+  type ChangeKind,
+  canParent,
+  entityChange,
+  outputChange,
+  savedKeep,
+  selfAndDescendants,
+  treeMark,
+} from "./changeMarks";
 import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
@@ -8,6 +18,7 @@ import styles from "./InspectorPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { packageAliasOf, useSystemQuery } from "./useProblems";
+import { useSavedFiles } from "./useSavedFiles";
 
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
@@ -46,8 +57,13 @@ function Hierarchy() {
   const { outputId, selection, select, mode, runtime, viewPoint } = useWorkspace();
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
+  const [closed, setClosed] = useState<Record<string, boolean>>({});
+  const [dropOver, setDropOver] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const dragId = useRef<string | null>(null);
   const output = project.output(outputId);
   const editing = canEdit;
   const rt = mode !== "edit" ? runtime() : null;
@@ -57,6 +73,18 @@ function Hierarchy() {
     : project.entities(outputId).map((e) => ({ id: e.id, name: e.name, parent: e.parent }));
 
   const selectedEntity = selection?.kind === "entity" ? selection.id : null;
+  const projectEntities = mode === "edit" ? project.entities(outputId) : [];
+  const keepNow = output?.keep ?? [];
+  const keepWas = savedKeep(saved, outputId);
+  const kindOf = new Map<string, ChangeKind | null>();
+  for (const e of projectEntities) {
+    kindOf.set(e.id, entityChange(saved, e, { saved: keepWas, current: keepNow }).kind);
+  }
+  const outputKind = output && mode === "edit" ? outputChange(saved, output).kind : null;
+
+  const openOf = (id: string) => {
+    setClosed((c) => ({ ...c, [id]: false }));
+  };
 
   const add = (spec: (typeof NEW_ENTITIES)[number]) => {
     setMenu(false);
@@ -67,12 +95,12 @@ function Hierarchy() {
       states[BUILTIN.Mesh] = { shape: spec.shape, size: spec.size };
     }
     const id = project.addEntity({ output: outputId, name: spec.label, states });
+    openOf(outputId);
     select({ kind: "entity", id });
   };
 
-  const duplicate = () => {
-    if (!selectedEntity) return;
-    const e = project.entity(selectedEntity);
+  const duplicate = (entityId: string) => {
+    const e = project.entity(entityId);
     if (!e) return;
     const id = project.addEntity({
       output: e.output,
@@ -80,31 +108,153 @@ function Hierarchy() {
       parent: e.parent,
       states: e.states,
     });
+    openOf(e.parent ?? outputId);
     select({ kind: "entity", id });
   };
 
-  const remove = () => {
-    if (!selectedEntity) return;
-    project.removeEntity(selectedEntity);
-    select(null);
+  const remove = (entityId: string) => {
+    const gone = new Set(selfAndDescendants(nodes, entityId));
+    project.removeEntity(entityId);
+    if (selectedEntity && gone.has(selectedEntity)) select(null);
+  };
+
+  const reparent = (entityId: string, parent: EntityId | null) => {
+    if (!canParent(nodes, entityId, parent)) return;
+    if ((nodes.find((n) => n.id === entityId)?.parent ?? null) === parent) return;
+    try {
+      setError(null);
+      project.setParent(entityId, parent);
+      openOf(parent ?? outputId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const allowDrop = (parent: EntityId | null) => {
+    const id = dragId.current;
+    return editing && id !== null && canParent(nodes, id, parent);
   };
 
   const children = (parent: EntityId | null) => nodes.filter((n) => n.parent === parent);
+  const descendantKinds = (id: string): ChangeKind[] => {
+    const out: ChangeKind[] = [];
+    const walk = (parent: string) => {
+      for (const n of nodes) {
+        if (n.parent !== parent) continue;
+        const kind = kindOf.get(n.id);
+        if (kind) out.push(kind);
+        walk(n.id);
+      }
+    };
+    walk(id);
+    return out;
+  };
+
   const renderTree = (parent: EntityId | null, depth: number): React.ReactNode =>
-    children(parent).map((n) => (
-      <li key={n.id}>
-        <button
-          type="button"
-          className={ui.item}
-          style={{ paddingLeft: 8 + depth * 14 }}
-          aria-current={selectedEntity === n.id || undefined}
-          onClick={() => select({ kind: "entity", id: n.id })}
-        >
-          <span className={ui.itemName}>{n.name}</span>
-        </button>
-        {children(n.id).length > 0 && <ul className={ui.list}>{renderTree(n.id, depth + 1)}</ul>}
-      </li>
-    ));
+    children(parent).map((n) => {
+      const kids = children(n.id);
+      const open = !closed[n.id];
+      const mark = treeMark(
+        kindOf.get(n.id) ?? null,
+        !open && kids.length > 0,
+        descendantKinds(n.id),
+      );
+      return (
+        <li key={n.id}>
+          {/* 行の中に開閉・複製・削除のボタンがあるので、行自体はボタンにしない */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: ドロップ先。操作は中のボタン */}
+          <div
+            className={styles.node}
+            style={{ paddingLeft: 4 + depth * 14 }}
+            data-current={selectedEntity === n.id || undefined}
+            data-drop={dropOver === n.id || undefined}
+            onDragOver={(e) => {
+              if (!allowDrop(n.id)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setDropOver((cur) => (cur === n.id ? cur : n.id));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const id = dragId.current;
+              dragId.current = null;
+              setDropOver(null);
+              if (id) reparent(id, n.id);
+            }}
+          >
+            {kids.length > 0 ? (
+              <button
+                type="button"
+                className={styles.fold}
+                data-no-drag=""
+                aria-expanded={open}
+                aria-label={open ? `${n.name} を閉じる` : `${n.name} を開く`}
+                onClick={() => setClosed((c) => ({ ...c, [n.id]: open }))}
+              >
+                <Chevron open={open} />
+              </button>
+            ) : (
+              <span className={styles.fold} />
+            )}
+            <ChangeMark kind={mark.kind} nested={mark.nested} />
+            <button
+              type="button"
+              className={styles.nodeName}
+              draggable={editing}
+              aria-current={selectedEntity === n.id || undefined}
+              title={editing ? `${n.name}（ドラッグして、別の Entity の中に入れる）` : n.name}
+              onClick={() => select({ kind: "entity", id: n.id })}
+              onDragStart={(e) => {
+                if ((e.target as HTMLElement).closest("[data-no-drag]")) {
+                  e.preventDefault();
+                  return;
+                }
+                dragId.current = n.id;
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", n.id);
+              }}
+              onDragEnd={() => {
+                dragId.current = null;
+                setDropOver(null);
+              }}
+            >
+              {n.name}
+            </button>
+            {editing && (
+              <span className={styles.actions} data-no-drag="">
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label={`${n.name} を複製`}
+                  title="複製"
+                  onClick={() => duplicate(n.id)}
+                >
+                  <CopyIcon />
+                </button>
+                <button
+                  type="button"
+                  className={ui.iconBtn}
+                  aria-label={`${n.name} を削除`}
+                  title={kids.length > 0 ? "この Entity と、中にあるものも削除する" : "削除"}
+                  onClick={() => remove(n.id)}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+          </div>
+          {open && kids.length > 0 && <ul className={ui.list}>{renderTree(n.id, depth + 1)}</ul>}
+        </li>
+      );
+    });
+
+  const outputOpen = !closed[outputId];
+  const outputMark = treeMark(
+    outputKind,
+    !outputOpen && nodes.some((n) => n.parent === null),
+    nodes.filter((n) => kindOf.get(n.id)).map((n) => kindOf.get(n.id) as ChangeKind),
+  );
 
   return (
     <nav className={styles.tree} aria-label="Hierarchy">
@@ -135,43 +285,104 @@ function Hierarchy() {
             </ul>
           )}
         </div>
-        <button
-          type="button"
-          className={ui.btn}
-          style={{ height: 26, padding: "0 8px" }}
-          disabled={!editing || !selectedEntity}
-          onClick={duplicate}
-        >
-          複製
-        </button>
-        <button
-          type="button"
-          className={ui.btn}
-          style={{ height: 26, padding: "0 8px" }}
-          disabled={!editing || !selectedEntity}
-          onClick={remove}
-        >
-          削除
-        </button>
       </div>
+      {error && <p className={ui.error}>{error}</p>}
       <ul className={ui.list}>
         <li>
-          <button
-            type="button"
-            className={ui.item}
-            aria-current={(selection?.kind === "output" && selection.id === outputId) || undefined}
-            onClick={() => select({ kind: "output", id: outputId })}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: ドロップ先。操作は中のボタン */}
+          <div
+            className={styles.node}
+            data-current={(selection?.kind === "output" && selection.id === outputId) || undefined}
+            data-drop={dropOver === "root" || undefined}
+            onDragOver={(e) => {
+              if (!allowDrop(null)) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setDropOver((cur) => (cur === "root" ? cur : "root"));
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const id = dragId.current;
+              dragId.current = null;
+              setDropOver(null);
+              if (id) reparent(id, null);
+            }}
           >
-            <span className={ui.itemName}>
+            {nodes.length > 0 ? (
+              <button
+                type="button"
+                className={styles.fold}
+                aria-expanded={outputOpen}
+                aria-label={outputOpen ? "中の Entity を閉じる" : "中の Entity を開く"}
+                onClick={() => setClosed((c) => ({ ...c, [outputId]: outputOpen }))}
+              >
+                <Chevron open={outputOpen} />
+              </button>
+            ) : (
+              <span className={styles.fold} />
+            )}
+            <ChangeMark kind={outputMark.kind} nested={outputMark.nested} />
+            <button
+              type="button"
+              className={styles.nodeName}
+              aria-current={
+                (selection?.kind === "output" && selection.id === outputId) || undefined
+              }
+              onClick={() => select({ kind: "output", id: outputId })}
+            >
               <b>{output?.name ?? "（アウトプットなし）"}</b>
-            </span>
+            </button>
             <span className={ui.badge}>{output?.kind === "world" ? "world" : "item"}</span>
-          </button>
+          </div>
         </li>
-        {renderTree(null, 1)}
+        {outputOpen && renderTree(null, 1)}
       </ul>
       {nodes.length === 0 && <p className={ui.empty}>＋ から Entity を追加できます</p>}
     </nav>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="12"
+      height="12"
+      aria-hidden="true"
+      style={{ transform: open ? undefined : "rotate(-90deg)" }}
+    >
+      <path
+        d="M4 6l4 4 4-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect
+        x="5.5"
+        y="5.5"
+        width="8"
+        height="8"
+        rx="1.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M10.5 5.5V3.2A1.2 1.2 0 0 0 9.3 2H3.2A1.2 1.2 0 0 0 2 3.2v6.1a1.2 1.2 0 0 0 1.2 1.2H5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+    </svg>
   );
 }
 
@@ -200,6 +411,7 @@ function EntityProperties({ id }: { id: EntityId }) {
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [picker, setPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +463,13 @@ function EntityProperties({ id }: { id: EntityId }) {
     const has = (k: { id: string | null }) => k.id !== null && attached.includes(k.id);
     return q.with.length > 0 && q.with.every(has) && !q.without.some(has);
   });
+  const projectEntity = mode === "edit" ? project.entity(id) : undefined;
+  const marks = projectEntity
+    ? entityChange(saved, projectEntity, {
+        saved: savedKeep(saved, outputId),
+        current: project.output(outputId)?.keep ?? [],
+      })
+    : null;
 
   return (
     <>
@@ -267,43 +486,47 @@ function EntityProperties({ id }: { id: EntityId }) {
         </div>
       )}
       <div className={ui.section}>
-        <div className={ui.row}>
-          <label className={ui.label} htmlFor={`name-${id}`}>
-            Name
-          </label>
-          <input
-            id={`name-${id}`}
-            key={`${id}:${entity.name}`}
-            className={ui.input}
-            defaultValue={entity.name}
-            disabled={!editing}
-            onBlur={(e) =>
-              e.target.value !== entity.name && project.renameEntity(id, e.target.value)
-            }
-            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          />
-        </div>
-        {editing && (
+        <MarkedLine kind={marks?.name ?? null}>
           <div className={ui.row}>
-            <label className={ui.label} htmlFor={`parent-${id}`}>
-              親
+            <label className={ui.label} htmlFor={`name-${id}`}>
+              Name
             </label>
-            <select
-              id={`parent-${id}`}
-              className={ui.select}
-              value={entity.parent ?? ""}
-              onChange={(e) => safely(() => project.setParent(id, e.target.value || null))}
-            >
-              <option value="">（なし）</option>
-              {choices.entities
-                .filter((e) => e.id !== id)
-                .map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-            </select>
+            <input
+              id={`name-${id}`}
+              key={`${id}:${entity.name}`}
+              className={ui.input}
+              defaultValue={entity.name}
+              disabled={!editing}
+              onBlur={(e) =>
+                e.target.value !== entity.name && project.renameEntity(id, e.target.value)
+              }
+              onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+            />
           </div>
+        </MarkedLine>
+        {editing && (
+          <MarkedLine kind={marks?.parent ?? null}>
+            <div className={ui.row}>
+              <label className={ui.label} htmlFor={`parent-${id}`}>
+                親
+              </label>
+              <select
+                id={`parent-${id}`}
+                className={ui.select}
+                value={entity.parent ?? ""}
+                onChange={(e) => safely(() => project.setParent(id, e.target.value || null))}
+              >
+                <option value="">（なし）</option>
+                {choices.entities
+                  .filter((e) => e.id !== id)
+                  .map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </MarkedLine>
         )}
         {error && <p className={ui.error}>{error}</p>}
       </div>
@@ -316,6 +539,7 @@ function EntityProperties({ id }: { id: EntityId }) {
           <section key={koko} className={ui.section} aria-label={def.name}>
             <div className={ui.sectionHead}>
               <h4 className={ui.kokoTitle}>{def.name}</h4>
+              <ChangeMark kind={marks?.states[koko]?.kind ?? null} />
               {def.builtin ? (
                 <span className={ui.badge}>Built-in</span>
               ) : packageAliasOf(project, koko) ? (
@@ -349,6 +573,13 @@ function EntityProperties({ id }: { id: EntityId }) {
                   choices={choices}
                   disabled={!editing}
                   onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
+                />
+                <ChangeMark
+                  kind={
+                    marks?.states[koko]?.kind === "added"
+                      ? null
+                      : (marks?.states[koko]?.fields[f.id] ?? null)
+                  }
                 />
                 {mode === "edit" && (
                   <KeepToggle
