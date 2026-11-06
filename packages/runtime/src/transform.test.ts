@@ -1,3 +1,5 @@
+import { World } from "@tukurium/eks";
+import { BUILTIN, buildRegistry } from "@tukurium/repo-model";
 import { Euler, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,6 +8,7 @@ import {
   poseInView,
   straightenRotation,
   viewQuaternion,
+  worldTransform,
 } from "./transform";
 
 describe("視点の姿勢", () => {
@@ -84,5 +87,31 @@ describe("視点の姿勢", () => {
     const near = moveAlongView([0, 0, -1], -10);
     expect(Math.hypot(...near)).toBeCloseTo(0.35, 4);
     expect(near[2]).toBeLessThan(0);
+  });
+});
+
+describe("Transform がないときの姿勢", () => {
+  it("初期値を付けたときと、親から見た位置が同じ", () => {
+    const world = new World(buildRegistry([]));
+    world.spawn("parent", null);
+    world.add("parent", BUILTIN.Transform, {
+      position: [2, 3, 4],
+      rotation: [0, 90, 0],
+      scale: [2, 2, 2],
+    });
+    world.spawn("bare", "parent");
+    world.spawn("plain", "parent");
+    world.add("plain", BUILTIN.Transform, {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+
+    const bare = worldTransform(world, "bare");
+    const plain = worldTransform(world, "plain");
+    expect(bare.position.toArray()).toEqual(plain.position.toArray());
+    expect(bare.quaternion.toArray()).toEqual(plain.quaternion.toArray());
+    expect(bare.scale.toArray()).toEqual(plain.scale.toArray());
+    expect(world.hasState("bare", BUILTIN.Transform)).toBe(false);
   });
 });

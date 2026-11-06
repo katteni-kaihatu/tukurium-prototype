@@ -19,16 +19,56 @@ export function localMatrix(position: Vec3, rotationDeg: Vec3, scale: Vec3): Mat
   return new Matrix4().compose(new Vector3(...position), q, new Vector3(...scale));
 }
 
-/** 親をたどって、Entity のワールド座標系での姿勢を求める。Transform がない Entity は原点として扱う。 */
+const DEFAULT_VEC3: Vec3 = [0, 0, 0];
+const DEFAULT_SCALE: Vec3 = [1, 1, 1];
+
+function vec3(value: unknown, fallback: Vec3): Vec3 {
+  if (Array.isArray(value) && value.length === 3) {
+    return [Number(value[0]), Number(value[1]), Number(value[2])];
+  }
+  return [fallback[0], fallback[1], fallback[2]];
+}
+
+/**
+ * Entity の姿勢。Transform が付いていなければ、フィールドの初期値（位置・回転 0、拡大率 1）。
+ * Transform は、この初期値からずらすためのもの（ADR 0050）。
+ */
+export function transformOf(
+  world: World,
+  id: EntityId,
+): { position: Vec3; rotation: Vec3; scale: Vec3 } {
+  const t = world.get(id, BUILTIN.Transform);
+  return {
+    position: vec3(t?.position, DEFAULT_VEC3),
+    rotation: vec3(t?.rotation, DEFAULT_VEC3),
+    scale: vec3(t?.scale, DEFAULT_SCALE),
+  };
+}
+
+/** 姿勢を書く。付いていなければ Transform を足す（ずれた結果を残すため）。 */
+export function writeTransform(world: World, id: EntityId, position: Vec3, rotation: Vec3): void {
+  const t = world.get(id, BUILTIN.Transform);
+  if (!t) {
+    world.add(id, BUILTIN.Transform, {
+      position: [position[0], position[1], position[2]],
+      rotation: [rotation[0], rotation[1], rotation[2]],
+      scale: [1, 1, 1],
+    });
+    return;
+  }
+  t.position = [position[0], position[1], position[2]];
+  t.rotation = [rotation[0], rotation[1], rotation[2]];
+}
+
+/** 親をたどって、Entity のワールド座標系での姿勢を求める。Transform がなければ初期値として扱う。 */
 export function worldTransform(world: World, id: EntityId, root?: Matrix4): WorldTransform {
   const chain: EntityId[] = [];
   for (let e: EntityId | null = id; e !== null && world.has(e); e = world.parentOf(e))
     chain.unshift(e);
   const m = root ? root.clone() : new Matrix4();
   for (const e of chain) {
-    const t = world.get(e, BUILTIN.Transform);
-    if (!t) continue;
-    m.multiply(localMatrix(t.position as Vec3, t.rotation as Vec3, t.scale as Vec3));
+    const t = transformOf(world, e);
+    m.multiply(localMatrix(t.position, t.rotation, t.scale));
   }
   const position = new Vector3();
   const quaternion = new Quaternion();
