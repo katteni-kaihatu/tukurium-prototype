@@ -7,6 +7,7 @@
 
 /* パネル 1 枚の入れ物。2D では overlay の中、3D では CSS3DObject の中に置かれる */
 .host {
+  position: relative;
   width: 340px;
   pointer-events: auto;
   display: flex;
@@ -170,4 +171,57 @@
 
 .trayBtn:hover {
   background: rgba(96, 61, 86, 0.08);
+}
+
+/* 付属パネル（ADR 0044）：本体の右端の外にくっつく。高さは本体に合わせる（低すぎるときは広げる） */
+.drawer {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  height: 100%;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  color: var(--c-ink);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.drawer .body {
+  flex: 1 1 auto;
+}
+
+.drawerHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px 0 14px;
+  flex: none;
+}
+
+.drawerTab {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 48px;
+  width: 30px;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-ink);
+}
+
+.drawerTab:hover {
+  filter: brightness(0.97);
+}
+
+.drawerTabText {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.06em;
 }

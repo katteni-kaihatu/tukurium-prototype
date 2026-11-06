@@ -24,10 +24,11 @@ const loadView = (): View => {
 };
 
 /**
- * KokoState を付けるウィンドウ。検索欄・件数付きのタグ（出どころ・役割）・カードで選ぶ。
- * 選ぶと、開いたときの Entity に付けて閉じる。
+ * KokoState を付ける付属パネル（ADR 0042・0044）。検索欄・件数付きのタグ（出どころ・役割）で絞り、
+ * 表かカードで選ぶ。付ける先は、いま選んでいる Entity。付けても閉じず、続けて付けられる。
  */
-export function KokoPickerPanel({ entityId }: { entityId: string }) {
+export function KokoPickerPanel() {
+  const entityId = useWorkspace((s) => (s.selection?.kind === "entity" ? s.selection.id : null));
   const project = useProject();
   useWorkspace((s) => s.rev);
   const [q, setQ] = useState("");
@@ -42,8 +43,11 @@ export function KokoPickerPanel({ entityId }: { entityId: string }) {
       // 覚えられなくても表示はできる
     }
   };
-  const entity = project.entity(entityId);
-  if (!entity) return <p className={ui.empty}>Entity が見つかりません</p>;
+  const entity = entityId ? project.entity(entityId) : undefined;
+  if (!entityId || !entity)
+    return (
+      <p className={ui.empty}>Hierarchy で Entity を選ぶと、ここから KokoState を付けられます</p>
+    );
   const attached = new Set(Object.keys(entity.states));
   const entries = catalogEntries(
     project
@@ -61,11 +65,10 @@ export function KokoPickerPanel({ entityId }: { entityId: string }) {
       else next.add(id);
       return next;
     });
-  const close = () => useWorkspace.setState({ kokoPicker: null });
   const pick = (kokoId: string) => {
     try {
+      setError(null);
       project.addState(entityId, kokoId);
-      close();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -73,7 +76,9 @@ export function KokoPickerPanel({ entityId }: { entityId: string }) {
 
   return (
     <div className={styles.root}>
-      <p className={ui.muted}>「{entity.name}」に付ける KokoState を選びます。</p>
+      <p className={ui.muted}>
+        「{entity.name}」に付けます。付けたあとも開いたままなので、続けて付けられます。
+      </p>
       <div className={styles.searchRow}>
         <input
           className={styles.search}

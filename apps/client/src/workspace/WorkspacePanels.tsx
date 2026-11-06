@@ -16,9 +16,10 @@ import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/Panel
 import { BagPanel } from "../session/BagPanel";
 import { SessionBelongings } from "../session/SessionBelongings";
 import type { SessionEngine } from "../session/SessionEngine";
-import { DetailPanel } from "./DefinitionProperties";
+import { DetailPanel, ResourceDetailDrawer } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
+import { useCanEdit } from "./hooks";
 import { InspectorPanel } from "./InspectorPanel";
 import { KokoPickerPanel } from "./KokoPickerPanel";
 import { LogPanel } from "./LogPanel";
@@ -81,7 +82,10 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
   const detail = useWorkspace((s) => s.detail);
-  const kokoPicker = useWorkspace((s) => s.kokoPicker);
+  const kokoPickerOpen = useWorkspace((s) => s.kokoPickerOpen);
+  const resourceDetailOpen = useWorkspace((s) => s.resourceDetailOpen);
+  const canEdit = useCanEdit();
+  const editMode = useWorkspace((s) => s.mode === "edit");
   const panels: PanelSpec[] = [];
   if (ready) {
     if (saveOpen) {
@@ -122,22 +126,31 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
     if (inspectorOpen) {
       panels.push({
         ...INSPECTOR,
+        // KokoState を付けるのは、Inspector にくっついた付属パネル（ADR 0044）
+        drawer:
+          canEdit && editMode
+            ? {
+                title: "KokoState を付ける",
+                width: 520,
+                open: kokoPickerOpen,
+                onToggle: (open) => useWorkspace.setState({ kokoPickerOpen: open }),
+                render: () => <KokoPickerPanel />,
+              }
+            : undefined,
         onClose: () => useWorkspace.setState({ inspectorOpen: false }),
-      });
-    }
-    if (kokoPicker) {
-      panels.push({
-        id: "ws-koko-picker",
-        title: "KokoState を付ける",
-        initial: { x: 420, y: 120, width: 640, height: 560 },
-        focusKey: kokoPicker.seq,
-        render: () => <KokoPickerPanel key={kokoPicker.entityId} entityId={kokoPicker.entityId} />,
-        onClose: () => useWorkspace.setState({ kokoPicker: null }),
       });
     }
     if (resourcesOpen) {
       panels.push({
         ...RESOURCES,
+        // Resources で選んだものの詳細は、Resources にくっついた付属パネルに出す（ADR 0044）
+        drawer: {
+          title: "リソースの詳細",
+          width: 420,
+          open: resourceDetailOpen,
+          onToggle: (open) => useWorkspace.setState({ resourceDetailOpen: open }),
+          render: () => <ResourceDetailDrawer />,
+        },
         onClose: () => useWorkspace.setState({ resourcesOpen: false }),
       });
     }

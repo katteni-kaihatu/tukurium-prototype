@@ -42,8 +42,8 @@ const loadView = (): View => {
  * - フォルダは並べ方だけの情報で、実行には関わらない（コミットには入る）
  */
 export function ResourcesPanel() {
-  const { openSystem, placeEditor, openDetail, placeDetail } = useWorkspace();
-  const detailId = useWorkspace((s) => s.detail?.id ?? null);
+  const { openSystem, placeEditor } = useWorkspace();
+  const detailId = useWorkspace((s) => s.resourceDetail?.id ?? null);
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
@@ -137,13 +137,9 @@ export function ResourcesPanel() {
     return exported(it) ? `${text} · 公開` : text;
   };
 
-  /** このパネルが 3D なら詳細も 3D、2D なら 2D で開く */
-  const showDetail = (kind: "koko" | "system" | "material" | "asset", id: string) => {
-    const mode =
-      root.current?.closest("[data-mode]")?.getAttribute("data-mode") === "3d" ? "3d" : "2d";
-    placeDetail(mode);
-    openDetail({ kind, id });
-  };
+  /** ここで選んだものは、Resources にくっついた「リソースの詳細」に出す（ADR 0044） */
+  const showDetail = (kind: "koko" | "system" | "material" | "asset", id: string) =>
+    useWorkspace.setState({ resourceDetail: { kind, id }, resourceDetailOpen: true });
   const pick = (it: ResItem) => {
     setSel(it.id);
     if (it.kind === "koko" || it.kind === "builtin") showDetail("koko", it.id);
