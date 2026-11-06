@@ -87,6 +87,26 @@ describe("checkProjectReferences", () => {
     ]);
   });
 
+  it("アウトプットのサムネイルは、Resources にある画像だけ（ADR 0046）", () => {
+    const out = (thumbnail: string) => [
+      { id: "out", name: "射撃場", kind: "item" as const, systems: [], keep: [], thumbnail },
+    ];
+    const assets = [
+      { id: "img", name: "thumb", kind: "image" as const, contentType: "image/png" },
+      { id: "snd", name: "Bang", kind: "audio" as const, contentType: "audio/mpeg" },
+    ];
+    expect(checkProjectReferences(snap({ outputs: out("img"), assets }))).toEqual([]);
+    expect(checkProjectReferences(snap({ outputs: out("gone"), assets }))[0]).toMatchObject({
+      code: "missing-resource",
+      subject: { kind: "output", id: "out" },
+      location: { kind: "property", path: ["thumbnail"] },
+    });
+    expect(checkProjectReferences(snap({ outputs: out("snd"), assets }))[0]).toMatchObject({
+      code: "wrong-resource-kind",
+      subject: { kind: "output", id: "out" },
+    });
+  });
+
   it("Entity のリソース・Entity のフィールドの参照切れ", () => {
     const ds = checkProjectReferences(
       snap({

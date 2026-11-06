@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
+import { Thumbnail } from "../app/Thumbnail";
 import { api, type RepoMeta, type Work } from "../net/api";
 import { ProjectLink as Link } from "./ProjectNavigation";
 import styles from "./pages.module.css";
@@ -28,6 +29,7 @@ export function ExplorePage({ embedded = false }: { embedded?: boolean }) {
             {works.length === 0 && <li className={styles.sub}>まだ公開された作品はありません</li>}
             {works.map((w) => (
               <li key={w.id}>
+                <Thumbnail id={w.thumbnail} name={w.name} size="small" />
                 <Link className={`${styles.link} ${styles.grow}`} to={`/p/${w.repoId}`}>
                   {w.name}
                 </Link>
@@ -44,6 +46,7 @@ export function ExplorePage({ embedded = false }: { embedded?: boolean }) {
           <ul className={styles.list}>
             {repos.map((r) => (
               <li key={r.id}>
+                <Thumbnail id={r.thumbnail} name={r.name} size="small" />
                 <Link className={`${styles.link} ${styles.grow}`} to={`/p/${r.id}`}>
                   {r.ownerName} / {r.name}
                 </Link>

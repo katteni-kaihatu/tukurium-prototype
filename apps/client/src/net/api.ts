@@ -17,6 +17,8 @@ export interface RepoMeta {
   kind: string;
   forkedFrom: { repoId: string; repoName: string; commit: string } | null;
   createdAt: string;
+  /** 一覧に出すサムネイル（いまの版の最初のアウトプットのもの。ADR 0046） */
+  thumbnail?: string | null;
 }
 
 export interface WorkPerms {
@@ -59,6 +61,8 @@ export interface Work {
   latest?: Release | null;
   /** リリースしたアウトプットの種類。ワールドは原点、アイテムは視線の先に置く */
   outputKind?: "item" | "world" | "library" | null;
+  /** リリースした版のサムネイル（画像の素材 ID。ADR 0046） */
+  thumbnail?: string | null;
   /** 公式の発行者の作品か（名前ではなく発行者で決まる。ADR 0016） */
   official?: boolean;
   createdAt: string;

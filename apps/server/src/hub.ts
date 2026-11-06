@@ -1295,6 +1295,13 @@ export class Hub {
       const snap = await this.repos.snapshot(r.id).catch(() => null);
       if (snapshotUsesAsset(snap, assetId)) return true;
     }
+    // 公開した作品のサムネイルは、マーケットで誰にでも見せる（リリースした版のもの。ADR 0046）
+    for (const w of await this.store.works()) {
+      const latest = (await this.store.releases(w.id))[0];
+      if (!latest) continue;
+      const snap = await this.repos.snapshot(w.repoId, latest.commit).catch(() => null);
+      if (snap?.outputs.find((o) => o.id === w.outputId)?.thumbnail === assetId) return true;
+    }
     return false;
   }
 

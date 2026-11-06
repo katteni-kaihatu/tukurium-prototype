@@ -265,6 +265,10 @@
   background: #eee6ec;
   color: #82677c;
 }
+.visualImage {
+  padding: 0;
+  overflow: hidden;
+}
 .visual > svg {
   width: 48px;
   height: 48px;

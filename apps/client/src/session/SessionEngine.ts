@@ -19,6 +19,15 @@ export interface Pose {
  * セッションの 3D 空間。描画ループ・FPS 操作・参加者表示を持つ。
  * React からは mount / dispose だけを呼ぶ（シーンを React の状態で管理しない）。
  */
+/** 先にボタンを引き受ける相手（claimPointer） */
+export interface PointerClaimer {
+  down(button: number): boolean;
+  up(button: number): void;
+}
+
+/** 撮影の背景（空の色。空間の背景の真ん中あたり） */
+const SHOT_SKY = new THREE.Color("#DCE7F3");
+
 export class SessionEngine {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -101,6 +110,43 @@ export class SessionEngine {
   onPointer(fn: (button: number, phase: "down" | "up") => void): () => void {
     this.pointerListeners.add(fn);
     return () => this.pointerListeners.delete(fn);
+  }
+
+  /**
+   * ほかより先にボタンを引き受ける相手（サムネイルのカメラを持つ、など。ADR 0046）。
+   * down で true を返すと、その押下はほかの相手（onPointer）へ渡さず、離したときもその相手にだけ渡す。
+   */
+  claimPointer(claimer: PointerClaimer): () => void {
+    this.claimers.add(claimer);
+    return () => {
+      this.claimers.delete(claimer);
+      for (const [b, c] of this.claimed) if (c === claimer) this.claimed.delete(b);
+    };
+  }
+  private readonly claimers = new Set<PointerClaimer>();
+  /** 引き受けられた押下（ボタン → 相手） */
+  private readonly claimed = new Map<number, PointerClaimer>();
+
+  /**
+   * 撮影用のカメラで描く（サムネイル。ADR 0046）。手伝いの表示（選択の枠・パネルの穴・人の姿など、
+   * userData.noShot を付けたもの）は写さない。背景は空の色で塗る。
+   */
+  renderShot(camera: THREE.Camera, target: THREE.WebGLRenderTarget): void {
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (o.userData.noShot && o.visible) {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
+    const clear = this.renderer.getClearColor(new THREE.Color());
+    const alpha = this.renderer.getClearAlpha();
+    this.renderer.setClearColor(SHOT_SKY, 1);
+    this.renderer.setRenderTarget(target);
+    this.renderer.render(this.scene, camera);
+    this.renderer.setRenderTarget(null);
+    this.renderer.setClearColor(clear, alpha);
+    for (const o of hidden) o.visible = true;
   }
 
   /** 右クリックを押したままホイールしたとき。戻り値で解除。 */
@@ -251,6 +297,12 @@ export class SessionEngine {
       }
       return;
     }
+    for (const c of this.claimers) {
+      if (c.down(e.button)) {
+        this.claimed.set(e.button, c);
+        return;
+      }
+    }
     for (const fn of this.pointerListeners) fn(e.button, "down");
   };
 
@@ -261,6 +313,12 @@ export class SessionEngine {
   private releaseRight(leaving = false): void {
     if (!this.rightButton) return;
     this.rightButton = false;
+    const claimer = this.claimed.get(2);
+    if (claimer) {
+      this.claimed.delete(2);
+      claimer.up(2);
+      return;
+    }
     if (this.panels.isMoving) {
       this.panels.endMove();
       return;
@@ -281,6 +339,12 @@ export class SessionEngine {
       return;
     }
     if (!this.controller.locked) return;
+    const claimer = this.claimed.get(e.button);
+    if (claimer) {
+      this.claimed.delete(e.button);
+      claimer.up(e.button);
+      return;
+    }
     if (e.button === 0 && this.pressed) {
       // 押した相手へ離す。離す瞬間の照準は、あいだに開いたパネルで別の要素になる
       this.forwardAimed(this.pressed, "up", this.aimedDetail);

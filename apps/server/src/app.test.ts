@@ -1205,11 +1205,20 @@ describe("リポジトリ・コミット・作品", () => {
       id: string;
       official: boolean;
       outputKind: string;
+      thumbnail: string | null;
     }[];
     expect(works.find((w) => w.id === "w_official_combat")).toMatchObject({
       official: true,
       outputKind: "library",
     });
+    // 公式ライブラリには同梱のサムネイルが付いていて、誰でも取り出せる（ADR 0046）
+    for (const id of ["w_official_combat", "w_official_interaction", "w_official_items"]) {
+      const thumb = works.find((w) => w.id === id)?.thumbnail;
+      expect(thumb).toMatch(/^[0-9a-f]{64}$/);
+      const got = await app.inject({ method: "GET", url: `/api/assets/${thumb}?t=${a.token}` });
+      expect(got.statusCode).toBe(200);
+      expect(got.headers["content-type"]).toBe("image/png");
+    }
     // 同じ名前の利用者が出しても、公式にはならない
     const repo = (await A.post("/api/repos", { name: "combat", template: "gun" })).json();
     const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();

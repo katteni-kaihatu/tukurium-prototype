@@ -11,6 +11,7 @@ import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 import { SessionWorldController } from "./SessionWorldController";
 import { resetSessionWorld } from "./sessionWorld";
+import { ThumbnailCamera } from "./ThumbnailCamera";
 import { WorkspacePreviews } from "./WorkspacePreviews";
 
 const POSE_INTERVAL_MS = 100;
@@ -79,6 +80,9 @@ export function SessionView() {
     const workspace = new WorkspaceController(engine);
     const sessionWorld = new SessionWorldController(engine);
     const previews = new WorkspacePreviews(engine);
+    const thumbnailCamera = new ThumbnailCamera(engine);
+    if (import.meta.env.DEV)
+      (window as { __thumbnailCamera?: ThumbnailCamera }).__thumbnailCamera = thumbnailCamera;
     if (import.meta.env.DEV) (window as { __previews?: WorkspacePreviews }).__previews = previews;
 
     // 参加者の表示
@@ -126,6 +130,7 @@ export function SessionView() {
       workspace.dispose();
       sessionWorld.dispose();
       previews.dispose();
+      thumbnailCamera.dispose();
       useMainMenu.setState({ engine: null });
       engine.dispose();
       engineRef.current = null;

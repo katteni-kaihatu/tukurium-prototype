@@ -184,6 +184,8 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
 
   for (const o of snap.outputs) {
     const subject: ResourceRef = { kind: "output", id: o.id };
+    if (o.thumbnail)
+      checkResource(subject, ["thumbnail"], o.thumbnail, "image", `「${o.name}」のサムネイル`);
     for (const s of o.systems) {
       if (isPackageResourceId(s.id)) {
         // ライブラリの System は依存の中身にあるので、今の依存のものかだけを見る（ADR 0015）

@@ -307,6 +307,10 @@
   padding: 16px;
   gap: 6px;
 }
+.itemArtImage {
+  padding: 0;
+  overflow: hidden;
+}
 .itemArt svg {
   min-height: 0;
 }

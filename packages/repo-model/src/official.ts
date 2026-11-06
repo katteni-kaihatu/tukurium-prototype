@@ -1,8 +1,9 @@
 import type { KokoStateValues, Vec3 } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
+import { OFFICIAL_THUMBNAILS } from "./officialThumbnails.generated";
 import { packageResourceId } from "./packageDependency";
 import { gunAndTargetSample } from "./samples";
-import type { PackageDependency, ProjectSnapshot } from "./schema";
+import type { AssetDef, PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
  * 公式の Platform Library（ADR 0016・計画 U4）。
@@ -29,6 +30,16 @@ export interface OfficialLibrary {
   name: string;
   description: string;
   snapshot: ProjectSnapshot;
+}
+
+/** 公式ライブラリのサムネイル（同梱の画像。サーバーが起動時に素材置き場へ入れる。ADR 0046） */
+function thumbnailAsset(key: keyof typeof OFFICIAL_THUMBNAILS): AssetDef {
+  return {
+    id: OFFICIAL_THUMBNAILS[key],
+    name: `${key} のサムネイル`,
+    kind: "image",
+    contentType: "image/png",
+  };
 }
 
 const DAMAGEABLE = `// Damage を受けて Health の hp を減らす（0 より下にはしない）。
@@ -76,8 +87,16 @@ function combatLibrary(): ProjectSnapshot {
     systems: [{ id: OFFICIAL_COMBAT.damageable, name: "Damageable", code: DAMAGEABLE }],
     materials: [],
     outputs: [
-      { id: OFFICIAL_COMBAT.outputId, name: "combat", kind: "library", systems: [], keep: [] },
+      {
+        id: OFFICIAL_COMBAT.outputId,
+        name: "combat",
+        kind: "library",
+        systems: [],
+        keep: [],
+        thumbnail: OFFICIAL_THUMBNAILS.combat,
+      },
     ],
+    assets: [thumbnailAsset("combat")],
     entities: [],
     exports: [OFFICIAL_COMBAT.damageable, OFFICIAL_COMBAT.health].sort(),
   };
@@ -131,8 +150,10 @@ function interactionLibrary(): ProjectSnapshot {
         kind: "library",
         systems: [],
         keep: [],
+        thumbnail: OFFICIAL_THUMBNAILS.interaction,
       },
     ],
+    assets: [thumbnailAsset("interaction")],
     entities: [],
     exports: [OFFICIAL_INTERACTION.toggle, OFFICIAL_INTERACTION.toggleable].sort(),
   };
@@ -181,8 +202,16 @@ function itemsLibrary(): ProjectSnapshot {
     systems: [{ id: OFFICIAL_ITEMS.keyPickup, name: "KeyPickup", code: KEY_PICKUP }],
     materials: [],
     outputs: [
-      { id: OFFICIAL_ITEMS.outputId, name: "items", kind: "library", systems: [], keep: [] },
+      {
+        id: OFFICIAL_ITEMS.outputId,
+        name: "items",
+        kind: "library",
+        systems: [],
+        keep: [],
+        thumbnail: OFFICIAL_THUMBNAILS.items,
+      },
     ],
+    assets: [thumbnailAsset("items")],
     entities: [],
     exports: [OFFICIAL_ITEMS.key, OFFICIAL_ITEMS.keyPickup].sort(),
   };
