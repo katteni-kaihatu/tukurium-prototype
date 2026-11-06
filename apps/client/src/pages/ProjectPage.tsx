@@ -316,10 +316,23 @@ function CommitsTab({ repo }: { repo: RepoDetail }) {
   );
 }
 
+const KIND_LABEL: Record<string, string> = {
+  world: "ワールド",
+  item: "アイテム",
+  library: "ライブラリ",
+};
+
+function kindLabel(kind: string | null): string {
+  return (kind && KIND_LABEL[kind]) || "アウトプット";
+}
+
+/** 左はアウトプット、右はそのバージョン。作品はアウトプットごとに一つ。 */
 function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
-  const [outputId, setOutputId] = useState(repo.outputs[0]?.id ?? "");
+  const rows = releaseRows(repo);
+  const [picked, setPicked] = useState(rows[0]?.key ?? "");
   const [publishTags, setPublishTags] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const selected = rows.find((row) => row.key === picked) ?? rows[0] ?? null;
   const run = async (fn: () => Promise<unknown>) => {
     try {
       setError(null);
@@ -329,29 +342,91 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
       setError(e instanceof Error ? e.message : String(e));
     }
   };
-  const unpublished = repo.outputs.filter((o) => !repo.works.some((w) => w.outputId === o.id));
   return (
     <section className={styles.card} aria-label="作品とリリース">
-      <h2 className={styles.h2}>作品とリリース</h2>
+      <h2 className={styles.h2}>リリース</h2>
       <p className={styles.sub}>
-        作品はアウトプットごとの公開の単位です。リリースはコミットからビルドしたバージョンで、リリース後も開発は続けられ、リリース済みのバージョンは変わりません。
+        左のアウトプットを選ぶと、右にそのバージョンが出ます。出したバージョンは、その後の開発では変わりません。
       </p>
       {error && <p className={styles.error}>{error}</p>}
-      {repo.works.length === 0 && <p className={styles.sub}>まだ作品はありません。</p>}
-      {repo.works.map((w) => (
-        <div key={w.id} className={styles.card} style={{ boxShadow: "none" }}>
-          <div className={styles.row}>
-            <b className={styles.grow}>{w.name}</b>
-            {repo.isOwner && (
-              <button
-                type="button"
-                className={styles.primary}
-                onClick={() => void run(() => api.release(w.id))}
-              >
-                最新のコミットからリリース
-              </button>
-            )}
-          </div>
+      {rows.length === 0 ? (
+        <p className={styles.sub}>アウトプットがありません。</p>
+      ) : (
+        <div className={styles.releaseSplit}>
+          <ul className={styles.outputList} aria-label="アウトプット">
+            {rows.map((row) => {
+              const latest = row.work?.releases[0];
+              const state = !row.work ? "未公開" : latest ? `v${latest.version}` : "公開済み";
+              return (
+                <li key={row.key}>
+                  <button
+                    type="button"
+                    className={styles.outputBtn}
+                    aria-pressed={selected?.key === row.key}
+                    onClick={() => {
+                      setPicked(row.key);
+                      setPublishTags("");
+                    }}
+                  >
+                    <span className={styles.outputName}>{row.name}</span>
+                    <span className={styles.sub}>
+                      {kindLabel(row.kind)} · {state}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {selected && (
+            <ReleaseDetail
+              repo={repo}
+              row={selected}
+              publishTags={publishTags}
+              onTags={setPublishTags}
+              onRun={run}
+              onChange={onChange}
+            />
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReleaseDetail({
+  repo,
+  row,
+  publishTags,
+  onTags,
+  onRun,
+  onChange,
+}: {
+  repo: RepoDetail;
+  row: ReleaseRow;
+  publishTags: string;
+  onTags: (value: string) => void;
+  onRun: (fn: () => Promise<unknown>) => Promise<void>;
+  onChange: () => void;
+}) {
+  const work = row.work;
+  return (
+    <section className={styles.releaseDetail} aria-label={`${row.name} のリリース`}>
+      <div className={styles.row}>
+        <h3 className={styles.h2}>{row.name}</h3>
+        <span className={styles.badge}>{kindLabel(row.kind)}</span>
+        <span className={styles.grow} />
+        {repo.isOwner && work && (
+          <button
+            type="button"
+            className={styles.primary}
+            onClick={() => void onRun(() => api.release(work.id))}
+          >
+            最新のコミットからリリース
+          </button>
+        )}
+      </div>
+      {work ? (
+        <>
           <fieldset className={styles.row} style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className={styles.label}>権限</legend>
             {(
@@ -364,68 +439,98 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
               <label key={k} className={styles.choice} style={{ padding: "6px 10px" }}>
                 <input
                   type="checkbox"
-                  checked={w.perms[k]}
+                  checked={work.perms[k]}
                   disabled={!repo.isOwner}
                   onChange={(e) =>
-                    void run(() => api.updateWork(w.id, { perms: { [k]: e.target.checked } }))
+                    void onRun(() => api.updateWork(work.id, { perms: { [k]: e.target.checked } }))
                   }
                 />
                 {label}
               </label>
             ))}
           </fieldset>
-          <WorkTagsEditor work={w} onSaved={onChange} />
-          <ul className={styles.list} aria-label={`${w.name} のリリース`}>
-            {w.releases.length === 0 && <li className={styles.sub}>リリースはまだありません</li>}
-            {w.releases.map((r, i) => (
-              <li key={r.id}>
-                <b>v{r.version}</b>
-                {i === 0 && <span className={styles.badge}>Latest</span>}
-                <span className={styles.grow} />
-                <span className={styles.mono}>{shortOid(r.commit)}</span>
-                <span className={styles.sub}>{new Date(r.createdAt).toLocaleString("ja-JP")}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      {repo.isOwner && unpublished.length > 0 && (
-        <div>
-          <PublicTagsField value={publishTags} onChange={setPublishTags} />
-          <div className={styles.row}>
-            <select
-              className={styles.select}
-              aria-label="公開するアウトプット"
-              value={outputId}
-              onChange={(e) => setOutputId(e.target.value)}
-            >
-              {unpublished.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
+          <WorkTagsEditor work={work} onSaved={onChange} />
+          <h3 className={styles.h2}>バージョン · {work.releases.length}</h3>
+          {work.releases.length === 0 ? (
+            <p className={styles.sub}>リリースはまだありません。</p>
+          ) : (
+            <ol className={styles.history}>
+              {work.releases.map((release, index) => (
+                <li key={release.id} className={styles.historyItem}>
+                  <span className={styles.historyTitle}>
+                    v{release.version}
+                    {index === 0 && <span className={styles.badge}>最新</span>}
+                  </span>
+                  <span className={styles.sub}>
+                    {new Date(release.createdAt).toLocaleString("ja-JP")} ·{" "}
+                    <span className={styles.mono}>{shortOid(release.commit)}</span>
+                  </span>
+                </li>
               ))}
-            </select>
-            <button
-              type="button"
-              className={styles.primary}
-              disabled={!workTagsSchema.safeParse(splitTagDraft(publishTags)).success}
-              onClick={() =>
-                void run(async () => {
-                  const id = unpublished.some((output) => output.id === outputId)
-                    ? outputId
-                    : (unpublished[0]?.id ?? "");
-                  await api.publish(repo.id, id, workTagsSchema.parse(splitTagDraft(publishTags)));
-                  setPublishTags("");
-                })
-              }
-            >
-              作品として公開
-            </button>
-          </div>
+            </ol>
+          )}
+        </>
+      ) : (
+        <div>
+          <p className={styles.sub}>このアウトプットは、まだ作品として公開していません。</p>
+          {repo.isOwner && row.outputId && (
+            <>
+              <PublicTagsField value={publishTags} onChange={onTags} />
+              <div className={styles.row}>
+                <button
+                  type="button"
+                  className={styles.primary}
+                  disabled={!workTagsSchema.safeParse(splitTagDraft(publishTags)).success}
+                  onClick={() =>
+                    void onRun(async () => {
+                      await api.publish(
+                        repo.id,
+                        row.outputId ?? "",
+                        workTagsSchema.parse(splitTagDraft(publishTags)),
+                      );
+                      onTags("");
+                    })
+                  }
+                >
+                  作品として公開
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </section>
   );
+}
+
+type ReleaseRow = {
+  key: string;
+  name: string;
+  kind: string | null;
+  outputId: string | null;
+  work: RepoDetail["works"][number] | null;
+};
+
+function releaseRows(repo: RepoDetail): ReleaseRow[] {
+  const byOutput = new Map(repo.works.map((work) => [work.outputId, work]));
+  const rows: ReleaseRow[] = repo.outputs.map((output) => ({
+    key: output.id,
+    name: output.name,
+    kind: output.kind,
+    outputId: output.id,
+    work: byOutput.get(output.id) ?? null,
+  }));
+  for (const work of repo.works) {
+    if (repo.outputs.some((output) => output.id === work.outputId)) continue;
+    rows.push({
+      key: work.id,
+      name: work.name,
+      kind: work.outputKind ?? null,
+      outputId: null,
+      work,
+    });
+  }
+  return rows;
 }
 
 function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
