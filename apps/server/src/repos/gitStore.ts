@@ -74,6 +74,20 @@ export class GitStore {
     return oid;
   }
 
+  /** リリースに添えるコメント。保存したときのメッセージから、共同制作者の行を除く。 */
+  async message(repoId: string, oid: string): Promise<string> {
+    try {
+      const { commit } = await git.readCommit({ fs, gitdir: this.gitdir(repoId), oid });
+      return commit.message
+        .split("\n")
+        .filter((line) => !line.startsWith("Co-authored-by:"))
+        .join("\n")
+        .trim();
+    } catch {
+      return "";
+    }
+  }
+
   async log(repoId: string, depth = 100): Promise<CommitInfo[]> {
     if (!(await this.head(repoId))) return [];
     const entries = await git.log({ fs, gitdir: this.gitdir(repoId), ref: BRANCH, depth });

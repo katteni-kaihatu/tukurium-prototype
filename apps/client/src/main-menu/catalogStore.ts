@@ -2,7 +2,7 @@ import type { ClientMessage } from "@tukurium/shared";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useApp } from "../app/store";
-import { api, type MarketPage, type OwnedItem, type Work } from "../net/api";
+import { api, type MarketPage, type OwnedItem, type Work, type WorkDetail } from "../net/api";
 import { useWorkspace } from "../workspace/store";
 import { useMainMenu } from "./store";
 
@@ -31,6 +31,13 @@ interface CatalogState {
   recent: Work[];
   recentLoading: boolean;
   recentError: string | null;
+  detail: WorkDetail | null;
+  detailFor: string | null;
+  detailLoading: boolean;
+  detailError: string | null;
+  mine: Work[];
+  mineLoading: boolean;
+  mineError: string | null;
 }
 const initial: CatalogState = {
   owner: null,
@@ -50,11 +57,20 @@ const initial: CatalogState = {
   recent: [],
   recentLoading: false,
   recentError: null,
+  detail: null,
+  detailFor: null,
+  detailLoading: false,
+  detailError: null,
+  mine: [],
+  mineLoading: false,
+  mineError: null,
 };
 export const useCatalog = create<CatalogState>(() => initial);
 let marketRequest = 0;
 let ownedRequest = 0;
 let recentRequest = 0;
+let detailRequest = 0;
+let mineRequest = 0;
 let marketAbort: AbortController | null = null;
 
 export function useCatalogConnection() {
@@ -68,6 +84,8 @@ export function useCatalogConnection() {
     marketRequest++;
     ownedRequest++;
     recentRequest++;
+    detailRequest++;
+    mineRequest++;
     const previous = owner;
     useCatalog.setState({ ...initial, owner: id });
     if (previous)
@@ -164,6 +182,8 @@ export async function saveWorkTags(workId: string, tags: string[]) {
     owned: s.owned.map((item) => (item.work ? { ...item, work: merge(item.work) } : item)),
     market: s.market ? { ...s.market, items: s.market.items.map(merge) } : null,
     recent: s.recent.map(merge),
+    mine: s.mine.map(merge),
+    detail: s.detail?.id === workId ? { ...s.detail, ...updated } : s.detail,
   }));
   void refreshOwned();
   const state = useCatalog.getState();
@@ -262,6 +282,34 @@ export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {
       useCatalog.setState({ actionError: errorMessage(e), retry: definite ? null : attempt });
   } finally {
     if (owner === useCatalog.getState().owner) useCatalog.setState({ busy: null });
+  }
+}
+
+export async function loadWork(id: string) {
+  const seq = ++detailRequest;
+  useCatalog.setState({ detailLoading: true, detailError: null, detailFor: id });
+  try {
+    const detail = await api.work(id);
+    if (seq === detailRequest) useCatalog.setState({ detail });
+  } catch (e) {
+    if (seq === detailRequest) useCatalog.setState({ detail: null, detailError: errorMessage(e) });
+  } finally {
+    if (seq === detailRequest) useCatalog.setState({ detailLoading: false });
+  }
+}
+
+export async function loadMyWorks() {
+  const owner = useCatalog.getState().owner;
+  if (!owner) return;
+  const seq = ++mineRequest;
+  useCatalog.setState({ mineLoading: true, mineError: null });
+  try {
+    const mine = await api.works(owner);
+    if (seq === mineRequest && owner === useCatalog.getState().owner) useCatalog.setState({ mine });
+  } catch (e) {
+    if (seq === mineRequest) useCatalog.setState({ mineError: errorMessage(e) });
+  } finally {
+    if (seq === mineRequest) useCatalog.setState({ mineLoading: false });
   }
 }
 

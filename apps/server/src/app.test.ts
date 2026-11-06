@@ -349,6 +349,23 @@ describe("本人識別とセッション", () => {
       await A.post("/api/works", { repoId: worldRepo.id, outputId: "out_main" })
     ).json();
     const worldRelease = (await A.post(`/api/works/${worldWork.id}/releases`)).json();
+    const detail = (await B.get(`/api/works/${work.id}`)).json();
+    expect(detail.project).toEqual({ id: repo.id, name: "検索用の銃" });
+    expect(detail.releases.map((release: { version: number }) => release.version)).toEqual([2, 1]);
+    expect(detail.releases[0].comment).toBe("最初のコミット");
+    expect((await B.get(`/api/works/${worldWork.id}`)).json()).toMatchObject({
+      outputKind: "world",
+      project: { id: worldRepo.id, name: "ワールド" },
+    });
+    expect(
+      (await app.inject({ method: "GET", url: `/api/works/${work.id}` })).json().project,
+    ).toEqual({ id: repo.id, name: "検索用の銃" });
+    expect((await B.get("/api/works/missing")).statusCode).toBe(404);
+    expect((await A.get(`/api/works?owner=${owner.me.id}`)).json()).toHaveLength(3);
+    await A.patch(`/api/repos/${repo.id}`, { visibility: "private" });
+    expect((await B.get(`/api/works/${work.id}`)).json().project).toBeNull();
+    expect((await A.get(`/api/works/${work.id}`)).json().project).toBeNull();
+    await A.patch(`/api/repos/${repo.id}`, { visibility: "public" });
     expect(
       (await B.get(`/api/market?q=${encodeURIComponent("アイテム作者")}&limit=1`)).json(),
     ).toMatchObject({ total: 2, items: [{ id: secondWork.id }], nextOffset: 1 });
@@ -380,6 +397,9 @@ describe("本人識別とセッション", () => {
       releaseId: r1.id,
     });
     expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+    await A.patch(`/api/works/${work.id}`, { perms: { use: false, view: false, fork: false } });
+    expect((await B.get(`/api/works/${work.id}`)).statusCode).toBe(404);
+    expect((await A.get(`/api/works/${work.id}`)).statusCode).toBe(200);
   });
 
   it("取り出しの再送と同じ人の別接続を一回の配置にまとめ、移動先と権限を確かめる", async () => {

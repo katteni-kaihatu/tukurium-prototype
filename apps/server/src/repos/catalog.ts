@@ -28,6 +28,28 @@ export class ItemCatalog {
     };
   }
 
+  /** 作品の詳細。バージョンと、その版を出した保存のメッセージを付ける。 */
+  async detail(user: User | null, workId: string) {
+    const work = await this.store.work(workId);
+    const visible =
+      !!work && (work.owner === user?.id || work.perms.use || work.perms.view || work.perms.fork);
+    if (!work || !visible) throw new HttpError(404, "作品が見つかりません");
+    const info = await this.describe(work);
+    const repo = await this.store.repo(work.repoId);
+    const releases = await Promise.all(
+      (await this.store.releases(work.id)).map(async (release) => ({
+        ...release,
+        comment: await this.repos.git.message(work.repoId, release.commit),
+      })),
+    );
+    return {
+      ...info,
+      releases,
+      // 非公開のプロジェクトは、作品を使えても参照を出さない
+      project: repo?.visibility === "public" ? { id: repo.id, name: repo.name } : null,
+    };
+  }
+
   async search(
     user: User | null,
     query: string,

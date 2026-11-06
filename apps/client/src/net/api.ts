@@ -35,6 +35,8 @@ export interface Release {
   createdAt: string;
   /** ライブラリの版の content hash（サーバーがリリースのときに計算する。ADR 0015） */
   contentHash?: string;
+  /** その版を出した保存のメッセージ。詳細でだけ付く */
+  comment?: string;
 }
 
 /** ライブラリの版の中身（公開したものだけ） */
@@ -66,6 +68,12 @@ export interface Work {
   /** 公式の発行者の作品か（名前ではなく発行者で決まる。ADR 0016） */
   official?: boolean;
   createdAt: string;
+}
+
+/** 作品の詳細。公開プロジェクトだけ project が付く */
+export interface WorkDetail extends Work {
+  releases: Release[];
+  project: { id: string; name: string } | null;
 }
 
 export interface OwnedItem {
@@ -232,6 +240,7 @@ export const api = {
     call<Work>("POST", "/api/works", { repoId, outputId, tags }),
   works: (owner?: string) =>
     call<Work[]>("GET", owner ? `/api/works?owner=${encodeURIComponent(owner)}` : "/api/works"),
+  work: (id: string) => call<WorkDetail>("GET", `/api/works/${encodeURIComponent(id)}`),
   updateWork: (id: string, body: { name?: string; perms?: Partial<WorkPerms>; tags?: string[] }) =>
     call<Work>("PATCH", `/api/works/${id}`, body),
   release: (workId: string) => call<Release>("POST", `/api/works/${workId}/releases`, {}),

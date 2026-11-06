@@ -284,6 +284,11 @@ export function registerRepoRoutes(
   );
 
   app.get(
+    "/api/works/:id",
+    handle<{ id: string }>(async (req) => catalog.detail(await userOf(req), req.params.id)),
+  );
+
+  app.get(
     "/api/works",
     handle(async (req) => {
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
