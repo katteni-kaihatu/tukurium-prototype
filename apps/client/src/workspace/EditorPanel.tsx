@@ -61,25 +61,6 @@ export function EditorPanel() {
             </span>
           ))}
         </div>
-        {problems.length > 0 && (
-          <section aria-label="このコードの問題">
-            {problems.map((p) => (
-              <button
-                key={`${p.freshness}:${p.id}`}
-                type="button"
-                className={ui.problem}
-                data-fresh={p.freshness}
-                onClick={() => showProblem(p)}
-              >
-                <span className={ui.problemPlace}>
-                  {problemPlace(project.system(p.subject.id)?.name ?? "", p)}
-                  <span className={ui.problemKind}>{problemKind(p)}</span>
-                </span>
-                <span>{p.message}</span>
-              </button>
-            ))}
-          </section>
-        )}
         <p className={ui.muted}>
           {mode === "edit"
             ? "変更は次の Play から反映されます。"
@@ -87,6 +68,36 @@ export function EditorPanel() {
         </p>
       </div>
       {activeSystem && <CodeView key={activeSystem} systemId={activeSystem} />}
+      {/* エラーはコードの下に出す（上に出すと、出るたびにコードの位置がずれる） */}
+      {problems.length > 0 && (
+        <section
+          aria-label="このコードの問題"
+          className={ui.section}
+          style={{
+            flex: "none",
+            maxHeight: 132,
+            overflow: "auto",
+            paddingTop: 6,
+            paddingBottom: 8,
+          }}
+        >
+          {problems.map((p) => (
+            <button
+              key={`${p.freshness}:${p.id}`}
+              type="button"
+              className={ui.problem}
+              data-fresh={p.freshness}
+              onClick={() => showProblem(p)}
+            >
+              <span className={ui.problemPlace}>
+                {problemPlace(project.system(p.subject.id)?.name ?? "", p)}
+                <span className={ui.problemKind}>{problemKind(p)}</span>
+              </span>
+              <span>{p.message}</span>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
