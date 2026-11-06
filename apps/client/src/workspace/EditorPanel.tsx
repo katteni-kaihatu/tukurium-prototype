@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
 import { useProject } from "./hooks";
+import { type ImportCandidate, importCandidates, importCompletionSource } from "./importCompletion";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { scriptLine } from "./problems";
 import { useWorkspace } from "./store";
@@ -137,6 +138,15 @@ function CodeView({ systemId }: { systemId: string }) {
   useEffect(() => {
     const text = project.code(systemId);
     if (!host.current || !text) return;
+    // import の候補。制作データか依存が変わったときだけ作り直す
+    let cache: { rev: number; packages: unknown; list: ImportCandidate[] } | null = null;
+    const candidates = () => {
+      const { rev, packages } = useWorkspace.getState();
+      if (!cache || cache.rev !== rev || cache.packages !== packages) {
+        cache = { rev, packages, list: importCandidates(project.snapshot(), systemId, packages) };
+      }
+      return cache.list;
+    };
     const view = new EditorView({
       parent: host.current,
       state: EditorState.create({
@@ -145,6 +155,7 @@ function CodeView({ systemId }: { systemId: string }) {
           basicSetup,
           javascript(),
           javascriptLanguage.data.of({ autocomplete: hostApiCompletionSource }),
+          javascriptLanguage.data.of({ autocomplete: importCompletionSource(candidates) }),
           // カーソル・選択の共有（awareness は閲覧権限のある人にだけ中継される）
           yCollab(text, awareness),
           EditorState.readOnly.of(readOnly),
