@@ -520,7 +520,7 @@ export class Hub {
         t: "session.rejected",
         sessionId,
         requestId,
-        message: "セッションが見つかりません（閉じられた可能性があります）",
+        message: "セッションが見つかりません（閉じられたか、サーバーが更新された可能性があります）",
       });
       return;
     }

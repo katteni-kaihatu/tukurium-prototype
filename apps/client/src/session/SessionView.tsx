@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
 import { editProject } from "../main-menu/editing";
@@ -19,6 +19,7 @@ const POSE_INTERVAL_MS = 100;
 export function SessionView() {
   const { sessionId = "" } = useParams();
   const [search, setSearch] = useSearchParams();
+  const navigate = useNavigate();
   const openRepo = search.get("open");
   const containerRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<SessionEngine | null>(null);
@@ -37,6 +38,17 @@ export function SessionView() {
       if (client.joinedSessionId !== sessionId) client.send({ t: "session.join", sessionId });
     });
   }, [client, sessionId]);
+
+  // セッションがなくなったら（閉じられた・サーバーが入れ替わって再接続したら無かった）、
+  // 空間に残さずホームへ出す。理由はホームに出す（closedReason・sessionError）。
+  useEffect(() => {
+    return client.on((msg) => {
+      const gone =
+        msg.t === "session.closed" ||
+        (msg.t === "session.rejected" && !msg.requestId && msg.sessionId === sessionId);
+      if (gone) navigate("/", { replace: true });
+    });
+  }, [client, sessionId, navigate]);
 
   // 別セッションへの移動では、サーバーの受理前に今の場所を退出しない。
   useEffect(() => {
