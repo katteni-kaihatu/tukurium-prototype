@@ -1,7 +1,8 @@
-import { diffFiles, type FileChange, toFiles } from "@tukurium/repo-model";
+import { fromFiles } from "@tukurium/repo-model";
 import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
 import { api, type CommitInfo } from "../net/api";
+import { type DiffEntry, describeDiff } from "./diffView";
 import { useProject } from "./hooks";
 import { useWorkspace } from "./store";
 
@@ -19,7 +20,7 @@ export function useHistory() {
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [headFiles, setHeadFiles] = useState<Record<string, string> | null>(null);
   const [owner, setOwner] = useState<string | null>(null);
-  const [changes, setChanges] = useState<FileChange[]>([]);
+  const [entries, setEntries] = useState<DiffEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // commitRev は保存のたびに増える。効果の中では参照せず、読み直すきっかけにだけ使う
@@ -60,7 +61,9 @@ export function useHistory() {
     if (!headFiles) return;
     const timer = setTimeout(
       () =>
-        setChanges(diffFiles(headFiles, toFiles({ ...project.snapshot(), name: project.name }))),
+        setEntries(
+          describeDiff(fromFiles(headFiles), { ...project.snapshot(), name: project.name }),
+        ),
       300,
     );
     return () => clearTimeout(timer);
@@ -79,7 +82,7 @@ export function useHistory() {
   return {
     repoId,
     commits,
-    changes,
+    entries,
     error,
     ready: headFiles !== null,
     isOwner: owner !== null && owner === me?.id,

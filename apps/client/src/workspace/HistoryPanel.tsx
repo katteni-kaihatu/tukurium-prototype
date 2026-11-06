@@ -1,7 +1,8 @@
-import type { FileChange } from "@tukurium/repo-model";
+import type { ProjectSnapshot } from "@tukurium/repo-model";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api, type CommitInfo } from "../net/api";
-import { DiffTree } from "./DiffTree";
+import { ChangeList } from "./ChangeList";
+import { type DiffEntry, describeDiff } from "./diffView";
 import styles from "./history.module.css";
 import { layoutLog } from "./logGraph";
 import { useWorkspace } from "./store";
@@ -22,7 +23,7 @@ export function HistoryPanel() {
   const history = useHistory();
   const openSave = useWorkspace((s) => s.openSave);
   const [selected, setSelected] = useState(UNSAVED);
-  const [diff, setDiff] = useState<FileChange[]>([]);
+  const [diff, setDiff] = useState<DiffEntry[]>([]);
   /** いま diff がどの記録のものか。選んだ記録と違う間は、空の差分を出さない */
   const [diffFor, setDiffFor] = useState(UNSAVED);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -47,10 +48,15 @@ export function HistoryPanel() {
     let alive = true;
     setDiffError(null);
     const oid = selected;
-    api.diff(history.repoId, oid).then(
-      (next) => {
+    const parent = history.commits.find((c) => c.oid === oid)?.parents[0];
+    const repoId = history.repoId;
+    Promise.all([
+      parent ? api.snapshot(repoId, parent) : Promise.resolve(emptySnapshot()),
+      api.snapshot(repoId, oid),
+    ]).then(
+      ([before, after]) => {
         if (!alive) return;
-        setDiff(next);
+        setDiff(describeDiff(before, after));
         setDiffFor(oid);
       },
       (e: Error) => {
@@ -63,7 +69,7 @@ export function HistoryPanel() {
     return () => {
       alive = false;
     };
-  }, [history.repoId, selected]);
+  }, [history.repoId, history.commits, selected]);
 
   if (!history.repoId) {
     return <p className={ui.empty}>このワークスペースにはプロジェクトがありません</p>;
@@ -96,14 +102,14 @@ export function HistoryPanel() {
                   )}
                   forks={[]}
                   hollow
-                  mark={history.changes.length > 0 ? "#8a5a2a" : laneColor(tipLane)}
+                  mark={history.entries.length > 0 ? "#8a5a2a" : laneColor(tipLane)}
                 />
                 <span className={styles.entryText}>
                   <span className={styles.entryTitle}>未保存</span>
                   <span className={styles.entryMeta}>
                     {history.ready
-                      ? history.changes.length > 0
-                        ? `差分 ${history.changes.length} 件`
+                      ? history.entries.length > 0
+                        ? `差分 ${history.entries.length} 件`
                         : "差分はありません"
                       : "読み込んでいます…"}
                   </span>
@@ -157,7 +163,7 @@ export function HistoryPanel() {
         </div>
         <section className={styles.detail} aria-label="詳細">
           {selected === UNSAVED || !picked ? (
-            <UnsavedDetail changes={history.changes} ready={history.ready} />
+            <UnsavedDetail entries={history.entries} ready={history.ready} />
           ) : (
             <CommitDetail commit={picked} changes={diff} diffing={diffing} error={diffError} />
           )}
@@ -167,15 +173,15 @@ export function HistoryPanel() {
   );
 }
 
-function UnsavedDetail({ changes, ready }: { changes: FileChange[]; ready: boolean }) {
+function UnsavedDetail({ entries, ready }: { entries: DiffEntry[]; ready: boolean }) {
   return (
     <>
       <h3 className={styles.subject}>未保存</h3>
       <p className={ui.muted}>
         まだ履歴に残していない変更です。作業の内容は、サーバーに自動で残っています。残すときは、左の印か「保存」から。
       </p>
-      <DiffBlock count={ready ? changes.length : null}>
-        {ready ? <DiffTree changes={changes} /> : <p className={ui.muted}>読み込んでいます…</p>}
+      <DiffBlock count={ready ? entries.length : null}>
+        {ready ? <ChangeList entries={entries} /> : <p className={ui.muted}>読み込んでいます…</p>}
       </DiffBlock>
     </>
   );
@@ -188,7 +194,7 @@ function CommitDetail({
   error,
 }: {
   commit: CommitInfo;
-  changes: FileChange[];
+  changes: DiffEntry[];
   diffing: boolean;
   error: string | null;
 }) {
@@ -220,7 +226,7 @@ function CommitDetail({
         ) : diffing ? (
           <p className={ui.muted}>読み込んでいます…</p>
         ) : (
-          <DiffTree changes={changes} />
+          <ChangeList entries={changes} />
         )}
       </DiffBlock>
     </>
@@ -332,6 +338,19 @@ function SaveIcon() {
       <path d="M5.2 13.5v-3.2h5.6v3.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   );
+}
+
+function emptySnapshot(): ProjectSnapshot {
+  return {
+    version: 1,
+    name: "",
+    kokostates: [],
+    systems: [],
+    materials: [],
+    assets: [],
+    outputs: [],
+    entities: [],
+  };
 }
 
 function subjectOf(commit: CommitInfo): string {
