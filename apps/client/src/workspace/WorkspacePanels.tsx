@@ -12,6 +12,7 @@ import { useApp } from "../app/store";
 import { beginEditing } from "../main-menu/editing";
 import { useMainMenu } from "../main-menu/store";
 import { api, type RepoMeta } from "../net/api";
+import { DrawerSlot } from "../panels/drawerSlot";
 import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/PanelLayer";
 import { BagPanel } from "../session/BagPanel";
 import { SessionBelongings } from "../session/SessionBelongings";
@@ -84,6 +85,8 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const detail = useWorkspace((s) => s.detail);
   const kokoPickerOpen = useWorkspace((s) => s.kokoPickerOpen);
   const resourceDetailOpen = useWorkspace((s) => s.resourceDetailOpen);
+  const saveSideOpen = useWorkspace((s) => s.saveSideOpen);
+  const historySideOpen = useWorkspace((s) => s.historySideOpen);
   const canEdit = useCanEdit();
   const editMode = useWorkspace((s) => s.mode === "edit");
   const panels: PanelSpec[] = [];
@@ -92,9 +95,16 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         id: "ws-save",
         title: "保存",
-        initial: { x: 36, y: 168, width: 860, height: 560 },
+        initial: { x: 36, y: 168, width: 440, height: 560 },
         focusKey: saveSeq,
         render: () => <SavePanel />,
+        drawer: {
+          title: "差分の中身",
+          width: 480,
+          open: saveSideOpen,
+          onToggle: (open) => useWorkspace.setState({ saveSideOpen: open }),
+          render: () => <DrawerSlot name="ws-save" />,
+        },
         onClose: () => useWorkspace.setState({ saveOpen: false }),
       });
     }
@@ -102,8 +112,15 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         id: "ws-history",
         title: "履歴",
-        initial: { x: 180, y: 168, width: 1200, height: 560 },
+        initial: { x: 180, y: 168, width: 720, height: 560 },
         render: () => <HistoryPanel />,
+        drawer: {
+          title: "差分の中身",
+          width: 520,
+          open: historySideOpen,
+          onToggle: (open) => useWorkspace.setState({ historySideOpen: open }),
+          render: () => <DrawerSlot name="ws-history" />,
+        },
         onClose: () => useWorkspace.setState({ historyOpen: false }),
       });
     }

@@ -1,13 +1,15 @@
 import { useState } from "react";
+import { InDrawer } from "../panels/drawerSlot";
 import { ChangeList, ChangeSide } from "./ChangeList";
 import styles from "./history.module.css";
+import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useHistory } from "./useHistory";
 import { useRevert } from "./useRevert";
 
 /**
  * 保存：左の上にメッセージと保存ボタン、下に未保存の差分を名前で出す。
- * 差分を選ぶと、右側の欄にその中身を出す。行にマウスを載せると、元に戻すボタンが出る。
+ * 差分を選ぶと、保存パネルの右にくっついた付属パネル「差分の中身」に出す（ADR 0044）。行にマウスを載せると、元に戻すボタンが出る。
  * 保存できるのはプロジェクトの持ち主だけ。一緒に編集している人は記録に残る。
  */
 export function SavePanel() {
@@ -79,6 +81,8 @@ export function SavePanel() {
                 onSelect={(id) => {
                   setRevertError(null);
                   setPicked(id);
+                  // 中身は、保存パネルにくっついた「差分の中身」に出す（ADR 0044）
+                  useWorkspace.setState({ saveSideOpen: true });
                 }}
                 revertable={(entry) => canRevert(entry.id)}
                 onRevert={(entry) => setRevertError(revert(entry.id))}
@@ -88,18 +92,20 @@ export function SavePanel() {
             )}
           </div>
         </div>
-        <ChangeSide
-          entry={pickedEntry}
-          error={revertError}
-          revert={
-            pickedEntry
-              ? {
-                  revertable: (part) => canRevert(pickedEntry.id, part),
-                  onRevert: (part) => setRevertError(revert(pickedEntry.id, part)),
-                }
-              : undefined
-          }
-        />
+        <InDrawer name="ws-save">
+          <ChangeSide
+            entry={pickedEntry}
+            error={revertError}
+            revert={
+              pickedEntry
+                ? {
+                    revertable: (part) => canRevert(pickedEntry.id, part),
+                    onRevert: (part) => setRevertError(revert(pickedEntry.id, part)),
+                  }
+                : undefined
+            }
+          />
+        </InDrawer>
       </div>
     </div>
   );
