@@ -181,7 +181,11 @@ function UnsavedDetail({ entries, ready }: { entries: DiffEntry[]; ready: boolea
         まだ履歴に残していない変更です。作業の内容は、サーバーに自動で残っています。残すときは、左の印か「保存」から。
       </p>
       <DiffBlock count={ready ? entries.length : null}>
-        {ready ? <ChangeList entries={entries} /> : <p className={ui.muted}>読み込んでいます…</p>}
+        {ready ? (
+          <ChangeList entries={entries} source="unsaved" panel="ws-history" />
+        ) : (
+          <p className={ui.muted}>読み込んでいます…</p>
+        )}
       </DiffBlock>
     </>
   );
@@ -226,7 +230,7 @@ function CommitDetail({
         ) : diffing ? (
           <p className={ui.muted}>読み込んでいます…</p>
         ) : (
-          <ChangeList entries={changes} />
+          <ChangeList entries={changes} source={`commit:${commit.oid}`} panel="ws-history" />
         )}
       </DiffBlock>
     </>

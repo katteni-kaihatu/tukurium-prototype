@@ -74,6 +74,7 @@ export function summarize(panelId: string): string[] {
     case "ws-detail": {
       const d = ws.detail;
       if (!d) return [];
+      if (d.kind === "change") return [`差分: ${d.entry.name}`];
       const name =
         d.kind === "system"
           ? project.system(d.id)?.name

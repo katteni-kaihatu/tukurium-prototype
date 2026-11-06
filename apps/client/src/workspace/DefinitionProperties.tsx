@@ -8,6 +8,7 @@ import {
   packageSystems,
 } from "@tukurium/repo-model";
 import { useState } from "react";
+import { ChangeDetailPanel } from "./ChangeList";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
 import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
@@ -29,10 +30,11 @@ const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"
   { type: "resource", label: "Resource", default: null },
 ];
 
-/** 開いている KokoState・マテリアル・スクリプトの詳細 */
+/** 開いている KokoState・マテリアル・スクリプト・差分の詳細 */
 export function DetailPanel() {
   const detail = useWorkspace((s) => s.detail);
   if (!detail) return null;
+  if (detail.kind === "change") return <ChangeDetailPanel entry={detail.entry} />;
   return <DefinitionProperties selection={detail} />;
 }
 

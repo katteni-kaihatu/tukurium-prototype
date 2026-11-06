@@ -60,7 +60,11 @@ export function SavePanel() {
             <span className={entries.length > 0 ? ui.badgeWarn : ui.badge}>{entries.length}件</span>
           )}
         </div>
-        {ready ? <ChangeList entries={entries} /> : <p className={ui.muted}>読み込んでいます…</p>}
+        {ready ? (
+          <ChangeList entries={entries} source="unsaved" panel="ws-save" />
+        ) : (
+          <p className={ui.muted}>読み込んでいます…</p>
+        )}
       </div>
     </div>
   );

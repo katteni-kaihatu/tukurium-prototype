@@ -241,16 +241,28 @@ export function PanelLayer({
   const detailPlace = useWorkspace((s) => s.detailPlace);
   useLayoutEffect(() => {
     if (!engine) return;
-    const jobs: { id: string; mode: "2d" | "3d"; key: "editorPlace" | "detailPlace" }[] = [];
+    const jobs: {
+      id: string;
+      mode: "2d" | "3d";
+      beside?: string;
+      key: "editorPlace" | "detailPlace";
+    }[] = [];
     if (editorPlace) jobs.push({ id: "ws-editor", mode: editorPlace.mode, key: "editorPlace" });
-    if (detailPlace) jobs.push({ id: "ws-detail", mode: detailPlace.mode, key: "detailPlace" });
+    if (detailPlace)
+      jobs.push({
+        id: "ws-detail",
+        mode: detailPlace.mode,
+        beside: detailPlace.beside,
+        key: "detailPlace",
+      });
     const ready = jobs.filter((job) => panels.some((p) => p.id === job.id));
     if (ready.length === 0) return;
     setStates((prev) => {
       let next = prev;
       for (const job of ready) {
         const spec = panels.find((p) => p.id === job.id);
-        if (spec) next = placeLike(next, spec, job.mode, engine, elements.current);
+        const beside = panels.find((p) => p.id === job.beside);
+        if (spec) next = placeLike(next, spec, job.mode, engine, elements.current, beside);
       }
       return next;
     });
@@ -361,9 +373,12 @@ function placeLike(
   mode: "2d" | "3d",
   engine: SessionEngine,
   elements: Map<string, HTMLElement>,
+  beside?: PanelSpec,
 ): Record<string, PanelState> {
   const st = prev[spec.id] ?? initialState(spec);
   if (mode === "2d") {
+    const source = beside ? (prev[beside.id] ?? initialState(beside)) : undefined;
+    if (beside && source?.pinned) return placeBeside(prev, spec.id, st, beside.id, source);
     return st.pinned ? prev : { ...prev, [spec.id]: { ...st, pinned: true } };
   }
   if (!st.pinned && st.transform) return prev;
@@ -372,6 +387,29 @@ function placeLike(
   return {
     ...prev,
     [spec.id]: { ...st, pinned: false, transform: placeInFront(engine, rect, others) },
+  };
+}
+
+/**
+ * 画面に固定したパネル（source）の右側に並べる。
+ * 右に入りきらないときは、元のパネルを左へ寄せて場所を空ける（寄せきれない分は重ねる）。
+ */
+function placeBeside(
+  prev: Record<string, PanelState>,
+  id: string,
+  st: PanelState,
+  sourceId: string,
+  source: PanelState,
+): Record<string, PanelState> {
+  const insets = panelViewportInsets();
+  const gap = 8;
+  const limit = window.innerWidth - gap;
+  const sourceX = Math.max(insets.left, Math.min(source.x, limit - st.width - gap - source.width));
+  const x = Math.max(insets.left, Math.min(sourceX + source.width + gap, limit - st.width));
+  return {
+    ...prev,
+    [sourceId]: { ...source, x: sourceX },
+    [id]: { ...st, x, y: Math.max(insets.top, source.y), pinned: true },
   };
 }
 

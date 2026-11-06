@@ -384,7 +384,7 @@
 }
 
 .change:hover,
-.change[aria-expanded="true"] {
+.change[aria-pressed="true"] {
   background: rgba(38, 38, 46, 0.05);
 }
 
@@ -416,10 +416,45 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 2px 0 8px;
-  padding: 8px 8px 10px;
-  border-radius: 8px;
-  background: rgba(38, 38, 46, 0.03);
+}
+
+.changePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px 16px;
+}
+
+.changePanelHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.changePanelGroup {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--c-ink-3);
+}
+
+.changePanelName {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.changePanelName[data-change="removed"] {
+  color: var(--c-ink-3);
+  text-decoration: line-through;
 }
 
 .lines {
