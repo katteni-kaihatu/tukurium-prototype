@@ -10,7 +10,7 @@ import {
 } from "@tukurium/repo-model";
 import { useState } from "react";
 import { ImagePreview, MaterialPreview, ModelPreview } from "./AssetPreview";
-import { ChangeMark, MarkedLine } from "./ChangeMark";
+import { ChangeMark, type ChangeTarget, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
 import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
 import { FieldInput } from "./FieldInput";
@@ -77,10 +77,11 @@ function NameRow(props: {
   value: string;
   disabled?: boolean;
   mark?: ChangeKind | null;
+  target?: ChangeTarget;
   onCommit: (v: string) => void;
 }) {
   return (
-    <MarkedLine kind={props.mark ?? null}>
+    <MarkedLine kind={props.mark ?? null} target={props.target}>
       <div className={ui.row}>
         <label className={ui.label} htmlFor={`n-${props.id}`}>
           Name
@@ -152,7 +153,7 @@ function OutputProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark kind={changed.kind} />
+          <ChangeMark kind={changed.kind} target={{ entry: `output:${id}` }} />
           <h3 className={ui.sectionTitle}>Output</h3>
         </div>
         <p className={ui.muted}>
@@ -163,10 +164,11 @@ function OutputProperties({ id }: { id: string }) {
           id={id}
           value={output.name}
           mark={changed.name}
+          target={{ entry: `output:${id}`, part: "name" }}
           disabled={!editing}
           onCommit={(name) => update({ name })}
         />
-        <MarkedLine kind={changed.outputKind}>
+        <MarkedLine kind={changed.outputKind} target={{ entry: `output:${id}`, part: "kind" }}>
           <div className={ui.row}>
             <label className={ui.label} htmlFor={`kind-${id}`}>
               Kind
@@ -201,7 +203,7 @@ function OutputProperties({ id }: { id: string }) {
             )}
           </span>
         </div>
-        <MarkedLine kind={changed.exposure}>
+        <MarkedLine kind={changed.exposure} target={{ entry: `output:${id}`, part: "exposure" }}>
           <div className={ui.row}>
             <label className={ui.label} htmlFor={`exposure-${id}`}>
               外からの見え方
@@ -221,7 +223,7 @@ function OutputProperties({ id }: { id: string }) {
           </div>
         </MarkedLine>
         {output.kind === "world" && (
-          <MarkedLine kind={changed.guestPolicy}>
+          <MarkedLine kind={changed.guestPolicy} target={{ entry: `output:${id}`, part: "guest" }}>
             <div className={ui.row}>
               <label className={ui.label} htmlFor={`guest-${id}`}>
                 外から来た Item
@@ -244,7 +246,7 @@ function OutputProperties({ id }: { id: string }) {
       </div>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark kind={changed.systems} />
+          <ChangeMark kind={changed.systems} target={{ entry: `output:${id}`, part: "systems" }} />
           <h3 className={ui.sectionTitle}>Systems</h3>
           <span className={ui.badge}>{output.systems.filter((s) => s.enabled).length} 有効</span>
         </div>
@@ -257,7 +259,10 @@ function OutputProperties({ id }: { id: string }) {
             const def = systems.find((s) => s.id === ref.id);
             return (
               <li key={ref.id} className={ui.item}>
-                <ChangeMark kind={changed.systemRows[ref.id] ?? null} />
+                <ChangeMark
+                  kind={changed.systemRows[ref.id] ?? null}
+                  target={{ entry: `output:${id}`, part: "systems" }}
+                />
                 <input
                   type="checkbox"
                   aria-label={`${def?.name ?? ref.id} を有効にする`}
@@ -357,7 +362,7 @@ function KokoDefProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark kind={changed.kind} />
+          <ChangeMark kind={changed.kind} target={{ entry: `koko:${id}` }} />
           <h3 className={ui.sectionTitle}>KokoState</h3>
           {def.builtin && <span className={ui.badge}>Built-in</span>}
         </div>
@@ -368,6 +373,7 @@ function KokoDefProperties({ id }: { id: string }) {
           id={id}
           value={def.name}
           mark={changed.name}
+          target={{ entry: `koko:${id}`, part: "name" }}
           disabled={!editing}
           onCommit={(name) => save({ ...def, name })}
         />
@@ -419,7 +425,10 @@ function KokoDefProperties({ id }: { id: string }) {
                 alignItems: "center",
               }}
             >
-              <ChangeMark kind={changed.fields[f.id] ?? null} />
+              <ChangeMark
+                kind={changed.fields[f.id] ?? null}
+                target={{ entry: `koko:${id}`, part: `field:${f.id}` }}
+              />
               <input
                 key={`${f.id}:${f.name}`}
                 className={ui.input}
@@ -457,7 +466,10 @@ function KokoDefProperties({ id }: { id: string }) {
                 ✕
               </button>
             </div>
-            <MarkedLine kind={changed.fields[f.id] ?? null}>
+            <MarkedLine
+              kind={changed.fields[f.id] ?? null}
+              target={{ entry: `koko:${id}`, part: `field:${f.id}` }}
+            >
               <FieldInput
                 koko={id}
                 field={{ ...f, name: "初期値" }}
@@ -578,7 +590,7 @@ function SystemProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark kind={changed.kind} />
+          <ChangeMark kind={changed.kind} target={{ entry: `code:${id}` }} />
           <h3 className={ui.sectionTitle}>System</h3>
           <span className={ui.badgeBrand}>Script</span>
         </div>
@@ -586,6 +598,7 @@ function SystemProperties({ id }: { id: string }) {
           id={id}
           value={def.name}
           mark={changed.name}
+          target={{ entry: `code:${id}`, part: "name" }}
           disabled={!editing}
           onCommit={(name) => safely(() => project.renameSystem(id, name))}
         />
@@ -605,7 +618,7 @@ function SystemProperties({ id }: { id: string }) {
             <span>{p.message}</span>
           </button>
         ))}
-        <MarkedLine kind={changed.code}>
+        <MarkedLine kind={changed.code} target={{ entry: `code:${id}`, part: "code" }}>
           <div className={ui.toolbar}>
             <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
               コードを開く
@@ -737,7 +750,7 @@ function MaterialProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark kind={changed.kind} />
+          <ChangeMark kind={changed.kind} target={{ entry: `material:${id}` }} />
           <h3 className={ui.sectionTitle}>Material</h3>
         </div>
         <MaterialPreview
@@ -750,6 +763,7 @@ function MaterialProperties({ id }: { id: string }) {
           id={id}
           value={m.name}
           mark={changed.name}
+          target={{ entry: `material:${id}`, part: "name" }}
           disabled={!editing}
           onCommit={(name) => safely(() => project.updateMaterial({ ...m, name }))}
         />
@@ -768,7 +782,7 @@ function MaterialProperties({ id }: { id: string }) {
             </button>
           </span>
         </div>
-        <MarkedLine kind={changed.color}>
+        <MarkedLine kind={changed.color} target={{ entry: `material:${id}`, part: "color" }}>
           <FieldInput
             koko="material"
             field={{ id: "color", name: "Color", type: "color", default: "#ffffff" }}
@@ -778,9 +792,19 @@ function MaterialProperties({ id }: { id: string }) {
             onChange={(v) => project.updateMaterial({ ...m, color: String(v) })}
           />
         </MarkedLine>
-        <MarkedLine kind={changed.roughness}>{slider("roughness", "粗さ")}</MarkedLine>
-        <MarkedLine kind={changed.metalness}>{slider("metalness", "金属感")}</MarkedLine>
-        <MarkedLine kind={changed.map}>
+        <MarkedLine
+          kind={changed.roughness}
+          target={{ entry: `material:${id}`, part: "roughness" }}
+        >
+          {slider("roughness", "粗さ")}
+        </MarkedLine>
+        <MarkedLine
+          kind={changed.metalness}
+          target={{ entry: `material:${id}`, part: "metalness" }}
+        >
+          {slider("metalness", "金属感")}
+        </MarkedLine>
+        <MarkedLine kind={changed.map} target={{ entry: `material:${id}`, part: "map" }}>
           <div className={ui.row}>
             <label className={ui.label} htmlFor={`map-${id}`}>
               画像

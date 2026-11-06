@@ -432,6 +432,31 @@
   background: rgba(38, 38, 46, 0.05);
 }
 
+.changeRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 戻すボタンは、行にマウスを載せたとき（キーボードで選んだとき）だけ出す */
+.revertBtn {
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.changeRow:hover .revertBtn,
+.revertBtn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .revertBtn {
+    opacity: 1;
+  }
+}
+
 .changeName {
   min-width: 0;
   flex: 1;
@@ -619,4 +644,10 @@
   background: rgba(38, 38, 46, 0.06);
   color: var(--c-ink-3);
   font-size: 12px;
+}
+
+.changeRow > .change {
+  flex: 1;
+  min-width: 0;
+  width: auto;
 }

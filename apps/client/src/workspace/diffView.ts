@@ -27,6 +27,13 @@ export interface DiffLine {
   /** null は、その側にない */
   before: string | null;
   after: string | null;
+  /**
+   * どの部分の変化か。元に戻す範囲と、Inspector の丸に出す行を決める。
+   * entity：name / place / state:<KokoState> / field:<KokoState>:<欄>、
+   * output：name / kind / exposure / guest / systems / keep、koko：name / field:<欄>、
+   * code：name、material：name / color / roughness / metalness / map。ないものは添え書き。
+   */
+  part?: string;
 }
 
 export interface CodeRow {
@@ -128,13 +135,19 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
   return pairById(before.entities, after.entities).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
     if ((prev?.name ?? null) !== (next?.name ?? null)) {
-      lines.push({ label: "名前", before: prev?.name ?? null, after: next?.name ?? null });
+      lines.push({
+        label: "名前",
+        before: prev?.name ?? null,
+        after: next?.name ?? null,
+        part: "name",
+      });
     }
     if ((prev?.order ?? null) !== (next?.order ?? null) && prev && next) {
       lines.push({
         label: "並び",
         before: `${prev.order + 1}番目`,
         after: `${next.order + 1}番目`,
+        part: "place",
       });
     }
     const outputChanged = (prev?.output ?? null) !== (next?.output ?? null);
@@ -143,6 +156,7 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
         label: "アウトプット",
         before: prev ? outputName(before, prev.output) : null,
         after: next ? outputName(after, next.output) : null,
+        part: "place",
       });
     }
     lines.push(...stateLines(id, prev, next, before, after));
@@ -155,7 +169,7 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
     const afterPath = next ? entityPath(after, next) : null;
     const path =
       parentChanged || outputChanged
-        ? { label: "階層", before: beforePath, after: afterPath }
+        ? { label: "階層", before: beforePath, after: afterPath, part: "place" }
         : { label: "階層", before: afterPath ?? beforePath, after: afterPath ?? beforePath };
     const hint = placeHint(next ? after : before, shown);
     return [entry("entity", id, shown.name, kind, [path, ...lines], hint)];
@@ -165,9 +179,7 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
 function codeEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
   return pairById(before.systems, after.systems).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
-    if ((prev?.name ?? null) !== (next?.name ?? null)) {
-      lines.push({ label: "名前", before: prev?.name ?? null, after: next?.name ?? null });
-    }
+    pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
     const beforeCode = prev?.code ?? "";
     const afterCode = next?.code ?? "";
     const code = beforeCode === afterCode ? undefined : lineDiff(beforeCode, afterCode);
@@ -179,9 +191,7 @@ function codeEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
 function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
   return pairById(before.kokostates, after.kokostates).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
-    if ((prev?.name ?? null) !== (next?.name ?? null)) {
-      lines.push({ label: "名前", before: prev?.name ?? null, after: next?.name ?? null });
-    }
+    pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
     const fields = new Map<
       string,
       { prev?: KokoStateDef["fields"][number]; next?: KokoStateDef["fields"][number] }
@@ -192,13 +202,14 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
       row.next = f;
       fields.set(f.id, row);
     }
-    for (const { prev: pf, next: nf } of fields.values()) {
+    for (const [fid, { prev: pf, next: nf }] of fields) {
       const name = nf?.name ?? pf?.name ?? "";
       if (!pf || !nf) {
         lines.push({
           label: `欄 ${name}`,
           before: pf ? fieldSummary(pf, before) : null,
           after: nf ? fieldSummary(nf, after) : null,
+          part: `field:${fid}`,
         });
         continue;
       }
@@ -207,6 +218,7 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
           label: `欄 ${nf.name}`,
           before: fieldSummary(pf, before),
           after: fieldSummary(nf, after),
+          part: `field:${fid}`,
         });
       }
     }
@@ -218,19 +230,21 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
 function materialEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
   return pairById(before.materials, after.materials).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
-    pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null);
-    pushIfChanged(lines, "色", prev?.color ?? null, next?.color ?? null);
+    pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
+    pushIfChanged(lines, "色", prev?.color ?? null, next?.color ?? null, "color");
     pushIfChanged(
       lines,
       "粗さ",
       prev ? String(prev.roughness) : null,
       next ? String(next.roughness) : null,
+      "roughness",
     );
     pushIfChanged(
       lines,
       "金属",
       prev ? String(prev.metalness) : null,
       next ? String(next.metalness) : null,
+      "metalness",
     );
     const beforeMap = prev?.map ?? null;
     const afterMap = next?.map ?? null;
@@ -239,6 +253,7 @@ function materialEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffE
         label: "テクスチャ",
         before: beforeMap ? resourceName(before, beforeMap) : null,
         after: afterMap ? resourceName(after, afterMap) : null,
+        part: "map",
       });
     }
     if (lines.length === 0) return [];
@@ -376,33 +391,37 @@ function outputLines(
   after: ProjectSnapshot,
 ): DiffLine[] {
   const lines: DiffLine[] = [];
-  pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null);
+  pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
   pushIfChanged(
     lines,
     "種類",
     prev ? kindLabel(prev.kind) : null,
     next ? kindLabel(next.kind) : null,
+    "kind",
   );
   pushIfChanged(
     lines,
     "外からの見え方",
     prev ? exposureLabel(prev.exposure ?? "interactive") : null,
     next ? exposureLabel(next.exposure ?? "interactive") : null,
+    "exposure",
   );
   const guestBefore = prev?.kind === "world" ? guestLabel(prev.guestPolicy ?? "interactive") : null;
   const guestAfter = next?.kind === "world" ? guestLabel(next.guestPolicy ?? "interactive") : null;
-  pushIfChanged(lines, "外から来た Item", guestBefore, guestAfter);
+  pushIfChanged(lines, "外から来た Item", guestBefore, guestAfter, "guest");
   pushIfChanged(
     lines,
     "システム",
     prev ? systemList(prev, before) : null,
     next ? systemList(next, after) : null,
+    "systems",
   );
   pushIfChanged(
     lines,
     "状態維持",
     prev ? keepList(prev, before) : null,
     next ? keepList(next, after) : null,
+    "keep",
   );
   return lines;
 }
@@ -430,12 +449,14 @@ function stateLines(
           label: name,
           before: had ? "付いている" : null,
           after: has ? "付いている" : null,
+          part: `state:${koko}`,
         });
       }
     }
     lines.push(
       ...fieldLines(
         name,
+        koko,
         def,
         had ? prevStates[koko] : undefined,
         has ? nextStates[koko] : undefined,
@@ -457,6 +478,7 @@ function stateLines(
         label: `${name} / ${fieldName} の維持`,
         before: beforeKeep ? "付ける" : "外す",
         after: afterKeep ? "付ける" : "外す",
+        part: `field:${koko}:${field}`,
       });
     }
   }
@@ -465,6 +487,7 @@ function stateLines(
 
 function fieldLines(
   prefix: string,
+  koko: string,
   def: KokoStateDef | undefined,
   beforeVals: Record<string, unknown> | undefined,
   afterVals: Record<string, unknown> | undefined,
@@ -492,6 +515,7 @@ function fieldLines(
       label: `${prefix} / ${field?.name ?? id}`,
       before: had ? show(beforeVals?.[id], field?.type, before) : null,
       after: has ? show(afterVals?.[id], field?.type, after) : null,
+      part: `field:${koko}:${id}`,
     });
   }
   return lines;
@@ -679,9 +703,10 @@ function pushIfChanged(
   label: string,
   before: string | null,
   after: string | null,
+  part?: string,
 ) {
   if (before === after) return;
-  lines.push({ label, before, after });
+  lines.push({ label, before, after, part });
 }
 
 const SHAPE: Record<string, string> = {

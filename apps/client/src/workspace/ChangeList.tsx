@@ -1,18 +1,24 @@
-import { useState } from "react";
 import { ImagePreview, ModelPreview } from "./AssetPreview";
 import { type DiffEntry, type DiffLine, diffKindLabel } from "./diffView";
 import styles from "./history.module.css";
 import ui from "./ui.module.css";
 
-/** 名前で並べた差分。行を押すと、パネルの右側の欄に階層や欄、コード、見た目を出す。 */
+/**
+ * 名前で並べた差分。行を押すと、パネルの右側の欄に階層や欄、コード、見た目を出す。
+ * revertable を渡すと、戻せる行にマウスを載せたとき、元に戻すボタンを出す。
+ */
 export function ChangeList({
   entries,
   selected,
   onSelect,
+  revertable,
+  onRevert,
 }: {
   entries: DiffEntry[];
   selected: string | null;
   onSelect: (id: string) => void;
+  revertable?: (entry: DiffEntry) => boolean;
+  onRevert?: (entry: DiffEntry) => void;
 }) {
   if (entries.length === 0) return <p className={styles.emptyDiff}>差分はありません</p>;
   const groups = new Map<string, DiffEntry[]>();
@@ -31,7 +37,7 @@ export function ChangeList({
           </h5>
           <ul className={styles.tree}>
             {list.map((entry) => (
-              <li key={entry.id}>
+              <li key={entry.id} className={styles.changeRow}>
                 <button
                   type="button"
                   className={styles.change}
@@ -43,6 +49,17 @@ export function ChangeList({
                   {entry.hint && <span className={styles.changeHint}>{entry.hint}</span>}
                   <span className={styles.kind}>{diffKindLabel(entry.kind)}</span>
                 </button>
+                {onRevert && revertable?.(entry) && (
+                  <button
+                    type="button"
+                    className={`${ui.iconBtn} ${styles.revertBtn}`}
+                    aria-label={`${entry.name} を元に戻す`}
+                    title="最後に保存した形に戻す"
+                    onClick={() => onRevert(entry)}
+                  >
+                    <RevertIcon />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -81,7 +98,31 @@ export function ChangeSide({ entry }: { entry: DiffEntry | null }) {
   );
 }
 
-function ChangeDetail({ entry }: { entry: DiffEntry }) {
+/** 元に戻す（左回りの矢印） */
+export function RevertIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M4.2 6.2H10a3.3 3.3 0 0 1 0 6.6H6.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M6.6 3.6 4 6.2l2.6 2.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** 差分ひとつの中身（欄の前後、コードの行、見た目） */
+export function ChangeDetail({ entry }: { entry: DiffEntry }) {
   return (
     <div className={styles.changeDetail}>
       {entry.lines.length > 0 && (
