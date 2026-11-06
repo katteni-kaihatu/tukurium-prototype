@@ -55,6 +55,15 @@ export class SessionEngine {
     Object.assign(canvas.style, { position: "absolute", inset: "0", pointerEvents: "none" });
     const css = this.cssRenderer.domElement;
     Object.assign(css.style, { position: "absolute", inset: "0", pointerEvents: "none" });
+    // パネルの中身にフォーカスが移ると、ブラウザが空間の入れ物を勝手にスクロールして、
+    // パネルがずれて見える（付属パネルの開け閉めで起きた）。入れ物は常に動かさない
+    const keepStill = (el: HTMLElement) => {
+      el.addEventListener("scroll", () => {
+        if (el.scrollLeft !== 0 || el.scrollTop !== 0) el.scrollTo(0, 0);
+      });
+    };
+    keepStill(css);
+    for (const child of Array.from(css.children)) keepStill(child as HTMLElement);
     container.style.background = "linear-gradient(#C9DDF6 0%, #DCE7F3 55%, #E9E4D6 100%)";
     container.append(css, canvas);
     this.panels = new PanelSpace(this.scene, this.cssRenderer);

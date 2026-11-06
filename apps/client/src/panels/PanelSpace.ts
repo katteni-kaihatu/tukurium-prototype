@@ -17,6 +17,8 @@ interface Placed {
   object: CSS3DObject;
   occluder: THREE.Mesh;
   observer: ResizeObserver;
+  /** 穴の中心の、本体の中心からのずれ（パネルの向きでの m。付属パネルがあると右へずれる） */
+  local: THREE.Vector3;
 }
 
 /**
@@ -70,17 +72,19 @@ export class PanelSpace {
       const occluder = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.occluderMaterial);
       const observer = new ResizeObserver(() => this.fitOccluder(id));
       this.scene.add(object, occluder);
-      p = { wrapper, object, occluder, observer };
+      p = { wrapper, object, occluder, observer, local: new THREE.Vector3() };
       this.placed.set(id, p);
     }
     if (element.parentElement !== p.wrapper) {
       p.wrapper.replaceChildren(element);
-      p.observer.disconnect();
-      p.observer.observe(element);
     }
+    // 付属パネルの開け閉めでも穴の大きさを合わせる
+    p.observer.disconnect();
+    p.observer.observe(element);
+    const drawer = drawerOf(element);
+    if (drawer) p.observer.observe(drawer);
     p.object.position.set(...transform.position);
     p.object.rotation.set(0, transform.yaw, 0);
-    p.occluder.position.copy(p.object.position);
     p.occluder.rotation.copy(p.object.rotation);
     this.fitOccluder(id);
   }
@@ -155,8 +159,8 @@ export class PanelSpace {
       // パネルが覚える角度は上下の軸まわりだけ。傾きは付けない
       const upright = straightenRotation(placed.rotation);
       m.object.rotation.set(0, ((upright[1] ?? 0) * Math.PI) / 180, 0);
-      m.occluder.position.copy(m.object.position);
       m.occluder.rotation.copy(m.object.rotation);
+      placeOccluder(m);
     }
     const eye = camera.getWorldPosition(new THREE.Vector3());
     const forward = camera.getWorldDirection(new THREE.Vector3());
@@ -192,15 +196,45 @@ export class PanelSpace {
     };
   }
 
+  /**
+   * WebGL に開ける穴を、パネルの大きさに合わせる。付属パネル（ADR 0044）があれば、
+   * それも含めた範囲にし、その中心へ穴をずらす（本体の位置は動かさない）。
+   */
   private fitOccluder(id: string): void {
     const p = this.placed.get(id);
     const el = p?.wrapper.firstElementChild as HTMLElement | null;
     if (!p || !el) return;
     // CSS の変形の影響を受けない大きさ（レイアウト上の px）
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let [minX, maxX, minY, maxY] = [0, w, 0, h];
+    const drawer = drawerOf(el);
+    if (drawer) {
+      minX = Math.min(minX, drawer.offsetLeft);
+      maxX = Math.max(maxX, drawer.offsetLeft + drawer.offsetWidth);
+      minY = Math.min(minY, drawer.offsetTop);
+      maxY = Math.max(maxY, drawer.offsetTop + drawer.offsetHeight);
+    }
     p.occluder.scale.set(
-      el.offsetWidth * PANEL_METERS_PER_PX,
-      el.offsetHeight * PANEL_METERS_PER_PX,
+      (maxX - minX) * PANEL_METERS_PER_PX,
+      (maxY - minY) * PANEL_METERS_PER_PX,
       1,
     );
+    // 本体の中心からのずれ（画面の下向きの px を、空間の上向きへ直す）
+    p.local.set(
+      ((minX + maxX) / 2 - w / 2) * PANEL_METERS_PER_PX,
+      -((minY + maxY) / 2 - h / 2) * PANEL_METERS_PER_PX,
+      0,
+    );
+    placeOccluder(p);
   }
+}
+
+function placeOccluder(p: Placed): void {
+  p.occluder.position.copy(p.local).applyEuler(p.object.rotation).add(p.object.position);
+}
+
+/** パネルの入れ物の直下にある付属パネル（開いていれば中身、たたんでいればつまみ） */
+function drawerOf(host: HTMLElement): HTMLElement | null {
+  return host.querySelector<HTMLElement>(":scope > [data-panel-drawer]");
 }

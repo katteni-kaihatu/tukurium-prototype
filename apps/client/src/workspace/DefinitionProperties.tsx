@@ -8,7 +8,7 @@ import {
   type OutputExposure,
   packageSystems,
 } from "@tukurium/repo-model";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { ImagePreview, MaterialPreview, ModelPreview } from "./AssetPreview";
 import { ChangeMark, type ChangeTarget, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
@@ -36,6 +36,24 @@ export function DetailPanel() {
   const detail = useWorkspace((s) => s.detail);
   if (!detail) return null;
   return <DefinitionProperties selection={detail} />;
+}
+
+/**
+ * 詳細を出している場所を閉じる（削除したときなど）。ふつうは詳細パネル、
+ * Resources の付属パネル（ADR 0044）の中では、その付属パネルの中身を空にする。
+ */
+const CloseDetail = createContext<() => void>(() => useWorkspace.getState().closeDetail());
+const useCloseDetail = () => useContext(CloseDetail);
+
+/** Resources の付属パネル「リソースの詳細」。Resources で選んだものを出す（ADR 0044） */
+export function ResourceDetailDrawer() {
+  const target = useWorkspace((s) => s.resourceDetail);
+  if (!target) return <p className={ui.empty}>Resources で選ぶと、ここに詳細が出ます</p>;
+  return (
+    <CloseDetail.Provider value={() => useWorkspace.setState({ resourceDetail: null })}>
+      <DefinitionProperties selection={target} />
+    </CloseDetail.Provider>
+  );
 }
 
 /** アウトプット・KokoState 定義・System・マテリアルの Properties */
@@ -335,7 +353,8 @@ function OutputProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function KokoDefProperties({ id }: { id: string }) {
-  const { select, openDetail, closeDetail } = useWorkspace();
+  const { select, openDetail } = useWorkspace();
+  const closeDetail = useCloseDetail();
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
@@ -572,7 +591,8 @@ function KokoDefProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function SystemProperties({ id }: { id: string }) {
-  const { openSystem, select, showProblem, closeDetail } = useWorkspace();
+  const { openSystem, select, showProblem } = useWorkspace();
+  const closeDetail = useCloseDetail();
   const queryOf = useSystemQuery();
   const { error, safely } = useSafe();
   const problems = useProblems().filter((p) => p.subject.id === id);
@@ -715,7 +735,7 @@ function SystemProperties({ id }: { id: string }) {
 // ---------------------------------------------------------------------------
 
 function MaterialProperties({ id }: { id: string }) {
-  const { closeDetail } = useWorkspace();
+  const closeDetail = useCloseDetail();
   const { error, safely } = useSafe();
   const project = useProject();
   const canEdit = useCanEdit();

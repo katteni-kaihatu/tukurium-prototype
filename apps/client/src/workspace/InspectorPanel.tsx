@@ -762,11 +762,7 @@ function EntityProperties({ id }: { id: EntityId }) {
           <button
             type="button"
             className={ui.btn}
-            onClick={() =>
-              useWorkspace.setState((s) => ({
-                kokoPicker: { entityId: id, seq: (s.kokoPicker?.seq ?? 0) + 1 },
-              }))
-            }
+            onClick={() => useWorkspace.setState({ kokoPickerOpen: true })}
           >
             ＋ Add KokoState
           </button>
