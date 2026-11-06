@@ -1,5 +1,5 @@
 import { tagKey } from "@tukurium/shared";
-import { useEffect, useId, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useId, useState } from "react";
 import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
 import type { OwnedItem, Work } from "../net/api";
@@ -33,6 +33,7 @@ export function CatalogPage({ active }: { active: boolean }) {
   const owner = useCatalog((s) => s.owner);
   const workId = menu.selected.market;
   const [tab, setTab] = useState<"search" | "mine">("search");
+  const [tags, setTags] = useState<string[]>([]);
   useEffect(() => {
     if (!active || !workId) return;
     void loadWork(workId);
@@ -70,18 +71,25 @@ export function CatalogPage({ active }: { active: boolean }) {
       {tab === "mine" ? (
         <MyWorks onOpen={(id) => menu.select("market", id)} />
       ) : (
-        <MarketSearch active={active} />
+        <MarketSearch active={active} tags={tags} setTags={setTags} />
       )}
     </>
   );
 }
 
-function MarketSearch({ active }: { active: boolean }) {
+function MarketSearch({
+  active,
+  tags,
+  setTags,
+}: {
+  active: boolean;
+  tags: string[];
+  setTags: Dispatch<SetStateAction<string[]>>;
+}) {
   const menu = useMainMenu();
   const catalog = useCatalog();
   const status = useApp((s) => s.status);
   const query = menu.queries.market.trim();
-  const [tags, setTags] = useState<string[]>([]);
   useEffect(() => {
     if (!active || !menu.open || status !== "online" || !catalog.owner) return;
     const timer = setTimeout(() => void searchMarket(query, 0, tags), 200);
@@ -242,7 +250,6 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }) 
             <span className={styles.kindBadge}>{kindLabel(detail.outputKind)}</span>
           </div>
           <p>作者: {detail.ownerName ?? "不明"}</p>
-          {(detail.tags ?? []).length > 0 && <WorkTags tags={detail.tags} />}
           {detail.project && (
             <p>
               プロジェクト:{" "}
