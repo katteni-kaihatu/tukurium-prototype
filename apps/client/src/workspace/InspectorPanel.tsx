@@ -30,12 +30,14 @@ function FloatMenu({
   anchor,
   align,
   onClose,
+  className,
   children,
 }: {
   anchor: HTMLElement;
   /** start は左端、end は右端をボタンに合わせる */
   align: "start" | "end";
   onClose: () => void;
+  className?: string;
   children: ReactNode;
 }) {
   const menuRef = useRef<HTMLUListElement>(null);
@@ -75,7 +77,7 @@ function FloatMenu({
   return createPortal(
     <ul
       ref={menuRef}
-      className={`${ui.menu} ${ui.menuPop}`}
+      className={`${ui.menu} ${ui.menuPop}${className ? ` ${className}` : ""}`}
       style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
     >
       {children}
@@ -520,6 +522,47 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+function ChildIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect
+        x="1.5"
+        y="1.5"
+        width="8"
+        height="8"
+        rx="1.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <rect
+        x="6.5"
+        y="6.5"
+        width="8"
+        height="8"
+        rx="1.2"
+        fill="var(--c-paper, #fff)"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
+
+function SystemsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M2.5 4h11M2.5 8h11M2.5 12h7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function CopyIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -550,27 +593,36 @@ function Properties() {
   const selection = useWorkspace((s) => s.selection);
   if (!selection) {
     return (
-      <div className={ui.section}>
-        <p className={ui.muted}>
-          Hierarchy
-          で選ぶと、ここに設定が出ます。空間ではクロスヘアを物に合わせてクリックしても選べます。KokoState・マテリアル・スクリプトは、Resources
-          で選ぶと詳細パネルに出ます。
-        </p>
+      <div className={styles.scrollPane}>
+        <div className={ui.section}>
+          <p className={ui.muted}>
+            Hierarchy
+            で選ぶと、ここに設定が出ます。空間ではクロスヘアを物に合わせてクリックしても選べます。KokoState・マテリアル・スクリプトは、Resources
+            で選ぶと詳細パネルに出ます。
+          </p>
+        </div>
       </div>
     );
   }
   if (selection.kind === "entity") return <EntityProperties id={selection.id} />;
-  return <DefinitionProperties selection={selection} />;
+  return (
+    <div className={styles.scrollPane}>
+      <DefinitionProperties selection={selection} />
+    </div>
+  );
 }
 
 function EntityProperties({ id }: { id: EntityId }) {
-  const { mode, runtime, stop, outputId } = useWorkspace();
+  const { mode, runtime, stop, outputId, select, openDetail } = useWorkspace();
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [error, setError] = useState<string | null>(null);
+  const [closedKoko, setClosedKoko] = useState<Record<string, boolean>>({});
+  const [dupAnchor, setDupAnchor] = useState<HTMLElement | null>(null);
+  const [systemAnchor, setSystemAnchor] = useState<HTMLElement | null>(null);
   const editing = canEdit;
   const registry = project.registry();
 
@@ -620,6 +672,9 @@ function EntityProperties({ id }: { id: EntityId }) {
     return q.with.length > 0 && q.with.every(has) && !q.without.some(has);
   });
   const projectEntity = mode === "edit" ? project.entity(id) : undefined;
+  const kids = project.entities(outputId).filter((e) => e.parent === id);
+  const kokoKey = (koko: string) => `${id}:${koko}`;
+  const allOpen = attached.length === 0 || attached.every((koko) => !closedKoko[kokoKey(koko)]);
   const marks = projectEntity
     ? entityChange(saved, projectEntity, {
         saved: savedKeep(saved, outputId),
@@ -627,21 +682,147 @@ function EntityProperties({ id }: { id: EntityId }) {
       })
     : null;
 
+  const duplicate = (withChildren: boolean) => {
+    setDupAnchor(null);
+    const root = project.entity(id);
+    if (!root) return;
+    const created = new Map<string, string>();
+    const copy = (srcId: string, parent: EntityId | null, rename: boolean) => {
+      const src = project.entity(srcId);
+      if (!src || created.has(srcId)) return;
+      created.set(
+        srcId,
+        project.addEntity({
+          output: src.output,
+          name: rename ? `${src.name} のコピー` : src.name,
+          parent,
+          states: src.states,
+        }),
+      );
+    };
+    copy(id, root.parent, true);
+    if (withChildren) {
+      const pending = [id];
+      const seen = new Set<string>(pending);
+      while (pending.length > 0) {
+        const cur = pending.shift();
+        if (!cur) break;
+        for (const kid of project.entities(root.output)) {
+          if (kid.parent !== cur || seen.has(kid.id)) continue;
+          seen.add(kid.id);
+          const parent = created.get(cur);
+          if (parent) copy(kid.id, parent, false);
+          pending.push(kid.id);
+        }
+      }
+    }
+    const made = created.get(id);
+    if (made) select({ kind: "entity", id: made });
+  };
+
+  const addChild = () => {
+    const made = project.addEntity({
+      output: outputId,
+      name: "空の Entity",
+      parent: id,
+      states: { [BUILTIN.Transform]: { position: [0, 1, 0] } },
+    });
+    select({ kind: "entity", id: made });
+  };
+
+  const askRemove = () => {
+    const nodes = project.entities(outputId).map((e) => ({ id: e.id, parent: e.parent }));
+    const nested = selfAndDescendants(nodes, id).length - 1;
+    const message =
+      nested > 0
+        ? `${entity.name} を削除しますか？中にある ${nested} 個も一緒に消えます。`
+        : `${entity.name} を削除しますか？`;
+    if (confirm(message)) {
+      project.removeEntity(id);
+      select(null);
+    }
+  };
+
+  const toggleKokos = () => {
+    setClosedKoko((cur) => {
+      const next = { ...cur };
+      for (const koko of attached) next[kokoKey(koko)] = allOpen;
+      return next;
+    });
+  };
+
   return (
-    <>
-      {mode !== "edit" && (
-        <div className={ui.section}>
-          <p className={ui.notice}>
-            Play mode 中は編集できません。Play mode 中の出来事はプロジェクトに残りません。
-          </p>
-          <div className={ui.toolbar}>
-            <button type="button" className={ui.btn} onClick={stop}>
-              Edit mode に戻る
-            </button>
-          </div>
+    <div className={styles.entityPane}>
+      <div className={styles.entityHead}>
+        <div className={styles.entityBar} role="toolbar" aria-label="Entity の操作">
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label={`${entity.name} を複製`}
+            aria-haspopup={kids.length > 0 ? "menu" : undefined}
+            aria-expanded={kids.length > 0 ? !!dupAnchor : undefined}
+            title="複製"
+            disabled={!editing}
+            onClick={(event) => {
+              const button = event.currentTarget;
+              setSystemAnchor(null);
+              if (!editing) return;
+              if (kids.length === 0) {
+                duplicate(false);
+                return;
+              }
+              setDupAnchor((cur) => (cur ? null : button));
+            }}
+          >
+            <CopyIcon />
+          </button>
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label={`${entity.name} を削除`}
+            title="削除"
+            disabled={!editing}
+            onClick={askRemove}
+          >
+            ✕
+          </button>
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label="子 Entity を作る"
+            title="子 Entity を作る"
+            disabled={!editing}
+            onClick={addChild}
+          >
+            <ChildIcon />
+          </button>
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label={allOpen ? "KokoState を閉じる" : "KokoState を開く"}
+            aria-pressed={allOpen}
+            title={allOpen ? "KokoState を閉じる" : "KokoState を開く"}
+            disabled={attached.length === 0}
+            onClick={toggleKokos}
+          >
+            <Chevron open={allOpen} />
+          </button>
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label="適用されている System"
+            aria-haspopup="menu"
+            aria-expanded={!!systemAnchor}
+            title="適用されている System"
+            onClick={(event) => {
+              const button = event.currentTarget;
+              setDupAnchor(null);
+              setSystemAnchor((cur) => (cur ? null : button));
+            }}
+          >
+            <SystemsIcon />
+          </button>
         </div>
-      )}
-      <div className={ui.section}>
         <MarkedLine kind={marks?.name ?? null} target={{ entry: `entity:${id}`, part: "name" }}>
           <div className={ui.row}>
             <label className={ui.label} htmlFor={`name-${id}`}>
@@ -660,133 +841,191 @@ function EntityProperties({ id }: { id: EntityId }) {
             />
           </div>
         </MarkedLine>
-        {editing && (
-          <MarkedLine
-            kind={marks?.parent ?? null}
-            target={{ entry: `entity:${id}`, part: "place" }}
-          >
-            <div className={ui.row}>
-              <label className={ui.label} htmlFor={`parent-${id}`}>
-                親
-              </label>
-              <select
-                id={`parent-${id}`}
-                className={ui.select}
-                value={entity.parent ?? ""}
-                onChange={(e) => safely(() => project.setParent(id, e.target.value || null))}
-              >
-                <option value="">（なし）</option>
-                {choices.entities
-                  .filter((e) => e.id !== id)
-                  .map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </MarkedLine>
-        )}
         {error && <p className={ui.error}>{error}</p>}
       </div>
+      <div className={styles.entityBody}>
+        {mode !== "edit" && (
+          <div className={ui.section}>
+            <p className={ui.notice}>
+              Play mode 中は編集できません。Play mode 中の出来事はプロジェクトに残りません。
+            </p>
+            <div className={ui.toolbar}>
+              <button type="button" className={ui.btn} onClick={stop}>
+                Edit mode に戻る
+              </button>
+            </div>
+          </div>
+        )}
+        {editing && (
+          <div className={ui.section}>
+            <MarkedLine
+              kind={marks?.parent ?? null}
+              target={{ entry: `entity:${id}`, part: "place" }}
+            >
+              <div className={ui.row}>
+                <label className={ui.label} htmlFor={`parent-${id}`}>
+                  親
+                </label>
+                <select
+                  id={`parent-${id}`}
+                  className={ui.select}
+                  value={entity.parent ?? ""}
+                  onChange={(e) => safely(() => project.setParent(id, e.target.value || null))}
+                >
+                  <option value="">（なし）</option>
+                  {choices.entities
+                    .filter((e) => e.id !== id)
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </MarkedLine>
+          </div>
+        )}
 
-      {attached.map((koko) => {
-        const def = registry.get(koko);
-        if (!def) return null;
-        const values = entity.states[koko] ?? {};
-        return (
-          <section key={koko} className={ui.section} aria-label={def.name}>
-            <div className={ui.sectionHead}>
-              <ChangeMark
-                kind={marks?.states[koko]?.kind ?? null}
-                target={{ entry: `entity:${id}`, part: `state:${koko}` }}
-              />
-              <h4 className={ui.kokoTitle}>{def.name}</h4>
-              {def.builtin ? (
-                <span className={ui.badge}>Built-in</span>
-              ) : packageAliasOf(project, koko) ? (
-                <span className={ui.badgeBrand} title="依存のライブラリの KokoState">
-                  @{packageAliasOf(project, koko)}
-                </span>
-              ) : (
-                <span className={ui.badgeBrand}>KokoState</span>
-              )}
-              {editing && (
+        {attached.map((koko) => {
+          const def = registry.get(koko);
+          if (!def) return null;
+          const values = entity.states[koko] ?? {};
+          const closed = !!closedKoko[kokoKey(koko)];
+          return (
+            <section key={koko} className={ui.section} aria-label={def.name}>
+              <div className={ui.sectionHead}>
                 <button
                   type="button"
-                  className={ui.iconBtn}
-                  aria-label={`${def.name} を外す`}
-                  title="外す"
-                  onClick={() => {
-                    if (window.confirm(`${def.name} を外しますか？`)) project.removeState(id, koko);
-                  }}
+                  className={styles.fold}
+                  aria-expanded={!closed}
+                  aria-label={closed ? `${def.name} を開く` : `${def.name} を閉じる`}
+                  onClick={() => setClosedKoko((cur) => ({ ...cur, [kokoKey(koko)]: !closed }))}
                 >
-                  ✕
+                  <Chevron open={!closed} />
                 </button>
-              )}
-            </div>
-            {def.fields.length === 0 && (
-              <p className={ui.muted}>フィールドなし（タグとして使う KokoState）</p>
-            )}
-            {def.fields.map((f) => (
-              <div key={f.id} className={styles.fieldRow}>
                 <ChangeMark
-                  kind={marks?.states[koko]?.fields[f.id] ?? null}
-                  target={{ entry: `entity:${id}`, part: `field:${koko}:${f.id}` }}
+                  kind={marks?.states[koko]?.kind ?? null}
+                  target={{ entry: `entity:${id}`, part: `state:${koko}` }}
                 />
-                <FieldInput
-                  koko={koko}
-                  field={f}
-                  value={(values[f.id] ?? f.default) as FieldValue}
-                  choices={choices}
-                  disabled={!editing}
-                  onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
-                />
-                {mode === "edit" && (
-                  <KeepToggle
-                    entity={id}
-                    koko={koko}
-                    field={f.id}
-                    label={`${def.name}.${f.name}`}
-                    disabled={!editing}
-                  />
+                <h4 className={ui.kokoTitle}>{def.name}</h4>
+                {def.builtin ? (
+                  <span className={ui.badge}>Built-in</span>
+                ) : packageAliasOf(project, koko) ? (
+                  <span className={ui.badgeBrand} title="依存のライブラリの KokoState">
+                    @{packageAliasOf(project, koko)}
+                  </span>
+                ) : (
+                  <span className={ui.badgeBrand}>KokoState</span>
+                )}
+                {editing && (
+                  <button
+                    type="button"
+                    className={ui.iconBtn}
+                    aria-label={`${def.name} を外す`}
+                    title="外す"
+                    onClick={() => {
+                      if (window.confirm(`${def.name} を外しますか？`))
+                        project.removeState(id, koko);
+                    }}
+                  >
+                    ✕
+                  </button>
                 )}
               </div>
-            ))}
-          </section>
-        );
-      })}
+              {closed ? null : (
+                <>
+                  {def.fields.length === 0 && (
+                    <p className={ui.muted}>フィールドなし（タグとして使う KokoState）</p>
+                  )}
+                  {def.fields.map((f) => (
+                    <div key={f.id} className={styles.fieldRow}>
+                      <ChangeMark
+                        kind={marks?.states[koko]?.fields[f.id] ?? null}
+                        target={{ entry: `entity:${id}`, part: `field:${koko}:${f.id}` }}
+                      />
+                      <FieldInput
+                        koko={koko}
+                        field={f}
+                        value={(values[f.id] ?? f.default) as FieldValue}
+                        choices={choices}
+                        disabled={!editing}
+                        onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
+                      />
+                      {mode === "edit" && (
+                        <KeepToggle
+                          entity={id}
+                          koko={koko}
+                          field={f.id}
+                          label={`${def.name}.${f.name}`}
+                          disabled={!editing}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+            </section>
+          );
+        })}
 
-      {editing && (
-        <div className={ui.section}>
-          <button
-            type="button"
-            className={ui.btn}
-            onClick={() => useWorkspace.setState({ kokoPickerOpen: true })}
-          >
-            ＋ Add KokoState
-          </button>
-        </div>
-      )}
-
-      <div className={ui.section}>
-        <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>Systems</h3>
-          <span className={ui.muted}>この Entity をクエリで処理している</span>
-        </div>
-        {matchedSystems.length === 0 ? (
-          <p className={ui.muted}>マッチする System はありません</p>
-        ) : (
-          <ul className={ui.list}>
-            {matchedSystems.map((s) => (
-              <li key={s.id} className={ui.item}>
-                <span className={ui.itemName}>{s.name}</span>
-              </li>
-            ))}
-          </ul>
+        {editing && (
+          <div className={ui.section}>
+            <button
+              type="button"
+              className={ui.btn}
+              onClick={() => useWorkspace.setState({ kokoPickerOpen: true })}
+            >
+              KokoState を追加
+            </button>
+          </div>
         )}
       </div>
-    </>
+      {dupAnchor && (
+        <FloatMenu anchor={dupAnchor} align="start" onClose={() => setDupAnchor(null)}>
+          <li>
+            <button type="button" className={ui.menuItem} onClick={() => duplicate(false)}>
+              これだけ複製
+            </button>
+          </li>
+          <li>
+            <button type="button" className={ui.menuItem} onClick={() => duplicate(true)}>
+              中も含めて複製
+            </button>
+          </li>
+        </FloatMenu>
+      )}
+      {systemAnchor && (
+        <FloatMenu
+          anchor={systemAnchor}
+          align="start"
+          className={styles.menuScroll}
+          onClose={() => setSystemAnchor(null)}
+        >
+          {matchedSystems.length === 0 ? (
+            <li>
+              <button type="button" className={ui.menuItem} disabled>
+                マッチする System はありません
+              </button>
+            </li>
+          ) : (
+            matchedSystems.map((system) => (
+              <li key={system.id}>
+                <button
+                  type="button"
+                  className={ui.menuItem}
+                  onClick={() => {
+                    setSystemAnchor(null);
+                    openDetail({ kind: "system", id: system.id });
+                  }}
+                >
+                  {system.name}
+                </button>
+              </li>
+            ))
+          )}
+        </FloatMenu>
+      )}
+    </div>
   );
 }
 

@@ -535,7 +535,7 @@ function KokoDefProperties({ id }: { id: string }) {
         <h3 className={ui.sectionTitle}>持っている Entity</h3>
         {holders.length === 0 ? (
           <p className={ui.muted}>
-            まだありません。Entity の Inspector の Add KokoState から付けられます。
+            まだありません。Entity の Inspector の「KokoState を追加」から付けられます。
           </p>
         ) : (
           <ul className={ui.list}>

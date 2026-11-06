@@ -47,8 +47,9 @@ const MAIN: PanelSpec = {
 const INSPECTOR: PanelSpec = {
   id: "ws-inspector",
   title: "Inspector",
-  // 高さはここで固定する。選んだ Entity の項目の数では変えない（中でスクロールする）
-  initial: { x: 16, y: 470, width: 600, height: 400 },
+  // 高さはここで固定する。選んだ Entity の項目の数では変えない（中でスクロールする）。
+  // 上端はワークスペースの下。画面が足りないときは、下端が収まるよう縮む（ADR 0048）
+  initial: { x: 16, y: 470, width: 600, height: 800 },
   render: () => <InspectorPanel />,
 };
 
@@ -144,11 +145,11 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
     if (inspectorOpen) {
       panels.push({
         ...INSPECTOR,
-        // KokoState を付けるのは、Inspector にくっついた付属パネル（ADR 0044）
+        // KokoState を追加するのは、Inspector にくっついた付属パネル（ADR 0044・0048）
         drawer:
           canEdit && editMode
             ? {
-                title: "KokoState を付ける",
+                title: "KokoState を追加",
                 width: 520,
                 open: kokoPickerOpen,
                 onToggle: (open) => useWorkspace.setState({ kokoPickerOpen: open }),
