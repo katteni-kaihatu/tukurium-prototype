@@ -76,7 +76,10 @@ export function SavePanel() {
               <ChangeList
                 entries={entries}
                 selected={pickedEntry?.id ?? null}
-                onSelect={setPicked}
+                onSelect={(id) => {
+                  setRevertError(null);
+                  setPicked(id);
+                }}
                 revertable={(entry) => canRevert(entry.id)}
                 onRevert={(entry) => setRevertError(revert(entry.id))}
               />
