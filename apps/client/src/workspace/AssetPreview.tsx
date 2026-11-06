@@ -2,13 +2,59 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../net/api";
 import styles from "./AssetPreview.module.css";
 
-/** テクスチャの見た目。 */
-export function ImagePreview({ id, name }: { id: string; name: string }) {
-  return <img src={assetUrl(id)} alt={name} className={styles.image} />;
+/** 画像の解像度（読み込めたら） */
+export interface ImageInfo {
+  width: number;
+  height: number;
 }
 
-/** モデルの見た目。開いているあいだだけ描く。 */
-export function ModelPreview({ id }: { id: string }) {
+/** モデルの中身の数と大きさ（読み込めたら） */
+export interface ModelInfo {
+  meshes: number;
+  triangles: number;
+  vertices: number;
+  materials: number;
+  textures: number;
+  animations: number;
+  /** 包む箱の大きさ（幅・高さ・奥行き。モデルの単位のまま） */
+  size: [number, number, number];
+}
+
+/** テクスチャの見た目。onInfo には、読み込めたときの解像度を渡す */
+export function ImagePreview({
+  id,
+  name,
+  onInfo,
+}: {
+  id: string;
+  name: string;
+  /** 読めなかったときは null */
+  onInfo?: (info: ImageInfo | null) => void;
+}) {
+  return (
+    <img
+      src={assetUrl(id)}
+      alt={name}
+      className={styles.image}
+      onLoad={(e) =>
+        onInfo?.({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })
+      }
+      onError={() => onInfo?.(null)}
+    />
+  );
+}
+
+/** モデルの見た目。開いているあいだだけ描く。onInfo には、読み込めたときの中身の数を渡す */
+export function ModelPreview({
+  id,
+  onInfo,
+}: {
+  id: string;
+  /** 読めなかったときは null */
+  onInfo?: (info: ModelInfo | null) => void;
+}) {
+  const report = useRef(onInfo);
+  report.current = onInfo;
   const canvas = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -66,6 +112,7 @@ export function ModelPreview({ id }: { id: string }) {
           model = gltf.scene;
           const box = new THREE.Box3().setFromObject(model);
           const size = box.getSize(new THREE.Vector3());
+          report.current?.(modelInfo(THREE, model, gltf.animations.length, size));
           const center = box.getCenter(new THREE.Vector3());
           model.position.sub(center);
           scene.add(model);
@@ -74,7 +121,10 @@ export function ModelPreview({ id }: { id: string }) {
           camera.lookAt(0, 0, 0);
           tick();
         } catch {
-          if (!stop) setFailed(true);
+          if (!stop) {
+            setFailed(true);
+            report.current?.(null);
+          }
           dispose();
         }
       })
@@ -194,4 +244,75 @@ function sizeOf(el: HTMLCanvasElement): { width: number; height: number } {
     width: el.clientWidth || 360,
     height: el.clientHeight || 180,
   };
+}
+
+/** モデルの中を数える。三角形は index があればその数、なければ頂点の数から */
+function modelInfo(
+  THREE: typeof import("three"),
+  root: import("three").Object3D,
+  animations: number,
+  size: import("three").Vector3,
+): ModelInfo {
+  let meshes = 0;
+  let triangles = 0;
+  let vertices = 0;
+  const materials = new Set<string>();
+  const textures = new Set<string>();
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    meshes++;
+    const geometry = obj.geometry as import("three").BufferGeometry;
+    const position = geometry.getAttribute("position");
+    const count = position?.count ?? 0;
+    vertices += count;
+    triangles += Math.floor((geometry.index?.count ?? count) / 3);
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      materials.add(mat.uuid);
+      for (const value of Object.values(mat)) {
+        if (value instanceof THREE.Texture) textures.add(value.uuid);
+      }
+    }
+  });
+  return {
+    meshes,
+    triangles,
+    vertices,
+    materials: materials.size,
+    textures: textures.size,
+    animations,
+    size: [size.x, size.y, size.z],
+  };
+}
+
+/** 素材のファイルの大きさと形式。サーバーから一度だけ読む。読んでいる間は null、読めなければ "failed" */
+export function useAssetFile(id: string): { bytes: number; type: string } | "failed" | null {
+  const [file, setFile] = useState<
+    { id: string; bytes: number; type: string } | { id: string; failed: true } | null
+  >(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(assetUrl(id))
+      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
+      .then(
+        (blob) => {
+          if (alive) setFile({ id, bytes: blob.size, type: blob.type });
+        },
+        () => {
+          if (alive) setFile({ id, failed: true });
+        },
+      );
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  if (!file || file.id !== id) return null;
+  return "failed" in file ? "failed" : { bytes: file.bytes, type: file.type };
+}
+
+/** バイト数を、KB・MB で読める形にする */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }

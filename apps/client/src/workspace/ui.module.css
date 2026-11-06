@@ -502,3 +502,27 @@ div.problem:hover {
   font-weight: 400;
   opacity: 0.75;
 }
+
+/* 読むだけの情報（ラベルと値）の一覧 */
+.infoList {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.infoList div {
+  display: grid;
+  grid-template-columns: minmax(96px, 40%) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.infoList dt {
+  color: var(--c-ink-3);
+}
+
+.infoList dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}

@@ -138,14 +138,16 @@ export function ResourcesPanel() {
   };
 
   /** ここで選んだものは、Resources にくっついた「リソースの詳細」に出す（ADR 0044） */
-  const showDetail = (kind: "koko" | "system" | "material" | "asset", id: string) =>
+  const showDetail = (kind: "koko" | "system" | "material" | "asset" | "folder", id: string) =>
     useWorkspace.setState({ resourceDetail: { kind, id }, resourceDetailOpen: true });
   const pick = (it: ResItem) => {
     setSel(it.id);
     if (it.kind === "koko" || it.kind === "builtin") showDetail("koko", it.id);
     else if (it.kind === "system") showDetail("system", it.id);
     else if (it.kind === "material") showDetail("material", it.id);
-    else if (it.kind === "image" || it.kind === "model") showDetail("asset", it.id);
+    else if (it.kind === "image" || it.kind === "model" || it.kind === "audio")
+      showDetail("asset", it.id);
+    else if (it.kind === "folder" && it.id !== BUILTIN_FOLDER) showDetail("folder", it.id);
   };
   /** このパネルが 3D ならコードも 3D、2D なら 2D で開く */
   const openCode = (id: string) => {

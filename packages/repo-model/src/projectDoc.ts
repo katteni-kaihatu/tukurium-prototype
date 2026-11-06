@@ -266,6 +266,14 @@ export class ProjectDoc {
   addAsset(a: AssetDef): void {
     this.assetMap.set(a.id, clone(a));
   }
+  /** 素材の名前を変える（同じ場所に同じ名前があれば拒む） */
+  renameAsset(id: string, name: string): void {
+    const a = this.assetMap.get(id);
+    const next = name.trim();
+    if (!a || !next || a.name === next) return;
+    this.assertSiblingName(next, id);
+    this.assetMap.set(id, { ...a, name: next });
+  }
   removeAsset(id: string): void {
     this.transact(() => {
       this.assetMap.delete(id);
