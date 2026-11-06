@@ -111,10 +111,17 @@ interface WorkspaceState {
   /** 自分のバッグのパネル（ADR 0018） */
   bagOpen: boolean;
   historyOpen: boolean;
+  /** 保存・履歴の付属パネル「差分の中身」を開いているか（ADR 0044） */
+  saveSideOpen: boolean;
+  historySideOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
-  /** KokoState を付けるウィンドウ（付け先の Entity。seq は開くたびに増え、前に出す合図） */
-  kokoPicker: { entityId: string; seq: number } | null;
+  /** Inspector の付属パネル「KokoState を付ける」を開いているか（たたんでいれば false。ADR 0044） */
+  kokoPickerOpen: boolean;
+  /** Resources の付属パネル「リソースの詳細」に出すもの（Resources で選んだもの。ADR 0044） */
+  resourceDetail: DetailTarget | null;
+  /** 「リソースの詳細」を開いているか（たたんでいれば false） */
+  resourceDetailOpen: boolean;
   /** Inspector を開いているか。ワークスペースを開いたときは開いている */
   inspectorOpen: boolean;
   /** Resources を開いているか。ワークスペースを開いたときは開いている */
@@ -238,8 +245,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     belongingsOpen: false,
     bagOpen: false,
     historyOpen: false,
+    saveSideOpen: false,
+    historySideOpen: false,
     sessionOpen: false,
-    kokoPicker: null,
+    kokoPickerOpen: false,
+    resourceDetail: null,
+    resourceDetailOpen: false,
     inspectorOpen: true,
     resourcesOpen: true,
     problemsOpen: false,
@@ -339,7 +350,9 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         editorPlace: null,
         detailPlace: null,
         sessionOpen: false,
-        kokoPicker: null,
+        kokoPickerOpen: false,
+        resourceDetail: null,
+        resourceDetailOpen: false,
         inspectorOpen: true,
         resourcesOpen: true,
         problemsOpen: false,

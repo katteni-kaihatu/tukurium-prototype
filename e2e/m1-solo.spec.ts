@@ -36,7 +36,8 @@ async function newKokoState(page: Page, name: string, field: string, def: string
   const res = panel(page, "Resources");
   await res.getByRole("button", { name: "New", exact: true }).click();
   await res.getByRole("menuitem", { name: /^KokoState/ }).click();
-  const detail = panel(page, "詳細");
+  // Resources で作ったものは、Resources にくっついた「リソースの詳細」に出る
+  const detail = panel(page, "リソースの詳細");
   await commitInput(detail.getByLabel("Name"), name);
   await detail.getByRole("button", { name: "＋ Add field" }).click();
   await commitInput(detail.getByLabel("フィールド名"), field);
@@ -60,7 +61,8 @@ async function addKoko(page: Page, name: string) {
   const picker = panel(page, "KokoState を付ける");
   await picker.getByLabel("KokoState を検索").fill(name);
   await picker.getByRole("button", { name, exact: true }).click();
-  await expect(picker).toHaveCount(0);
+  // 付属パネルは付けたあとも開いたまま。付けたものは Inspector に出る
+  await expect(insp.locator(`section[aria-label="${name}"]`)).toBeVisible();
 }
 
 test("空のプロジェクトから銃と的を作り、Play で撃って当てる", async ({ page }) => {
@@ -72,8 +74,10 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   await newKokoState(page, "Gun", "ammo", "5");
   await newKokoState(page, "Target", "hp", "2");
 
-  // 的：詳細の編集を終え、Inspector を使う。
-  await panel(page, "詳細").getByRole("button", { name: "詳細 を閉じる", exact: true }).click();
+  // 的：リソースの詳細をたたみ、Inspector を使う。
+  await panel(page, "リソースの詳細")
+    .getByRole("button", { name: "リソースの詳細 をたたむ", exact: true })
+    .click();
   const insp = panel(page, "Inspector");
   await insp.getByRole("heading", { name: "Inspector", exact: true }).click();
   await insp.getByRole("button", { name: "Entity を追加" }).click();

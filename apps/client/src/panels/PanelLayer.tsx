@@ -44,6 +44,20 @@ export interface PanelSpec {
   containKeys?: boolean;
   hidden?: boolean;
   onActivate?: () => void;
+  /** 付属パネル。本体の右にくっつき、本体と一緒に動く（2D でも 3D でも）。閉じずに折りたたむ */
+  drawer?: PanelDrawerSpec;
+}
+
+/**
+ * 付属パネル（ADR 0044）。本体のパネルの入れ物の中に描くので、位置も大きさの基準も本体に従う。
+ * ピンも × もなく、開く・折りたたむだけ。折りたたむと、本体の横に縦長のつまみが残る。
+ */
+export interface PanelDrawerSpec {
+  title: string;
+  width: number;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  render: () => ReactNode;
 }
 
 interface PanelState {
@@ -332,20 +346,23 @@ export function PanelLayer({
       {panels.map((p) => {
         const st = stateOf(p);
         return createPortal(
-          <PanelWindow
-            title={p.title}
-            containKeys={p.containKeys}
-            pinned={!engine || st.pinned}
-            fixedHeight={st.height != null}
-            maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
-            actions={p.actions}
-            onClose={p.onClose}
-            onTogglePin={engine ? () => togglePin(p) : undefined}
-            onDrag={(dx, dy) => moveBy(p, dx, dy)}
-            onResize={(width, height) => resizeTo(p, width, height)}
-          >
-            {p.render()}
-          </PanelWindow>,
+          <>
+            <PanelWindow
+              title={p.title}
+              containKeys={p.containKeys}
+              pinned={!engine || st.pinned}
+              fixedHeight={st.height != null}
+              maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
+              actions={p.actions}
+              onClose={p.onClose}
+              onTogglePin={engine ? () => togglePin(p) : undefined}
+              onDrag={(dx, dy) => moveBy(p, dx, dy)}
+              onResize={(width, height) => resizeTo(p, width, height)}
+            >
+              {p.render()}
+            </PanelWindow>
+            {p.drawer && <PanelDrawer drawer={p.drawer} />}
+          </>,
           elementFor(p.id),
           p.id,
         );
@@ -409,6 +426,50 @@ function placeInFront(
   const t = depth / Math.max(ray.ray.direction.dot(forward), 0.2);
   const p = ray.ray.at(t, new THREE.Vector3());
   return { position: [p.x, p.y, p.z], yaw: engine.pose().yaw };
+}
+
+/** 付属パネル：開いていれば中身、たたんでいれば縦長のつまみ。本体の右にくっつける（画面からはみ出してもよい） */
+function PanelDrawer({ drawer }: { drawer: PanelDrawerSpec }) {
+  if (!drawer.open) {
+    return (
+      <button
+        type="button"
+        className={`glass ${styles.drawerTab}`}
+        data-panel-drawer=""
+        aria-expanded={false}
+        aria-label={`${drawer.title} を開く`}
+        title={`${drawer.title} を開く`}
+        onClick={() => drawer.onToggle(true)}
+      >
+        <span className={styles.drawerTabText}>{drawer.title}</span>
+      </button>
+    );
+  }
+  return (
+    <section
+      className={`glass ${styles.drawer}`}
+      data-panel-drawer=""
+      aria-label={drawer.title}
+      style={{ width: drawer.width }}
+    >
+      <header className={styles.drawerHead}>
+        <h2 className={styles.title}>{drawer.title}</h2>
+        <button
+          type="button"
+          className={styles.pin}
+          aria-expanded={true}
+          aria-label={`${drawer.title} をたたむ`}
+          title="たたむ"
+          onClick={() => drawer.onToggle(false)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </button>
+      </header>
+      <div className={styles.body}>{drawer.render()}</div>
+    </section>
+  );
 }
 
 function PanelWindow(props: {
