@@ -138,7 +138,8 @@ function outputRevert(
   const saved = head.outputs.find((o) => o.id === id);
   const cur = project.output(id);
   if (!part) {
-    if (!saved) return cur ? () => project.removeOutput(id) : null;
+    // アウトプットがなくなると編集する先がないので、最後の一つは消さない
+    if (!saved) return cur && project.outputs().length > 1 ? () => project.removeOutput(id) : null;
     return () => {
       const alive = new Set(project.entities(id).map((e) => e.id));
       project.updateOutput({ ...saved, keep: saved.keep.filter((k) => alive.has(k.entity)) });

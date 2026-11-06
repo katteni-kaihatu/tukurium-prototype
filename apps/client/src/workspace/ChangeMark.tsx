@@ -61,6 +61,11 @@ export function ChangeMark({
     },
     [],
   );
+  // 丸が消えたら（戻した・ほかの人が直した）閉じる。開いたままだと、次に変わったときに勝手に出る
+  const live = kind !== null && !nested && target !== undefined && edit;
+  useEffect(() => {
+    if (!live) setOpen(false);
+  }, [live]);
   const label =
     kind === null
       ? null
