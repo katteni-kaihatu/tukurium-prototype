@@ -157,10 +157,10 @@ function Hierarchy() {
 
   const add = (spec: (typeof NEW_ENTITIES)[number]) => {
     setMenu(false);
-    const states: Record<string, KokoStateValues> = {
-      [BUILTIN.Transform]: { position: viewPoint?.() ?? [0, 1, 0] },
-    };
+    // 空の Entity には KokoState を付けない。形があるものだけ Transform と Mesh を付ける（ADR 0049）
+    const states: Record<string, KokoStateValues> = {};
     if (spec.shape) {
+      states[BUILTIN.Transform] = { position: viewPoint?.() ?? [0, 1, 0] };
       states[BUILTIN.Mesh] = { shape: spec.shape, size: spec.size };
     }
     const id = project.addEntity({ output: outputId, name: spec.label, states });
@@ -725,7 +725,6 @@ function EntityProperties({ id }: { id: EntityId }) {
       output: outputId,
       name: "空の Entity",
       parent: id,
-      states: { [BUILTIN.Transform]: { position: [0, 1, 0] } },
     });
     select({ kind: "entity", id: made });
   };
@@ -967,18 +966,6 @@ function EntityProperties({ id }: { id: EntityId }) {
             </section>
           );
         })}
-
-        {editing && (
-          <div className={ui.section}>
-            <button
-              type="button"
-              className={ui.btn}
-              onClick={() => useWorkspace.setState({ kokoPickerOpen: true })}
-            >
-              KokoState を追加
-            </button>
-          </div>
-        )}
       </div>
       {dupAnchor && (
         <FloatMenu anchor={dupAnchor} align="start" onClose={() => setDupAnchor(null)}>
