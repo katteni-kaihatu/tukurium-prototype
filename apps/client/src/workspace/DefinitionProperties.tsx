@@ -430,14 +430,16 @@ function KokoDefProperties({ id }: { id: string }) {
                 ✕
               </button>
             </div>
-            <FieldInput
-              koko={id}
-              field={{ ...f, name: "初期値" }}
-              value={f.default}
-              choices={{ materials: project.materials(), entities: [] }}
-              disabled={!editing}
-              onChange={(v) => setField(f.id, { default: v })}
-            />
+            <MarkedLine kind={changed.fields[f.id] ?? null}>
+              <FieldInput
+                koko={id}
+                field={{ ...f, name: "初期値" }}
+                value={f.default}
+                choices={{ materials: project.materials(), entities: [] }}
+                disabled={!editing}
+                onChange={(v) => setField(f.id, { default: v })}
+              />
+            </MarkedLine>
           </div>
         ))}
         {editing && (
