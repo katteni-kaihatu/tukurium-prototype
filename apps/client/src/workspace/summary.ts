@@ -81,7 +81,9 @@ export function summarize(panelId: string): string[] {
             ? project.material(d.id)?.name
             : d.kind === "asset"
               ? project.asset(d.id)?.name
-              : project.registry().get(d.id)?.name;
+              : d.kind === "folder"
+                ? project.folders().find((f) => f.id === d.id)?.name
+                : project.registry().get(d.id)?.name;
       const label =
         d.kind === "system"
           ? "Script"
@@ -91,7 +93,9 @@ export function summarize(panelId: string): string[] {
               ? project.asset(d.id)?.kind === "model"
                 ? "Model"
                 : "Texture"
-              : "KokoState";
+              : d.kind === "folder"
+                ? "Folder"
+                : "KokoState";
       return [`${label}: ${name ?? d.id}`];
     }
     case "ws-resources":

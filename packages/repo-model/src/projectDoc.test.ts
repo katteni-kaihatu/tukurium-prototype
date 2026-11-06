@@ -419,4 +419,15 @@ describe("ProjectDoc", () => {
     // いちばん上で Gun と同じ場所にある Target を Gun にはできない
     expect(() => p.updateKokoState({ ...target, name: "Gun" })).toThrow("同じ場所");
   });
+
+  it("素材の名前を変える（同じ場所に同じ名前があれば拒む）", () => {
+    const doc = new ProjectDoc();
+    doc.load(emptyProject("素材"));
+    doc.addAsset({ id: "a1", name: "木", kind: "image", contentType: "image/png" });
+    doc.addAsset({ id: "a2", name: "石", kind: "image", contentType: "image/png" });
+    doc.renameAsset("a1", "  板  ");
+    expect(doc.asset("a1")?.name).toBe("板");
+    expect(() => doc.renameAsset("a1", "石")).toThrow();
+    expect(doc.asset("a1")?.name).toBe("板");
+  });
 });

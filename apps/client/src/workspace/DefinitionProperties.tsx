@@ -7,9 +7,18 @@ import {
   type OutputDef,
   type OutputExposure,
   packageSystems,
+  ResourcePathIndex,
 } from "@tukurium/repo-model";
 import { createContext, useContext, useState } from "react";
-import { ImagePreview, MaterialPreview, ModelPreview } from "./AssetPreview";
+import {
+  formatBytes,
+  type ImageInfo,
+  ImagePreview,
+  MaterialPreview,
+  type ModelInfo,
+  ModelPreview,
+  useAssetFile,
+} from "./AssetPreview";
 import { ChangeMark, type ChangeTarget, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
 import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
@@ -31,7 +40,7 @@ const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"
   { type: "resource", label: "Resource", default: null },
 ];
 
-/** 開いている KokoState・マテリアル・スクリプト・素材の詳細 */
+/** 開いている KokoState・マテリアル・スクリプト・素材・フォルダの詳細 */
 export function DetailPanel() {
   const detail = useWorkspace((s) => s.detail);
   if (!detail) return null;
@@ -73,7 +82,9 @@ export function DefinitionProperties({
     case "material":
       return <MaterialProperties id={selection.id} />;
     case "asset":
-      return <AssetProperties id={selection.id} />;
+      return <AssetProperties key={selection.id} id={selection.id} />;
+    case "folder":
+      return <FolderProperties id={selection.id} />;
   }
 }
 
@@ -875,19 +886,149 @@ function MaterialProperties({ id }: { id: string }) {
 
 function AssetProperties({ id }: { id: string }) {
   const project = useProject();
+  const canEdit = useCanEdit();
+  const { error, safely } = useSafe();
+  const file = useAssetFile(id);
+  const [image, setImage] = useState<ImageInfo | null>(null);
+  const [model, setModel] = useState<ModelInfo | null>(null);
   const asset = project.asset(id);
   if (!asset) return <p className={ui.empty}>素材が見つかりません</p>;
   const title = asset.kind === "model" ? "モデル" : asset.kind === "image" ? "テクスチャ" : "音声";
+  const num = (n: number) => n.toLocaleString("ja-JP");
+  const len = (n: number) => (Math.round(n * 100) / 100).toString();
+  const rows: [string, string][] = [
+    ["形式", file?.type || asset.contentType],
+    ["大きさ", file ? formatBytes(file.bytes) : "読み込んでいます…"],
+  ];
+  if (asset.kind === "image") {
+    rows.push([
+      "解像度",
+      image ? `${num(image.width)} × ${num(image.height)} px` : "読み込んでいます…",
+    ]);
+  }
+  if (asset.kind === "model") {
+    if (model) {
+      rows.push(
+        ["ポリゴン（三角形）", num(model.triangles)],
+        ["頂点", num(model.vertices)],
+        ["メッシュ", num(model.meshes)],
+        ["マテリアル", num(model.materials)],
+        ["テクスチャ", num(model.textures)],
+        ["アニメーション", num(model.animations)],
+        ["寸法（幅 × 高さ × 奥行き）", model.size.map(len).join(" × ")],
+      );
+    } else {
+      rows.push(["中身", "読み込んでいます…"]);
+    }
+  }
   return (
     <div className={ui.section}>
       <div className={ui.sectionHead}>
         <h3 className={ui.sectionTitle}>{title}</h3>
       </div>
-      <p className={ui.itemName}>{asset.name}</p>
-      {asset.kind === "image" && <ImagePreview id={asset.id} name={asset.name} />}
-      {asset.kind === "model" && <ModelPreview id={asset.id} />}
+      <NameRow
+        id={id}
+        value={asset.name}
+        disabled={!canEdit}
+        onCommit={(name) => safely(() => project.renameAsset(id, name))}
+      />
+      {error && <p className={ui.error}>{error}</p>}
+      {asset.kind === "image" && <ImagePreview id={asset.id} name={asset.name} onInfo={setImage} />}
+      {asset.kind === "model" && <ModelPreview id={asset.id} onInfo={setModel} />}
       {asset.kind === "audio" && (
         <p className={ui.muted}>音声は、Resources の下の「試聴」で聞けます。</p>
+      )}
+      <InfoList label={`${title}の情報`} rows={rows} />
+    </div>
+  );
+}
+
+/** ラベルと値を並べた、読むだけの一覧 */
+function InfoList({ label, rows }: { label: string; rows: [string, string][] }) {
+  return (
+    <dl className={ui.infoList} aria-label={label}>
+      {rows.map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const RESOURCE_KIND_LABEL = {
+  kokostate: "KokoState",
+  system: "Script",
+  material: "Material",
+  model: "Model",
+  image: "Texture",
+  audio: "Audio",
+} as const;
+
+/** フォルダの詳細：名前（変えられる）・場所・直下の中身 */
+function FolderProperties({ id }: { id: string }) {
+  const project = useProject();
+  const canEdit = useCanEdit();
+  const { error, safely } = useSafe();
+  const folder = project.folders().find((f) => f.id === id);
+  if (!folder) return <p className={ui.empty}>フォルダが見つかりません</p>;
+  const index = ResourcePathIndex.fromSnapshot(project.snapshot());
+  const inside = (resource: string) => project.folderOf(resource) === id;
+  const children: { id: string; name: string; kind: string }[] = [
+    ...project
+      .folders()
+      .filter((f) => f.parent === id)
+      .map((f) => ({ id: f.id, name: f.name, kind: "フォルダ" })),
+    ...project
+      .kokostates()
+      .filter((k) => !k.builtin && inside(k.id))
+      .map((k) => ({ id: k.id, name: k.name, kind: RESOURCE_KIND_LABEL.kokostate })),
+    ...project
+      .systems()
+      .filter((x) => inside(x.id))
+      .map((x) => ({ id: x.id, name: x.name, kind: RESOURCE_KIND_LABEL.system })),
+    ...project
+      .materials()
+      .filter((m) => inside(m.id))
+      .map((m) => ({ id: m.id, name: m.name, kind: RESOURCE_KIND_LABEL.material })),
+    ...project
+      .assets()
+      .filter((x) => inside(x.id))
+      .map((x) => ({ id: x.id, name: x.name, kind: RESOURCE_KIND_LABEL[x.kind] })),
+  ];
+  return (
+    <div className={ui.section}>
+      <div className={ui.sectionHead}>
+        <h3 className={ui.sectionTitle}>フォルダ</h3>
+      </div>
+      <NameRow
+        id={id}
+        value={folder.name}
+        disabled={!canEdit}
+        onCommit={(name) => safely(() => project.renameFolder(id, name))}
+      />
+      {error && <p className={ui.error}>{error}</p>}
+      <InfoList
+        label="フォルダの情報"
+        rows={[
+          ["場所", index.pathOf(id) ?? "（フォルダが輪になっています）"],
+          ["中身", `${children.length} 項目`],
+        ]}
+      />
+      {children.length === 0 ? (
+        <p className={ui.muted}>空のフォルダです</p>
+      ) : (
+        <ul className={ui.list} aria-label="フォルダの中身">
+          {children.map((c) => (
+            <li key={c.id} className={ui.item}>
+              <span className={ui.itemName}>{c.name}</span>
+              <span className={ui.badge}>{c.kind}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
