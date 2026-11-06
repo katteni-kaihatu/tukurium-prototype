@@ -72,6 +72,9 @@ export class WorkspaceController {
     );
     this.bounds.visible = false;
     this.selectionBox.visible = false;
+    // 編集の手伝いの枠はサムネイルに写さない（ADR 0046）
+    this.bounds.userData.noShot = true;
+    this.selectionBox.userData.noShot = true;
     engine.scene.add(this.bounds, this.selectionBox);
 
     this.disposers.push(

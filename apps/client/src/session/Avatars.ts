@@ -98,6 +98,8 @@ export class Avatars {
   private create(p: Participant): Avatar {
     const c = colorFor(p.id);
     const root = new THREE.Group();
+    // 人の姿はサムネイルに写さない（ADR 0046）
+    root.userData.noShot = true;
     const bodyMat = new THREE.MeshStandardMaterial({ color: c.bg, roughness: 0.7 });
     const accentMat = new THREE.MeshStandardMaterial({ color: c.fg, roughness: 0.5 });
 

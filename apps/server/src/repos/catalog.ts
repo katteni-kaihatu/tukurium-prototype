@@ -15,15 +15,16 @@ export class ItemCatalog {
     const snapshot = latest
       ? await this.repos.snapshot(work.repoId, latest.commit).catch(() => null)
       : null;
+    const output = snapshot?.outputs.find((o) => o.id === work.outputId);
     return {
       ...work,
+      // リリースした版のサムネイル（Resources の画像の素材 ID。ADR 0046）
+      thumbnail: output?.thumbnail ?? null,
       tags: work.tags ?? [],
       ownerName: (await this.store.user(work.owner))?.name ?? "?",
       repoName: repo?.name ?? "?",
       latest,
-      outputKind:
-        snapshot?.outputs.find((o) => o.id === work.outputId)?.kind ??
-        (latest ? null : (repo?.kind ?? null)),
+      outputKind: output?.kind ?? (latest ? null : (repo?.kind ?? null)),
     };
   }
 

@@ -70,6 +70,8 @@ export class PanelSpace {
       const object = new CSS3DObject(wrapper);
       object.scale.setScalar(PANEL_METERS_PER_PX);
       const occluder = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.occluderMaterial);
+      // 穴はサムネイルに写さない（写すと透明な穴になる。ADR 0046）
+      occluder.userData.noShot = true;
       const observer = new ResizeObserver(() => this.fitOccluder(id));
       this.scene.add(object, occluder);
       p = { wrapper, object, occluder, observer, local: new THREE.Vector3() };

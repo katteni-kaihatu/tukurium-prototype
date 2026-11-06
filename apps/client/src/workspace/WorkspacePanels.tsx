@@ -9,6 +9,7 @@ import {
 import type { PanelPublic } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useApp } from "../app/store";
+import { Thumbnail } from "../app/Thumbnail";
 import { beginEditing } from "../main-menu/editing";
 import { useMainMenu } from "../main-menu/store";
 import { api, type RepoMeta } from "../net/api";
@@ -480,6 +481,7 @@ function OpenFromProject() {
               className={ui.item}
               onClick={() => beginEditing(() => useWorkspace.getState().openRepo(r.id))}
             >
+              <Thumbnail id={r.thumbnail} name={r.name} size="small" />
               <span className={ui.itemName}>{r.name}</span>
               <span className={ui.badge}>{r.owner === me?.id ? "自分" : r.ownerName}</span>
             </button>

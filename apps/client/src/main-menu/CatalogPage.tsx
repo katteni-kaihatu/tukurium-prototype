@@ -1,6 +1,7 @@
 import { tagKey } from "@tukurium/shared";
 import { useEffect, useId, useState } from "react";
 import { useApp } from "../app/store";
+import { Thumbnail } from "../app/Thumbnail";
 import type { OwnedItem, Work } from "../net/api";
 import { acquire, refreshOwned, searchMarket, takeOut, useCatalog } from "./catalogStore";
 import styles from "./MainMenu.module.css";
@@ -127,7 +128,7 @@ export function CatalogPage({ active }: { active: boolean }) {
                   aria-label={`${work.name} の詳細`}
                   onClick={() => menu.select("market", work.id)}
                 >
-                  <ItemArt />
+                  <ItemArt work={work} />
                   {item && <span className={styles.ownedBadge}>所持済み</span>}
                 </button>
                 <div className={styles.cardCopy}>
@@ -152,7 +153,7 @@ export function CatalogPage({ active }: { active: boolean }) {
                 ×
               </button>
             </div>
-            <ItemArt />
+            <ItemArt work={selected} />
             <h2>{selected.name}</h2>
             <p>作者: {selected.ownerName ?? "不明"}</p>
             <p className={styles.muted}>
@@ -296,7 +297,14 @@ export function CatalogNotice() {
   );
 }
 
-export function ItemArt() {
+/** アイテムの絵：サムネイルがあればそれ、なければ箱の絵（ADR 0046） */
+export function ItemArt({ work }: { work?: Work | null }) {
+  if (work?.thumbnail)
+    return (
+      <div className={`${styles.itemArt} ${styles.itemArtImage}`}>
+        <Thumbnail id={work.thumbnail} name={work.name} />
+      </div>
+    );
   return (
     <div className={styles.itemArt}>
       <svg viewBox="0 0 120 90" width="100%" height="100%" aria-hidden="true">

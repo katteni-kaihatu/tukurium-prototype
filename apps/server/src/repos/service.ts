@@ -310,7 +310,17 @@ export class RepoService {
           createdAt: new Date().toISOString(),
         });
       const latest = (await this.store.releases(lib.workId))[0];
-      if (latest?.contentHash === contentHashOf(packageManifest(lib.snapshot))) continue;
+      // 公開した中身（hash）とサムネイル（ADR 0046。中身の hash には入らない）が同じなら、出し直さない
+      const thumbnail = (snap: ProjectSnapshot | null) =>
+        snap?.outputs.find((o) => o.id === lib.outputId)?.thumbnail ?? null;
+      const released = latest
+        ? await this.snapshot(lib.repoId, latest.commit).catch(() => null)
+        : null;
+      if (
+        latest?.contentHash === contentHashOf(packageManifest(lib.snapshot)) &&
+        thumbnail(released) === thumbnail(lib.snapshot)
+      )
+        continue;
       // 作ったばかりなら、最初のコミットが同梱の中身。そうでなければ、同梱の中身をコミットしてから出す
       if (!created)
         await this.commit(lib.repoId, lib.snapshot, "公式ライブラリを更新", publisher, []);

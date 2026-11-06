@@ -77,6 +77,9 @@ export class WorkspacePreviews {
     );
     box.userData.workspaceId = id;
     const label = makeLabel(restricted ? "作業中" : `作業中：${name}`, "#3b3540");
+    // ほかの作業の枠と札はサムネイルに写さない（ADR 0046）
+    box.userData.noShot = true;
+    label.userData.noShot = true;
     this.root.add(box, label);
     this.entries.set(id, { name, restricted, preview, view, box, label, portal: null });
   }
