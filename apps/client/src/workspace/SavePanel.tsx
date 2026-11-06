@@ -85,7 +85,18 @@ export function SavePanel() {
             )}
           </div>
         </div>
-        <ChangeSide entry={pickedEntry} />
+        <ChangeSide
+          entry={pickedEntry}
+          error={revertError}
+          revert={
+            pickedEntry
+              ? {
+                  revertable: (part) => canRevert(pickedEntry.id, part),
+                  onRevert: (part) => setRevertError(revert(pickedEntry.id, part)),
+                }
+              : undefined
+          }
+        />
       </div>
     </div>
   );
