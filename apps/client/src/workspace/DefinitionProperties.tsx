@@ -898,25 +898,31 @@ function AssetProperties({ id }: { id: string }) {
   const canEdit = useCanEdit();
   const { error, safely } = useSafe();
   const file = useAssetFile(id);
-  const [image, setImage] = useState<ImageInfo | null>(null);
-  const [model, setModel] = useState<ModelInfo | null>(null);
+  // undefined は読んでいる間、null は読めなかった
+  const [image, setImage] = useState<ImageInfo | null | undefined>(undefined);
+  const [model, setModel] = useState<ModelInfo | null | undefined>(undefined);
   const asset = project.asset(id);
   if (!asset) return <p className={ui.empty}>素材が見つかりません</p>;
   const title = asset.kind === "model" ? "モデル" : asset.kind === "image" ? "テクスチャ" : "音声";
   const num = (n: number) => n.toLocaleString("ja-JP");
   const len = (n: number) => (Math.round(n * 100) / 100).toString();
+  const LOADING = "読み込んでいます…";
+  const FAILED = "読めません";
+  const loaded = file && file !== "failed" ? file : null;
   const rows: [string, string][] = [
-    ["形式", file?.type || asset.contentType],
-    ["大きさ", file ? formatBytes(file.bytes) : "読み込んでいます…"],
+    ["形式", loaded?.type || asset.contentType],
+    ["大きさ", loaded ? formatBytes(loaded.bytes) : file === "failed" ? FAILED : LOADING],
   ];
   if (asset.kind === "image") {
     rows.push([
       "解像度",
-      image ? `${num(image.width)} × ${num(image.height)} px` : "読み込んでいます…",
+      image ? `${num(image.width)} × ${num(image.height)} px` : image === null ? FAILED : LOADING,
     ]);
   }
   if (asset.kind === "model") {
-    if (model) {
+    if (model === null) {
+      rows.push(["中身", FAILED]);
+    } else if (model) {
       rows.push(
         ["ポリゴン（三角形）", num(model.triangles)],
         ["頂点", num(model.vertices)],
@@ -927,7 +933,7 @@ function AssetProperties({ id }: { id: string }) {
         ["寸法（幅 × 高さ × 奥行き）", model.size.map(len).join(" × ")],
       );
     } else {
-      rows.push(["中身", "読み込んでいます…"]);
+      rows.push(["中身", LOADING]);
     }
   }
   return (

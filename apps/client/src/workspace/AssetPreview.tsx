@@ -28,7 +28,8 @@ export function ImagePreview({
 }: {
   id: string;
   name: string;
-  onInfo?: (info: ImageInfo) => void;
+  /** 読めなかったときは null */
+  onInfo?: (info: ImageInfo | null) => void;
 }) {
   return (
     <img
@@ -38,12 +39,20 @@ export function ImagePreview({
       onLoad={(e) =>
         onInfo?.({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })
       }
+      onError={() => onInfo?.(null)}
     />
   );
 }
 
 /** モデルの見た目。開いているあいだだけ描く。onInfo には、読み込めたときの中身の数を渡す */
-export function ModelPreview({ id, onInfo }: { id: string; onInfo?: (info: ModelInfo) => void }) {
+export function ModelPreview({
+  id,
+  onInfo,
+}: {
+  id: string;
+  /** 読めなかったときは null */
+  onInfo?: (info: ModelInfo | null) => void;
+}) {
   const report = useRef(onInfo);
   report.current = onInfo;
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -112,7 +121,10 @@ export function ModelPreview({ id, onInfo }: { id: string; onInfo?: (info: Model
           camera.lookAt(0, 0, 0);
           tick();
         } catch {
-          if (!stop) setFailed(true);
+          if (!stop) {
+            setFailed(true);
+            report.current?.(null);
+          }
           dispose();
         }
       })
@@ -273,9 +285,11 @@ function modelInfo(
   };
 }
 
-/** 素材のファイルの大きさと形式。サーバーから一度だけ読む */
-export function useAssetFile(id: string): { bytes: number; type: string } | null {
-  const [file, setFile] = useState<{ id: string; bytes: number; type: string } | null>(null);
+/** 素材のファイルの大きさと形式。サーバーから一度だけ読む。読んでいる間は null、読めなければ "failed" */
+export function useAssetFile(id: string): { bytes: number; type: string } | "failed" | null {
+  const [file, setFile] = useState<
+    { id: string; bytes: number; type: string } | { id: string; failed: true } | null
+  >(null);
   useEffect(() => {
     let alive = true;
     fetch(assetUrl(id))
@@ -284,13 +298,16 @@ export function useAssetFile(id: string): { bytes: number; type: string } | null
         (blob) => {
           if (alive) setFile({ id, bytes: blob.size, type: blob.type });
         },
-        () => {},
+        () => {
+          if (alive) setFile({ id, failed: true });
+        },
       );
     return () => {
       alive = false;
     };
   }, [id]);
-  return file && file.id === id ? { bytes: file.bytes, type: file.type } : null;
+  if (!file || file.id !== id) return null;
+  return "failed" in file ? "failed" : { bytes: file.bytes, type: file.type };
 }
 
 /** バイト数を、KB・MB で読める形にする */
