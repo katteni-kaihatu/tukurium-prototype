@@ -473,3 +473,67 @@ export default system({
     expect(logs.map((l) => l.message)).toContain("legacy undefined");
   });
 });
+
+describe("Simulation：Transform は初期値からのずれ", () => {
+  const bare = () => {
+    const snap = emptyProject("bare");
+    snap.entities = [
+      {
+        id: "root",
+        name: "根",
+        parent: null,
+        output: "out_main",
+        order: 0,
+        states: { [BUILTIN.Mesh]: { shape: "box" } },
+      },
+      {
+        id: "child",
+        name: "子",
+        parent: "root",
+        output: "out_main",
+        order: 1,
+        states: { [BUILTIN.Mesh]: { shape: "sphere" } },
+      },
+    ];
+    return snap;
+  };
+
+  it("再生の位置が初期値なら、Transform は付かない", async () => {
+    sim = await Simulation.create(bare(), "out_main", { realm: "r" });
+    expect(sim.world.hasState("root", BUILTIN.Transform)).toBe(false);
+    expect(sim.world.hasState("child", BUILTIN.Transform)).toBe(false);
+  });
+
+  it("配置の位置は、初期値にそのずれを足したものになる", async () => {
+    const withDefault = bare();
+    const root = withDefault.entities[0];
+    if (!root) throw new Error("root がない");
+    root.states = {
+      ...root.states,
+      [BUILTIN.Transform]: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "a",
+      realm: "r",
+      outputId: "out_main",
+      snapshot: bare(),
+      position: [3, 1, -2],
+      yaw: 0,
+    });
+    sim.addPart({
+      id: "b",
+      realm: "r",
+      outputId: "out_main",
+      snapshot: withDefault,
+      position: [3, 1, -2],
+      yaw: 0,
+    });
+    expect(sim.world.get("a/root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
+    expect(sim.world.get("a/root", BUILTIN.Transform)?.rotation).toEqual([0, 0, 0]);
+    expect(sim.world.get("a/root", BUILTIN.Transform)?.scale).toEqual([1, 1, 1]);
+    expect(sim.world.get("b/root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
+    // 子は親からのずれがないので、Transform は付かない
+    expect(sim.world.hasState("a/child", BUILTIN.Transform)).toBe(false);
+  });
+});

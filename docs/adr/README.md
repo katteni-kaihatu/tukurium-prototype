@@ -53,3 +53,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0047](0047-market-work-detail.md) | 採用・実装済み | マーケットの作品は詳細ページで開き、バージョンと保存時のコメントを出す。公開プロジェクトへ辿れる。自分の作品は別タブ | 0034 の横の詳細欄は、マーケットでは使わない |
 | [0048](0048-inspector-entity-bar.md) | 採用・実装済み | Inspector の詳細は名前をスクロールの外に置き、KokoState をたためる。上に複製・削除・子・開閉・System のボタン | 付属パネルの名前は「KokoState を追加」 |
 | [0049](0049-empty-entity-and-koko-button.md) | 採用・実装済み | 空の Entity には Transform を付けない。詳細の下の「KokoState を追加」は出さない | 形のあるものは Transform と Mesh。付けるのは端のつまみから |
+| [0050](0050-transform-is-offset.md) | 採用・実装済み | Transform が無い Entity は、フィールドの初期値の姿勢として扱う。Transform はそこからずらすもの | 配置・物理・持った移動でずれたときだけ Transform を残す |

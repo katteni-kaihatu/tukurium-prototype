@@ -1,5 +1,6 @@
 import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN, type MaterialDef } from "@tukurium/repo-model";
+import { transformOf } from "@tukurium/runtime";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { assetUrl } from "../net/api";
@@ -143,19 +144,11 @@ export class EntityView {
   }
 
   private syncTransform(node: Node, world: World, id: EntityId): void {
-    const t = world.get(id, BUILTIN.Transform);
-    if (!t) {
-      node.object.position.set(0, 0, 0);
-      node.object.rotation.set(0, 0, 0);
-      node.object.scale.set(1, 1, 1);
-      return;
-    }
-    const p = t.position as Vec3;
-    const r = t.rotation as Vec3;
-    const s = t.scale as Vec3;
-    node.object.position.set(p[0], p[1], p[2]);
-    node.object.rotation.set(r[0] * DEG, r[1] * DEG, r[2] * DEG, "XYZ");
-    node.object.scale.set(s[0], s[1], s[2]);
+    // Transform がなければ初期値（位置・回転 0、拡大率 1）。付いている値は、そこからのずれ
+    const t = transformOf(world, id);
+    node.object.position.set(t.position[0], t.position[1], t.position[2]);
+    node.object.rotation.set(t.rotation[0] * DEG, t.rotation[1] * DEG, t.rotation[2] * DEG, "XYZ");
+    node.object.scale.set(t.scale[0], t.scale[1], t.scale[2]);
   }
 
   private syncMesh(

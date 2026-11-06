@@ -47,8 +47,10 @@ import {
   placeFromView,
   poseInView as poseRelativeToView,
   straightenRotation,
+  transformOf,
   twistRotation,
   worldTransform,
+  writeTransform,
 } from "./transform";
 
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
@@ -938,7 +940,6 @@ export class Simulation {
     if (!target || this.world.parentOf(target) !== null) return true;
     if (this.world.hasState(target, BUILTIN.Held)) return true; // ほかの人が持っている
     const pose = this.poseInView(target, ev);
-    if (!pose) return true;
     this.world.add(target, BUILTIN.Held, { ...pose, player: ev.player });
     return true;
   }
@@ -980,35 +981,32 @@ export class Simulation {
   }
 
   /** いまの位置と角度を、視点からの差として覚える（持った瞬間に動かさないため） */
-  private poseInView(id: EntityId, ev: InputEvent): { offset: Vec3; rotation: Vec3 } | null {
-    const t = this.world.get(id, BUILTIN.Transform);
-    if (!t) return null;
-    return poseRelativeToView(ev.origin, ev.direction, t.position as Vec3, t.rotation as Vec3);
+  private poseInView(id: EntityId, ev: InputEvent): { offset: Vec3; rotation: Vec3 } {
+    const t = transformOf(this.world, id);
+    return poseRelativeToView(ev.origin, ev.direction, t.position, t.rotation);
   }
 
   /** 覚えた位置関係のまま、持っている人の視点へ置く（ほかの人にはこの位置で見える） */
   private placeHeld(id: EntityId, ev: InputEvent): void {
-    const t = this.world.get(id, BUILTIN.Transform);
     const held = this.world.get(id, BUILTIN.Held);
-    if (!t || !held) return;
+    if (!held) return;
     const placed = placeFromView(
       ev.origin,
       ev.direction,
       (held.offset as Vec3 | undefined) ?? [0, 0, 0],
       (held.rotation as Vec3 | undefined) ?? [0, 0, 0],
     );
-    t.position = placed.position;
-    t.rotation = placed.rotation;
+    writeTransform(this.world, id, placed.position, placed.rotation);
   }
 
   /** 傾きを直し、上下の軸まわりの向きだけ残す */
   private straightenHeld(id: EntityId, ev: InputEvent): void {
-    const t = this.world.get(id, BUILTIN.Transform);
     const held = this.world.get(id, BUILTIN.Held);
-    if (!t || !held) return;
-    t.rotation = straightenRotation(t.rotation as Vec3);
+    if (!held) return;
+    const t = transformOf(this.world, id);
+    writeTransform(this.world, id, t.position, straightenRotation(t.rotation));
     const pose = this.poseInView(id, ev);
-    if (pose) held.rotation = pose.rotation;
+    held.rotation = pose.rotation;
   }
 
   /** ホイールの分だけ、持っている物を前後に動かす（画面上の位置は保つ） */
@@ -1021,13 +1019,13 @@ export class Simulation {
 
   /** マウスの動き（ラジアン）だけ、持っている物を回す */
   private twistHeld(id: EntityId, ev: InputEvent): void {
-    const t = this.world.get(id, BUILTIN.Transform);
     const held = this.world.get(id, BUILTIN.Held);
     const [yaw, pitch] = ev.pointer ?? [0, 0];
-    if (!t || !held || (yaw === 0 && pitch === 0)) return;
-    t.rotation = twistRotation(t.rotation as Vec3, yaw, pitch);
+    if (!held || (yaw === 0 && pitch === 0)) return;
+    const t = transformOf(this.world, id);
+    writeTransform(this.world, id, t.position, twistRotation(t.rotation, yaw, pitch));
     const pose = this.poseInView(id, ev);
-    if (pose) held.rotation = pose.rotation;
+    held.rotation = pose.rotation;
   }
 
   /** 配置の Entity を World に作る（ID の付け替え、ルートへの配置の位置・向き） */
@@ -1044,10 +1042,19 @@ export class Simulation {
     const cos = Math.cos(part.yaw);
     const sin = Math.sin(part.yaw);
     const moved = part.yaw !== 0 || part.position.some((v) => v !== 0);
+    const place = (p: Vec3, r: Vec3) => ({
+      position: [
+        part.position[0] + p[0] * cos + p[2] * sin,
+        part.position[1] + p[1],
+        part.position[2] - p[0] * sin + p[2] * cos,
+      ] as Vec3,
+      rotation: [r[0], r[1] + (part.yaw * 180) / Math.PI, r[2]] as Vec3,
+    });
     for (const e of snap.entities) {
       const id = this.eid(part, e.id);
       if (this.world.has(id)) this.world.destroy(id);
       this.world.spawn(id, e.parent === null ? null : this.eid(part, e.parent));
+      let sawTransform = false;
       for (const [koko, values] of Object.entries(e.states)) {
         const k = this.kid(part.realm, koko);
         if (!this.registry.get(k)) continue;
@@ -1059,17 +1066,21 @@ export class Simulation {
           if (f.type === "entity" && typeof v[f.id] === "string")
             v[f.id] = this.eid(part, v[f.id] as string);
         }
+        if (koko === BUILTIN.Transform) sawTransform = true;
         if (koko === BUILTIN.Transform && e.parent === null && moved) {
-          const p = v.position as Vec3;
-          const r = v.rotation as Vec3;
-          v.position = [
-            part.position[0] + p[0] * cos + p[2] * sin,
-            part.position[1] + p[1],
-            part.position[2] - p[0] * sin + p[2] * cos,
-          ];
-          v.rotation = [r[0], r[1] + (part.yaw * 180) / Math.PI, r[2]];
+          const placed = place(
+            (v.position as Vec3 | undefined) ?? [0, 0, 0],
+            (v.rotation as Vec3 | undefined) ?? [0, 0, 0],
+          );
+          v.position = placed.position;
+          v.rotation = placed.rotation;
         }
         this.world.add(id, k, v);
+      }
+      // 付いていなければ初期値。ルートだけ、その初期値に配置の位置と向きを足して残す
+      if (!sawTransform && e.parent === null && moved) {
+        const placed = place([0, 0, 0], [0, 0, 0]);
+        this.world.add(id, BUILTIN.Transform, { ...placed, scale: [1, 1, 1] });
       }
       this.names.set(id, names.get(e.id) ?? e.id);
       part.entities.add(id);
