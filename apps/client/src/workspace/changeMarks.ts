@@ -64,6 +64,13 @@ function keepKey(koko: string, field: string): string {
   return `${koko}\0${field}`;
 }
 
+/** 保存にない KokoState の、いま付いているフィールド。欄ごと緑にする。 */
+function addedFields(values: object): Record<string, ChangeKind> {
+  const fields: Record<string, ChangeKind> = {};
+  for (const fid of Object.keys(values)) fields[fid] = "added";
+  return fields;
+}
+
 function keepSet(marks: KeepMark[], entityId: string): Set<string> {
   const out = new Set<string>();
   for (const k of marks) if (k.entity === entityId) out.add(keepKey(k.koko, k.field));
@@ -86,7 +93,9 @@ export function entityChange(
   const currentKeep = keepSet(keep?.current ?? [], entity.id);
   if (!saved) {
     const states: EntityChange["states"] = {};
-    for (const koko of Object.keys(entity.states)) states[koko] = { kind: "added", fields: {} };
+    for (const [koko, values] of Object.entries(entity.states)) {
+      states[koko] = { kind: "added", fields: addedFields(values) };
+    }
     return {
       kind: "added",
       name: "added",
@@ -99,7 +108,7 @@ export function entityChange(
   for (const [koko, values] of Object.entries(entity.states)) {
     const before = beforeStates[koko];
     if (!before) {
-      states[koko] = { kind: "added", fields: {} };
+      states[koko] = { kind: "added", fields: addedFields(values) };
       continue;
     }
     const fields: Record<string, ChangeKind> = {};

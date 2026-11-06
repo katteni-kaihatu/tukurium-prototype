@@ -636,13 +636,7 @@ function EntityProperties({ id }: { id: EntityId }) {
             )}
             {def.fields.map((f) => (
               <div key={f.id} className={styles.fieldRow}>
-                <ChangeMark
-                  kind={
-                    marks?.states[koko]?.kind === "added"
-                      ? null
-                      : (marks?.states[koko]?.fields[f.id] ?? null)
-                  }
-                />
+                <ChangeMark kind={marks?.states[koko]?.fields[f.id] ?? null} />
                 <FieldInput
                   koko={koko}
                   field={f}

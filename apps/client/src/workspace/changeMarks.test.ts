@@ -48,7 +48,7 @@ describe("保存との差", () => {
     expect(mark.name).toBe("added");
     expect(mark.parent).toBeNull();
     expect(mark.states["builtin.Transform"]?.kind).toBe("added");
-    expect(mark.states["builtin.Transform"]?.fields).toEqual({});
+    expect(mark.states["builtin.Transform"]?.fields).toEqual({ position: "added" });
   });
 
   it("名前・親・フィールドの変化を分け、並び順だけでは印を出さない", () => {
@@ -79,7 +79,7 @@ describe("保存との差", () => {
       ...before,
       states: { ...before.states, ks_hp: { f_hp: 3 } },
     });
-    expect(added.states.ks_hp).toEqual({ kind: "added", fields: {} });
+    expect(added.states.ks_hp).toEqual({ kind: "added", fields: { f_hp: "added" } });
 
     const kept = entityChange(head, before, {
       saved: [],
