@@ -359,6 +359,12 @@
   box-shadow: 0 12px 32px rgba(15, 25, 40, 0.18);
 }
 
+/* 階層のスクロール枠の外へ出す。詳細の上に重なってもよい */
+.menuPop {
+  position: fixed;
+  z-index: 10000;
+}
+
 .menuItem {
   display: flex;
   flex-direction: column;

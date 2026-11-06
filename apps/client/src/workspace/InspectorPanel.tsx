@@ -1,6 +1,7 @@
 import type { EntityId, FieldValue, KokoStateDef, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
-import { useRef, useState } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
 import {
   type ChangeKind,
@@ -20,6 +21,68 @@ import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { packageAliasOf, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
+
+/**
+ * 階層の中に置くと、スクロール枠と右の詳細で切れる。
+ * 画面の上に出して、はみ出してもよい。
+ */
+function FloatMenu({
+  anchor,
+  align,
+  onClose,
+  children,
+}: {
+  anchor: HTMLElement;
+  /** start は左端、end は右端をボタンに合わせる */
+  align: "start" | "end";
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const place = () => {
+      const button = anchor.getBoundingClientRect();
+      const size = menu.getBoundingClientRect();
+      let top = button.bottom + 4;
+      if (top + size.height > window.innerHeight - 8) {
+        top = Math.max(8, button.top - 4 - size.height);
+      }
+      const raw = align === "start" ? button.left : button.right - size.width;
+      const left = Math.max(8, Math.min(raw, window.innerWidth - size.width - 8));
+      setPos((cur) => (cur && cur.top === top && cur.left === left ? cur : { top, left }));
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [anchor, align]);
+  useLayoutEffect(() => {
+    const close = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (anchor.contains(target) || menuRef.current?.contains(target)) return;
+      onClose();
+    };
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
+  }, [anchor, onClose]);
+  return createPortal(
+    <ul
+      ref={menuRef}
+      className={`${ui.menu} ${ui.menuPop}`}
+      style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
+    >
+      {children}
+    </ul>,
+    document.body,
+  );
+}
 
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
@@ -61,9 +124,11 @@ function Hierarchy() {
   const saved = useSavedFiles();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
   const [dropOver, setDropOver] = useState<{ id: string; mode: DropMode } | null>(null);
   const [dupFor, setDupFor] = useState<string | null>(null);
+  const [dupAnchor, setDupAnchor] = useState<HTMLElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dragId = useRef<string | null>(null);
   const output = project.output(outputId);
@@ -283,11 +348,20 @@ function Hierarchy() {
                   aria-haspopup={kids.length > 0 ? "menu" : undefined}
                   aria-expanded={kids.length > 0 ? dupFor === n.id : undefined}
                   title="複製"
-                  onClick={() =>
-                    kids.length > 0
-                      ? setDupFor(dupFor === n.id ? null : n.id)
-                      : duplicate(n.id, false)
-                  }
+                  onClick={(e) => {
+                    setMenu(false);
+                    if (kids.length === 0) {
+                      duplicate(n.id, false);
+                      return;
+                    }
+                    if (dupFor === n.id) {
+                      setDupFor(null);
+                      setDupAnchor(null);
+                      return;
+                    }
+                    setDupFor(n.id);
+                    setDupAnchor(e.currentTarget);
+                  }}
                 >
                   <CopyIcon />
                 </button>
@@ -302,8 +376,8 @@ function Hierarchy() {
                 </button>
               </span>
             )}
-            {dupFor === n.id && (
-              <ul className={ui.menu} style={{ right: 4, top: 28 }}>
+            {dupFor === n.id && dupAnchor && (
+              <FloatMenu anchor={dupAnchor} align="end" onClose={() => setDupFor(null)}>
                 <li>
                   <button
                     type="button"
@@ -322,7 +396,7 @@ function Hierarchy() {
                     中も含めて複製
                   </button>
                 </li>
-              </ul>
+              </FloatMenu>
             )}
           </div>
           {open && kids.length > 0 && <ul className={ui.list}>{renderTree(n.id, depth + 1)}</ul>}
@@ -341,7 +415,7 @@ function Hierarchy() {
     <nav className={styles.tree} aria-label="Hierarchy">
       <div className={styles.treeHead}>
         <h3 className={ui.sectionTitle}>Hierarchy</h3>
-        <div style={{ position: "relative" }}>
+        <div>
           <button
             type="button"
             className={ui.iconBtn}
@@ -350,12 +424,17 @@ function Hierarchy() {
             aria-haspopup="menu"
             aria-expanded={menu}
             disabled={!editing}
-            onClick={() => setMenu((v) => !v)}
+            onClick={(e) => {
+              setDupFor(null);
+              setDupAnchor(null);
+              setMenuAnchor(e.currentTarget);
+              setMenu((open) => !open);
+            }}
           >
             ＋
           </button>
-          {menu && (
-            <ul className={ui.menu} style={{ left: 0, top: 30 }}>
+          {menu && menuAnchor && (
+            <FloatMenu anchor={menuAnchor} align="start" onClose={() => setMenu(false)}>
               {NEW_ENTITIES.map((spec) => (
                 <li key={spec.label}>
                   <button type="button" className={ui.menuItem} onClick={() => add(spec)}>
@@ -363,7 +442,7 @@ function Hierarchy() {
                   </button>
                 </li>
               ))}
-            </ul>
+            </FloatMenu>
           )}
         </div>
       </div>
@@ -625,7 +704,9 @@ function EntityProperties({ id }: { id: EntityId }) {
                   className={ui.iconBtn}
                   aria-label={`${def.name} を外す`}
                   title="外す"
-                  onClick={() => project.removeState(id, koko)}
+                  onClick={() => {
+                    if (window.confirm(`${def.name} を外しますか？`)) project.removeState(id, koko);
+                  }}
                 >
                   ✕
                 </button>
