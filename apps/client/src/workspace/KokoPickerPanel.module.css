@@ -1,0 +1,140 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 16px;
+}
+
+.search {
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid #ddd5c8;
+  background: #fffdf9;
+  font: inherit;
+  font-size: 14px;
+  color: inherit;
+}
+
+.search:focus {
+  outline: none;
+  border-color: #603d56;
+  box-shadow: 0 0 0 3px #f3eaf0;
+}
+
+.tags {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tagGroup {
+  float: left;
+  padding: 0;
+  width: 56px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a8174;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 4px 0 12px;
+  border-radius: 999px;
+  border: 1.5px solid #e7e1d6;
+  background: #fffdf9;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3b3530;
+  cursor: pointer;
+}
+
+.tag:hover {
+  background: #f7f2ea;
+}
+
+.tag[aria-pressed="true"] {
+  border-color: #603d56;
+  background: #f3eaf0;
+}
+
+.count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  background: #603d56;
+  color: #fff;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 10px;
+  border-radius: 14px;
+  border: 1px solid #e7e1d6;
+  background: #fffdf9;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card:hover {
+  border-color: #603d56;
+  box-shadow: 0 2px 10px rgb(96 61 86 / 14%);
+}
+
+.thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef3df;
+  color: #4e6b1f;
+}
+
+.name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+}
+
+.fields {
+  font-size: 11px;
+  color: #8a8174;
+}

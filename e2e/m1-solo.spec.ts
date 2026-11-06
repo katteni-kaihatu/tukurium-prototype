@@ -57,11 +57,10 @@ async function newScript(page: Page, code: string) {
 async function addKoko(page: Page, name: string) {
   const insp = panel(page, "Inspector");
   await insp.getByRole("button", { name: "＋ Add KokoState" }).click();
-  await insp.getByLabel("KokoState を検索").fill(name);
-  await insp
-    .getByRole("button", { name: new RegExp(`^${name}`) })
-    .first()
-    .click();
+  const picker = panel(page, "KokoState を付ける");
+  await picker.getByLabel("KokoState を検索").fill(name);
+  await picker.getByRole("button", { name, exact: true }).click();
+  await expect(picker).toHaveCount(0);
 }
 
 test("空のプロジェクトから銃と的を作り、Play で撃って当てる", async ({ page }) => {
@@ -78,7 +77,8 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
   const insp = panel(page, "Inspector");
   await insp.getByRole("heading", { name: "Inspector", exact: true }).click();
   await insp.getByRole("button", { name: "Entity を追加" }).click();
-  await insp.getByRole("button", { name: "ボックス" }).click();
+  // 追加のメニューは Inspector の外（ページの上）に出る
+  await page.getByRole("button", { name: "ボックス", exact: true }).click();
   await commitInput(insp.getByLabel("Name"), "的");
   await commitInput(insp.getByLabel("position X"), "0");
   await commitInput(insp.getByLabel("position Y"), "1.5");
@@ -88,7 +88,7 @@ test("空のプロジェクトから銃と的を作り、Play で撃って当て
 
   // 銃：空の Entity に Gun
   await insp.getByRole("button", { name: "Entity を追加" }).click();
-  await insp.getByRole("button", { name: "空の Entity" }).click();
+  await page.getByRole("button", { name: "空の Entity", exact: true }).click();
   await commitInput(insp.getByLabel("Name"), "銃");
   await addKoko(page, "Gun");
 

@@ -562,7 +562,6 @@ function EntityProperties({ id }: { id: EntityId }) {
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
-  const [picker, setPicker] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const editing = canEdit;
   const registry = project.registry();
@@ -743,21 +742,17 @@ function EntityProperties({ id }: { id: EntityId }) {
 
       {editing && (
         <div className={ui.section}>
-          {picker ? (
-            <KokoPicker
-              defs={registry.all().filter((d) => !attached.includes(d.id))}
-              aliasOf={(d) => packageAliasOf(project, d.id)}
-              onPick={(d) => {
-                safely(() => project.addState(id, d.id));
-                setPicker(false);
-              }}
-              onClose={() => setPicker(false)}
-            />
-          ) : (
-            <button type="button" className={ui.btn} onClick={() => setPicker(true)}>
-              ＋ Add KokoState
-            </button>
-          )}
+          <button
+            type="button"
+            className={ui.btn}
+            onClick={() =>
+              useWorkspace.setState((s) => ({
+                kokoPicker: { entityId: id, seq: (s.kokoPicker?.seq ?? 0) + 1 },
+              }))
+            }
+          >
+            ＋ Add KokoState
+          </button>
         </div>
       )}
 
@@ -779,50 +774,6 @@ function EntityProperties({ id }: { id: EntityId }) {
         )}
       </div>
     </>
-  );
-}
-
-function KokoPicker(props: {
-  defs: KokoStateDef[];
-  /** 依存のライブラリの KokoState なら、その別名 */
-  aliasOf: (d: KokoStateDef) => string | null;
-  onPick: (d: KokoStateDef) => void;
-  onClose: () => void;
-}) {
-  const [q, setQ] = useState("");
-  const shown = props.defs.filter((d) => d.name.toLowerCase().includes(q.toLowerCase()));
-  return (
-    <div className={styles.picker}>
-      <div className={ui.toolbar}>
-        <input
-          className={ui.input}
-          style={{ flex: 1 }}
-          placeholder="KokoState を検索"
-          aria-label="KokoState を検索"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          // biome-ignore lint/a11y/noAutofocus: 開いた直後に検索できるようにする
-          autoFocus
-        />
-        <button type="button" className={ui.btn} onClick={props.onClose}>
-          閉じる
-        </button>
-      </div>
-      <ul className={ui.list}>
-        {shown.map((d) => (
-          <li key={d.id}>
-            <button type="button" className={ui.item} onClick={() => props.onPick(d)}>
-              <span className={ui.itemName}>{d.name}</span>
-              {props.aliasOf(d) && <span className={ui.badgeBrand}>@{props.aliasOf(d)}</span>}
-              <span className={d.builtin ? ui.badge : ui.badgeBrand}>
-                {d.builtin ? "Built-in" : `${d.fields.length} fields`}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {shown.length === 0 && <p className={ui.empty}>付けられる KokoState はありません</p>}
-    </div>
   );
 }
 
