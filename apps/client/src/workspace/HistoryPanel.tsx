@@ -1,7 +1,7 @@
 import type { ProjectSnapshot } from "@tukurium/repo-model";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api, type CommitInfo } from "../net/api";
-import { ChangeList } from "./ChangeList";
+import { ChangeList, ChangeSide } from "./ChangeList";
 import { type DiffEntry, describeDiff } from "./diffView";
 import styles from "./history.module.css";
 import { layoutLog } from "./logGraph";
@@ -16,7 +16,8 @@ const laneColor = (index: number) => LANE_COLORS[index % LANE_COLORS.length] ?? 
 const UNSAVED = "unsaved";
 
 /**
- * 履歴：左は Git の log のようなグラフ（いちばん上は未保存）、右は選んだ記録の詳細。
+ * 履歴：左は Git の log のようなグラフ（いちばん上は未保存）、まんなかは選んだ記録の詳細と差分、
+ * 右は選んだ差分の中身。
  * 未保存の横の印から、保存パネルを開く。
  */
 export function HistoryPanel() {
@@ -27,6 +28,8 @@ export function HistoryPanel() {
   /** いま diff がどの記録のものか。選んだ記録と違う間は、空の差分を出さない */
   const [diffFor, setDiffFor] = useState(UNSAVED);
   const [diffError, setDiffError] = useState<string | null>(null);
+  /** 選んだ差分。記録ごとに覚える（別の記録を選んだら、何も選んでいない状態から） */
+  const [picked, setPicked] = useState<{ of: string; id: string } | null>(null);
   const rows = useMemo(
     () => layoutLog(history.commits.map((c) => ({ oid: c.oid, parents: c.parents }))),
     [history.commits],
@@ -79,7 +82,11 @@ export function HistoryPanel() {
   const tip = rows[0];
   const width = tip ? Math.max(tip.incoming.length, tip.outgoing.length) : 1;
   const tipLane = tip?.lane ?? 0;
-  const picked = history.commits.find((c) => c.oid === selected) ?? null;
+  const pickedCommit = history.commits.find((c) => c.oid === selected) ?? null;
+  const shown = selected === UNSAVED || !pickedCommit ? history.entries : diffing ? [] : diff;
+  const pickedId = picked?.of === selected ? picked.id : null;
+  const pickedEntry = shown.find((e) => e.id === pickedId) ?? null;
+  const select = (id: string) => setPicked({ of: selected, id });
 
   return (
     <div className={styles.frame}>
@@ -162,18 +169,41 @@ export function HistoryPanel() {
           {history.error && <p className={ui.error}>{history.error}</p>}
         </div>
         <section className={styles.detail} aria-label="詳細">
-          {selected === UNSAVED || !picked ? (
-            <UnsavedDetail entries={history.entries} ready={history.ready} />
+          {selected === UNSAVED || !pickedCommit ? (
+            <UnsavedDetail
+              entries={history.entries}
+              ready={history.ready}
+              selected={pickedEntry?.id ?? null}
+              onSelect={select}
+            />
           ) : (
-            <CommitDetail commit={picked} changes={diff} diffing={diffing} error={diffError} />
+            <CommitDetail
+              commit={pickedCommit}
+              changes={diff}
+              diffing={diffing}
+              error={diffError}
+              selected={pickedEntry?.id ?? null}
+              onSelect={select}
+            />
           )}
         </section>
+        <ChangeSide entry={pickedEntry} />
       </div>
     </div>
   );
 }
 
-function UnsavedDetail({ entries, ready }: { entries: DiffEntry[]; ready: boolean }) {
+function UnsavedDetail({
+  entries,
+  ready,
+  selected,
+  onSelect,
+}: {
+  entries: DiffEntry[];
+  ready: boolean;
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
   return (
     <>
       <h3 className={styles.subject}>未保存</h3>
@@ -182,7 +212,7 @@ function UnsavedDetail({ entries, ready }: { entries: DiffEntry[]; ready: boolea
       </p>
       <DiffBlock count={ready ? entries.length : null}>
         {ready ? (
-          <ChangeList entries={entries} source="unsaved" panel="ws-history" />
+          <ChangeList entries={entries} selected={selected} onSelect={onSelect} />
         ) : (
           <p className={ui.muted}>読み込んでいます…</p>
         )}
@@ -196,11 +226,15 @@ function CommitDetail({
   changes,
   diffing,
   error,
+  selected,
+  onSelect,
 }: {
   commit: CommitInfo;
   changes: DiffEntry[];
   diffing: boolean;
   error: string | null;
+  selected: string | null;
+  onSelect: (id: string) => void;
 }) {
   const [subject, ...rest] = commit.message.split("\n");
   const body = rest.join("\n").trim();
@@ -230,7 +264,7 @@ function CommitDetail({
         ) : diffing ? (
           <p className={ui.muted}>読み込んでいます…</p>
         ) : (
-          <ChangeList entries={changes} source={`commit:${commit.oid}`} panel="ws-history" />
+          <ChangeList entries={changes} selected={selected} onSelect={onSelect} />
         )}
       </DiffBlock>
     </>

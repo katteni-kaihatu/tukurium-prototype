@@ -9,7 +9,7 @@
 .split {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr);
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -34,15 +34,30 @@
   gap: 10px;
 }
 
-@container history (max-width: 560px) {
+@container history (max-width: 820px) {
   .split {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(140px, 1fr) minmax(140px, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(140px, 0.8fr) minmax(140px, 1fr);
   }
 
   .log {
+    grid-column: 1 / -1;
     border-right: 0;
     border-bottom: 1px solid rgba(38, 38, 46, 0.08);
+  }
+}
+
+@container history (max-width: 520px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: minmax(140px, auto);
+    overflow: auto;
+  }
+
+  .side {
+    border-left: 0;
+    border-top: 1px solid rgba(38, 38, 46, 0.08);
   }
 }
 
@@ -301,10 +316,39 @@
   color: #8a2a2a;
 }
 
+.saveOuter {
+  container: save / inline-size;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+}
+
+.saveFrame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  overflow: hidden;
+}
+
+@container save (max-width: 560px) {
+  .saveFrame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(140px, 0.8fr);
+  }
+
+  .saveFrame > .side {
+    border-left: 0;
+    border-top: 1px solid rgba(38, 38, 46, 0.08);
+  }
+}
+
 .save {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   height: 100%;
 }
@@ -418,22 +462,33 @@
   gap: 8px;
 }
 
-.changePanel {
+/* 保存・履歴パネルの右側の欄（選んだ差分の中身） */
+.side {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid rgba(38, 38, 46, 0.08);
+  padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 0;
-  padding: 12px 14px 16px;
 }
 
-.changePanelHead {
+.sideEmpty {
+  margin: auto 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--c-ink-3);
+}
+
+.sideHead {
   display: flex;
   align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
 
-.changePanelGroup {
+.sideGroup {
   flex: none;
   font-size: 11px;
   font-weight: 700;
@@ -441,7 +496,7 @@
   color: var(--c-ink-3);
 }
 
-.changePanelName {
+.sideName {
   min-width: 0;
   flex: 1;
   margin: 0;
@@ -452,7 +507,7 @@
   font-weight: 700;
 }
 
-.changePanelName[data-change="removed"] {
+.sideName[data-change="removed"] {
   color: var(--c-ink-3);
   text-decoration: line-through;
 }

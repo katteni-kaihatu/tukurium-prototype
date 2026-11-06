@@ -2,42 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../net/api";
 import { type DiffEntry, type DiffLine, diffKindLabel } from "./diffView";
 import styles from "./history.module.css";
-import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-/**
- * 名前で並べた差分。行を押すと、右側の詳細パネルに階層や欄、コード、見た目を出す。
- * source は差分の出どころ（"unsaved" か "commit:<oid>"）、panel はこの一覧を出しているパネルの id。
- */
+/** 名前で並べた差分。行を押すと、パネルの右側の欄に階層や欄、コード、見た目を出す。 */
 export function ChangeList({
   entries,
-  source,
-  panel,
+  selected,
+  onSelect,
 }: {
   entries: DiffEntry[];
-  source: string;
-  panel: string;
+  selected: string | null;
+  onSelect: (id: string) => void;
 }) {
-  const root = useRef<HTMLDivElement>(null);
-  const openId = useWorkspace((s) =>
-    s.detail?.kind === "change" && s.detail.source === source ? s.detail.id : null,
-  );
-  // 一覧が新しくなったら、開いている詳細も新しい中身にする
-  useEffect(() => {
-    useWorkspace.getState().refreshChange(source, entries);
-  }, [source, entries]);
-
-  const show = (entry: DiffEntry) => {
-    const ws = useWorkspace.getState();
-    // 詳細パネルが閉じているときだけ、この一覧のパネルの右側に置く（動かした場所は変えない）
-    if (ws.detail === null) {
-      const mode =
-        root.current?.closest("[data-mode]")?.getAttribute("data-mode") === "3d" ? "3d" : "2d";
-      ws.placeDetail(mode, panel);
-    }
-    ws.openDetail({ kind: "change", id: entry.id, source, entry });
-  };
-
   if (entries.length === 0) return <p className={styles.emptyDiff}>差分はありません</p>;
   const groups = new Map<string, DiffEntry[]>();
   for (const entry of entries) {
@@ -46,7 +22,7 @@ export function ChangeList({
     groups.set(entry.group, list);
   }
   return (
-    <div ref={root} className={styles.groups}>
+    <div className={styles.groups}>
       {[...groups.values()].map((list) => (
         <section key={list[0]?.group} aria-label={list[0]?.groupLabel}>
           <h5 className={styles.groupTitle}>
@@ -59,9 +35,9 @@ export function ChangeList({
                 <button
                   type="button"
                   className={styles.change}
-                  aria-pressed={openId === entry.id}
+                  aria-pressed={selected === entry.id}
                   data-change={entry.kind}
-                  onClick={() => show(entry)}
+                  onClick={() => onSelect(entry.id)}
                 >
                   <span className={styles.changeName}>{entry.name}</span>
                   {entry.hint && <span className={styles.changeHint}>{entry.hint}</span>}
@@ -76,16 +52,23 @@ export function ChangeList({
   );
 }
 
-/** 詳細パネルに出す、差分ひとつの中身 */
-export function ChangeDetailPanel({ entry }: { entry: DiffEntry }) {
+/** パネルの右側の欄。選んだ差分ひとつの中身を出す */
+export function ChangeSide({ entry }: { entry: DiffEntry | null }) {
+  if (!entry) {
+    return (
+      <aside className={styles.side} aria-label="差分の詳細">
+        <p className={styles.sideEmpty}>差分を選ぶと、ここに中身が出ます</p>
+      </aside>
+    );
+  }
   const empty = entry.lines.length === 0 && !entry.code?.length && !entry.preview;
   return (
-    <div className={styles.changePanel}>
-      <div className={styles.changePanelHead}>
-        <span className={styles.changePanelGroup}>{entry.groupLabel}</span>
-        <h3 className={styles.changePanelName} data-change={entry.kind}>
+    <aside className={styles.side} aria-label="差分の詳細">
+      <div className={styles.sideHead}>
+        <span className={styles.sideGroup}>{entry.groupLabel}</span>
+        <h4 className={styles.sideName} data-change={entry.kind}>
           {entry.name}
-        </h3>
+        </h4>
         <span className={styles.kind}>{diffKindLabel(entry.kind)}</span>
       </div>
       {entry.hint && <p className={ui.muted}>{entry.hint}</p>}
@@ -94,7 +77,7 @@ export function ChangeDetailPanel({ entry }: { entry: DiffEntry }) {
       ) : (
         <ChangeDetail entry={entry} />
       )}
-    </div>
+    </aside>
   );
 }
 

@@ -22,7 +22,6 @@ import * as Y from "yjs";
 import { create } from "zustand";
 import { useApp } from "../app/store";
 import type { WorkspaceAnchor } from "./anchor";
-import type { DiffEntry } from "./diffView";
 import { resolvePackagePool } from "./packages";
 import { mergeRun, runDiagnostics, scriptLine } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
@@ -32,12 +31,6 @@ export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: s
 
 /** KokoState・マテリアル・スクリプト。Inspector とは別の詳細パネルで開く */
 export type DetailTarget = { kind: "koko" | "system" | "material"; id: string };
-
-/**
- * 保存・履歴の差分のひとつ。詳細パネルに出す。
- * source は差分の出どころ（"unsaved" か "commit:<oid>"）。一覧が変わったら、同じ出どころの分だけ出し直す。
- */
-export type ChangeTarget = { kind: "change"; id: string; source: string; entry: DiffEntry };
 
 const NO_DIAGNOSTICS: ObservedDiagnostics = { diagnostics: [], observedVersion: 0 };
 
@@ -69,8 +62,8 @@ interface WorkspaceState {
   packagePool: readonly PackageResolution[];
   outputId: string;
   selection: Selection | null;
-  /** 開いている詳細（KokoState・マテリアル・スクリプト・差分）。null ならパネルを出さない */
-  detail: ((DetailTarget | ChangeTarget) & { seq: number }) | null;
+  /** 開いている詳細（KokoState・マテリアル・スクリプト）。null ならパネルを出さない */
+  detail: (DetailTarget & { seq: number }) | null;
   mode: Mode;
   /** ホストのときだけ：実行中の Simulation */
   sim: Simulation | null;
@@ -138,9 +131,7 @@ interface WorkspaceState {
   open(workspaceId: string): void;
   leave(): void;
   select(sel: Selection | null): void;
-  openDetail(target: DetailTarget | ChangeTarget): void;
-  /** 差分の一覧が変わったとき、開いている同じ出どころの差分を新しい中身にする（消えたら閉じる） */
-  refreshChange(source: string, entries: readonly DiffEntry[]): void;
+  openDetail(target: DetailTarget): void;
   closeDetail(): void;
   setOutput(id: string): void;
   play(): void;
@@ -155,12 +146,9 @@ interface WorkspaceState {
    */
   editorPlace: { mode: "2d" | "3d"; seq: number } | null;
   placeEditor(mode: "2d" | "3d"): void;
-  /**
-   * 詳細パネルも、開いた元のパネルと同じ置き方にする。
-   * beside を渡すと、2D のときはそのパネルの右側に並べる。
-   */
-  detailPlace: { mode: "2d" | "3d"; beside?: string; seq: number } | null;
-  placeDetail(mode: "2d" | "3d", beside?: string): void;
+  /** 詳細パネルも、開いた元のパネルと同じ置き方にする */
+  detailPlace: { mode: "2d" | "3d"; seq: number } | null;
+  placeDetail(mode: "2d" | "3d"): void;
   closeSystem(id: string): void;
   togglePanels(): void;
   clearLogs(): void;
@@ -360,15 +348,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     openDetail: (target) => set((s) => ({ detail: { ...target, seq: (s.detail?.seq ?? 0) + 1 } })),
 
-    refreshChange: (source, entries) =>
-      set((s) => {
-        const d = s.detail;
-        if (d?.kind !== "change" || d.source !== source) return {};
-        const entry = entries.find((e) => e.id === d.id);
-        if (!entry) return { detail: null };
-        return entry === d.entry ? {} : { detail: { ...d, entry } };
-      }),
-
     closeDetail: () => set({ detail: null }),
 
     setOutput: (outputId) => {
@@ -397,8 +376,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     placeEditor: (mode) =>
       set((s) => ({ editorPlace: { mode, seq: (s.editorPlace?.seq ?? 0) + 1 } })),
 
-    placeDetail: (mode, beside) =>
-      set((s) => ({ detailPlace: { mode, beside, seq: (s.detailPlace?.seq ?? 0) + 1 } })),
+    placeDetail: (mode) =>
+      set((s) => ({ detailPlace: { mode, seq: (s.detailPlace?.seq ?? 0) + 1 } })),
 
     closeSystem: (id) =>
       set((s) => {

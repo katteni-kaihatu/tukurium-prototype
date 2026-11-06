@@ -43,9 +43,7 @@ const loadView = (): View => {
  */
 export function ResourcesPanel() {
   const { openSystem, placeEditor, openDetail, placeDetail } = useWorkspace();
-  const detailId = useWorkspace((s) =>
-    s.detail?.kind === "change" ? null : (s.detail?.id ?? null),
-  );
+  const detailId = useWorkspace((s) => s.detail?.id ?? null);
   const project = useProject();
   const editing = useCanEdit();
   const problems = useProblems();
