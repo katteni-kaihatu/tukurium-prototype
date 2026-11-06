@@ -9,6 +9,7 @@ import {
   packageSystems,
 } from "@tukurium/repo-model";
 import { useState } from "react";
+import { ImagePreview, MaterialPreview, ModelPreview } from "./AssetPreview";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
 import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
@@ -30,7 +31,7 @@ const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"
   { type: "resource", label: "Resource", default: null },
 ];
 
-/** 開いている KokoState・マテリアル・スクリプトの詳細 */
+/** 開いている KokoState・マテリアル・スクリプト・素材の詳細 */
 export function DetailPanel() {
   const detail = useWorkspace((s) => s.detail);
   if (!detail) return null;
@@ -53,6 +54,8 @@ export function DefinitionProperties({
       return <SystemProperties id={selection.id} />;
     case "material":
       return <MaterialProperties id={selection.id} />;
+    case "asset":
+      return <AssetProperties id={selection.id} />;
   }
 }
 
@@ -737,6 +740,12 @@ function MaterialProperties({ id }: { id: string }) {
           <ChangeMark kind={changed.kind} />
           <h3 className={ui.sectionTitle}>Material</h3>
         </div>
+        <MaterialPreview
+          color={m.color}
+          roughness={m.roughness}
+          metalness={m.metalness}
+          map={m.map ?? null}
+        />
         <NameRow
           id={id}
           value={m.name}
@@ -817,5 +826,25 @@ function MaterialProperties({ id }: { id: string }) {
         </div>
       )}
     </>
+  );
+}
+
+function AssetProperties({ id }: { id: string }) {
+  const project = useProject();
+  const asset = project.asset(id);
+  if (!asset) return <p className={ui.empty}>素材が見つかりません</p>;
+  const title = asset.kind === "model" ? "モデル" : asset.kind === "image" ? "テクスチャ" : "音声";
+  return (
+    <div className={ui.section}>
+      <div className={ui.sectionHead}>
+        <h3 className={ui.sectionTitle}>{title}</h3>
+      </div>
+      <p className={ui.itemName}>{asset.name}</p>
+      {asset.kind === "image" && <ImagePreview id={asset.id} name={asset.name} />}
+      {asset.kind === "model" && <ModelPreview id={asset.id} />}
+      {asset.kind === "audio" && (
+        <p className={ui.muted}>音声は、Resources の下の「試聴」で聞けます。</p>
+      )}
+    </div>
   );
 }

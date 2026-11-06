@@ -79,9 +79,19 @@ export function summarize(panelId: string): string[] {
           ? project.system(d.id)?.name
           : d.kind === "material"
             ? project.material(d.id)?.name
-            : project.registry().get(d.id)?.name;
+            : d.kind === "asset"
+              ? project.asset(d.id)?.name
+              : project.registry().get(d.id)?.name;
       const label =
-        d.kind === "system" ? "Script" : d.kind === "material" ? "Material" : "KokoState";
+        d.kind === "system"
+          ? "Script"
+          : d.kind === "material"
+            ? "Material"
+            : d.kind === "asset"
+              ? project.asset(d.id)?.kind === "model"
+                ? "Model"
+                : "Texture"
+              : "KokoState";
       return [`${label}: ${name ?? d.id}`];
     }
     case "ws-resources":

@@ -29,8 +29,8 @@ import { WorkspaceSync } from "./WorkspaceSync";
 /** Hierarchy で選んだもの。Inspector の右側に出る */
 export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: string };
 
-/** KokoState・マテリアル・スクリプト。Inspector とは別の詳細パネルで開く */
-export type DetailTarget = { kind: "koko" | "system" | "material"; id: string };
+/** KokoState・マテリアル・スクリプト・素材。Inspector とは別の詳細パネルで開く */
+export type DetailTarget = { kind: "koko" | "system" | "material" | "asset"; id: string };
 
 const NO_DIAGNOSTICS: ObservedDiagnostics = { diagnostics: [], observedVersion: 0 };
 
