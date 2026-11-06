@@ -1,5 +1,5 @@
 import type { ProjectSnapshot } from "@tukurium/repo-model";
-import { gunAndTargetSample } from "@tukurium/repo-model";
+import { BUILTIN, gunAndTargetSample } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
 import { describeDiff, lineDiff } from "./diffView";
 
@@ -59,10 +59,44 @@ describe("describeDiff", () => {
       expect.arrayContaining([
         { label: "名前", before: "子", after: "鉄砲", part: "name" },
         { label: "階層", before: "射撃場 / 親 / 子", after: "射撃場 / 鉄砲", part: "place" },
-        expect.objectContaining({ label: "Gun / ammo", before: "12", after: "7" }),
+        expect.objectContaining({
+          label: "ammo",
+          before: "12",
+          after: "7",
+          section: { key: "state:ks", label: "Gun", change: "modified" },
+        }),
       ]),
     );
     expect(describeDiff(before, after).some((e) => e.name === "親")).toBe(false);
+  });
+
+  it("Entity の KokoState は、KokoState ごとの見出しにまとめる", () => {
+    const before = snap({
+      entities: [
+        {
+          id: "e",
+          name: "箱",
+          parent: null,
+          output: "out",
+          order: 0,
+          states: { ks: { f: 1 }, [BUILTIN.Collider]: {} },
+        },
+      ],
+    });
+    const after = structuredClone(before);
+    const e = after.entities[0];
+    if (!e) throw new Error("ない");
+    e.states = { [BUILTIN.Transform]: { position: [0, 1, 0] }, ks: { f: 1 } };
+    const lines = describeDiff(before, after).find((x) => x.group === "entity")?.lines ?? [];
+    const heads = [
+      ...new Map(lines.flatMap((l) => (l.section ? [[l.section.key, l.section]] : []))).values(),
+    ];
+    expect(heads).toEqual([
+      { key: `state:${BUILTIN.Collider}`, label: "Collider", change: "removed" },
+      { key: `state:${BUILTIN.Transform}`, label: "Transform", change: "added" },
+    ]);
+    // 欄の名前は見出しを付けずに出す
+    expect(lines.find((l) => l.section?.label === "Transform")?.label).toBe("position");
   });
 
   it("アウトプットの名前だけ変えても、中のエンティティは出さない", () => {
