@@ -67,6 +67,7 @@
 
 - フックを早期 return の後で呼ぶと、表示が切り替わったときに落ちる。Biome の `useHookAtTopLevel` で検出する。
 - パネルを重ねたとき、触ったパネルを前に出す（pointerdown で z-index を上げる）。
+- Inspector のメニューを階層の中に absolute で置くと、スクロール枠と右の詳細で切れる。`document.body` へ出して fixed で、詳細の上に重ねる。
 
 ## GitHub・CI
 

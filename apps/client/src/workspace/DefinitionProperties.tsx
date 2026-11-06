@@ -515,7 +515,7 @@ function KokoDefProperties({ id }: { id: string }) {
                   holders.length === 0
                     ? `${def.name} を削除しますか？`
                     : `${def.name} を削除すると、${holders.length} 個の Entity から外れます。削除しますか？`;
-                if (confirm(message)) {
+                if (window.confirm(message)) {
                   project.removeKokoState(id);
                   closeDetail();
                 }
