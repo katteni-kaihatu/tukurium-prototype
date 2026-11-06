@@ -15,15 +15,38 @@ export class ItemCatalog {
     const snapshot = latest
       ? await this.repos.snapshot(work.repoId, latest.commit).catch(() => null)
       : null;
+    const output = snapshot?.outputs.find((o) => o.id === work.outputId);
     return {
       ...work,
+      // リリースした版のサムネイル（Resources の画像の素材 ID。ADR 0046）
+      thumbnail: output?.thumbnail ?? null,
       tags: work.tags ?? [],
       ownerName: (await this.store.user(work.owner))?.name ?? "?",
       repoName: repo?.name ?? "?",
       latest,
-      outputKind:
-        snapshot?.outputs.find((o) => o.id === work.outputId)?.kind ??
-        (latest ? null : (repo?.kind ?? null)),
+      outputKind: output?.kind ?? (latest ? null : (repo?.kind ?? null)),
+    };
+  }
+
+  /** 作品の詳細。バージョンと、その版を出した保存のメッセージを付ける。 */
+  async detail(user: User | null, workId: string) {
+    const work = await this.store.work(workId);
+    const visible =
+      !!work && (work.owner === user?.id || work.perms.use || work.perms.view || work.perms.fork);
+    if (!work || !visible) throw new HttpError(404, "作品が見つかりません");
+    const info = await this.describe(work);
+    const repo = await this.store.repo(work.repoId);
+    const releases = await Promise.all(
+      (await this.store.releases(work.id)).map(async (release) => ({
+        ...release,
+        comment: await this.repos.git.message(work.repoId, release.commit),
+      })),
+    );
+    return {
+      ...info,
+      releases,
+      // 非公開のプロジェクトは、作品を使えても参照を出さない
+      project: repo?.visibility === "public" ? { id: repo.id, name: repo.name } : null,
     };
   }
 

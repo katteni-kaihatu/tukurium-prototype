@@ -26,6 +26,7 @@ import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
+import { ThumbnailField } from "./ThumbnailField";
 import ui from "./ui.module.css";
 import { useProblems, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
@@ -273,6 +274,14 @@ function OutputProperties({ id }: { id: string }) {
           </MarkedLine>
         )}
       </div>
+      <ThumbnailField
+        output={output}
+        editing={editing}
+        onChange={(thumbnail) => {
+          const { thumbnail: _old, ...rest } = output;
+          project.updateOutput(thumbnail ? { ...rest, thumbnail } : rest);
+        }}
+      />
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <ChangeMark kind={changed.systems} target={{ entry: `output:${id}`, part: "systems" }} />

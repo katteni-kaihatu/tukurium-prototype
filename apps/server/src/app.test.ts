@@ -349,6 +349,23 @@ describe("本人識別とセッション", () => {
       await A.post("/api/works", { repoId: worldRepo.id, outputId: "out_main" })
     ).json();
     const worldRelease = (await A.post(`/api/works/${worldWork.id}/releases`)).json();
+    const detail = (await B.get(`/api/works/${work.id}`)).json();
+    expect(detail.project).toEqual({ id: repo.id, name: "検索用の銃" });
+    expect(detail.releases.map((release: { version: number }) => release.version)).toEqual([2, 1]);
+    expect(detail.releases[0].comment).toBe("最初のコミット");
+    expect((await B.get(`/api/works/${worldWork.id}`)).json()).toMatchObject({
+      outputKind: "world",
+      project: { id: worldRepo.id, name: "ワールド" },
+    });
+    expect(
+      (await app.inject({ method: "GET", url: `/api/works/${work.id}` })).json().project,
+    ).toEqual({ id: repo.id, name: "検索用の銃" });
+    expect((await B.get("/api/works/missing")).statusCode).toBe(404);
+    expect((await A.get(`/api/works?owner=${owner.me.id}`)).json()).toHaveLength(3);
+    await A.patch(`/api/repos/${repo.id}`, { visibility: "private" });
+    expect((await B.get(`/api/works/${work.id}`)).json().project).toBeNull();
+    expect((await A.get(`/api/works/${work.id}`)).json().project).toBeNull();
+    await A.patch(`/api/repos/${repo.id}`, { visibility: "public" });
     expect(
       (await B.get(`/api/market?q=${encodeURIComponent("アイテム作者")}&limit=1`)).json(),
     ).toMatchObject({ total: 2, items: [{ id: secondWork.id }], nextOffset: 1 });
@@ -380,6 +397,9 @@ describe("本人識別とセッション", () => {
       releaseId: r1.id,
     });
     expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+    await A.patch(`/api/works/${work.id}`, { perms: { use: false, view: false, fork: false } });
+    expect((await B.get(`/api/works/${work.id}`)).statusCode).toBe(404);
+    expect((await A.get(`/api/works/${work.id}`)).statusCode).toBe(200);
   });
 
   it("取り出しの再送と同じ人の別接続を一回の配置にまとめ、移動先と権限を確かめる", async () => {
@@ -1205,11 +1225,20 @@ describe("リポジトリ・コミット・作品", () => {
       id: string;
       official: boolean;
       outputKind: string;
+      thumbnail: string | null;
     }[];
     expect(works.find((w) => w.id === "w_official_combat")).toMatchObject({
       official: true,
       outputKind: "library",
     });
+    // 公式ライブラリには同梱のサムネイルが付いていて、誰でも取り出せる（ADR 0046）
+    for (const id of ["w_official_combat", "w_official_interaction", "w_official_items"]) {
+      const thumb = works.find((w) => w.id === id)?.thumbnail;
+      expect(thumb).toMatch(/^[0-9a-f]{64}$/);
+      const got = await app.inject({ method: "GET", url: `/api/assets/${thumb}?t=${a.token}` });
+      expect(got.statusCode).toBe(200);
+      expect(got.headers["content-type"]).toBe("image/png");
+    }
     // 同じ名前の利用者が出しても、公式にはならない
     const repo = (await A.post("/api/repos", { name: "combat", template: "gun" })).json();
     const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();

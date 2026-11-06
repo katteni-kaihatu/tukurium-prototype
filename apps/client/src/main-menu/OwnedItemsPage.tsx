@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useApp } from "../app/store";
+import { Thumbnail } from "../app/Thumbnail";
 import type { OwnedItem, Work } from "../net/api";
 import { CatalogNotice, ItemAction, ItemDetailsPlaceholder } from "./CatalogPage";
 import { refreshOwned, useCatalog } from "./catalogStore";
@@ -335,6 +336,13 @@ function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
 }
 
 function ItemThumbnail({ work }: { work: Work | null }) {
+  // サムネイルがあればそれを出す（ADR 0046）
+  if (work?.thumbnail)
+    return (
+      <span className={`${styles.visual} ${styles.visualImage}`} aria-hidden="true">
+        <Thumbnail id={work.thumbnail} name={work.name} />
+      </span>
+    );
   return (
     <span className={styles.visual} aria-hidden="true">
       <Glyph kind="box" />

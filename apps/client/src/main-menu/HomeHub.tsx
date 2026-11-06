@@ -131,7 +131,7 @@ export function HomeHub({ active }: { active: boolean }) {
                         menu.selectPage("items");
                       }}
                     >
-                      <ItemArt />
+                      <ItemArt work={item.work} />
                     </button>
                     <div className={styles.cardCopy}>
                       <strong>{item.work?.name ?? "利用できないアイテム"}</strong>
@@ -175,7 +175,7 @@ export function HomeHub({ active }: { active: boolean }) {
                       menu.selectPage("market");
                     }}
                   >
-                    <ItemArt />
+                    <ItemArt work={work} />
                     <strong>{work.name}</strong>
                     <span className={styles.caption}>{work.ownerName}</span>
                   </button>

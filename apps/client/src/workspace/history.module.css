@@ -573,6 +573,45 @@
   justify-content: space-between;
 }
 
+/* KokoState ごとのまとまり（見出しと、その下の欄） */
+.lines li.sectionHead {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(38, 38, 46, 0.06);
+  font-weight: 700;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.lines[data-revert] li.sectionHead {
+  grid-template-columns: minmax(0, 1fr) auto 22px;
+}
+
+.lines li.sectionHead:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.sectionName {
+  color: var(--c-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lines li.sectionHead[data-change="added"] .sectionName {
+  color: #1f6b47;
+}
+
+.lines li.sectionHead[data-change="removed"] .sectionName {
+  color: #9a3b3b;
+  text-decoration: line-through;
+}
+
+.lines li[data-in-section] .lineLabel {
+  padding-left: 12px;
+}
+
 .lineLabel {
   color: var(--c-ink-3);
   overflow: hidden;

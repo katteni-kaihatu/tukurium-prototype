@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { ImagePreview, ModelPreview } from "./AssetPreview";
 import { type DiffEntry, type DiffLine, diffKindLabel } from "./diffView";
 import styles from "./history.module.css";
@@ -140,6 +141,8 @@ export function RevertIcon() {
 }
 
 /** 差分ひとつの中身（欄の前後、コードの行、見た目）。revert を渡すと、行ごとに戻すボタンを出す */
+const SECTION_LABEL = { added: "付けた", removed: "外した", modified: "変えた" } as const;
+
 export function ChangeDetail({ entry, revert }: { entry: DiffEntry; revert?: PartRevert }) {
   const can = (part: string | undefined): part is string =>
     part !== undefined && revert?.revertable(part) === true;
@@ -149,22 +152,45 @@ export function ChangeDetail({ entry, revert }: { entry: DiffEntry; revert?: Par
         <ul className={styles.lines} data-revert={revert ? "" : undefined}>
           {withKeys(
             entry.lines,
-            (line) => `${line.label}\0${line.before ?? ""}\0${line.after ?? ""}`,
-          ).map(({ item: line, key }) => (
-            <li key={key}>
-              <span className={styles.lineLabel}>{line.label}</span>
-              <LineValue line={line} />
-              {revert &&
-                (can(line.part) ? (
-                  <PartButton
-                    label={`${line.label} を元に戻す`}
-                    onClick={() => line.part && revert.onRevert(line.part)}
-                  />
-                ) : (
-                  <span />
-                ))}
-            </li>
-          ))}
+            (line) =>
+              `${line.section?.key ?? ""}\0${line.label}\0${line.before ?? ""}\0${line.after ?? ""}`,
+          ).map(({ item: line, key }, i) => {
+            // KokoState ごとにまとめる：同じ見出しの最初の行の前に、見出しを一つだけ出す
+            const section = line.section;
+            const first = section && entry.lines[i - 1]?.section?.key !== section.key;
+            return (
+              <Fragment key={key}>
+                {section && first && (
+                  <li className={styles.sectionHead} data-change={section.change}>
+                    <span className={styles.sectionName}>{section.label}</span>
+                    <span className={styles.kind}>{SECTION_LABEL[section.change]}</span>
+                    {revert &&
+                      (can(section.key) ? (
+                        <PartButton
+                          label={`${section.label} を元に戻す`}
+                          onClick={() => revert.onRevert(section.key)}
+                        />
+                      ) : (
+                        <span />
+                      ))}
+                  </li>
+                )}
+                <li data-in-section={section ? "" : undefined}>
+                  <span className={styles.lineLabel}>{line.label}</span>
+                  <LineValue line={line} />
+                  {revert &&
+                    (can(line.part) && line.part !== section?.key ? (
+                      <PartButton
+                        label={`${section ? `${section.label} / ` : ""}${line.label} を元に戻す`}
+                        onClick={() => line.part && revert.onRevert(line.part)}
+                      />
+                    ) : (
+                      <span />
+                    ))}
+                </li>
+              </Fragment>
+            );
+          })}
         </ul>
       )}
       {entry.code && entry.code.length > 0 && revert && can("code") && (

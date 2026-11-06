@@ -138,7 +138,13 @@ export function registerRepoRoutes(
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
       const list = await store.repos(q);
       const visible = [];
-      for (const r of list) if (await repos.canRead(user, r)) visible.push(await withOwner(r));
+      for (const r of list) {
+        if (!(await repos.canRead(user, r))) continue;
+        // 一覧に出すサムネイルは、いまの版の最初のアウトプットのもの（ADR 0046）
+        const snap = await repos.snapshot(r.id).catch(() => null);
+        const thumbnail = snap?.outputs.find((o) => o.thumbnail)?.thumbnail ?? null;
+        visible.push({ ...(await withOwner(r)), thumbnail });
+      }
       return visible;
     }),
   );
@@ -278,6 +284,11 @@ export function registerRepoRoutes(
   );
 
   app.get(
+    "/api/works/:id",
+    handle<{ id: string }>(async (req) => catalog.detail(await userOf(req), req.params.id)),
+  );
+
+  app.get(
     "/api/works",
     handle(async (req) => {
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
@@ -289,12 +300,15 @@ export function registerRepoRoutes(
           const snap = latest
             ? await repos.snapshot(w.repoId, latest.commit).catch(() => null)
             : null;
-          const outputKind = snap?.outputs.find((o) => o.id === w.outputId)?.kind ?? null;
+          const output = snap?.outputs.find((o) => o.id === w.outputId);
+          const outputKind = output?.kind ?? null;
           return {
             ...(await withOwner(w)),
             repoName: (await store.repo(w.repoId))?.name ?? "?",
             latest,
             outputKind,
+            // リリースした版のサムネイル（ADR 0046）
+            thumbnail: output?.thumbnail ?? null,
             // 公式かどうかは発行者で決める（名前は見ない。ADR 0013 §1）
             official: isOfficial(w.owner),
           };

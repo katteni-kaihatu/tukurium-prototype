@@ -1,19 +1,95 @@
 import { tagKey } from "@tukurium/shared";
-import { useEffect, useId, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useId, useState } from "react";
 import { useApp } from "../app/store";
+import { Thumbnail } from "../app/Thumbnail";
 import type { OwnedItem, Work } from "../net/api";
-import { acquire, refreshOwned, searchMarket, takeOut, useCatalog } from "./catalogStore";
+import {
+  acquire,
+  loadMyWorks,
+  loadWork,
+  refreshOwned,
+  searchMarket,
+  takeOut,
+  useCatalog,
+} from "./catalogStore";
 import styles from "./MainMenu.module.css";
 import shelfStyles from "./OwnedItemsPage.module.css";
 import { useMainMenu } from "./store";
 import { WorkTags, WorkTagsEditor } from "./WorkTags";
 
+const KIND_LABEL: Record<string, string> = {
+  world: "ワールド",
+  item: "アイテム",
+  library: "ライブラリ",
+};
+
+function kindLabel(kind: string | null | undefined): string {
+  return (kind && KIND_LABEL[kind]) || "作品";
+}
+
 export function CatalogPage({ active }: { active: boolean }) {
+  const menu = useMainMenu();
+  const open = useMainMenu((s) => s.open);
+  const owner = useCatalog((s) => s.owner);
+  const workId = menu.selected.market;
+  const [tab, setTab] = useState<"search" | "mine">("search");
+  const [tags, setTags] = useState<string[]>([]);
+  useEffect(() => {
+    if (!active || !workId) return;
+    void loadWork(workId);
+  }, [active, workId]);
+  useEffect(() => {
+    if (!active || !open || tab !== "mine" || !owner) return;
+    void loadMyWorks();
+  }, [active, open, tab, owner]);
+  if (workId) return <WorkDetail workId={workId} onBack={() => menu.select("market", undefined)} />;
+  return (
+    <>
+      <div className={styles.pageHeader}>
+        <h1>マーケット</h1>
+      </div>
+      <div className={styles.marketTabs} role="tablist" aria-label="マーケット">
+        <button
+          type="button"
+          role="tab"
+          className={styles.marketTab}
+          aria-selected={tab === "search"}
+          onClick={() => setTab("search")}
+        >
+          さがす
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className={styles.marketTab}
+          aria-selected={tab === "mine"}
+          onClick={() => setTab("mine")}
+        >
+          自分の作品
+        </button>
+      </div>
+      {tab === "mine" ? (
+        <MyWorks onOpen={(id) => menu.select("market", id)} />
+      ) : (
+        <MarketSearch active={active} tags={tags} setTags={setTags} />
+      )}
+    </>
+  );
+}
+
+function MarketSearch({
+  active,
+  tags,
+  setTags,
+}: {
+  active: boolean;
+  tags: string[];
+  setTags: Dispatch<SetStateAction<string[]>>;
+}) {
   const menu = useMainMenu();
   const catalog = useCatalog();
   const status = useApp((s) => s.status);
   const query = menu.queries.market.trim();
-  const [tags, setTags] = useState<string[]>([]);
   useEffect(() => {
     if (!active || !menu.open || status !== "online" || !catalog.owner) return;
     const timer = setTimeout(() => void searchMarket(query, 0, tags), 200);
@@ -22,7 +98,6 @@ export function CatalogPage({ active }: { active: boolean }) {
   const matches =
     catalog.marketQuery === query && JSON.stringify(catalog.marketTags) === JSON.stringify(tags);
   const entries = matches ? (catalog.market?.items ?? []) : [];
-  const selected = entries.find((work) => work.id === menu.selected.market);
   const loading = catalog.marketLoading || !matches || (!catalog.market && !catalog.marketError);
   const choices = [
     ...new Map(
@@ -38,13 +113,9 @@ export function CatalogPage({ active }: { active: boolean }) {
         ? previous.filter((value) => tagKey(value) !== tagKey(tag))
         : [...previous, tag].sort(),
     );
-    menu.select("market", undefined);
   };
   return (
     <>
-      <div className={styles.pageHeader}>
-        <h1>マーケット</h1>
-      </div>
       <div className={styles.toolbar}>
         <input
           aria-label="マーケットを検索"
@@ -111,62 +182,29 @@ export function CatalogPage({ active }: { active: boolean }) {
           </p>
         </div>
       )}
-      <div className={styles.catalogSplit}>
-        <div className={styles.itemGrid}>
-          {entries.map((work) => {
-            const item = catalog.owned.find((entry) => entry.workId === work.id);
-            return (
-              <article
-                key={work.id}
-                className={styles.itemCard}
-                data-selected={selected?.id === work.id || undefined}
-              >
-                <button
-                  className={styles.artButton}
-                  type="button"
-                  aria-label={`${work.name} の詳細`}
-                  onClick={() => menu.select("market", work.id)}
-                >
-                  <ItemArt />
-                  {item && <span className={styles.ownedBadge}>所持済み</span>}
-                </button>
-                <div className={styles.cardCopy}>
-                  <strong>{work.name}</strong>
-                  <span className={styles.caption}>{work.ownerName ?? "作者不明"}</span>
-                  <WorkTags tags={work.tags} onSelect={toggleTag} />
-                  <ItemAction work={work} item={item} />
-                </div>
-              </article>
-            );
-          })}
-        </div>
-        {selected ? (
-          <aside className={styles.detail} aria-label="アイテムの詳細">
-            <div className={styles.detailTop}>
-              <span>アイテムの詳細</span>
+      <div className={styles.itemGrid}>
+        {entries.map((work) => {
+          const item = catalog.owned.find((entry) => entry.workId === work.id);
+          return (
+            <article key={work.id} className={styles.itemCard}>
               <button
+                className={styles.artButton}
                 type="button"
-                aria-label="アイテムの選択を解除"
-                onClick={() => menu.select("market", undefined)}
+                aria-label={`${work.name} の詳細`}
+                onClick={() => menu.select("market", work.id)}
               >
-                ×
+                <ItemArt work={work} />
+                {item && <span className={styles.ownedBadge}>所持済み</span>}
               </button>
-            </div>
-            <ItemArt />
-            <h2>{selected.name}</h2>
-            <p>作者: {selected.ownerName ?? "不明"}</p>
-            <p className={styles.muted}>
-              公開されている版: {selected.latest ? `v${selected.latest.version}` : "リリースなし"}
-            </p>
-            <ItemAction
-              work={selected}
-              item={catalog.owned.find((entry) => entry.workId === selected.id)}
-            />
-            <WorkTagsEditor key={selected.id} work={selected} />
-          </aside>
-        ) : (
-          <ItemDetailsPlaceholder />
-        )}
+              <div className={styles.cardCopy}>
+                <strong>{work.name}</strong>
+                <span className={styles.caption}>{work.ownerName ?? "作者不明"}</span>
+                <WorkTags tags={work.tags} onSelect={toggleTag} />
+                <ItemAction work={work} item={item} />
+              </div>
+            </article>
+          );
+        })}
       </div>
       {catalog.market?.nextOffset != null && !loading && (
         <button
@@ -177,6 +215,118 @@ export function CatalogPage({ active }: { active: boolean }) {
           さらに表示する
         </button>
       )}
+    </>
+  );
+}
+
+function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }) {
+  const detail = useCatalog((s) => (s.detail?.id === workId ? s.detail : null));
+  const loading = useCatalog((s) => s.detailLoading);
+  const error = useCatalog((s) => s.detailError);
+  const item = useCatalog((s) => s.owned.find((entry) => entry.workId === workId));
+  const openProject = () => {
+    if (detail?.project) useMainMenu.getState().showProject(`/p/${detail.project.id}`);
+  };
+  return (
+    <section className={styles.workDetail} aria-label="作品の詳細">
+      <button type="button" className={styles.button} onClick={onBack}>
+        一覧へ戻る
+      </button>
+      {loading && !detail && (
+        <p className={styles.muted} role="status">
+          作品を読み込んでいます…
+        </p>
+      )}
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
+      {detail && (
+        <>
+          <ItemArt work={detail} />
+          <div className={styles.pageHeader}>
+            <h1>{detail.name}</h1>
+            <span className={styles.kindBadge}>{kindLabel(detail.outputKind)}</span>
+          </div>
+          <p>作者: {detail.ownerName ?? "不明"}</p>
+          {detail.project && (
+            <p>
+              プロジェクト:{" "}
+              <button type="button" className={styles.projectLink} onClick={openProject}>
+                {detail.project.name}
+              </button>
+            </p>
+          )}
+          {detail.outputKind === "item" ? (
+            <ItemAction work={detail} item={item} />
+          ) : (
+            <p className={styles.muted}>入手できるのはアイテムです。</p>
+          )}
+          <WorkTagsEditor key={detail.id} work={detail} />
+          <h2 className={styles.versionHeading}>バージョン · {detail.releases.length}</h2>
+          {detail.releases.length === 0 ? (
+            <p className={styles.muted}>リリースはまだありません。</p>
+          ) : (
+            <ol className={styles.versionList}>
+              {detail.releases.map((release, index) => (
+                <li key={release.id}>
+                  <div className={styles.versionHead}>
+                    <strong>v{release.version}</strong>
+                    {index === 0 && <span className={styles.kindBadge}>最新</span>}
+                    <time dateTime={release.createdAt}>
+                      {new Date(release.createdAt).toLocaleString("ja-JP")}
+                    </time>
+                  </div>
+                  <p className={styles.versionComment}>
+                    {release.comment?.trim() || "コメントはありません"}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function MyWorks({ onOpen }: { onOpen: (id: string) => void }) {
+  const owner = useCatalog((s) => s.owner);
+  const mine = useCatalog((s) => s.mine);
+  const loading = useCatalog((s) => s.mineLoading);
+  const error = useCatalog((s) => s.mineError);
+  if (!owner) {
+    return <p className={styles.muted}>ログインすると、自分の作品を見られます。</p>;
+  }
+  return (
+    <>
+      {error && (
+        <p className={styles.error} role="alert">
+          {error}
+        </p>
+      )}
+      {loading && mine.length === 0 && (
+        <p className={styles.muted} role="status">
+          作品を読み込んでいます…
+        </p>
+      )}
+      {!loading && !error && mine.length === 0 && (
+        <div className={styles.empty}>
+          <p>公開した作品はまだありません。</p>
+        </div>
+      )}
+      <ul className={styles.workList}>
+        {mine.map((work) => (
+          <li key={work.id}>
+            <button type="button" onClick={() => onOpen(work.id)}>
+              <strong>{work.name}</strong>
+              <span>{kindLabel(work.outputKind)}</span>
+              <span>{work.latest ? `v${work.latest.version}` : "リリースなし"}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </>
   );
 }
@@ -296,7 +446,14 @@ export function CatalogNotice() {
   );
 }
 
-export function ItemArt() {
+/** アイテムの絵：サムネイルがあればそれ、なければ箱の絵（ADR 0046） */
+export function ItemArt({ work }: { work?: Work | null }) {
+  if (work?.thumbnail)
+    return (
+      <div className={`${styles.itemArt} ${styles.itemArtImage}`}>
+        <Thumbnail id={work.thumbnail} name={work.name} />
+      </div>
+    );
   return (
     <div className={styles.itemArt}>
       <svg viewBox="0 0 120 90" width="100%" height="100%" aria-hidden="true">

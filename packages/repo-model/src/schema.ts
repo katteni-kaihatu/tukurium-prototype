@@ -36,6 +36,11 @@ export interface OutputDef {
    * - interactive：相手が公開した Contract も送れる
    */
   guestPolicy?: GuestPolicy;
+  /**
+   * サムネイル：Resources にある画像の素材 ID（ADR 0046）。アイテム・マーケットのカードや
+   * プロジェクトの一覧に出す。ないときは名前の文字を出す。
+   */
+  thumbnail?: string;
 }
 
 export type GuestPolicy = "deny" | "collision" | "interactive";

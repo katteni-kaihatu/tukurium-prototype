@@ -34,6 +34,18 @@ export interface DiffLine {
    * code：name、material：name / color / roughness / metalness / map。ないものは添え書き。
    */
   part?: string;
+  /**
+   * まとめて見せる見出し（Entity の KokoState ごと）。同じ key の行は、見出しの下にまとめて並べ、
+   * label は欄の名前だけにする。
+   */
+  section?: DiffSection;
+}
+
+export interface DiffSection {
+  key: string;
+  label: string;
+  /** その KokoState を付けた・外した・中身を変えた */
+  change: "added" | "removed" | "modified";
 }
 
 export interface CodeRow {
@@ -443,27 +455,31 @@ function stateLines(
     const name = def?.name ?? koko;
     const had = koko in prevStates;
     const has = koko in nextStates;
-    if (!had || !has) {
-      if ((def?.fields.length ?? 0) === 0) {
-        lines.push({
-          label: name,
-          before: had ? "付いている" : null,
-          after: has ? "付いている" : null,
-          part: `state:${koko}`,
-        });
-      }
-    }
-    lines.push(
-      ...fieldLines(
-        name,
-        koko,
-        def,
-        had ? prevStates[koko] : undefined,
-        has ? nextStates[koko] : undefined,
-        before,
-        after,
-      ),
+    // KokoState ごとに見出しを立て、その下に欄をまとめる
+    const section: DiffSection = {
+      key: `state:${koko}`,
+      label: name,
+      change: !had ? "added" : !has ? "removed" : "modified",
+    };
+    const own: DiffLine[] = [];
+    const values = fieldLines(
+      koko,
+      def,
+      had ? prevStates[koko] : undefined,
+      has ? nextStates[koko] : undefined,
+      before,
+      after,
     );
+    // 付けた・外したのに欄の行が出ない（欄がない、値が空）ときは、付け外しの行を出す
+    if ((!had || !has) && values.length === 0) {
+      own.push({
+        label: "付け外し",
+        before: had ? "付いている" : null,
+        after: has ? "付いている" : null,
+        part: `state:${koko}`,
+      });
+    }
+    own.push(...values);
     const fieldIds = new Set([
       ...Object.keys(prevStates[koko] ?? {}),
       ...Object.keys(nextStates[koko] ?? {}),
@@ -474,19 +490,19 @@ function stateLines(
       const afterKeep = next ? kept(after, next.output, id, koko, field) : false;
       if (beforeKeep === afterKeep) continue;
       const fieldName = def?.fields.find((f) => f.id === field)?.name ?? field;
-      lines.push({
-        label: `${name} / ${fieldName} の維持`,
+      own.push({
+        label: `${fieldName} の維持`,
         before: beforeKeep ? "付ける" : "外す",
         after: afterKeep ? "付ける" : "外す",
         part: `field:${koko}:${field}`,
       });
     }
+    lines.push(...own.map((l) => ({ ...l, section })));
   }
   return lines;
 }
 
 function fieldLines(
-  prefix: string,
   koko: string,
   def: KokoStateDef | undefined,
   beforeVals: Record<string, unknown> | undefined,
@@ -512,7 +528,7 @@ function fieldLines(
     const has = afterVals !== undefined && Object.hasOwn(afterVals, id);
     if (had && has && same(beforeVals?.[id], afterVals?.[id])) continue;
     lines.push({
-      label: `${prefix} / ${field?.name ?? id}`,
+      label: field?.name ?? id,
       before: had ? show(beforeVals?.[id], field?.type, before) : null,
       after: has ? show(afterVals?.[id], field?.type, after) : null,
       part: `field:${koko}:${id}`,
