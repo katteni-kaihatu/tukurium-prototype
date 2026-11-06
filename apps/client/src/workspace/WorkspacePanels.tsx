@@ -20,6 +20,7 @@ import { DetailPanel } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { InspectorPanel } from "./InspectorPanel";
+import { KokoPickerPanel } from "./KokoPickerPanel";
 import { LogPanel } from "./LogPanel";
 import { MainPanel } from "./MainPanel";
 import { MembersPanel } from "./MembersPanel";
@@ -80,6 +81,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
   const detail = useWorkspace((s) => s.detail);
+  const kokoPicker = useWorkspace((s) => s.kokoPicker);
   const panels: PanelSpec[] = [];
   if (ready) {
     if (saveOpen) {
@@ -121,6 +123,16 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         ...INSPECTOR,
         onClose: () => useWorkspace.setState({ inspectorOpen: false }),
+      });
+    }
+    if (kokoPicker) {
+      panels.push({
+        id: "ws-koko-picker",
+        title: "KokoState を付ける",
+        initial: { x: 420, y: 120, width: 640, height: 560 },
+        focusKey: kokoPicker.seq,
+        render: () => <KokoPickerPanel key={kokoPicker.entityId} entityId={kokoPicker.entityId} />,
+        onClose: () => useWorkspace.setState({ kokoPicker: null }),
       });
     }
     if (resourcesOpen) {

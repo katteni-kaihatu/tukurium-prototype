@@ -15,6 +15,18 @@ export const BUILTIN = {
   Label: "builtin.Label",
 } as const;
 
+/** KokoState の役割。KokoState を選ぶ画面で、タグとして絞り込みに使う */
+export const KOKO_ROLES = [
+  { id: "transform", label: "配置" },
+  { id: "look", label: "見た目" },
+  { id: "physics", label: "物理" },
+  { id: "interaction", label: "操作" },
+  { id: "audio", label: "音" },
+  { id: "text", label: "文字" },
+  { id: "game", label: "遊び" },
+] as const;
+export type KokoRole = (typeof KOKO_ROLES)[number]["id"];
+
 /** プロシージャルメッシュの形状。size の意味は各 KokoState 定義のコメントを参照。 */
 export const MESH_SHAPES = ["box", "sphere", "cylinder", "capsule", "plane"] as const;
 export type MeshShape = (typeof MESH_SHAPES)[number];
@@ -25,6 +37,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Transform,
     name: "Transform",
+    role: "transform",
     builtin: true,
     fields: [
       { id: "position", name: "position", type: "vec3", default: [0, 0, 0] },
@@ -36,6 +49,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Mesh,
     name: "Mesh",
+    role: "look",
     builtin: true,
     fields: [
       { id: "shape", name: "shape", type: "string", default: "box" },
@@ -51,6 +65,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Collider,
     name: "Collider",
+    role: "physics",
     builtin: true,
     fields: [
       /** true なら当たり判定だけ（押し返さない） */
@@ -60,6 +75,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.RigidBody,
     name: "RigidBody",
+    role: "physics",
     builtin: true,
     fields: [
       { id: "type", name: "type", type: "string", default: "dynamic" },
@@ -69,6 +85,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Held,
     name: "Held",
+    role: "interaction",
     builtin: true,
     fields: [
       /** 視点に対する位置（m）。右クリックで持ったときは、持った瞬間の位置を入れる */
@@ -82,6 +99,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Grabbable,
     name: "Grabbable",
+    role: "interaction",
     builtin: true,
     fields: [
       /** 以前、持ったときに目の前へ寄せる距離だった。いまは持った位置を保つので使わない */
@@ -91,6 +109,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.AudioSource,
     name: "AudioSource",
+    role: "audio",
     builtin: true,
     fields: [
       /** 音声の素材 ID */
@@ -101,6 +120,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   {
     id: BUILTIN.Label,
     name: "Label",
+    role: "text",
     builtin: true,
     fields: [
       /** 出す文字。空なら表示しない */

@@ -113,6 +113,8 @@ interface WorkspaceState {
   historyOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
+  /** KokoState を付けるウィンドウ（付け先の Entity。seq は開くたびに増え、前に出す合図） */
+  kokoPicker: { entityId: string; seq: number } | null;
   /** Inspector を開いているか。ワークスペースを開いたときは開いている */
   inspectorOpen: boolean;
   /** Resources を開いているか。ワークスペースを開いたときは開いている */
@@ -237,6 +239,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     bagOpen: false,
     historyOpen: false,
     sessionOpen: false,
+    kokoPicker: null,
     inspectorOpen: true,
     resourcesOpen: true,
     problemsOpen: false,
@@ -336,6 +339,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         editorPlace: null,
         detailPlace: null,
         sessionOpen: false,
+        kokoPicker: null,
         inspectorOpen: true,
         resourcesOpen: true,
         problemsOpen: false,

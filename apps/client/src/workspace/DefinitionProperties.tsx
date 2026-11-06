@@ -2,6 +2,7 @@ import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
 import {
   type GuestPolicy,
   inferCapabilities,
+  KOKO_ROLES,
   newId,
   type OutputDef,
   type OutputExposure,
@@ -367,6 +368,29 @@ function KokoDefProperties({ id }: { id: string }) {
           disabled={!editing}
           onCommit={(name) => save({ ...def, name })}
         />
+        <div className={ui.row}>
+          <label className={ui.label} htmlFor={`role-${id}`}>
+            役割
+          </label>
+          <select
+            id={`role-${id}`}
+            className={ui.select}
+            value={def.role ?? ""}
+            disabled={!editing}
+            title="KokoState を付けるときの絞り込みに使います。動きには関わりません"
+            onChange={(e) => {
+              const { role: _old, ...rest } = def;
+              save(e.target.value ? { ...rest, role: e.target.value } : rest);
+            }}
+          >
+            <option value="">（なし）</option>
+            {KOKO_ROLES.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </div>
         {error && <p className={ui.error}>{error}</p>}
       </div>
       <div className={ui.section}>
