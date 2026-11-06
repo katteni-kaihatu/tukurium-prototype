@@ -2,10 +2,18 @@ import { useState } from "react";
 import { ImagePreview, ModelPreview } from "./AssetPreview";
 import { type DiffEntry, type DiffLine, diffKindLabel } from "./diffView";
 import styles from "./history.module.css";
+import ui from "./ui.module.css";
 
-/** 名前で並べた差分。行を押すと、階層や欄、コード、見た目を出す。 */
-export function ChangeList({ entries }: { entries: DiffEntry[] }) {
-  const [open, setOpen] = useState<string | null>(null);
+/** 名前で並べた差分。行を押すと、パネルの右側の欄に階層や欄、コード、見た目を出す。 */
+export function ChangeList({
+  entries,
+  selected,
+  onSelect,
+}: {
+  entries: DiffEntry[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
   if (entries.length === 0) return <p className={styles.emptyDiff}>差分はありません</p>;
   const groups = new Map<string, DiffEntry[]>();
   for (const entry of entries) {
@@ -27,21 +35,49 @@ export function ChangeList({ entries }: { entries: DiffEntry[] }) {
                 <button
                   type="button"
                   className={styles.change}
-                  aria-expanded={open === entry.id}
+                  aria-pressed={selected === entry.id}
                   data-change={entry.kind}
-                  onClick={() => setOpen(open === entry.id ? null : entry.id)}
+                  onClick={() => onSelect(entry.id)}
                 >
                   <span className={styles.changeName}>{entry.name}</span>
                   {entry.hint && <span className={styles.changeHint}>{entry.hint}</span>}
                   <span className={styles.kind}>{diffKindLabel(entry.kind)}</span>
                 </button>
-                {open === entry.id && <ChangeDetail entry={entry} />}
               </li>
             ))}
           </ul>
         </section>
       ))}
     </div>
+  );
+}
+
+/** パネルの右側の欄。選んだ差分ひとつの中身を出す */
+export function ChangeSide({ entry }: { entry: DiffEntry | null }) {
+  if (!entry) {
+    return (
+      <aside className={styles.side} aria-label="差分の詳細">
+        <p className={styles.sideEmpty}>差分を選ぶと、ここに中身が出ます</p>
+      </aside>
+    );
+  }
+  const empty = entry.lines.length === 0 && !entry.code?.length && !entry.preview;
+  return (
+    <aside className={styles.side} aria-label="差分の詳細">
+      <div className={styles.sideHead}>
+        <span className={styles.sideGroup}>{entry.groupLabel}</span>
+        <h4 className={styles.sideName} data-change={entry.kind}>
+          {entry.name}
+        </h4>
+        <span className={styles.kind}>{diffKindLabel(entry.kind)}</span>
+      </div>
+      {entry.hint && <p className={ui.muted}>{entry.hint}</p>}
+      {empty ? (
+        <p className={styles.emptyDiff}>くわしい中身はありません</p>
+      ) : (
+        <ChangeDetail entry={entry} />
+      )}
+    </aside>
   );
 }
 

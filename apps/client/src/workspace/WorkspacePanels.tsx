@@ -88,7 +88,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         id: "ws-save",
         title: "保存",
-        initial: { x: 36, y: 168, width: 440, height: 560 },
+        initial: { x: 36, y: 168, width: 860, height: 560 },
         focusKey: saveSeq,
         render: () => <SavePanel />,
         onClose: () => useWorkspace.setState({ saveOpen: false }),
@@ -98,7 +98,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         id: "ws-history",
         title: "履歴",
-        initial: { x: 500, y: 168, width: 900, height: 560 },
+        initial: { x: 180, y: 168, width: 1200, height: 560 },
         render: () => <HistoryPanel />,
         onClose: () => useWorkspace.setState({ historyOpen: false }),
       });
