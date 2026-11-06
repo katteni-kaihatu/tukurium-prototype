@@ -406,6 +406,72 @@ export class ProjectDoc {
     values.set(field, clone(value));
   }
 
+  // ---------- 保存した形に戻す ----------
+
+  /** Entity を、渡した形に丸ごと置き直す（なければ作る）。値は定義に合わせ直さず、そのまま入れる。 */
+  restoreEntity(def: EntityDef): void {
+    this.transact(() => {
+      const e = this.entityMap.get(def.id) ?? new Y.Map<unknown>();
+      if (!this.entityMap.has(def.id)) this.entityMap.set(def.id, e);
+      e.set("id", def.id);
+      e.set("name", def.name);
+      e.set("parent", def.parent ?? null);
+      e.set("output", def.output);
+      e.set("order", def.order);
+      const states = new Y.Map<Y.Map<FieldValue>>();
+      for (const [k, v] of Object.entries(def.states)) {
+        states.set(k, new Y.Map<FieldValue>(Object.entries(clone(v))));
+      }
+      e.set("states", states);
+    });
+  }
+  /** KokoState の値を丸ごと置き直す。null なら外す。 */
+  restoreState(id: EntityId, koko: KokoStateId, values: KokoStateValues | null): void {
+    const states = this.statesOf(id);
+    this.transact(() => {
+      if (values === null) {
+        states.delete(koko);
+        return;
+      }
+      states.set(koko, new Y.Map<FieldValue>(Object.entries(clone(values))));
+    });
+  }
+  /** 親・アウトプット・並び順を、渡した値にする。 */
+  restorePlace(id: EntityId, place: { parent: EntityId | null; output: string; order: number }) {
+    const e = this.entityMap.get(id);
+    if (!e) return;
+    if (place.parent !== null) this.assertCanParent(id, place.parent);
+    this.transact(() => {
+      e.set("parent", place.parent);
+      e.set("output", place.output);
+      e.set("order", place.order);
+    });
+  }
+  /** System の名前とコードを、渡した形にする（なければ作る）。開いているエディタはそのまま使える。 */
+  restoreSystem(def: SystemDef, code: string): void {
+    this.transact(() => {
+      this.systemMap.set(def.id, { id: def.id, name: def.name });
+      let text = this.codeMap.get(def.id);
+      if (!text) {
+        text = new Y.Text();
+        this.codeMap.set(def.id, text);
+      }
+      if (text.toString() !== code) {
+        text.delete(0, text.length);
+        text.insert(0, code);
+      }
+    });
+  }
+  /** アウトプットと、その中の Entity を消す。 */
+  removeOutput(id: string): void {
+    this.transact(() => {
+      this.outputMap.delete(id);
+      for (const [eid, e] of [...this.entityMap.entries()]) {
+        if (e.get("output") === id) this.entityMap.delete(eid);
+      }
+    });
+  }
+
   // ---------- 丸ごと ----------
   snapshot(): ProjectSnapshot {
     const resources = new Set([

@@ -57,9 +57,9 @@ describe("describeDiff", () => {
     expect(hit?.id).not.toContain(".json");
     expect(hit?.lines).toEqual(
       expect.arrayContaining([
-        { label: "名前", before: "子", after: "鉄砲" },
-        { label: "階層", before: "射撃場 / 親 / 子", after: "射撃場 / 鉄砲" },
-        { label: "Gun / ammo", before: "12", after: "7" },
+        { label: "名前", before: "子", after: "鉄砲", part: "name" },
+        { label: "階層", before: "射撃場 / 親 / 子", after: "射撃場 / 鉄砲", part: "place" },
+        expect.objectContaining({ label: "Gun / ammo", before: "12", after: "7" }),
       ]),
     );
     expect(describeDiff(before, after).some((e) => e.name === "親")).toBe(false);
@@ -88,12 +88,18 @@ describe("describeDiff", () => {
     expect(hit?.name).toBe("的当て");
     expect(hit?.lines).toEqual(
       expect.arrayContaining([
-        { label: "名前", before: "射撃場", after: "的当て" },
-        { label: "システム", before: "Shoot、TargetHit", after: "TargetHit（停止）" },
+        { label: "名前", before: "射撃場", after: "的当て", part: "name" },
+        {
+          label: "システム",
+          before: "Shoot、TargetHit",
+          after: "TargetHit（停止）",
+          part: "systems",
+        },
         {
           label: "状態維持",
           before: "銃 の Gun / ammo",
           after: "（なし）",
+          part: "keep",
         },
       ]),
     );

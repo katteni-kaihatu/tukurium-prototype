@@ -8,6 +8,7 @@ import { layoutLog } from "./logGraph";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useHistory } from "./useHistory";
+import { useRevert } from "./useRevert";
 
 const COL = 16;
 const LANE_COLORS = ["#603d56", "#2a6b8a", "#1f6b47", "#8a5a2a", "#6b3d7a"];
@@ -204,6 +205,8 @@ function UnsavedDetail({
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
+  const { canRevert, revert } = useRevert();
+  const [revertError, setRevertError] = useState<string | null>(null);
   return (
     <>
       <h3 className={styles.subject}>未保存</h3>
@@ -212,10 +215,17 @@ function UnsavedDetail({
       </p>
       <DiffBlock count={ready ? entries.length : null}>
         {ready ? (
-          <ChangeList entries={entries} selected={selected} onSelect={onSelect} />
+          <ChangeList
+            entries={entries}
+            selected={selected}
+            onSelect={onSelect}
+            revertable={(entry) => canRevert(entry.id)}
+            onRevert={(entry) => setRevertError(revert(entry.id))}
+          />
         ) : (
           <p className={ui.muted}>読み込んでいます…</p>
         )}
+        {revertError && <p className={ui.error}>{revertError}</p>}
       </DiffBlock>
     </>
   );

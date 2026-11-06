@@ -1,4 +1,4 @@
-import type { EntityId, FieldValue, KokoStateDef, KokoStateValues } from "@tukurium/eks";
+import type { EntityId, FieldValue, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -312,7 +312,11 @@ function Hierarchy() {
             ) : (
               <span className={styles.fold} />
             )}
-            <ChangeMark kind={mark.kind} nested={mark.nested} />
+            <ChangeMark
+              kind={mark.kind}
+              nested={mark.nested}
+              target={{ entry: `entity:${n.id}` }}
+            />
             <button
               type="button"
               className={styles.nodeName}
@@ -470,7 +474,11 @@ function Hierarchy() {
             ) : (
               <span className={styles.fold} />
             )}
-            <ChangeMark kind={outputMark.kind} nested={outputMark.nested} />
+            <ChangeMark
+              kind={outputMark.kind}
+              nested={outputMark.nested}
+              target={{ entry: `output:${outputId}` }}
+            />
             <button
               type="button"
               className={styles.nodeName}
@@ -634,7 +642,7 @@ function EntityProperties({ id }: { id: EntityId }) {
         </div>
       )}
       <div className={ui.section}>
-        <MarkedLine kind={marks?.name ?? null}>
+        <MarkedLine kind={marks?.name ?? null} target={{ entry: `entity:${id}`, part: "name" }}>
           <div className={ui.row}>
             <label className={ui.label} htmlFor={`name-${id}`}>
               Name
@@ -653,7 +661,10 @@ function EntityProperties({ id }: { id: EntityId }) {
           </div>
         </MarkedLine>
         {editing && (
-          <MarkedLine kind={marks?.parent ?? null}>
+          <MarkedLine
+            kind={marks?.parent ?? null}
+            target={{ entry: `entity:${id}`, part: "place" }}
+          >
             <div className={ui.row}>
               <label className={ui.label} htmlFor={`parent-${id}`}>
                 親
@@ -686,7 +697,10 @@ function EntityProperties({ id }: { id: EntityId }) {
         return (
           <section key={koko} className={ui.section} aria-label={def.name}>
             <div className={ui.sectionHead}>
-              <ChangeMark kind={marks?.states[koko]?.kind ?? null} />
+              <ChangeMark
+                kind={marks?.states[koko]?.kind ?? null}
+                target={{ entry: `entity:${id}`, part: `state:${koko}` }}
+              />
               <h4 className={ui.kokoTitle}>{def.name}</h4>
               {def.builtin ? (
                 <span className={ui.badge}>Built-in</span>
@@ -716,7 +730,10 @@ function EntityProperties({ id }: { id: EntityId }) {
             )}
             {def.fields.map((f) => (
               <div key={f.id} className={styles.fieldRow}>
-                <ChangeMark kind={marks?.states[koko]?.fields[f.id] ?? null} />
+                <ChangeMark
+                  kind={marks?.states[koko]?.fields[f.id] ?? null}
+                  target={{ entry: `entity:${id}`, part: `field:${koko}:${f.id}` }}
+                />
                 <FieldInput
                   koko={koko}
                   field={f}
