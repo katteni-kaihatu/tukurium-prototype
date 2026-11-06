@@ -519,19 +519,6 @@
   color: var(--c-ink-3);
 }
 
-.previewImg,
-.previewCanvas {
-  width: 100%;
-  height: 140px;
-  object-fit: contain;
-  border-radius: 8px;
-  background: rgba(38, 38, 46, 0.06);
-}
-
-.previewCanvas {
-  display: block;
-}
-
 .previewEmpty {
   display: flex;
   align-items: center;

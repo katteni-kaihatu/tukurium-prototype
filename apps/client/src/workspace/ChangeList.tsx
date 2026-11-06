@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { assetUrl } from "../net/api";
+import { useState } from "react";
+import { ImagePreview, ModelPreview } from "./AssetPreview";
 import { type DiffEntry, type DiffLine, diffKindLabel } from "./diffView";
 import styles from "./history.module.css";
 
@@ -139,91 +139,6 @@ function PreviewPair({ entry }: { entry: DiffEntry }) {
 }
 
 function Thumb({ kind, id, name }: { kind: "model" | "image"; id: string; name: string }) {
-  if (kind === "image") {
-    return <img src={assetUrl(id)} alt={name} className={styles.previewImg} />;
-  }
-  return <ModelThumb id={id} />;
-}
-
-/** 開いているあいだだけ、モデルを小さな画面で回す。 */
-function ModelThumb({ id }: { id: string }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const el = canvas.current;
-    if (!el) return;
-    let stop = false;
-    let frame = 0;
-    let dispose = () => {};
-    void import("three")
-      .then(async (THREE) => {
-        if (stop) return;
-        const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
-        if (stop) return;
-        const renderer = new THREE.WebGLRenderer({ canvas: el, alpha: true, antialias: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-        renderer.setSize(el.clientWidth, el.clientHeight, false);
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(
-          35,
-          el.clientWidth / Math.max(1, el.clientHeight),
-          0.01,
-          100,
-        );
-        scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.3));
-        const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-        sun.position.set(2, 3, 4);
-        scene.add(sun);
-        let model: import("three").Object3D | null = null;
-        const tick = () => {
-          if (stop) return;
-          frame = requestAnimationFrame(tick);
-          if (model) model.rotation.y += 0.012;
-          renderer.render(scene, camera);
-        };
-        let released = false;
-        dispose = () => {
-          if (released) return;
-          released = true;
-          cancelAnimationFrame(frame);
-          scene.traverse((obj) => {
-            if (obj instanceof THREE.Mesh) {
-              obj.geometry.dispose();
-              const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-              for (const mat of mats) mat.dispose();
-            }
-          });
-          renderer.dispose();
-        };
-        try {
-          const gltf = await new GLTFLoader().loadAsync(assetUrl(id));
-          if (stop) {
-            dispose();
-            return;
-          }
-          model = gltf.scene;
-          const box = new THREE.Box3().setFromObject(model);
-          const size = box.getSize(new THREE.Vector3());
-          const center = box.getCenter(new THREE.Vector3());
-          model.position.sub(center);
-          scene.add(model);
-          const max = Math.max(size.x, size.y, size.z, 0.001);
-          camera.position.set(max * 0.9, max * 0.7, max * 1.8);
-          camera.lookAt(0, 0, 0);
-          tick();
-        } catch {
-          if (!stop) setFailed(true);
-          dispose();
-        }
-      })
-      .catch(() => {
-        if (!stop) setFailed(true);
-      });
-    return () => {
-      stop = true;
-      dispose();
-    };
-  }, [id]);
-  if (failed) return <p className={styles.previewEmpty}>表示できません</p>;
-  return <canvas ref={canvas} className={styles.previewCanvas} aria-label="モデルの見た目" />;
+  if (kind === "image") return <ImagePreview id={id} name={name} />;
+  return <ModelPreview id={id} />;
 }
