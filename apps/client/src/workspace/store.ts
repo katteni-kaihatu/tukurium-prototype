@@ -119,7 +119,7 @@ interface WorkspaceState {
   historySideOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
-  /** Inspector の付属パネル「KokoState を付ける」を開いているか（たたんでいれば false。ADR 0044） */
+  /** Inspector の付属パネル「KokoState を追加」を開いているか（たたんでいれば false。ADR 0044） */
   kokoPickerOpen: boolean;
   /** Resources の付属パネル「リソースの詳細」に出すもの（Resources で選んだもの。ADR 0044） */
   resourceDetail: DetailTarget | null;

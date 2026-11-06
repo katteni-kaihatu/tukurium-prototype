@@ -57,8 +57,8 @@ async function newScript(page: Page, code: string) {
 
 async function addKoko(page: Page, name: string) {
   const insp = panel(page, "Inspector");
-  await insp.getByRole("button", { name: "＋ Add KokoState" }).click();
-  const picker = panel(page, "KokoState を付ける");
+  await insp.getByRole("button", { name: "KokoState を追加" }).click();
+  const picker = panel(page, "KokoState を追加");
   await picker.getByLabel("KokoState を検索").fill(name);
   await picker.getByRole("button", { name, exact: true }).click();
   // 付属パネルは付けたあとも開いたまま。付けたものは Inspector に出る

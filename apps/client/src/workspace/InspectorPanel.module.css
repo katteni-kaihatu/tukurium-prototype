@@ -130,6 +130,46 @@
   width: 380px;
   max-width: 380px;
   min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.scrollPane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.entityPane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.entityHead {
+  flex: none;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid rgba(38, 38, 46, 0.08);
+}
+
+.entityBar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.entityBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.menuScroll {
+  max-height: 280px;
   overflow: auto;
 }
 
