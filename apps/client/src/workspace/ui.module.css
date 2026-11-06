@@ -30,21 +30,29 @@
   min-width: 0;
 }
 
-.changeMark {
+.changeMark,
+.changeGap {
   flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+}
+
+/* 変化がない行の丸。中は透けていて、文字の開始位置を揃える */
+.changeMark {
+  box-sizing: border-box;
+  border: 1px solid var(--c-ink-4);
   background: transparent;
 }
 
 .changeMark[data-change="added"] {
+  border-color: var(--c-green);
   background: var(--c-green);
 }
 
 .changeMark[data-change="modified"] {
+  border-color: #c9a227;
   background: #fdd046;
-  box-shadow: inset 0 0 0 1px rgba(120, 84, 0, 0.45);
 }
 
 .sectionTitle {

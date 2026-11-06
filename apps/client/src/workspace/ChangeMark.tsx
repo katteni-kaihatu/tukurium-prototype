@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import type { ChangeKind } from "./changeMarks";
+import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-/** 行の左端に、変化の丸を置く。丸の分はいつも空けて、出たり消えたりでずれないようにする。 */
+/** 行の左端に、変化の丸を置く。変化がない行も透けた丸にして、文字の開始を揃える。 */
 export function MarkedLine({ kind, children }: { kind: ChangeKind | null; children: ReactNode }) {
   return (
     <div className={ui.markedLine}>
@@ -12,7 +13,7 @@ export function MarkedLine({ kind, children }: { kind: ChangeKind | null; childr
   );
 }
 
-/** 新しいものは緑、変わったものは黄色の丸。色だけに頼らず名前も付ける。 */
+/** 新しいものは緑、変わったものは黄色、変化がないものは中が透けた丸。色だけに頼らず名前も付ける。 */
 export function ChangeMark({
   kind,
   nested = false,
@@ -21,6 +22,7 @@ export function ChangeMark({
   /** 閉じた階層の中にある変化 */
   nested?: boolean;
 }) {
+  const edit = useWorkspace((s) => s.mode === "edit");
   const label =
     kind === null
       ? null
@@ -31,7 +33,9 @@ export function ChangeMark({
         : kind === "added"
           ? "新しい"
           : "変わった";
-  if (!label || !kind) return <span className={ui.changeMark} />;
+  if (!label || !kind) {
+    return <span className={edit ? ui.changeMark : ui.changeGap} aria-hidden="true" />;
+  }
   return (
     <span
       className={ui.changeMark}
