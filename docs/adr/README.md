@@ -43,4 +43,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0037](0037-field-level-collaboration.md) | 採用・実装済み | Entityの値をフィールド単位で同期する | #61、フィールド別のY.Map、通信プロトコル5 |
 | [0038](0038-extract-into-editable-repo.md) | 採用・実装済み | 編集用データがある既存先への抽出を拒否する | #62、Gitと未コミットの編集内容を保護 |
 | [0039](0039-runtime-entity-ownership-frame.md) | 採用・実装済み | 実行中に生成したEntityの所属も引き継ぐ | #64、所属情報を必須化、通信プロトコル5 |
-| [0040](0040-inspector-hierarchy-changes.md) | 採用・実装済み | Hierarchy でドラッグして親子にし、開閉と行の上の複製・削除を出す。新しいものと変わったものに丸を付ける | 詳細の KokoState 削除は確認する |
+| [0040](0040-inspector-hierarchy-changes.md) | 採用・実装済み | Hierarchy でドラッグして並べ替えと親子付けをし、開閉と行の上の複製・削除を出す。新しいものと変わったものに左の丸を付ける | Entity と KokoState の削除は確認する |

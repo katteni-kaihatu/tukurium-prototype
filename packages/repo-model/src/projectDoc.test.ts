@@ -152,6 +152,36 @@ describe("ProjectDoc", () => {
     expect(() => p.setParent(a, b)).toThrow();
   });
 
+  it("並べ替えと、指定した位置への親子付けができる", () => {
+    const p = new ProjectDoc();
+    p.load(emptyProject("test"));
+    const a = p.addEntity({ output: "out_main", name: "a" });
+    const b = p.addEntity({ output: "out_main", name: "b" });
+    const c = p.addEntity({ output: "out_main", name: "c" });
+    const names = () =>
+      p
+        .entities("out_main")
+        .filter((e) => e.parent === null)
+        .map((e) => e.name);
+    p.placeEntity(c, null, 0);
+    expect(names()).toEqual(["c", "a", "b"]);
+    p.placeEntity(b, a, 0);
+    expect(p.entity(b)?.parent).toBe(a);
+    expect(names()).toEqual(["c", "a"]);
+    p.placeEntity(c, a, 1);
+    expect(
+      p
+        .entities("out_main")
+        .filter((e) => e.parent === a)
+        .map((e) => e.name),
+    ).toEqual(["b", "c"]);
+    expect(() => p.placeEntity(a, b, 0)).toThrow();
+    // 同じ場所への移動は、並びを動かさない
+    const before = p.snapshot();
+    p.placeEntity(b, a, 0);
+    expect(p.snapshot()).toEqual(before);
+  });
+
   it("System を消すとアウトプットの一覧からも外れる", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());

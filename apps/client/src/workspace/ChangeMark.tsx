@@ -2,12 +2,12 @@ import type { ReactNode } from "react";
 import type { ChangeKind } from "./changeMarks";
 import ui from "./ui.module.css";
 
-/** 行の右端に、変化の丸を置く。丸の分はいつも空けて、出たり消えたりでずれないようにする。 */
+/** 行の左端に、変化の丸を置く。丸の分はいつも空けて、出たり消えたりでずれないようにする。 */
 export function MarkedLine({ kind, children }: { kind: ChangeKind | null; children: ReactNode }) {
   return (
     <div className={ui.markedLine}>
-      <div className={ui.markedBody}>{children}</div>
       <ChangeMark kind={kind} />
+      <div className={ui.markedBody}>{children}</div>
     </div>
   );
 }

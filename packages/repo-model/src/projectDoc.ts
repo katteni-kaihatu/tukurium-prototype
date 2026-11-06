@@ -344,11 +344,36 @@ export class ProjectDoc {
     this.entityMap.get(id)?.set("name", name);
   }
   setParent(id: EntityId, parent: EntityId | null): void {
-    // 自分の子孫を親にはできない
-    for (let p = parent; p !== null; p = this.entity(p)?.parent ?? null) {
-      if (p === id) throw new Error("自分の子孫を親にはできません");
-    }
+    this.assertCanParent(id, parent);
     this.entityMap.get(id)?.set("parent", parent);
+  }
+
+  /**
+   * 親と、その兄弟の中の位置をまとめて変える。
+   * index は、動かした Entity を除いた並びの何番目に入れるか（0 が先頭）。
+   */
+  placeEntity(id: EntityId, parent: EntityId | null, index: number): void {
+    this.assertCanParent(id, parent);
+    const self = this.entity(id);
+    if (!self) return;
+    const siblings = this.entities(self.output)
+      .filter((e) => e.parent === parent && e.id !== id)
+      .sort((a, b) => a.order - b.order);
+    const at = Math.max(0, Math.min(index, siblings.length));
+    const order = [
+      ...siblings.slice(0, at).map((e) => e.id),
+      id,
+      ...siblings.slice(at).map((e) => e.id),
+    ];
+    const current = this.entities(self.output)
+      .filter((e) => e.parent === parent)
+      .sort((a, b) => a.order - b.order)
+      .map((e) => e.id);
+    if (self.parent === parent && current.join("\0") === order.join("\0")) return;
+    this.transact(() => {
+      this.entityMap.get(id)?.set("parent", parent);
+      for (const [i, eid] of order.entries()) this.entityMap.get(eid)?.set("order", i);
+    });
   }
   /** Entity を削除する（子も削除）。状態維持のマークも外す。 */
   removeEntity(id: EntityId): void {
@@ -628,6 +653,16 @@ export class ProjectDoc {
       if (target) this.placementMap.set(resourceId, target);
       else this.placementMap.delete(resourceId);
     });
+  }
+
+  /** 自分の子孫を親にはできない。親子が輪になっていても、ここで止まって落ちない。 */
+  private assertCanParent(id: EntityId, parent: EntityId | null): void {
+    const seen = new Set<EntityId>();
+    for (let p = parent; p !== null; p = this.entity(p)?.parent ?? null) {
+      if (p === id) throw new Error("自分の子孫を親にはできません");
+      if (seen.has(p)) return;
+      seen.add(p);
+    }
   }
 
   private descendants(id: EntityId): EntityId[] {

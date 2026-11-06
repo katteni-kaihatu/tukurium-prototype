@@ -43,9 +43,17 @@
   background: var(--c-brand-soft);
 }
 
-.node[data-drop="true"] {
+.node[data-drop="inside"] {
   outline: 2px solid var(--c-brand);
   background: var(--c-brand-soft);
+}
+
+.node[data-drop="before"] {
+  box-shadow: inset 0 2px 0 var(--c-brand);
+}
+
+.node[data-drop="after"] {
+  box-shadow: inset 0 -2px 0 var(--c-brand);
 }
 
 .fold {
@@ -152,7 +160,7 @@
 
 .fieldRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
 }

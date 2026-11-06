@@ -3,6 +3,7 @@ import { toFiles } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
 import {
   canParent,
+  dropPlacement,
   entityChange,
   kokoChange,
   materialChange,
@@ -166,6 +167,19 @@ describe("階層", () => {
     expect(canParent(nodes, "a", "a")).toBe(false);
     expect(canParent(nodes, "a", "c")).toBe(false);
     expect(canParent(nodes, "a", "missing")).toBe(false);
+  });
+
+  it("行の端は並び替え、真ん中は子にする", () => {
+    const nodes = [
+      { id: "a", parent: null },
+      { id: "b", parent: null },
+      { id: "c", parent: "a" },
+    ];
+    expect(dropPlacement(nodes, "b", "a", "before")).toEqual({ parent: null, index: 0 });
+    expect(dropPlacement(nodes, "b", "a", "after")).toEqual({ parent: null, index: 1 });
+    expect(dropPlacement(nodes, "b", "a", "inside")).toEqual({ parent: "a", index: 1 });
+    expect(dropPlacement(nodes, "a", "c", "inside")).toBeNull();
+    expect(dropPlacement(nodes, "a", null, "inside")).toEqual({ parent: null, index: 1 });
   });
 
   it("閉じているときだけ、中の変化を外側の丸にする", () => {

@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
 import {
   type ChangeKind,
-  canParent,
+  type DropMode,
+  dropPlacement,
   entityChange,
   outputChange,
   savedKeep,
@@ -61,7 +62,8 @@ function Hierarchy() {
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
-  const [dropOver, setDropOver] = useState<string | null>(null);
+  const [dropOver, setDropOver] = useState<{ id: string; mode: DropMode } | null>(null);
+  const [dupFor, setDupFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const dragId = useRef<string | null>(null);
   const output = project.output(outputId);
@@ -99,17 +101,43 @@ function Hierarchy() {
     select({ kind: "entity", id });
   };
 
-  const duplicate = (entityId: string) => {
-    const e = project.entity(entityId);
-    if (!e) return;
-    const id = project.addEntity({
-      output: e.output,
-      name: `${e.name} のコピー`,
-      parent: e.parent,
-      states: e.states,
-    });
-    openOf(e.parent ?? outputId);
-    select({ kind: "entity", id });
+  const duplicate = (entityId: string, withChildren: boolean) => {
+    setDupFor(null);
+    const root = project.entity(entityId);
+    if (!root) return;
+    const created = new Map<string, string>();
+    const copy = (srcId: string, parent: EntityId | null, rename: boolean) => {
+      const src = project.entity(srcId);
+      if (!src || created.has(srcId)) return;
+      created.set(
+        srcId,
+        project.addEntity({
+          output: src.output,
+          name: rename ? `${src.name} のコピー` : src.name,
+          parent,
+          states: src.states,
+        }),
+      );
+    };
+    copy(entityId, root.parent, true);
+    if (withChildren) {
+      const pending = [entityId];
+      const seen = new Set<string>(pending);
+      while (pending.length > 0) {
+        const cur = pending.shift();
+        if (!cur) break;
+        for (const kid of project.entities(root.output)) {
+          if (kid.parent !== cur || seen.has(kid.id)) continue;
+          seen.add(kid.id);
+          const parent = created.get(cur);
+          if (parent) copy(kid.id, parent, false);
+          pending.push(kid.id);
+        }
+      }
+    }
+    const made = created.get(entityId);
+    openOf(root.parent ?? outputId);
+    if (made) select({ kind: "entity", id: made });
   };
 
   const remove = (entityId: string) => {
@@ -118,29 +146,63 @@ function Hierarchy() {
     if (selectedEntity && gone.has(selectedEntity)) select(null);
   };
 
-  const reparent = (entityId: string, parent: EntityId | null) => {
-    if (!canParent(nodes, entityId, parent)) return;
-    if ((nodes.find((n) => n.id === entityId)?.parent ?? null) === parent) return;
+  const askRemove = (entityId: string, name: string) => {
+    const nested = selfAndDescendants(nodes, entityId).length - 1;
+    const message =
+      nested > 0
+        ? `${name} を削除しますか？中にある ${nested} 個も一緒に消えます。`
+        : `${name} を削除しますか？`;
+    if (confirm(message)) remove(entityId);
+  };
+
+  const modeAt = (event: React.DragEvent, targetId: string | null): DropMode => {
+    if (targetId === null) return "inside";
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = rect.height === 0 ? 0.5 : (event.clientY - rect.top) / rect.height;
+    if (ratio < 0.28) return "before";
+    if (ratio > 0.72) return "after";
+    return "inside";
+  };
+
+  const hoverDrop = (event: React.DragEvent, targetId: string | null) => {
+    const id = dragId.current;
+    if (!editing || !id) return;
+    const mode = modeAt(event, targetId);
+    if (!dropPlacement(nodes, id, targetId, mode)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const key = targetId ?? "root";
+    setDropOver((cur) => (cur?.id === key && cur.mode === mode ? cur : { id: key, mode }));
+  };
+
+  const finishDrop = (event: React.DragEvent, targetId: string | null) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = dragId.current;
+    dragId.current = null;
+    setDropOver(null);
+    if (!id) return;
+    const mode = modeAt(event, targetId);
+    const place = dropPlacement(nodes, id, targetId, mode);
+    if (!place) return;
     try {
       setError(null);
-      project.setParent(entityId, parent);
-      openOf(parent ?? outputId);
+      project.placeEntity(id, place.parent, place.index);
+      openOf(place.parent ?? outputId);
+      if (mode === "inside" && targetId) openOf(targetId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const allowDrop = (parent: EntityId | null) => {
-    const id = dragId.current;
-    return editing && id !== null && canParent(nodes, id, parent);
-  };
-
   const children = (parent: EntityId | null) => nodes.filter((n) => n.parent === parent);
   const descendantKinds = (id: string): ChangeKind[] => {
     const out: ChangeKind[] = [];
+    const seen = new Set<string>([id]);
     const walk = (parent: string) => {
       for (const n of nodes) {
-        if (n.parent !== parent) continue;
+        if (n.parent !== parent || seen.has(n.id)) continue;
+        seen.add(n.id);
         const kind = kindOf.get(n.id);
         if (kind) out.push(kind);
         walk(n.id);
@@ -167,21 +229,9 @@ function Hierarchy() {
             className={styles.node}
             style={{ paddingLeft: 4 + depth * 14 }}
             data-current={selectedEntity === n.id || undefined}
-            data-drop={dropOver === n.id || undefined}
-            onDragOver={(e) => {
-              if (!allowDrop(n.id)) return;
-              e.preventDefault();
-              e.stopPropagation();
-              setDropOver((cur) => (cur === n.id ? cur : n.id));
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              const id = dragId.current;
-              dragId.current = null;
-              setDropOver(null);
-              if (id) reparent(id, n.id);
-            }}
+            data-drop={dropOver?.id === n.id ? dropOver.mode : undefined}
+            onDragOver={(e) => hoverDrop(e, n.id)}
+            onDrop={(e) => finishDrop(e, n.id)}
           >
             {kids.length > 0 ? (
               <button
@@ -203,8 +253,11 @@ function Hierarchy() {
               className={styles.nodeName}
               draggable={editing}
               aria-current={selectedEntity === n.id || undefined}
-              title={editing ? `${n.name}（ドラッグして、別の Entity の中に入れる）` : n.name}
-              onClick={() => select({ kind: "entity", id: n.id })}
+              title={editing ? `${n.name}（上か下で並び替え、真ん中に置くと子にする）` : n.name}
+              onClick={() => {
+                setDupFor(null);
+                select({ kind: "entity", id: n.id });
+              }}
               onDragStart={(e) => {
                 if ((e.target as HTMLElement).closest("[data-no-drag]")) {
                   e.preventDefault();
@@ -227,8 +280,14 @@ function Hierarchy() {
                   type="button"
                   className={ui.iconBtn}
                   aria-label={`${n.name} を複製`}
+                  aria-haspopup={kids.length > 0 ? "menu" : undefined}
+                  aria-expanded={kids.length > 0 ? dupFor === n.id : undefined}
                   title="複製"
-                  onClick={() => duplicate(n.id)}
+                  onClick={() =>
+                    kids.length > 0
+                      ? setDupFor(dupFor === n.id ? null : n.id)
+                      : duplicate(n.id, false)
+                  }
                 >
                   <CopyIcon />
                 </button>
@@ -236,12 +295,34 @@ function Hierarchy() {
                   type="button"
                   className={ui.iconBtn}
                   aria-label={`${n.name} を削除`}
-                  title={kids.length > 0 ? "この Entity と、中にあるものも削除する" : "削除"}
-                  onClick={() => remove(n.id)}
+                  title="削除"
+                  onClick={() => askRemove(n.id, n.name)}
                 >
                   ✕
                 </button>
               </span>
+            )}
+            {dupFor === n.id && (
+              <ul className={ui.menu} style={{ right: 4, top: 28 }}>
+                <li>
+                  <button
+                    type="button"
+                    className={ui.menuItem}
+                    onClick={() => duplicate(n.id, false)}
+                  >
+                    これだけ複製
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    className={ui.menuItem}
+                    onClick={() => duplicate(n.id, true)}
+                  >
+                    中も含めて複製
+                  </button>
+                </li>
+              </ul>
             )}
           </div>
           {open && kids.length > 0 && <ul className={ui.list}>{renderTree(n.id, depth + 1)}</ul>}
@@ -293,20 +374,9 @@ function Hierarchy() {
           <div
             className={styles.node}
             data-current={(selection?.kind === "output" && selection.id === outputId) || undefined}
-            data-drop={dropOver === "root" || undefined}
-            onDragOver={(e) => {
-              if (!allowDrop(null)) return;
-              e.preventDefault();
-              e.stopPropagation();
-              setDropOver((cur) => (cur === "root" ? cur : "root"));
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const id = dragId.current;
-              dragId.current = null;
-              setDropOver(null);
-              if (id) reparent(id, null);
-            }}
+            data-drop={dropOver?.id === "root" ? dropOver.mode : undefined}
+            onDragOver={(e) => hoverDrop(e, null)}
+            onDrop={(e) => finishDrop(e, null)}
           >
             {nodes.length > 0 ? (
               <button
@@ -538,8 +608,8 @@ function EntityProperties({ id }: { id: EntityId }) {
         return (
           <section key={koko} className={ui.section} aria-label={def.name}>
             <div className={ui.sectionHead}>
-              <h4 className={ui.kokoTitle}>{def.name}</h4>
               <ChangeMark kind={marks?.states[koko]?.kind ?? null} />
+              <h4 className={ui.kokoTitle}>{def.name}</h4>
               {def.builtin ? (
                 <span className={ui.badge}>Built-in</span>
               ) : packageAliasOf(project, koko) ? (
@@ -566,6 +636,13 @@ function EntityProperties({ id }: { id: EntityId }) {
             )}
             {def.fields.map((f) => (
               <div key={f.id} className={styles.fieldRow}>
+                <ChangeMark
+                  kind={
+                    marks?.states[koko]?.kind === "added"
+                      ? null
+                      : (marks?.states[koko]?.fields[f.id] ?? null)
+                  }
+                />
                 <FieldInput
                   koko={koko}
                   field={f}
@@ -573,13 +650,6 @@ function EntityProperties({ id }: { id: EntityId }) {
                   choices={choices}
                   disabled={!editing}
                   onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
-                />
-                <ChangeMark
-                  kind={
-                    marks?.states[koko]?.kind === "added"
-                      ? null
-                      : (marks?.states[koko]?.fields[f.id] ?? null)
-                  }
                 />
                 {mode === "edit" && (
                   <KeepToggle

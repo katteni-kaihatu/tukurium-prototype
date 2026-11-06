@@ -296,6 +296,42 @@ export function treeMark(
   return { kind: null, nested: false };
 }
 
+export type DropMode = "before" | "inside" | "after";
+
+/**
+ * ドロップの位置。行の上端・下端は兄弟としての並び替え、真ん中はその子。
+ * target が null のときは、いちばん上（親なし）の末尾。
+ * 自分の中には入れられない。
+ */
+export function dropPlacement(
+  nodes: { id: string; parent: string | null }[],
+  dragId: string,
+  targetId: string | null,
+  mode: DropMode,
+): { parent: string | null; index: number } | null {
+  if (targetId === null) {
+    if (!canParent(nodes, dragId, null)) return null;
+    return {
+      parent: null,
+      index: nodes.filter((n) => n.parent === null && n.id !== dragId).length,
+    };
+  }
+  const target = nodes.find((n) => n.id === targetId);
+  if (!target) return null;
+  if (mode === "inside") {
+    if (!canParent(nodes, dragId, targetId)) return null;
+    return {
+      parent: targetId,
+      index: nodes.filter((n) => n.parent === targetId && n.id !== dragId).length,
+    };
+  }
+  if (!canParent(nodes, dragId, target.parent)) return null;
+  const siblings = nodes.filter((n) => n.parent === target.parent && n.id !== dragId);
+  const at = siblings.findIndex((n) => n.id === targetId);
+  if (at < 0) return null;
+  return { parent: target.parent, index: mode === "before" ? at : at + 1 };
+}
+
 /** ドラッグした Entity を、その Entity（またはその中）の子にはできない。 */
 export function canParent(
   nodes: { id: string; parent: string | null }[],
@@ -306,18 +342,30 @@ export function canParent(
   const parents = new Map(nodes.map((n) => [n.id, n.parent]));
   if (!parents.has(id)) return false;
   if (parent !== null && !parents.has(parent)) return false;
+  const seen = new Set<string>();
   for (let p = parent; p; p = parents.get(p) ?? null) {
     if (p === id) return false;
+    if (seen.has(p)) return true;
+    seen.add(p);
   }
   return true;
 }
 
-/** id 自身と、その中にある Entity。 */
+/** id 自身と、その中にある Entity。親子が輪になっていても一周で止める。 */
 export function selfAndDescendants(
   nodes: { id: string; parent: string | null }[],
   id: string,
 ): string[] {
   const out = [id];
-  for (const n of nodes) if (n.parent === id) out.push(...selfAndDescendants(nodes, n.id));
+  const seen = new Set<string>(out);
+  for (let i = 0; i < out.length; i++) {
+    for (const n of nodes) {
+      const cur = out[i];
+      if (n.parent === cur && !seen.has(n.id)) {
+        seen.add(n.id);
+        out.push(n.id);
+      }
+    }
+  }
   return out;
 }

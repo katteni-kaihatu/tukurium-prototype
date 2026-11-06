@@ -148,8 +148,8 @@ function OutputProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>Output</h3>
           <ChangeMark kind={changed.kind} />
+          <h3 className={ui.sectionTitle}>Output</h3>
         </div>
         <p className={ui.muted}>
           ルートはアウトプットそのものです。Entity ではないので KokoState や Transform
@@ -240,8 +240,8 @@ function OutputProperties({ id }: { id: string }) {
       </div>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>Systems</h3>
           <ChangeMark kind={changed.systems} />
+          <h3 className={ui.sectionTitle}>Systems</h3>
           <span className={ui.badge}>{output.systems.filter((s) => s.enabled).length} 有効</span>
         </div>
         <p className={ui.muted}>
@@ -353,8 +353,8 @@ function KokoDefProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>KokoState</h3>
           <ChangeMark kind={changed.kind} />
+          <h3 className={ui.sectionTitle}>KokoState</h3>
           {def.builtin && <span className={ui.badge}>Built-in</span>}
         </div>
         {def.builtin && (
@@ -549,8 +549,8 @@ function SystemProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>System</h3>
           <ChangeMark kind={changed.kind} />
+          <h3 className={ui.sectionTitle}>System</h3>
           <span className={ui.badgeBrand}>Script</span>
         </div>
         <NameRow
@@ -708,8 +708,8 @@ function MaterialProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <h3 className={ui.sectionTitle}>Material</h3>
           <ChangeMark kind={changed.kind} />
+          <h3 className={ui.sectionTitle}>Material</h3>
         </div>
         <NameRow
           id={id}
