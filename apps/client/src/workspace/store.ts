@@ -111,6 +111,9 @@ interface WorkspaceState {
   /** 自分のバッグのパネル（ADR 0018） */
   bagOpen: boolean;
   historyOpen: boolean;
+  /** 保存・履歴の付属パネル「差分の中身」を開いているか（ADR 0044） */
+  saveSideOpen: boolean;
+  historySideOpen: boolean;
   /** セッションに出す・適用・リンク先一覧のパネルを開いているか */
   sessionOpen: boolean;
   /** Inspector の付属パネル「KokoState を付ける」を開いているか（たたんでいれば false。ADR 0044） */
@@ -242,6 +245,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     belongingsOpen: false,
     bagOpen: false,
     historyOpen: false,
+    saveSideOpen: false,
+    historySideOpen: false,
     sessionOpen: false,
     kokoPickerOpen: false,
     resourceDetail: null,

@@ -1,6 +1,7 @@
 import type { ProjectSnapshot } from "@tukurium/repo-model";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api, type CommitInfo } from "../net/api";
+import { InDrawer } from "../panels/drawerSlot";
 import { ChangeList, ChangeSide } from "./ChangeList";
 import { type DiffEntry, describeDiff } from "./diffView";
 import styles from "./history.module.css";
@@ -18,7 +19,7 @@ const UNSAVED = "unsaved";
 
 /**
  * 履歴：左は Git の log のようなグラフ（いちばん上は未保存）、まんなかは選んだ記録の詳細と差分、
- * 右は選んだ差分の中身。
+ * 選んだ差分の中身は、右にくっついた付属パネル「差分の中身」に出す（ADR 0044）。
  * 未保存の横の印から、保存パネルを開く。
  */
 export function HistoryPanel() {
@@ -93,6 +94,8 @@ export function HistoryPanel() {
   const select = (id: string) => {
     setSideError(null);
     setPicked({ of: selected, id });
+    // 中身は、履歴パネルにくっついた「差分の中身」に出す（ADR 0044）
+    useWorkspace.setState({ historySideOpen: true });
   };
 
   return (
@@ -194,18 +197,20 @@ export function HistoryPanel() {
             />
           )}
         </section>
-        <ChangeSide
-          entry={pickedEntry}
-          error={sideError}
-          revert={
-            pickedEntry && (selected === UNSAVED || !pickedCommit)
-              ? {
-                  revertable: (part) => canRevert(pickedEntry.id, part),
-                  onRevert: (part) => setSideError(revert(pickedEntry.id, part)),
-                }
-              : undefined
-          }
-        />
+        <InDrawer name="ws-history">
+          <ChangeSide
+            entry={pickedEntry}
+            error={sideError}
+            revert={
+              pickedEntry && (selected === UNSAVED || !pickedCommit)
+                ? {
+                    revertable: (part) => canRevert(pickedEntry.id, part),
+                    onRevert: (part) => setSideError(revert(pickedEntry.id, part)),
+                  }
+                : undefined
+            }
+          />
+        </InDrawer>
       </div>
     </div>
   );
