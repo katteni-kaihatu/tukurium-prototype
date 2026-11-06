@@ -554,6 +554,50 @@
   font-size: 12px;
 }
 
+/* 行ごとに戻すボタンを出すとき。ボタンは行にマウスを載せたときだけ見せる */
+.lines[data-revert] li {
+  grid-template-columns: minmax(72px, 34%) minmax(0, 1fr) 22px;
+  align-items: center;
+  margin: 0 -4px;
+  padding: 1px 4px;
+  border-radius: 6px;
+}
+
+.lines[data-revert] li:hover {
+  background: rgba(38, 38, 46, 0.04);
+}
+
+.partRevert {
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.partRevert:focus-visible {
+  opacity: 1;
+}
+
+.codeHead:hover .partRevert {
+  opacity: 1;
+}
+
+.lines li:hover .partRevert {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .partRevert {
+    opacity: 1;
+  }
+}
+
+.codeHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .lineLabel {
   color: var(--c-ink-3);
   overflow: hidden;

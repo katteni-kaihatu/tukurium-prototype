@@ -69,8 +69,25 @@ export function ChangeList({
   );
 }
 
-/** パネルの右側の欄。選んだ差分ひとつの中身を出す */
-export function ChangeSide({ entry }: { entry: DiffEntry | null }) {
+/**
+ * 行ごとに戻す操作。part は DiffLine の part（"name" や "field:<KokoState>:<欄>" など）。
+ * revertable が false の行には、ボタンを出さない。
+ */
+export interface PartRevert {
+  revertable: (part: string) => boolean;
+  onRevert: (part: string) => void;
+}
+
+/** パネルの右側の欄。選んだ差分ひとつの中身を出す。revert を渡すと、行ごとに戻すボタンを出す */
+export function ChangeSide({
+  entry,
+  revert,
+  error,
+}: {
+  entry: DiffEntry | null;
+  revert?: PartRevert;
+  error?: string | null;
+}) {
   if (!entry) {
     return (
       <aside className={styles.side} aria-label="差分の詳細">
@@ -92,8 +109,9 @@ export function ChangeSide({ entry }: { entry: DiffEntry | null }) {
       {empty ? (
         <p className={styles.emptyDiff}>くわしい中身はありません</p>
       ) : (
-        <ChangeDetail entry={entry} />
+        <ChangeDetail entry={entry} revert={revert} />
       )}
+      {error && <p className={ui.error}>{error}</p>}
     </aside>
   );
 }
@@ -121,12 +139,14 @@ export function RevertIcon() {
   );
 }
 
-/** 差分ひとつの中身（欄の前後、コードの行、見た目） */
-export function ChangeDetail({ entry }: { entry: DiffEntry }) {
+/** 差分ひとつの中身（欄の前後、コードの行、見た目）。revert を渡すと、行ごとに戻すボタンを出す */
+export function ChangeDetail({ entry, revert }: { entry: DiffEntry; revert?: PartRevert }) {
+  const can = (part: string | undefined): part is string =>
+    part !== undefined && revert?.revertable(part) === true;
   return (
     <div className={styles.changeDetail}>
       {entry.lines.length > 0 && (
-        <ul className={styles.lines}>
+        <ul className={styles.lines} data-revert={revert ? "" : undefined}>
           {withKeys(
             entry.lines,
             (line) => `${line.label}\0${line.before ?? ""}\0${line.after ?? ""}`,
@@ -134,9 +154,24 @@ export function ChangeDetail({ entry }: { entry: DiffEntry }) {
             <li key={key}>
               <span className={styles.lineLabel}>{line.label}</span>
               <LineValue line={line} />
+              {revert &&
+                (can(line.part) ? (
+                  <PartButton
+                    label={`${line.label} を元に戻す`}
+                    onClick={() => line.part && revert.onRevert(line.part)}
+                  />
+                ) : (
+                  <span />
+                ))}
             </li>
           ))}
         </ul>
+      )}
+      {entry.code && entry.code.length > 0 && revert && can("code") && (
+        <div className={styles.codeHead}>
+          <span className={styles.lineLabel}>コード</span>
+          <PartButton label="コードを元に戻す" onClick={() => revert.onRevert("code")} />
+        </div>
       )}
       {entry.code && entry.code.length > 0 && (
         <pre className={styles.code}>
@@ -156,6 +191,20 @@ export function ChangeDetail({ entry }: { entry: DiffEntry }) {
       )}
       {entry.preview && <PreviewPair entry={entry} />}
     </div>
+  );
+}
+
+function PartButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`${ui.iconBtn} ${styles.partRevert}`}
+      aria-label={label}
+      title="最後に保存した形に戻す"
+      onClick={onClick}
+    >
+      <RevertIcon />
+    </button>
   );
 }
 

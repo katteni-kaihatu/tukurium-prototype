@@ -31,6 +31,9 @@ export function HistoryPanel() {
   const [diffError, setDiffError] = useState<string | null>(null);
   /** 選んだ差分。記録ごとに覚える（別の記録を選んだら、何も選んでいない状態から） */
   const [picked, setPicked] = useState<{ of: string; id: string } | null>(null);
+  // 戻せるのは未保存の差分だけ（記録の差分は、その記録の前後の差なので戻す先が違う）
+  const { canRevert, revert } = useRevert();
+  const [sideError, setSideError] = useState<string | null>(null);
   const rows = useMemo(
     () => layoutLog(history.commits.map((c) => ({ oid: c.oid, parents: c.parents }))),
     [history.commits],
@@ -87,7 +90,10 @@ export function HistoryPanel() {
   const shown = selected === UNSAVED || !pickedCommit ? history.entries : diffing ? [] : diff;
   const pickedId = picked?.of === selected ? picked.id : null;
   const pickedEntry = shown.find((e) => e.id === pickedId) ?? null;
-  const select = (id: string) => setPicked({ of: selected, id });
+  const select = (id: string) => {
+    setSideError(null);
+    setPicked({ of: selected, id });
+  };
 
   return (
     <div className={styles.frame}>
@@ -188,7 +194,18 @@ export function HistoryPanel() {
             />
           )}
         </section>
-        <ChangeSide entry={pickedEntry} />
+        <ChangeSide
+          entry={pickedEntry}
+          error={sideError}
+          revert={
+            pickedEntry && (selected === UNSAVED || !pickedCommit)
+              ? {
+                  revertable: (part) => canRevert(pickedEntry.id, part),
+                  onRevert: (part) => setSideError(revert(pickedEntry.id, part)),
+                }
+              : undefined
+          }
+        />
       </div>
     </div>
   );

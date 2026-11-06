@@ -76,7 +76,10 @@ export function SavePanel() {
               <ChangeList
                 entries={entries}
                 selected={pickedEntry?.id ?? null}
-                onSelect={setPicked}
+                onSelect={(id) => {
+                  setRevertError(null);
+                  setPicked(id);
+                }}
                 revertable={(entry) => canRevert(entry.id)}
                 onRevert={(entry) => setRevertError(revert(entry.id))}
               />
@@ -85,7 +88,18 @@ export function SavePanel() {
             )}
           </div>
         </div>
-        <ChangeSide entry={pickedEntry} />
+        <ChangeSide
+          entry={pickedEntry}
+          error={revertError}
+          revert={
+            pickedEntry
+              ? {
+                  revertable: (part) => canRevert(pickedEntry.id, part),
+                  onRevert: (part) => setRevertError(revert(pickedEntry.id, part)),
+                }
+              : undefined
+          }
+        />
       </div>
     </div>
   );
