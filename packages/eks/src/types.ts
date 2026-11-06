@@ -37,6 +37,8 @@ export interface KokoStateDef {
   /** フィールドなしの KokoState はタグとして Query の絞り込みに使う。 */
   fields: FieldDef[];
   builtin?: boolean;
+  /** 役割（配置・見た目・物理など。`KOKO_ROLES` の ID）。選ぶ画面の絞り込みに使い、実行には関わらない */
+  role?: string;
 }
 
 /** KokoState の値。キーはフィールド ID。 */
