@@ -242,6 +242,12 @@ export function registerRepoRoutes(
     }),
   );
 
+  /** 開いているワークスペースへ取り込むための、取り出し元の中身（フォークできる人だけ） */
+  app.get(
+    "/api/repos/:id/import-source",
+    handle<{ id: string }>(async (req) => repos.importSource(await needUser(req), req.params.id)),
+  );
+
   app.post(
     "/api/repos/:id/extract",
     handle<{ id: string }>(async (req) => {

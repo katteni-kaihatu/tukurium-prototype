@@ -422,6 +422,15 @@ export function ResourcesPanel() {
                 onClick={() => create("material")}
               />
               <NewItem
+                kind="folder"
+                label="ほかのプロジェクトから"
+                sub="アウトプット・リソースを、使うものごと取り込む"
+                onClick={() => {
+                  setNewOpen(false);
+                  useWorkspace.setState({ importOpen: true });
+                }}
+              />
+              <NewItem
                 kind="image"
                 label="素材を取り込む"
                 sub="GLB・PNG・JPEG・WebP・MP3・OGG・WAV（20MB まで）"

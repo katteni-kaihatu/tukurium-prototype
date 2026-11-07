@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
+import { extractInto } from "./extract";
 import { ProjectDoc } from "./projectDoc";
 import { emptyProject, gunAndTargetSample } from "./samples";
 
@@ -429,5 +430,39 @@ describe("ProjectDoc", () => {
     expect(doc.asset("a1")?.name).toBe("板");
     expect(() => doc.renameAsset("a1", "石")).toThrow();
     expect(doc.asset("a1")?.name).toBe("板");
+  });
+
+  it("取り込み：抽出で足したものだけを、いまの中身に足す（いまあるものは書き換えない）", () => {
+    const doc = new ProjectDoc();
+    doc.load(emptyProject("取り込み先"));
+    doc.addKokoState("Mine");
+    const src = gunAndTargetSample();
+    const merged = extractInto(
+      src,
+      { outputs: ["out_range"], kokostates: [], systems: [], materials: [], assets: [] },
+      { repoId: "r_src", repoName: "銃と的", commit: "c".repeat(40) },
+      doc.snapshot(),
+    );
+    doc.mergeAdditions(merged);
+    const after = doc.snapshot();
+    expect(after.kokostates.map((k) => k.name).sort()).toEqual(["Gun", "Mine", "Target"]);
+    expect(after.outputs.map((o) => o.name)).toContain("射撃場");
+    expect(after.entities.length).toBe(src.entities.length);
+    expect(doc.code("sys_shoot")?.toString()).toBe(
+      src.systems.find((x) => x.id === "sys_shoot")?.code,
+    );
+    const record = after.provenance?.at(-1);
+    expect(record).toMatchObject({ kind: "extract", repoId: "r_src", commit: "c".repeat(40) });
+  });
+
+  it("抽出の由来に、取り出したリソースの元の論理パスを残す", () => {
+    const src = gunAndTargetSample();
+    const merged = extractInto(
+      src,
+      { outputs: [], kokostates: ["ks_gun"], systems: ["sys_shoot"], materials: [], assets: [] },
+      { repoId: "r_src", repoName: "銃と的", commit: "c".repeat(40) },
+      null,
+    );
+    expect(merged.provenance?.at(-1)?.paths).toEqual(["/Gun.koko", "/Shoot.system"]);
   });
 });

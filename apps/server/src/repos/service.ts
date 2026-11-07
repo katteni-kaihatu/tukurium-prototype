@@ -178,6 +178,26 @@ export class RepoService {
     return meta;
   }
 
+  /**
+   * 開いているワークスペースへ取り込むための、取り出し元の中身（いまの最新のコミット）。
+   * 抽出と同じく、フォークできる人だけに渡す（見るだけの人には渡さない）。
+   */
+  async importSource(
+    user: User,
+    repoId: string,
+  ): Promise<{ repoId: string; repoName: string; commit: string; snapshot: ProjectSnapshot }> {
+    const src = await this.require(repoId);
+    if (!(await this.canFork(user, src))) throw new HttpError(403, "取り込む権限がありません");
+    const commit = await this.git.head(repoId);
+    if (!commit) throw new HttpError(409, "まだコミットがありません");
+    return {
+      repoId: src.id,
+      repoName: src.name,
+      commit,
+      snapshot: await this.snapshot(repoId, commit),
+    };
+  }
+
   /** 抽出：新しいリポジトリ（target.name）か、自分の既存のリポジトリ（target.repoId）へ */
   async extract(
     user: User,

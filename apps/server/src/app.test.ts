@@ -114,6 +114,23 @@ const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
 });
 
 describe("本人識別とセッション", () => {
+  it("取り込み元の中身は、フォークできる人にだけ渡す", async () => {
+    const { app, url } = await start();
+    const owner = await client(url, "作者");
+    const other = await client(url, "ほかの人");
+    const A = api(app, owner.token);
+    const B = api(app, other.token);
+    const source = (
+      await A.post("/api/repos", { name: "銃と的", template: "sample", visibility: "private" })
+    ).json();
+    const mine = await A.get(`/api/repos/${source.id}/import-source`);
+    expect(mine.statusCode).toBe(200);
+    expect(mine.json().snapshot.kokostates.length).toBeGreaterThan(0);
+    expect(mine.json().commit).toMatch(/^[0-9a-f]{40}$/);
+    expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(403);
+    await A.patch(`/api/repos/${source.id}`, { visibility: "public" });
+    expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(200);
+  });
   it("未編集の既存先へ同時に抽出しても、両方の取り込みを残す (#62)", async () => {
     const { app, url } = await start();
     const user = await client(url, "作者");

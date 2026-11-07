@@ -135,6 +135,8 @@ interface WorkspaceState {
   problemsFocus: number;
   /** ログ・保存のパネルを開いているか */
   logOpen: boolean;
+  /** ほかのプロジェクトから取り込むパネルを開いているか */
+  importOpen: boolean;
   /** 保存パネルを開いているか */
   saveOpen: boolean;
   /** 保存パネルを前に出すため。開くたびに増やす */
@@ -259,6 +261,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     problemsOpen: false,
     problemsFocus: 0,
     logOpen: false,
+    importOpen: false,
     saveOpen: false,
     saveSeq: 0,
     openSave: () => set((s) => ({ saveOpen: true, saveSeq: s.saveSeq + 1 })),
@@ -317,6 +320,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         problemsOpen: false,
         problemsFocus: 0,
         logOpen: false,
+        importOpen: false,
       });
       client().send({ t: "ws.open", workspaceId });
     },
@@ -361,6 +365,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         problemsOpen: false,
         problemsFocus: 0,
         logOpen: false,
+        importOpen: false,
       });
     },
 

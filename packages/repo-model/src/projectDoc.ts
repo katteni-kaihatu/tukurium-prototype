@@ -532,6 +532,39 @@ export class ProjectDoc {
     };
   }
 
+  /**
+   * snap にあって、いまない（ID で比べる）ものを足す。いまあるものは書き換えない（取り込み。ADR 0052）。
+   * 抽出（extractInto）で今の中身に足した結果を、共同編集中のデータへ一度に入れるために使う。
+   * 由来（provenance）は snap のものにする。
+   */
+  mergeAdditions(snap: ProjectSnapshot): void {
+    this.transact(() => {
+      for (const f of snap.folders ?? [])
+        if (!this.folderMap.has(f.id)) this.folderMap.set(f.id, clone(f));
+      for (const k of snap.kokostates)
+        if (!this.kokoMap.has(k.id)) this.kokoMap.set(k.id, clone(k));
+      for (const x of snap.systems) {
+        if (this.systemMap.has(x.id)) continue;
+        this.systemMap.set(x.id, { id: x.id, name: x.name });
+        const text = new Y.Text();
+        text.insert(0, x.code);
+        this.codeMap.set(x.id, text);
+      }
+      for (const m of snap.materials)
+        if (!this.materialMap.has(m.id)) this.materialMap.set(m.id, clone(m));
+      for (const a of snap.assets ?? [])
+        if (!this.assetMap.has(a.id)) this.assetMap.set(a.id, clone(a));
+      for (const o of snap.outputs)
+        if (!this.outputMap.has(o.id)) this.outputMap.set(o.id, clone(o));
+      for (const e of snap.entities) if (!this.entityMap.has(e.id)) this.restoreEntity(e);
+      for (const [r, f] of Object.entries(snap.placement ?? {}))
+        if (!this.placementMap.has(r)) this.placementMap.set(r, f);
+      for (const d of snap.dependencies ?? [])
+        if (!this.dependencyMap.has(d.alias)) this.dependencyMap.set(d.alias, clone(d));
+      this.meta.set("provenance", clone(snap.provenance ?? []) as unknown as string);
+    });
+  }
+
   /** 中身を丸ごと置き換える（サンプルの読み込み、コミットからの復元など）。 */
   load(snap: ProjectSnapshot): void {
     this.transact(() => {
