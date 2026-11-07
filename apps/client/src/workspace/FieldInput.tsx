@@ -102,18 +102,23 @@ export function FieldInput(props: {
         control = (
           <span className={ui.vec3}>
             {(["X", "Y", "Z"] as const).map((axis, i) => (
-              <NumberInput
-                key={axis}
-                id={i === 0 ? id : undefined}
-                label={`${field.name} ${axis}`}
-                value={v[i] ?? 0}
-                disabled={disabled}
-                onCommit={(n) => {
-                  const next = [...v] as Vec3;
-                  next[i] = n;
-                  onChange(next);
-                }}
-              />
+              // 軸ごとに色を付けた印を、入力欄の頭に出す（X 赤・Y 緑・Z 青）
+              <span key={axis} className={ui.axisBox} data-axis={axis}>
+                <span className={ui.axisTag} aria-hidden="true">
+                  {axis}
+                </span>
+                <NumberInput
+                  id={i === 0 ? id : undefined}
+                  label={`${field.name} ${axis}`}
+                  value={v[i] ?? 0}
+                  disabled={disabled}
+                  onCommit={(n) => {
+                    const next = [...v] as Vec3;
+                    next[i] = n;
+                    onChange(next);
+                  }}
+                />
+              </span>
             ))}
           </span>
         );
