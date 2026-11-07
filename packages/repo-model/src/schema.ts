@@ -41,6 +41,11 @@ export interface OutputDef {
    * プロジェクトの一覧に出す。ないときは名前の文字を出す。
    */
   thumbnail?: string;
+  /**
+   * ライブラリのときだけ：含めるリソースの ID（KokoState・System・マテリアル・素材。ADR 0015・0054）。
+   * 含めたものだけが Package に入り、使う側から import できる。ライブラリは Entity を持たない。
+   */
+  resources?: string[];
 }
 
 export type GuestPolicy = "deny" | "collision" | "interactive";
@@ -107,8 +112,6 @@ export interface ProjectSnapshot {
   folders?: FolderDef[];
   /** リソース（KokoState・System・マテリアル・素材）の ID → 入っているフォルダの ID。ないものはいちばん上 */
   placement?: Record<string, string>;
-  /** 公開の印を付けたリソースの ID（ライブラリとして、ほかのプロジェクトから import できる。ADR 0015） */
-  exports?: string[];
   /** 使うライブラリ（別名の順。古いデータにはない。ADR 0015） */
   dependencies?: PackageDependency[];
 }

@@ -220,24 +220,27 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
         });
     }
   }
-  // 公開した System は、使う側では同じライブラリの公開したもの・Built-in・そのライブラリの依存しか見えない（ADR 0015）
-  const exported = new Set(snap.exports ?? []);
+  // ライブラリに含めた System は、使う側では同じライブラリに含めたもの・Built-in・そのライブラリの依存しか見えない（ADR 0015・0054）
   let index: ResourcePathIndex | null = null;
-  for (const s of snap.systems) {
-    if (!exported.has(s.id) || !s.code.includes("import")) continue;
-    index ??= ResourcePathIndex.fromSnapshot(snap);
-    const compiled = compileSystem(s.id, s.code, index);
-    const subject: ResourceRef = { kind: "system", id: s.id };
-    for (const b of compiled.bindings) {
-      if (isBuiltin(b.resourceId) || exported.has(b.resourceId)) continue;
-      push({
-        code: "exported-system-imports-private",
-        severity: "error",
-        subject,
-        location: { kind: "script", line: b.line, symbol: b.spelling },
-        related: [{ kind: "kokostate", id: b.resourceId }],
-        message: `公開した System「${s.name}」が、公開していない「${b.name}」を import しています（使う側では見つかりません。「${b.name}」も公開してください）`,
-      });
+  for (const o of snap.outputs) {
+    if (o.kind !== "library") continue;
+    const included = new Set(o.resources ?? []);
+    for (const s of snap.systems) {
+      if (!included.has(s.id) || !s.code.includes("import")) continue;
+      index ??= ResourcePathIndex.fromSnapshot(snap);
+      const compiled = compileSystem(s.id, s.code, index);
+      const subject: ResourceRef = { kind: "system", id: s.id };
+      for (const b of compiled.bindings) {
+        if (isBuiltin(b.resourceId) || included.has(b.resourceId)) continue;
+        push({
+          code: "exported-system-imports-private",
+          severity: "error",
+          subject,
+          location: { kind: "script", line: b.line, symbol: b.spelling },
+          related: [{ kind: "kokostate", id: b.resourceId }],
+          message: `ライブラリ「${o.name}」に含めた System「${s.name}」が、含めていない「${b.name}」を import しています（使う側では見つかりません。「${b.name}」もライブラリに含めてください）`,
+        });
+      }
     }
   }
   return out;

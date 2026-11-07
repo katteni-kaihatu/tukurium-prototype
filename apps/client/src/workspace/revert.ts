@@ -148,7 +148,8 @@ function outputRevert(
   if (!saved || !cur) return null;
   const pick: Partial<Record<string, (keyof OutputDef)[]>> = {
     name: ["name"],
-    kind: ["kind"],
+    kind: ["kind", "resources"],
+    resources: ["resources"],
     exposure: ["exposure"],
     guest: ["guestPolicy"],
     systems: ["systems"],

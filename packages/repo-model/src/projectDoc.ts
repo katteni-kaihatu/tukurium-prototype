@@ -76,10 +76,6 @@ export class ProjectDoc {
   private get placementMap() {
     return this.doc.getMap<string>("placement");
   }
-  /** 公開の印（リソース ID → true。ADR 0015） */
-  private get exportMap() {
-    return this.doc.getMap<boolean>("exports");
-  }
   /** 使うライブラリ（別名 → 依存。ADR 0015） */
   private get dependencyMap() {
     return this.doc.getMap<PackageDependency>("dependencies");
@@ -299,7 +295,14 @@ export class ProjectDoc {
   }
   addOutput(name: string, kind: OutputKind): string {
     const id = newId("out");
-    this.outputMap.set(id, { id, name, kind, systems: [], keep: [] });
+    this.outputMap.set(id, {
+      id,
+      name,
+      kind,
+      systems: [],
+      keep: [],
+      ...(kind === "library" ? { resources: [] } : {}),
+    });
     return id;
   }
   updateOutput(o: OutputDef): void {
@@ -326,6 +329,8 @@ export class ProjectDoc {
     states?: Record<KokoStateId, KokoStateValues>;
     id?: EntityId;
   }): EntityId {
+    if (this.outputMap.get(init.output)?.kind === "library")
+      throw new Error("ライブラリには Entity を作れません");
     const id = init.id ?? newId("ent");
     const registry = this.registry();
     this.transact(() => {
@@ -520,14 +525,16 @@ export class ProjectDoc {
       systems: this.systems().map((s) => ({ ...s, code: this.code(s.id)?.toString() ?? "" })),
       materials: this.materials(),
       assets: this.assets(),
-      outputs: this.outputs(),
+      // 消えたリソースは、ライブラリの含めるリソースに残さない
+      outputs: this.outputs().map((o) =>
+        o.resources ? { ...o, resources: o.resources.filter((r) => resources.has(r)) } : o,
+      ),
       entities: this.entities(),
       provenance: clone(
         (this.meta.get("provenance") as unknown as ProjectSnapshot["provenance"]) ?? [],
       ),
       folders,
       placement,
-      exports: [...this.exportMap.keys()].filter((r) => resources.has(r)).sort(),
       dependencies: this.dependencies(),
     };
   }
@@ -578,14 +585,12 @@ export class ProjectDoc {
         this.entityMap,
         this.folderMap,
         this.placementMap,
-        this.exportMap,
         this.dependencyMap,
       ]) {
         m.clear();
       }
       for (const f of snap.folders ?? []) this.folderMap.set(f.id, clone(f));
       for (const [r, f] of Object.entries(snap.placement ?? {})) this.placementMap.set(r, f);
-      for (const r of snap.exports ?? []) this.exportMap.set(r, true);
       for (const d of snap.dependencies ?? []) this.dependencyMap.set(d.alias, clone(d));
       this.meta.set("name", snap.name);
       this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
@@ -728,14 +733,17 @@ export class ProjectDoc {
     this.refactoring(() => this.folderMap.set(id, { ...f, parent }));
   }
 
-  /** 公開の印を付ける・外す（ライブラリとして、ほかのプロジェクトから import できる。ADR 0015） */
-  setExported(resourceId: string, exported: boolean): void {
-    if (exported) this.exportMap.set(resourceId, true);
-    else this.exportMap.delete(resourceId);
-  }
-
-  isExported(resourceId: string): boolean {
-    return this.exportMap.get(resourceId) === true;
+  /**
+   * ライブラリのアウトプットに、リソースを含める・外す（含めたものだけを使う側から import できる。
+   * ADR 0015・0054）。フォルダと Built-in は含められない。
+   */
+  setIncluded(outputId: string, resourceId: string, included: boolean): void {
+    const o = this.outputMap.get(outputId);
+    if (o?.kind !== "library") return;
+    const now = o.resources ?? [];
+    if (now.includes(resourceId) === included) return;
+    const resources = included ? [...now, resourceId].sort() : now.filter((r) => r !== resourceId);
+    this.outputMap.set(outputId, { ...clone(o), resources });
   }
 
   // ---------- 依存（ADR 0015） ----------

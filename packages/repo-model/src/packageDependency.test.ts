@@ -19,8 +19,18 @@ import { type PackageManifest, packageManifest } from "./packageManifest";
 import { ProjectDoc } from "./projectDoc";
 import { ResourcePathIndex } from "./resourcePath";
 import { gunAndTargetSample } from "./samples";
-import type { PackageDependency, ProjectSnapshot } from "./schema";
+import type { OutputDef, PackageDependency, ProjectSnapshot } from "./schema";
 import { compileSystem } from "./systemCompiler";
+
+/** resources を含めるライブラリのアウトプット（out_lib） */
+const libraryOutput = (resources: string[]): OutputDef => ({
+  id: "out_lib",
+  name: "lib",
+  kind: "library",
+  systems: [],
+  keep: [],
+  resources,
+});
 
 const dep: PackageDependency = {
   alias: "combat",
@@ -40,13 +50,12 @@ function library(): PackageManifest {
     ],
     systems: [],
     materials: [],
-    outputs: [],
+    outputs: [libraryOutput(["ks_health"])],
     entities: [],
     folders: [{ id: "f_states", name: "States", parent: null }],
     placement: { ks_health: "f_states", ks_secret: "f_states" },
-    exports: ["ks_health"],
   };
-  return packageManifest(s);
+  return packageManifest(s, "out_lib");
 }
 
 const ready = (d = dep): Map<string, PackageResolution> =>
@@ -265,7 +274,7 @@ describe("依存の System（ADR 0015）", () => {
         { id: "sys_dep", name: "Dep", code: `import X from "@other/A.koko";` },
       ],
       materials: [],
-      outputs: [],
+      outputs: [libraryOutput(["ks_health", "sys_drain", "sys_peek", "sys_dep"])],
       entities: [],
       folders: [
         { id: "f_states", name: "States", parent: null },
@@ -278,13 +287,12 @@ describe("依存の System（ADR 0015）", () => {
         sys_peek: "f_sys",
         sys_dep: "f_sys",
       },
-      exports: ["ks_health", "sys_drain", "sys_peek", "sys_dep"],
     };
   }
   const resolved = (): PackageResolution => ({
     status: "ready",
     dependency: dep,
-    manifest: packageManifest(libraryWithSystems()),
+    manifest: packageManifest(libraryWithSystems(), "out_lib"),
   });
 
   it("公開した System を、Package と版で区切った ID で候補にする", () => {
@@ -344,9 +352,8 @@ describe("依存の依存（ADR 0015）", () => {
       kokostates: [{ id: "ks_h", name: "Health", fields: [] }],
       systems: [],
       materials: [],
-      outputs: [],
+      outputs: [libraryOutput(["ks_h"])],
       entities: [],
-      exports: ["ks_h"],
       dependencies: deps,
     };
     const dependency: PackageDependency = {
@@ -357,19 +364,19 @@ describe("依存の依存（ADR 0015）", () => {
     };
     return {
       dependency,
-      resolution: { status: "ready", dependency, manifest: packageManifest(s) },
+      resolution: { status: "ready", dependency, manifest: packageManifest(s, "out_lib") },
     };
   };
 
   it("manifest には依存があるときだけ入れる（依存のないライブラリの中身は前と同じ）", () => {
     const s = gunAndTargetSample();
-    s.exports = ["ks_gun"];
-    expect("dependencies" in packageManifest(s)).toBe(false);
+    s.outputs.push(libraryOutput(["ks_gun"]));
+    expect("dependencies" in packageManifest(s, "out_lib")).toBe(false);
     s.dependencies = [
       { ...dep, alias: "z" },
       { ...dep, alias: "a", packageId: "w_a" },
     ];
-    expect(packageManifest(s).dependencies?.map((d) => d.alias)).toEqual(["a", "z"]);
+    expect(packageManifest(s, "out_lib").dependencies?.map((d) => d.alias)).toEqual(["a", "z"]);
   });
 
   it("依存の依存をたどる。別名ではなく lock で照らし合わせる。輪でも止まる", () => {

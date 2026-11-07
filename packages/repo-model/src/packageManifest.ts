@@ -2,9 +2,9 @@ import { type PathKind, ResourcePathIndex } from "./resourcePath";
 import type { PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
- * Library Package の中身（ADR 0013・0015）。公開の印を付けたリソースだけを、決まった並び（ID の順）で
- * 書き出す。Registry（サーバー）は、この stableStringify に SHA-256 をかけて content hash にする。
- * 公開していないものは入らないので、内部を変えても hash は変わらない。
+ * Library Package の中身（ADR 0013・0015・0054）。ライブラリのアウトプットに含めたリソースだけを、
+ * 決まった並び（ID の順）で書き出す。Registry（サーバー）は、この stableStringify に SHA-256 をかけて
+ * content hash にする。含めていないものは入らないので、内部を変えても hash は変わらない。
  */
 
 export interface PackageExport {
@@ -27,9 +27,15 @@ export interface PackageManifest {
   dependencies?: PackageDependency[];
 }
 
-export function packageManifest(snap: ProjectSnapshot): PackageManifest {
+/** ライブラリのアウトプットに含めたリソースの ID（ライブラリでなければ空） */
+export function includedResources(snap: ProjectSnapshot, outputId: string): Set<string> {
+  const o = snap.outputs.find((x) => x.id === outputId);
+  return new Set(o?.kind === "library" ? (o.resources ?? []) : []);
+}
+
+export function packageManifest(snap: ProjectSnapshot, outputId: string): PackageManifest {
   const index = ResourcePathIndex.fromSnapshot(snap);
-  const exported = new Set(snap.exports ?? []);
+  const exported = includedResources(snap, outputId);
   const defs = new Map<string, unknown>();
   for (const k of snap.kokostates) defs.set(k.id, k);
   for (const s of snap.systems) defs.set(s.id, s);

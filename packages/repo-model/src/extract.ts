@@ -40,6 +40,13 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
   for (const o of src.outputs) {
     if (!out.outputs.has(o.id)) continue;
     for (const s of o.systems) out.systems.add(s.id);
+    // ライブラリに含めたリソース（ADR 0054）
+    for (const id of o.resources ?? []) {
+      if (src.kokostates.some((k) => k.id === id)) out.kokostates.add(id);
+      else if (src.systems.some((x) => x.id === id)) out.systems.add(id);
+      else if (src.materials.some((m) => m.id === id)) out.materials.add(id);
+      else if ((src.assets ?? []).some((a) => a.id === id)) out.assets.add(id);
+    }
     for (const e of src.entities) {
       if (e.output !== o.id) continue;
       for (const [koko, values] of Object.entries(e.states)) {
@@ -191,6 +198,7 @@ export function extractInto(
       ...structuredClone(o),
       id: newOut,
       systems: o.systems.map((s) => ({ ...s, id: r(s.id) })),
+      ...(o.resources ? { resources: o.resources.map(r).sort() } : {}),
       keep: o.keep.map((k) => ({
         ...k,
         entity: entityIds.get(k.entity) ?? k.entity,

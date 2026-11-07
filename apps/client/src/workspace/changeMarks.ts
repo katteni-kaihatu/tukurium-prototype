@@ -241,6 +241,10 @@ export interface OutputChange {
   systems: ChangeKind | null;
   /** System 1 件。追加か、有効・無効の変更 */
   systemRows: Record<string, ChangeKind>;
+  /** ライブラリに含めるリソース全体 */
+  resources: ChangeKind | null;
+  /** 含めるリソース 1 件（新しく含めたもの） */
+  resourceRows: Record<string, ChangeKind>;
 }
 
 export function outputChange(head: FileMap | null, output: OutputDef): OutputChange {
@@ -252,6 +256,8 @@ export function outputChange(head: FileMap | null, output: OutputDef): OutputCha
     guestPolicy: null,
     systems: null,
     systemRows: {},
+    resources: null,
+    resourceRows: {},
   };
   if (!head) return empty;
   const saved = readJson<OutputDef>(head, outputFilePath(output.id));
@@ -266,6 +272,8 @@ export function outputChange(head: FileMap | null, output: OutputDef): OutputCha
       guestPolicy: output.kind === "world" ? "added" : null,
       systems: output.systems.length > 0 ? "added" : null,
       systemRows,
+      resources: (output.resources ?? []).length > 0 ? "added" : null,
+      resourceRows: Object.fromEntries((output.resources ?? []).map((r) => [r, "added" as const])),
     };
   }
   const name = saved.name !== output.name ? "modified" : null;
@@ -285,8 +293,27 @@ export function outputChange(head: FileMap | null, output: OutputDef): OutputCha
     else if (old.enabled !== s.enabled) systemRows[s.id] = "modified";
   }
   const systems = !same(saved.systems, output.systems) ? "modified" : null;
-  const kind = name || outputKind || exposure || guestPolicy || systems ? "modified" : null;
-  return { kind, name, outputKind, exposure, guestPolicy, systems, systemRows };
+  const savedResources = new Set(saved.resources ?? []);
+  const nowResources = output.resources ?? [];
+  const resourceRows: Record<string, ChangeKind> = {};
+  for (const r of nowResources) if (!savedResources.has(r)) resourceRows[r] = "added";
+  const resources =
+    nowResources.length !== savedResources.size || Object.keys(resourceRows).length > 0
+      ? "modified"
+      : null;
+  const kind =
+    name || outputKind || exposure || guestPolicy || systems || resources ? "modified" : null;
+  return {
+    kind,
+    name,
+    outputKind,
+    exposure,
+    guestPolicy,
+    systems,
+    systemRows,
+    resources,
+    resourceRows,
+  };
 }
 
 /**

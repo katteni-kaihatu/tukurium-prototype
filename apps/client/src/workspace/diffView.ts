@@ -334,15 +334,6 @@ function otherEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntr
   if (placeLines.length > 0) {
     out.push(entry("other", "placement", "置き場所", "modified", placeLines));
   }
-  const exportBefore = exportText(before);
-  const exportAfter = exportText(after);
-  if (exportBefore !== exportAfter) {
-    out.push(
-      entry("other", "exports", "公開", "modified", [
-        { label: "公開", before: exportBefore, after: exportAfter },
-      ]),
-    );
-  }
   const depBefore = (before.dependencies ?? []).map((d) => `@${d.alias} v${d.version}`).join("、");
   const depAfter = (after.dependencies ?? []).map((d) => `@${d.alias} v${d.version}`).join("、");
   if (depBefore !== depAfter) {
@@ -427,6 +418,13 @@ function outputLines(
     prev ? systemList(prev, before) : null,
     next ? systemList(next, after) : null,
     "systems",
+  );
+  pushIfChanged(
+    lines,
+    "含めるリソース",
+    prev?.kind === "library" ? resourceList(prev, before) : null,
+    next?.kind === "library" ? resourceList(next, after) : null,
+    "resources",
   );
   pushIfChanged(
     lines,
@@ -682,8 +680,9 @@ function resourceName(snap: ProjectSnapshot, id: string): string {
   );
 }
 
-function exportText(snap: ProjectSnapshot): string {
-  const names = (snap.exports ?? [])
+/** ライブラリに含めるリソースの名前（名前の順） */
+function resourceList(o: OutputDef, snap: ProjectSnapshot): string {
+  const names = (o.resources ?? [])
     .map((id) => resourceName(snap, id))
     .sort((a, b) => a.localeCompare(b, "ja"));
   return names.length > 0 ? names.join("、") : "（なし）";

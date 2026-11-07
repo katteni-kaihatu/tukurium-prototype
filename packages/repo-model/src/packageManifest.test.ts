@@ -3,35 +3,57 @@ import { fromFiles, toFiles } from "./files";
 import { packageManifest, stableStringify } from "./packageManifest";
 import { ProjectDoc } from "./projectDoc";
 import { gunAndTargetSample } from "./samples";
+import type { ProjectSnapshot } from "./schema";
 
-describe("公開の印（exports。ADR 0015）", () => {
-  it("印を付けたリソースだけが制作データの exports に入り、消したリソースは残らない", () => {
+/** s にライブラリのアウトプット（out_lib）を足し、resources を含める */
+function asLibrary(s: ProjectSnapshot, resources: string[]): ProjectSnapshot {
+  s.outputs.push({ id: "out_lib", name: "lib", kind: "library", systems: [], keep: [], resources });
+  return s;
+}
+
+describe("ライブラリに含めるリソース（ADR 0015・0054）", () => {
+  it("含める・外すができ、消したリソースは制作データに残らない", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());
-    p.setExported("ks_gun", true);
-    p.setExported("sys_shoot", true);
-    p.setExported("sys_shoot", false);
-    p.setExported("ks_target", true);
-    expect(p.isExported("ks_gun")).toBe(true);
-    expect(p.snapshot().exports).toEqual(["ks_gun", "ks_target"]);
+    const lib = p.addOutput("lib", "library");
+    p.setIncluded(lib, "ks_gun", true);
+    p.setIncluded(lib, "sys_shoot", true);
+    p.setIncluded(lib, "sys_shoot", false);
+    p.setIncluded(lib, "ks_target", true);
+    const resources = (snap: ProjectSnapshot) => snap.outputs.find((o) => o.id === lib)?.resources;
+    expect(resources(p.snapshot())).toEqual(["ks_gun", "ks_target"]);
     p.removeKokoState("ks_target");
-    expect(p.snapshot().exports).toEqual(["ks_gun"]);
+    expect(resources(p.snapshot())).toEqual(["ks_gun"]);
+  });
+
+  it("ライブラリでないアウトプットには含められない", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    p.setIncluded("out_range", "ks_gun", true);
+    expect(p.output("out_range")?.resources).toBeUndefined();
+  });
+
+  it("ライブラリには Entity を作れない", () => {
+    const p = new ProjectDoc();
+    p.load(gunAndTargetSample());
+    const lib = p.addOutput("lib", "library");
+    expect(() => p.addEntity({ output: lib, name: "x" })).toThrow();
   });
 
   it("ファイルに書き出して読み戻しても残る", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());
-    p.setExported("ks_gun", true);
+    const lib = p.addOutput("lib", "library");
+    p.setIncluded(lib, "ks_gun", true);
     const back = fromFiles(toFiles(p.snapshot()));
-    expect(back.exports).toEqual(["ks_gun"]);
+    expect(back.outputs.find((o) => o.id === lib)?.resources).toEqual(["ks_gun"]);
   });
 });
 
 describe("packageManifest（Registry が hash を計算する正本の並び）", () => {
   it("公開したものだけを、ID の順に、論理パスと定義つきで並べる", () => {
-    const s = gunAndTargetSample();
-    s.exports = ["sys_shoot", "ks_gun"];
-    const m = packageManifest(s);
+    const s = asLibrary(gunAndTargetSample(), ["sys_shoot", "ks_gun"]);
+    const m = packageManifest(s, "out_lib");
     expect(m.exports.map((e) => [e.kind, e.id, e.path])).toEqual([
       ["kokostate", "ks_gun", "/Gun.koko"],
       ["system", "sys_shoot", "/Shoot.system"],
@@ -43,12 +65,28 @@ describe("packageManifest（Registry が hash を計算する正本の並び）"
   });
 
   it("公開していないものの変更では、manifest の文字列は変わらない", () => {
-    const a = gunAndTargetSample();
-    a.exports = ["ks_gun"];
-    const b = gunAndTargetSample();
-    b.exports = ["ks_gun"];
+    const a = asLibrary(gunAndTargetSample(), ["ks_gun"]);
+    const b = asLibrary(gunAndTargetSample(), ["ks_gun"]);
     b.materials = b.materials.map((m) => ({ ...m, color: "#000000" }));
-    expect(stableStringify(packageManifest(a))).toBe(stableStringify(packageManifest(b)));
+    expect(stableStringify(packageManifest(a, "out_lib"))).toBe(
+      stableStringify(packageManifest(b, "out_lib")),
+    );
+  });
+
+  it("同じプロジェクトの別のライブラリは、別の中身になる", () => {
+    const s = asLibrary(gunAndTargetSample(), ["ks_gun"]);
+    s.outputs.push({
+      id: "out_lib2",
+      name: "lib2",
+      kind: "library",
+      systems: [],
+      keep: [],
+      resources: ["sys_shoot"],
+    });
+    expect(packageManifest(s, "out_lib").exports.map((e) => e.id)).toEqual(["ks_gun"]);
+    expect(packageManifest(s, "out_lib2").exports.map((e) => e.id)).toEqual(["sys_shoot"]);
+    // ライブラリでないアウトプットは何も入らない
+    expect(packageManifest(s, "out_range").exports).toEqual([]);
   });
 
   it("stableStringify はキーの順に左右されない", () => {
