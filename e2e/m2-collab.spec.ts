@@ -1,5 +1,14 @@
 import { type Browser, expect, type Page } from "@playwright/test";
-import { aimAt, createSessionAndWorkspace, fire, newPerson, runtimeState, test } from "./helpers";
+import {
+  aimAt,
+  createSessionAndWorkspace,
+  equip,
+  fire,
+  newPerson,
+  runtimeState,
+  test,
+  unequip,
+} from "./helpers";
 
 // M2 の完了条件：2 人が同じワークスペースを編集・再生し、相手のパネルが空間に見える（シナリオ 1, 5）
 
@@ -43,7 +52,8 @@ test("2 人で同じワークスペースを編集し、再生を共有し、相
   await expect(panel(a, "ワークスペース").getByText("Play mode")).toBeVisible();
   await expect(panel(b, "ワークスペース").getByText("Play mode")).toBeVisible();
 
-  // b が撃つ → 入力はホストへ → 命中が両方に見える
+  // b が銃を拾って（E）撃つ → 入力はホストへ → 命中が両方に見える
+  await equip(b, "b");
   await aimAt(b, [0, 1.5, -5]);
   await b.evaluate(() => {
     const w = window as unknown as { __tukurium: any; __workspace: any };
@@ -61,7 +71,8 @@ test("2 人で同じワークスペースを編集し、再生を共有し、相
   await expect.poll(async () => (await runtimeState(a, "的2", "Target"))?.hp).toBe(2);
   await expect.poll(async () => (await runtimeState(b, "的2", "Target"))?.hp).toBe(2);
 
-  // ホストの a 自身も撃てる（直前の射撃のクールダウン 0.2 秒が明けるまで待つ）
+  // b が銃を外すと、ホストの a 自身も拾って撃てる（直前の射撃のクールダウン 0.2 秒が明けるまで待つ）
+  await unequip(b, "b");
   await a.waitForTimeout(600);
   await aimAt(a, [1.6, 1.5, -5]);
   await fire(a);

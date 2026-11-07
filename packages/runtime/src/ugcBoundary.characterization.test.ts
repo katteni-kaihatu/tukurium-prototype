@@ -2,6 +2,7 @@ import type { Vec3 } from "@tukurium/eks";
 import { BUILTIN, gunSample, type ProjectSnapshot, targetRangeSample } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 /**
  * UGC の境界についての、今の動きの記録（characterization。計画 UGC U0）。
@@ -89,7 +90,7 @@ describe("U2：別の配置へは opaque handle と公開 Contract だけ（ADR 
   it("Raycast は、別の配置の Entity の生の ID を返さない（handle の token だけ）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("probe"));
+    inputWithTools(s, input("probe"));
     s.step(1 / 60);
     expect(messages(logs)).toContain("hit null");
   });
@@ -97,7 +98,7 @@ describe("U2：別の配置へは opaque handle と公開 Contract だけ（ADR 
   it("world.emit は、別の配置の Entity には届かない（見つからないのと同じ）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("poke"));
+    inputWithTools(s, input("poke"));
     s.step(1 / 60);
     expect(s.world.get("victim/ent_target2", s.stateIdOf("victim", "ks_target") ?? "")?.f_hp).toBe(
       3,
@@ -109,7 +110,7 @@ describe("U1：別の配置は「見つからない」（ADR 0012）", () => {
   it("world.find は、自分の配置の中だけを探す", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("probe"));
+    inputWithTools(s, input("probe"));
     s.step(1 / 60);
     expect(messages(logs)).toContain("find null");
     expect(messages(logs)).toContain('get "none"');
@@ -118,7 +119,7 @@ describe("U1：別の配置は「見つからない」（ADR 0012）", () => {
   it("world.destroy は、別の配置の Entity を消せない（見つからないのと同じで、何も起きない）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("smash"));
+    inputWithTools(s, input("smash"));
     s.step(1 / 60);
     expect(s.world.has("victim/ent_target2")).toBe(true);
   });
@@ -134,7 +135,7 @@ describe("U1：別の配置は「見つからない」（ADR 0012）", () => {
       position: [3, 0, 0],
       yaw: 0,
     });
-    s.input(input("self"));
+    inputWithTools(s, input("self"));
     s.step(1 / 60);
     expect(
       messages(logs)
@@ -146,7 +147,7 @@ describe("U1：別の配置は「見つからない」（ADR 0012）", () => {
   it("world.spawn で作った Entity は、作った System の配置のものになる（自分で消せる）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("spawnkill"));
+    inputWithTools(s, input("spawnkill"));
     s.step(1 / 60);
     expect(messages(logs)).toContain("spawned true");
     expect(messages(logs)).toContain("after null");
@@ -160,12 +161,16 @@ describe("今の動き：入力の player は申告どおりに信じる", () =>
     // 的 2 を持てるようにする（Collider は的のサンプルに付いている）
     s.world.add("victim/ent_target2", BUILTIN.Grabbable, { distance: 1.2 });
     // つかめる距離（6m）まで近づいてから右クリック
-    s.input({ ...input("grab", "alice"), origin: [0, 1.5, -3] as Vec3 });
+    inputWithTools(s, { ...input("grab", "alice"), origin: [0, 1.5, -3] as Vec3 });
     s.step(1 / 60);
-    expect(s.world.get("victim/ent_target2", BUILTIN.Held)?.player).toBe("alice");
+    expect(s.world.get("victim/ent_target2", BUILTIN.Grabbable)?.player).toBe("alice");
     // 別の人が player を "alice" と書いた入力でも、alice の持っている物を放せる
-    s.input({ ...input("grab", "alice"), origin: [0, 1.5, -3] as Vec3, phase: "up" as const });
+    inputWithTools(s, {
+      ...input("grab", "alice"),
+      origin: [0, 1.5, -3] as Vec3,
+      phase: "up" as const,
+    });
     s.step(1 / 60);
-    expect(s.world.hasState("victim/ent_target2", BUILTIN.Held)).toBe(false);
+    expect(s.world.get("victim/ent_target2", BUILTIN.Grabbable)?.player).toBe("");
   });
 });

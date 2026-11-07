@@ -174,6 +174,15 @@ export class SessionEngine {
     this.avatars.setPose(id, position, yaw, pitch);
   }
 
+  /** 道具を装備している参加者（ワークスペースの再生とセッションの世界から、それぞれ届く。ADR 0053） */
+  private readonly equipped = new Map<string, Set<string>>();
+  setEquippedPlayers(source: "workspace" | "session", players: Set<string>): void {
+    this.equipped.set(source, players);
+    const all = new Set<string>();
+    for (const set of this.equipped.values()) for (const p of set) all.add(p);
+    this.avatars.setEquipped(all);
+  }
+
   removeParticipant(id: string): void {
     this.avatars.remove(id);
   }

@@ -9,6 +9,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { HOST_API_POLICY } from "./capabilities";
 import { type LogEntry, Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 /** 実効権限：宣言（コードから読み取り）∩ 置いた物への付与 ∩ World の上限（ADR 0012、計画 UGC U1） */
 
@@ -81,7 +82,7 @@ const warnings = (s: Simulation) =>
 describe("実効権限（セッション）", () => {
   it("付与を指定しなければ、コードから読み取った宣言どおりに使える", async () => {
     const { s, logs } = await session(RAYCAST);
-    s.input(fire);
+    inputWithTools(s, fire);
     s.step(1 / 60);
     expect(said(logs, "hit")).toEqual(["hit yes"]);
     expect(s.declaredCapabilities("gun")).toEqual(["physics.raycast"]);
@@ -89,7 +90,7 @@ describe("実効権限（セッション）", () => {
 
   it("置いた物への付与に無い Capability は拒み、注意を残す（System は止めない）", async () => {
     const { s, logs } = await session(RAYCAST, []);
-    s.input(fire);
+    inputWithTools(s, fire);
     s.step(1 / 60);
     expect(said(logs, "hit")).toEqual(["hit no"]);
     expect(warnings(s)).toEqual([
@@ -101,17 +102,17 @@ describe("実効権限（セッション）", () => {
   it("置いた後に付与を変えられる（null に戻すと宣言どおり）", async () => {
     const { s, logs } = await session(RAYCAST);
     s.setGrants("gun", []);
-    s.input(fire);
+    inputWithTools(s, fire);
     s.step(1 / 60);
     s.setGrants("gun", null);
-    s.input(fire);
+    inputWithTools(s, fire);
     s.step(1 / 60);
     expect(said(logs, "hit")).toEqual(["hit no", "hit yes"]);
   });
 
   it("コードから読み取れない使い方（宣言に無い Capability）はセッションでは拒む", async () => {
     const { s, logs } = await session(DYNAMIC);
-    s.input(fire);
+    inputWithTools(s, fire);
     s.step(1 / 60);
     expect(said(logs, "found")).toEqual(["found null"]);
     expect(warnings(s)[0]).toMatchObject({ code: "capability-denied" });
@@ -136,7 +137,7 @@ describe("ワークスペースの再生では強制しない（利用者と決�
       realm: "r",
       onLog: (l) => logs.push(l),
     });
-    sim.input(fire);
+    inputWithTools(sim, fire);
     sim.step(1 / 60);
     expect(said(logs, "found")).toEqual(["found ent_gun"]);
   });

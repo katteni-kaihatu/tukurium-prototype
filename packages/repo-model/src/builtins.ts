@@ -9,7 +9,7 @@ export const BUILTIN = {
   Mesh: "builtin.Mesh",
   Collider: "builtin.Collider",
   RigidBody: "builtin.RigidBody",
-  Held: "builtin.Held",
+  EquipmentTool: "builtin.EquipmentTool",
   Grabbable: "builtin.Grabbable",
   AudioSource: "builtin.AudioSource",
   Label: "builtin.Label",
@@ -83,20 +83,6 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     ],
   },
   {
-    id: BUILTIN.Held,
-    name: "Held",
-    role: "interaction",
-    builtin: true,
-    fields: [
-      /** 視点に対する位置（m）。右クリックで持ったときは、持った瞬間の位置を入れる */
-      { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
-      /** 視点に対する角度（度）。右クリックで持ったときは、持った瞬間の角度を入れる */
-      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
-      /** 持っている人の ID。空なら、見ている人みんなが自分の手に持つ（銃のサンプルなど） */
-      { id: "player", name: "player", type: "string", default: "" },
-    ],
-  },
-  {
     id: BUILTIN.Grabbable,
     name: "Grabbable",
     role: "interaction",
@@ -104,6 +90,26 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     fields: [
       /** 以前、持ったときに目の前へ寄せる距離だった。いまは持った位置を保つので使わない */
       { id: "distance", name: "distance", type: "number", default: 1.2 },
+      /** 右クリックで持っている人の ID（Host が入れる）。空なら誰も持っていない */
+      { id: "player", name: "player", type: "string", default: "" },
+      /** 持っている間の、視点に対する位置（m）と角度（度）。持った瞬間の位置関係を Host が入れる */
+      { id: "offset", name: "offset", type: "vec3", default: [0, 0, -1.2] },
+      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
+    ],
+  },
+  {
+    // E で拾うと右手に装備する道具（ADR 0053）。装備した人の入力だけが onInput に届く
+    id: BUILTIN.EquipmentTool,
+    name: "EquipmentTool",
+    role: "interaction",
+    builtin: true,
+    fields: [
+      /** 装備している間の、視点に対する位置（m）。右手で前に構えた位置 */
+      { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
+      /** 装備している間の、視点に対する角度（度） */
+      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
+      /** 装備している人の ID（Host が入れる）。空なら置いてある */
+      { id: "player", name: "player", type: "string", default: "" },
     ],
   },
   {

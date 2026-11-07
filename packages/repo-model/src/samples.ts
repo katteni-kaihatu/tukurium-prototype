@@ -182,14 +182,17 @@ export function gunAndTargetSample(): ProjectSnapshot {
         output: out,
         order: 0,
         states: {
-          [BUILTIN.Transform]: { position: [0, 1.1, -1.5], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          // 再生を始めた位置（+Z 側 6m）の少し前に置く。E で拾うと右手に装備する（ADR 0053）
+          [BUILTIN.Transform]: { position: [0, 1.1, 3.6], rotation: [0, 0, 0], scale: [1, 1, 1] },
           [BUILTIN.Mesh]: {
             shape: "box",
             size: [0.08, 0.12, 0.42],
             material: "mat_gun",
             color: "#3a3942",
           },
-          [BUILTIN.Held]: { offset: [0.28, -0.26, -0.75] },
+          // 拾うには当たり判定が要る（見ている物を E で調べるため）
+          [BUILTIN.Collider]: { sensor: false },
+          [BUILTIN.EquipmentTool]: { offset: [0.28, -0.26, -0.75] },
           ks_gun: { f_ammo: 12, f_maxAmmo: 12, f_interval: 0.2, f_cooldown: 0, f_damage: 1 },
         },
       },

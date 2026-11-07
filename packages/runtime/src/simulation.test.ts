@@ -7,6 +7,7 @@ import {
 } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 let sim: Simulation | undefined;
 afterEach(() => {
@@ -33,20 +34,20 @@ describe("Simulation：銃と的のサンプル", () => {
     const target = () => sim?.world.get("ent_target2", "ks_target");
     const gun = () => sim?.world.get("ent_gun", "ks_gun");
 
-    sim.input(fire([0, 0, -1]));
+    inputWithTools(sim, fire([0, 0, -1]));
     sim.step(1 / 60);
     expect(gun()?.f_ammo).toBe(11);
     expect(target()?.f_hp).toBe(2);
     expect(sim.world.get("ent_target2", BUILTIN.Mesh)?.color).toBe("#fdd046");
 
     // クールダウン中は撃てない
-    sim.input(fire([0, 0, -1]));
+    inputWithTools(sim, fire([0, 0, -1]));
     sim.step(1 / 60);
     expect(gun()?.f_ammo).toBe(11);
 
     for (let i = 0; i < 2; i++) {
       for (let t = 0; t < 15; t++) sim.step(1 / 60);
-      sim.input(fire([0, 0, -1]));
+      inputWithTools(sim, fire([0, 0, -1]));
       sim.step(1 / 60);
     }
     expect(target()?.f_hp).toBe(0);
@@ -62,13 +63,13 @@ describe("Simulation：銃と的のサンプル", () => {
 
   it("外れた弾は何にも当たらない。リロードで弾が戻る", async () => {
     sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "repo1" });
-    sim.input(fire([0, 1, 0]));
+    inputWithTools(sim, fire([0, 1, 0]));
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(11);
     expect(
       sim.world.query({ with: ["ks_target"] }).map((e) => sim?.world.get(e, "ks_target")?.f_hp),
     ).toEqual([3, 3, 3]);
-    sim.input(fire([0, 0, 0], "reload"));
+    inputWithTools(sim, fire([0, 0, 0], "reload"));
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(12);
   });
@@ -77,7 +78,7 @@ describe("Simulation：銃と的のサンプル", () => {
 describe("Simulation：ホストの引き継ぎ", () => {
   it("別の Simulation に状態を移しても、続きから動く", async () => {
     sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "a" });
-    sim.input(fire([0, 0, -1]));
+    inputWithTools(sim, fire([0, 0, -1]));
     sim.step(1 / 60);
     const snap = sim.world.snapshot();
     const names = Object.fromEntries(
@@ -94,7 +95,7 @@ describe("Simulation：ホストの引き継ぎ", () => {
     expect(sim.time).toBeCloseTo(1 / 60);
     // 引き継いだあとも撃てて、当たる（物理ワールドは作り直される）
     for (let t = 0; t < 15; t++) sim.step(1 / 60);
-    sim.input(fire([0, 0, -1]));
+    inputWithTools(sim, fire([0, 0, -1]));
     sim.step(1 / 60);
     expect(sim.world.get("ent_target2", "ks_target")?.f_hp).toBe(1);
     expect(sim.nameOf("ent_target2")).toBe("的2");
@@ -265,9 +266,9 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
   it("持った瞬間は位置も角度も変えず、すぐ離せば同じ場所にある", async () => {
     sim = await Simulation.create(box([10, 20, 30], false), "out", { realm: "r" });
     sim.step(1 / 60);
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    const held = sim.world.get("box", BUILTIN.Held);
+    const held = sim.world.get("box", BUILTIN.Grabbable);
     expect(held?.player).toBe("p1");
     const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     const rot = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
@@ -278,28 +279,28 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
     expect(rot[1]).toBeCloseTo(20, 4);
     expect(rot[2]).toBeCloseTo(30, 4);
     // 同じ視点のまま追従しても、場所は変わらない
-    sim.input(fire([0, 0, -1], "hold"));
+    inputWithTools(sim, fire([0, 0, -1], "hold"));
     sim.step(1 / 60);
     const still = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(still[2]).toBeCloseTo(-3, 4);
     // 押したままもう一度 down が来ても、離すまでは持ったまま
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(true);
-    sim.input({ ...fire([0, 0, -1], "grab"), phase: "up" });
+    expect(sim.world.get("box", BUILTIN.Grabbable)?.player).not.toBe("");
+    inputWithTools(sim, { ...fire([0, 0, -1], "grab"), phase: "up" });
     sim.step(1 / 60);
-    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    expect(sim.world.get("box", BUILTIN.Grabbable)?.player).toBe("");
     const after = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(after[0]).toBeCloseTo(0, 4);
     expect(after[1]).toBeCloseTo(1.5, 4);
     expect(after[2]).toBeCloseTo(-3, 4);
     // 向きを変えてから離すと、見えていた位置に残る（追従の送信を待たない）
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    sim.input({ ...fire([1, 0, 0], "grab"), phase: "up" });
+    inputWithTools(sim, { ...fire([1, 0, 0], "grab"), phase: "up" });
     sim.step(1 / 60);
     const left = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
-    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    expect(sim.world.get("box", BUILTIN.Grabbable)?.player).toBe("");
     expect(left[0]).toBeCloseTo(3, 1);
     expect(left[1]).toBeCloseTo(1.5, 1);
     expect(left[2]).toBeCloseTo(0, 1);
@@ -308,21 +309,21 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
   it("持っている間は視点との位置関係を保ち、落ちない。ほかの人は取れない", async () => {
     sim = await Simulation.create(box(), "out", { realm: "r" });
     sim.step(1 / 60);
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
     // 右を向くと、持ったときの「3m 手前」が右へ移る
-    sim.input(fire([1, 0, 0], "hold"));
+    inputWithTools(sim, fire([1, 0, 0], "hold"));
     for (let i = 0; i < 30; i++) sim.step(1 / 60);
     const pos = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(pos[0]).toBeCloseTo(3, 1);
     expect(pos[1]).toBeCloseTo(1.5, 1);
     expect(pos[2]).toBeCloseTo(0, 1);
-    sim.input({ ...fire([1, 0, 0], "grab"), player: "p2" });
+    inputWithTools(sim, { ...fire([1, 0, 0], "grab"), player: "p2" });
     sim.step(1 / 60);
-    expect(sim.world.get("box", BUILTIN.Held)?.player).toBe("p1");
-    sim.input({ ...fire([1, 0, 0], "grab"), phase: "up" });
+    expect(sim.world.get("box", BUILTIN.Grabbable)?.player).toBe("p1");
+    inputWithTools(sim, { ...fire([1, 0, 0], "grab"), phase: "up" });
     for (let i = 0; i < 30; i++) sim.step(1 / 60);
-    expect(sim.world.hasState("box", BUILTIN.Held)).toBe(false);
+    expect(sim.world.get("box", BUILTIN.Grabbable)?.player).toBe("");
     const dropped = sim.world.get("box", BUILTIN.Transform)?.position as Vec3 | undefined;
     expect(dropped?.[1]).toBeLessThan(1.4);
   });
@@ -330,15 +331,15 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
   it("ホイールで前後に動かし、画面上の位置は保つ", async () => {
     sim = await Simulation.create(box([0, 0, 0], false), "out", { realm: "r" });
     sim.step(1 / 60);
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    sim.input({ ...fire([0, 0, -1], "reach"), pointer: [1, 0] });
+    inputWithTools(sim, { ...fire([0, 0, -1], "reach"), pointer: [1, 0] });
     sim.step(1 / 60);
     const far = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(far[0]).toBeCloseTo(0, 2);
     expect(far[1]).toBeCloseTo(1.5, 2);
     expect(far[2]).toBeCloseTo(-4, 2);
-    sim.input({ ...fire([0, 0, -1], "reach"), pointer: [-1, 0] });
+    inputWithTools(sim, { ...fire([0, 0, -1], "reach"), pointer: [-1, 0] });
     sim.step(1 / 60);
     const back = sim.world.get("box", BUILTIN.Transform)?.position as Vec3;
     expect(back[2]).toBeCloseTo(-3, 2);
@@ -347,16 +348,16 @@ describe("Simulation：右クリックで持つ（Grabbable）", () => {
   it("左クリックで傾きを直し、E の動きで角度が変わる", async () => {
     sim = await Simulation.create(box([30, 40, 25], false), "out", { realm: "r" });
     sim.step(1 / 60);
-    sim.input(fire([0, 0, -1], "grab"));
+    inputWithTools(sim, fire([0, 0, -1], "grab"));
     sim.step(1 / 60);
-    sim.input(fire([0, 0, -1], "align"));
+    inputWithTools(sim, fire([0, 0, -1], "align"));
     sim.step(1 / 60);
     const upright = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
     expect(upright[0]).toBeCloseTo(0, 4);
     expect(upright[2]).toBeCloseTo(0, 4);
     expect(Math.abs(upright[1])).toBeGreaterThan(1);
     const y = upright[1];
-    sim.input({ ...fire([0, 0, -1], "twist"), pointer: [Math.PI / 2, 0] });
+    inputWithTools(sim, { ...fire([0, 0, -1], "twist"), pointer: [Math.PI / 2, 0] });
     sim.step(1 / 60);
     const turned = sim.world.get("box", BUILTIN.Transform)?.rotation as Vec3;
     expect(turned[1]).not.toBeCloseTo(y, 0);
@@ -398,7 +399,7 @@ export default system({
       { realm: "repo1" },
     );
     expect(sim.systemStatus().find((s) => s.id === "sys_shoot")).toMatchObject({ error: null });
-    sim.input(fire([0, 0, -1]));
+    inputWithTools(sim, fire([0, 0, -1]));
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(11);
   });
@@ -535,5 +536,66 @@ describe("Simulation：Transform は初期値からのずれ", () => {
     expect(sim.world.get("b/root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
     // 子は親からのずれがないので、Transform は付かない
     expect(sim.world.hasState("a/child", BUILTIN.Transform)).toBe(false);
+  });
+});
+
+describe("Simulation：装備（EquipmentTool。ADR 0053）", () => {
+  /** 再生を始めた位置（+Z 側 6m、目の高さ）から、置いてある銃を見る */
+  const lookAtGun = (player: string, action = "use") => {
+    const origin: Vec3 = [0, 1.6, 6];
+    const to: Vec3 = [0, 1.1, 3.6];
+    const d = to.map((v, i) => v - (origin[i] ?? 0));
+    const len = Math.hypot(...d);
+    return {
+      action,
+      phase: "down" as const,
+      origin,
+      direction: d.map((v) => v / len) as Vec3,
+      player,
+    };
+  };
+
+  it("E で見ている道具を右手に装備し、装備した人の入力だけが道具に届く", async () => {
+    sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "r" });
+    const ammo = () => sim?.world.get("ent_gun", "ks_gun")?.f_ammo;
+    // 装備する前は、誰が撃っても銃は動かない
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    expect(ammo()).toBe(12);
+
+    sim.input(lookAtGun("p1"));
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", BUILTIN.EquipmentTool)?.player).toBe("p1");
+    // 右手（視点からの位置）へ動く
+    const at = sim.world.get("ent_gun", BUILTIN.Transform)?.position as Vec3;
+    expect(at[2]).toBeGreaterThan(5);
+
+    // ほかの人の fire は届かず、装備した人の fire は届く
+    sim.input({ ...fire([0, 0, -1]), player: "p2" });
+    sim.step(1 / 60);
+    expect(ammo()).toBe(12);
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    expect(ammo()).toBe(11);
+
+    // ほかの人は、装備されている道具を拾えない
+    sim.input(lookAtGun("p2"));
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", BUILTIN.EquipmentTool)?.player).toBe("p1");
+  });
+
+  it("外すとその場に落とす（置いた位置のまま、誰も装備していない）", async () => {
+    sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "r" });
+    sim.input(lookAtGun("p1"));
+    sim.step(1 / 60);
+    const inHand = [...((sim.world.get("ent_gun", BUILTIN.Transform)?.position as Vec3) ?? [])];
+    sim.input({ ...lookAtGun("p1"), action: "unequip" });
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", BUILTIN.EquipmentTool)?.player).toBe("");
+    expect(sim.world.get("ent_gun", BUILTIN.Transform)?.position).toEqual(inHand);
+    // 落とした後は、ほかの人が拾える
+    sim.input(fire([0, 0, -1]));
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(12);
   });
 });
