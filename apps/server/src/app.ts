@@ -2,6 +2,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { PROTOCOL_VERSION } from "@tukurium/shared";
 import Fastify from "fastify";
+import { registerMcp } from "./agent/mcp";
 import {
   ASSET_TYPES,
   type AssetStore,
@@ -42,6 +43,10 @@ export async function buildApp(
     onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
   });
   registerSocialRoutes(app, store, hub);
+  // AI エージェントのためのリモート MCP（ADR 0054）
+  registerMcp(app, hub, repos);
+  // テストから hub に内部でつなぐための入口
+  app.decorate("tukuriumHub", hub);
 
   app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
 

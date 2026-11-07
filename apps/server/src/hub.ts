@@ -42,6 +42,11 @@ interface Conn {
   pose: Omit<Participant, "id" | "name">;
   open: Set<string>;
   panels: PanelPublic[];
+  /**
+   * AI エージェントの接続（ADR 0054）。人と同じ道を通るが、ワークスペースのホスト（再生の実行役）
+   * にはならず、保存（コミット）もできない。
+   */
+  agent?: boolean;
 }
 
 interface Placement {
@@ -185,7 +190,10 @@ export class Hub {
       .catch((e) => this.opts.log(`social update: ${e}`));
   }
 
-  connect(peer: Peer): { onMessage(raw: string): void; onClose(): void } {
+  connect(
+    peer: Peer,
+    options: { agent?: boolean } = {},
+  ): { onMessage(raw: string): void; onClose(): void } {
     const conn: Conn = {
       id: randomUUID(),
       peer,
@@ -194,6 +202,7 @@ export class Hub {
       pose: { position: [0, 0, 0], yaw: 0, pitch: 0 },
       open: new Set(),
       panels: [],
+      ...(options.agent ? { agent: true } : {}),
     };
     this.conns.set(conn.id, conn);
     // メッセージは届いた順に処理する（Store の非同期処理をまたいでも順序を保つ）
@@ -273,6 +282,8 @@ export class Hub {
       case "ws.openRepo":
         return this.openRepo(conn, msg.repoId);
       case "ws.commit":
+        // 保存は人だけ（ADR 0054。のちに権限の設定で変えられるようにする）
+        if (conn.agent) return this.deny(conn, "エージェントは保存できません。保存は人が行います");
         return this.commit(conn, msg.workspaceId, msg.message);
       case "placeRelease":
         return this.placeRelease(conn, msg);
@@ -1130,7 +1141,7 @@ export class Hub {
       update: toB64(Y.encodeStateAsUpdate(w.room.doc)),
       role,
     });
-    if (!w.host && role === "admin") this.setHost(w, conn);
+    if (!w.host && role === "admin" && !conn.agent) this.setHost(w, conn);
     else if (w.lastFrame) this.send(conn, { t: "ws.frame", workspaceId, frame: w.lastFrame });
     this.broadcastSession(s);
   }
@@ -1155,7 +1166,9 @@ export class Hub {
   /** ホストが抜けたら、ワークスペースを開いている管理者に引き継ぐ。いなければ再生を止める。 */
   private migrateHost(w: Workspace): void {
     w.host = null;
-    const next = [...w.conns].find((c) => c.user && this.roleOf(w, c.user.id) === "admin");
+    const next = [...w.conns].find(
+      (c) => c.user && !c.agent && this.roleOf(w, c.user.id) === "admin",
+    );
     if (next) {
       this.setHost(w, next);
       return;
@@ -1212,7 +1225,7 @@ export class Hub {
         if (w.host === c) this.migrateHost(w);
       } else if (w.host === c && r !== "admin") {
         this.migrateHost(w);
-      } else if (!w.host && r === "admin") {
+      } else if (!w.host && r === "admin" && !c.agent) {
         this.setHost(w, c);
       }
     }
