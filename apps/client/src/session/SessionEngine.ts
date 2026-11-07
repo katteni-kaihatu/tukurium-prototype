@@ -226,6 +226,7 @@ export class SessionEngine {
     // 照準が 3D のパネルに乗っていたら、照準の見た目を変える（クリックがパネルに届く合図）
     const aim = this.controller.locked && this.aimedPanelElement() ? "panel" : "";
     if ((this.container.dataset.aim ?? "") !== aim) this.container.dataset.aim = aim;
+    this.updateAimedDrag();
     this.avatars.update(dt);
     this.effects.update(dt);
     this.remotePanels.update();
@@ -267,6 +268,87 @@ export class SessionEngine {
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
 
+  // ---------------------------------------------------------------------------
+  // 照準でのドラッグ＆ドロップ：照準では押す・離す・クリックしか渡せないので、パネルの中の draggable な要素を
+  // 押したまま視点を動かしたら、HTML のドラッグのイベント（dragstart・dragover・drop など）を合成して渡す。
+
+  /** 照準で押した draggable な要素と、押したときの視点の向き（まだドラッグは始めていない） */
+  private dragFrom: { source: HTMLElement | null; yaw: number; pitch: number } | null = null;
+  /** 照準でドラッグしている間の状態 */
+  private dragging: {
+    source: HTMLElement;
+    data: DataTransfer;
+    over: Element | null;
+    /** いま乗っている相手が dragover を受け付けたか（preventDefault したか） */
+    accepted: boolean;
+  } | null = null;
+
+  private dragEvent(type: string, data: DataTransfer, cancelable = true): DragEvent {
+    const c = this.center();
+    return new DragEvent(type, {
+      bubbles: true,
+      cancelable,
+      clientX: c.x,
+      clientY: c.y,
+      dataTransfer: data,
+    });
+  }
+
+  /** 毎フレーム：押したまま視点を動かしたらドラッグを始め、照準の先の要素へ dragover を渡す */
+  private updateAimedDrag(): void {
+    if (!this.controller.locked) {
+      if (this.dragging) this.cancelAimedDrag();
+      this.dragFrom = null;
+      return;
+    }
+    const from = this.dragFrom;
+    if (!this.dragging && from?.source?.isConnected) {
+      const moved =
+        Math.abs(this.controller.yaw - from.yaw) + Math.abs(this.controller.pitch - from.pitch);
+      if (moved < 0.02) return;
+      const data = new DataTransfer();
+      const start = this.dragEvent("dragstart", data);
+      from.source.dispatchEvent(start);
+      this.dragFrom = null;
+      if (start.defaultPrevented) return;
+      this.dragging = { source: from.source, data, over: null, accepted: false };
+    }
+    const d = this.dragging;
+    if (!d) return;
+    d.source.dispatchEvent(this.dragEvent("drag", d.data));
+    const el = this.aimedPanelElement();
+    if (el !== d.over) {
+      d.over?.dispatchEvent(this.dragEvent("dragleave", d.data, false));
+      el?.dispatchEvent(this.dragEvent("dragenter", d.data));
+      d.over = el;
+    }
+    if (!el) {
+      d.accepted = false;
+      return;
+    }
+    const over = this.dragEvent("dragover", d.data);
+    el.dispatchEvent(over);
+    d.accepted = over.defaultPrevented;
+  }
+
+  private finishAimedDrag(): void {
+    const d = this.dragging;
+    this.dragging = null;
+    this.dragFrom = null;
+    if (!d) return;
+    if (d.over && d.accepted) d.over.dispatchEvent(this.dragEvent("drop", d.data));
+    else d.over?.dispatchEvent(this.dragEvent("dragleave", d.data, false));
+    d.source.dispatchEvent(this.dragEvent("dragend", d.data, false));
+  }
+
+  private cancelAimedDrag(): void {
+    const d = this.dragging;
+    this.dragging = null;
+    if (!d) return;
+    d.over?.dispatchEvent(this.dragEvent("dragleave", d.data, false));
+    d.source.dispatchEvent(this.dragEvent("dragend", d.data, false));
+  }
+
   /** 照準の先にある、3D のパネルの中の要素 */
   aimedPanelElement(): Element | null {
     const c = this.center();
@@ -306,6 +388,11 @@ export class SessionEngine {
       } else if (e.button === 0) {
         const target = this.aimedClickTarget(el);
         this.pressed = target;
+        this.dragFrom = {
+          source: target.closest<HTMLElement>('[draggable="true"]'),
+          yaw: this.controller.yaw,
+          pitch: this.controller.pitch,
+        };
         this.forwardAimed(target, "down", this.aimedDetail);
         const focusable = target.closest<HTMLElement>(
           "input, textarea, select, button, a[href], [contenteditable='true'], [tabindex]",
@@ -366,6 +453,13 @@ export class SessionEngine {
       claimer.up(e.button);
       return;
     }
+    if (e.button === 0 && this.dragging) {
+      // 照準でドラッグしていたら、離したところへ落とす（クリックは渡さない）
+      this.finishAimedDrag();
+      this.pressed = null;
+      return;
+    }
+    this.dragFrom = null;
     if (e.button === 0 && this.pressed) {
       // 押した相手へ離す。離す瞬間の照準は、あいだに開いたパネルで別の要素になる
       this.forwardAimed(this.pressed, "up", this.aimedDetail);
