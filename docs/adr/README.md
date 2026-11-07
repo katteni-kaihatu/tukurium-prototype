@@ -55,3 +55,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0049](0049-empty-entity-and-koko-button.md) | 採用・実装済み | 空の Entity には Transform を付けない。詳細の下の「KokoState を追加」は出さない | 形のあるものは Transform と Mesh。付けるのは端のつまみから |
 | [0050](0050-transform-is-offset.md) | 採用・実装済み | Transform が無い Entity は、フィールドの初期値の姿勢として扱う。Transform はそこからずらすもの | 配置・物理・持った移動でずれたときだけ Transform を残す |
 | [0051](0051-resource-field-types.md) | 採用・実装済み | 欄の型 Resource を、Texture・Material・Model・Audio に分ける。何を指すかは型で決まる | 選ぶ一覧はその型のものだけ。古い resource の欄は移さない |
+| [0052](0052-import-from-project.md) | 採用・実装済み | Resources の New から、ほかのプロジェクトのアウトプット・リソースを、使うものごと開いているワークスペースへ取り込む | 取り込み元はフォークできる人だけ。由来に元のリポジトリ・コミット・パスを残す |

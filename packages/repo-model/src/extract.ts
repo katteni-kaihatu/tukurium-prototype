@@ -223,12 +223,22 @@ export function extractInto(
     ...selection.assets.map((id) => src.assets?.find((a) => a.id === id)?.name ?? id),
   ];
   rebindImports(src, dst, added, aliases.map);
+  const index = ResourcePathIndex.fromSnapshot(src);
+  const paths = [
+    ...selection.kokostates,
+    ...selection.systems,
+    ...selection.materials,
+    ...selection.assets,
+  ]
+    .map((id) => index.pathOf(id))
+    .filter((p): p is string => p !== null);
   const record: Provenance = {
     kind: "extract",
     repoId: source.repoId,
     repoName: source.repoName,
     commit: source.commit,
     items: [...new Set(names)],
+    ...(paths.length > 0 ? { paths: [...new Set(paths)] } : {}),
     ...(aliases.carried.length > 0 ? { dependencies: aliases.carried } : {}),
     at: new Date().toISOString(),
   };

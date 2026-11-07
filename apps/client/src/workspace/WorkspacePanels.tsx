@@ -22,6 +22,7 @@ import { DetailPanel, ResourceDetailDrawer } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { useCanEdit } from "./hooks";
+import { ImportPanel } from "./ImportPanel";
 import { InspectorPanel } from "./InspectorPanel";
 import { KokoPickerPanel } from "./KokoPickerPanel";
 import { LogPanel } from "./LogPanel";
@@ -84,6 +85,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const problemsOpen = useWorkspace((s) => s.problemsOpen);
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
+  const importOpen = useWorkspace((s) => s.importOpen);
   const detail = useWorkspace((s) => s.detail);
   const kokoPickerOpen = useWorkspace((s) => s.kokoPickerOpen);
   const resourceDetailOpen = useWorkspace((s) => s.resourceDetailOpen);
@@ -191,6 +193,16 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
         focusKey: problemsFocus,
         render: () => <ProblemsPanel />,
         onClose: () => useWorkspace.setState({ problemsOpen: false }),
+      });
+    }
+    if (importOpen) {
+      panels.push({
+        id: "ws-import",
+        title: "ほかのプロジェクトから取り込む",
+        initial: { x: 200, y: 140, width: 860, height: 560 },
+        focusKey: "import",
+        render: () => <ImportPanel />,
+        onClose: () => useWorkspace.setState({ importOpen: false }),
       });
     }
     if (logOpen) {

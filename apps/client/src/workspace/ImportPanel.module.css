@@ -1,0 +1,108 @@
+.frame {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.top {
+  flex: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(38, 38, 46, 0.08);
+}
+
+.split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+}
+
+.pick,
+.side {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.side {
+  border-left: 1px solid rgba(38, 38, 46, 0.08);
+}
+
+.group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 45%);
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: rgba(38, 38, 46, 0.05);
+}
+
+.name,
+.where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.where {
+  font-size: 11px;
+  color: var(--c-ink-3);
+  font-family: var(--font-mono);
+}
+
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(38, 38, 46, 0.08);
+}
+
+.source {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--c-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.done {
+  font-size: 12px;
+  color: var(--c-green);
+}
+
+/* 見出し（sectionTitle）は flex: 1 で伸びるので、ここでは伸ばさない */
+.side > h3,
+.group > legend {
+  flex: none;
+}

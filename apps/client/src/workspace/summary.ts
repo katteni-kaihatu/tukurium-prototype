@@ -115,6 +115,8 @@ export function summarize(panelId: string): string[] {
       return ["履歴"];
     case "ws-save":
       return ["保存"];
+    case "ws-import":
+      return ["ほかのプロジェクトから取り込む"];
     default:
       return [];
   }
