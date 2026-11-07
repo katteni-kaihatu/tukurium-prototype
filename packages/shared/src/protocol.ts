@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
@@ -221,7 +221,7 @@ export type HostPart = z.infer<typeof HostPart>;
 
 /**
  * 自分が開いているパネルの公開用の情報。内容（lines）はサーバーが権限を確かめてから相手に渡す。
- * 3D 表示ならその位置、2D 表示なら本人の前に並べて見せる。
+ * 3D 表示ならその位置、2D 表示なら本人の視界の中の同じ所（画面上の位置）に見せる。
  */
 export const PanelPublic = z.object({
   id: z.string().max(64),
@@ -229,6 +229,20 @@ export const PanelPublic = z.object({
   workspaceId: id.nullable(),
   mode: z.enum(["2d", "3d"]),
   transform: z.object({ position: vec3, yaw: z.number() }).nullable(),
+  /** パネルの大きさ（px）。空間では 1px = PANEL_METERS_PER_PX で見せる */
+  size: z.object({
+    width: z.number().min(1).max(4000),
+    height: z.number().min(1).max(4000),
+  }),
+  /** 2D 表示のとき、画面（3D の描画領域）の中のパネルの中心と、画面の大きさ（px） */
+  screen: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      viewWidth: z.number().min(1).max(10000),
+      viewHeight: z.number().min(1).max(10000),
+    })
+    .nullable(),
   lines: z.array(z.string().max(120)).max(12),
 });
 export type PanelPublic = z.infer<typeof PanelPublic>;
