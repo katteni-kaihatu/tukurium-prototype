@@ -6,7 +6,7 @@ import type {
   KokoStateRegistry,
   Vec3,
 } from "@tukurium/eks";
-import { World, type WorldSnapshot } from "@tukurium/eks";
+import { isResourceFieldType, World, type WorldSnapshot } from "@tukurium/eks";
 import {
   type AssetDef,
   BUILTIN,
@@ -545,7 +545,7 @@ export class Simulation {
           v.every((n) => typeof n === "number" && Number.isFinite(n)));
       // Entity・リソースの参照は、配置をまたぐと意味がないので持たない
       out[f.name] = (
-        ok ? v : f.type === "entity" || f.type === "resource" ? null : f.default
+        ok ? v : f.type === "entity" || isResourceFieldType(f.type) ? null : f.default
       ) as Json;
     }
     return out;
@@ -1666,7 +1666,10 @@ function accepts(f: FieldDef, v: Json): boolean {
         v.every((n) => typeof n === "number" && Number.isFinite(n))
       );
     case "entity":
-    case "resource":
+    case "texture":
+    case "material":
+    case "model":
+    case "audio":
       return v === null || typeof v === "string";
   }
 }

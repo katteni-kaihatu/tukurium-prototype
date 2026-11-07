@@ -1,5 +1,6 @@
 import type { KokoStateDef } from "@tukurium/eks";
-import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_KIND } from "../builtins";
+import { isResourceFieldType } from "@tukurium/eks";
+import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import { ResourcePathIndex } from "../resourcePath";
 import type { ProjectSnapshot } from "../schema";
@@ -102,15 +103,8 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
         const v = values[f.id];
         if (typeof v !== "string" || v === "") continue;
         const what = `「${e.name}」の ${def.name}.${f.name}`;
-        if (f.type === "resource")
-          checkResource(
-            subject,
-            [kokoId, f.id],
-            v,
-            RESOURCE_KIND[`${kokoId}/${f.id}`] ?? null,
-            what,
-            related,
-          );
+        if (isResourceFieldType(f.type))
+          checkResource(subject, [kokoId, f.id], v, RESOURCE_FIELD_KIND[f.type], what, related);
         else if (f.type === "entity" && !entities.has(v))
           push({
             code: "missing-entity",

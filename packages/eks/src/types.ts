@@ -17,8 +17,28 @@ export interface FieldValueMap {
   color: string;
   /** 参照先 Entity。未設定は null。 */
   entity: EntityId | null;
-  /** 素材などのリソース ID。未設定は null。 */
-  resource: string | null;
+  /** テクスチャ（画像の素材）の ID。未設定は null。 */
+  texture: string | null;
+  /** マテリアルの ID。未設定は null。 */
+  material: string | null;
+  /** モデル（3D の素材）の ID。未設定は null。 */
+  model: string | null;
+  /** 音声の素材の ID。未設定は null。 */
+  audio: string | null;
+}
+
+/** リソースを指す欄の型（テクスチャ・マテリアル・モデル・音声） */
+export type ResourceFieldType = "texture" | "material" | "model" | "audio";
+
+export const RESOURCE_FIELD_TYPES: readonly ResourceFieldType[] = [
+  "texture",
+  "material",
+  "model",
+  "audio",
+];
+
+export function isResourceFieldType(type: string): type is ResourceFieldType {
+  return (RESOURCE_FIELD_TYPES as readonly string[]).includes(type);
 }
 
 export type FieldType = keyof FieldValueMap;

@@ -38,7 +38,10 @@ const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"
   { type: "vec3", label: "Vector3", default: [0, 0, 0] },
   { type: "color", label: "Color", default: "#ffffff" },
   { type: "entity", label: "Entity", default: null },
-  { type: "resource", label: "Resource", default: null },
+  { type: "texture", label: "Texture", default: null },
+  { type: "material", label: "Material", default: null },
+  { type: "model", label: "Model", default: null },
+  { type: "audio", label: "Audio", default: null },
 ];
 
 /** 開いている KokoState・マテリアル・スクリプト・素材・フォルダの詳細 */
