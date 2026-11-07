@@ -7,6 +7,7 @@ import { describeDiff } from "./diffView";
 import styles from "./history.module.css";
 import { useProject } from "./hooks";
 import { entryPart } from "./revert";
+import { revertAsk } from "./revertAsk";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useRevert } from "./useRevert";
@@ -40,7 +41,7 @@ export function MarkedLine({
 
 /**
  * 新しいものは緑、変わったものは黄色、変化がないものは中が透けた丸。色だけに頼らず名前も付ける。
- * target を渡すと、マウスを載せたときに、どう変わったかと「元に戻す」を出す。
+ * target を渡すと、マウスを載せたときに、どう変わったかと戻す印を出す。
  */
 export function ChangeMark({
   kind,
@@ -56,6 +57,8 @@ export function ChangeMark({
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 確認を出しているあいだは、マウスが外れても閉じない
+  const holding = useRef(false);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -97,6 +100,7 @@ export function ChangeMark({
     setOpen(true);
   };
   const leave = () => {
+    if (holding.current) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setOpen(false), 180);
   };
@@ -128,6 +132,9 @@ export function ChangeMark({
           target={target}
           onEnter={stay}
           onLeave={leave}
+          onHold={(held) => {
+            holding.current = held;
+          }}
           onClose={() => setOpen(false)}
         />
       )}
@@ -135,13 +142,14 @@ export function ChangeMark({
   );
 }
 
-/** 丸の下に、どう変わったか（保存パネルの差分と同じ書き方）と「元に戻す」を出す */
+/** 丸の下に、どう変わったか（保存パネルの差分と同じ書き方）と戻す印を出す */
 function ChangePop({
   anchor,
   label,
   target,
   onEnter,
   onLeave,
+  onHold,
   onClose,
 }: {
   anchor: HTMLElement;
@@ -149,6 +157,7 @@ function ChangePop({
   target: ChangeTarget;
   onEnter: () => void;
   onLeave: () => void;
+  onHold: (held: boolean) => void;
   onClose: () => void;
 }) {
   const project = useProject();
@@ -184,26 +193,40 @@ function ChangePop({
       }}
     >
       <div className={ui.changePopHead}>
-        <span
-          className={ui.changeMark}
-          data-change={entry?.kind === "added" ? "added" : "modified"}
-        />
-        <span className={ui.changePopTitle}>{label}</span>
         {revertable && (
           <button
             type="button"
             className={ui.btn}
+            aria-label="元に戻す"
             onFocus={onEnter}
             onClick={() => {
+              onEnter();
+              onHold(true);
+              const ok = window.confirm(revertAsk(entry));
+              onHold(false);
+              if (!ok) {
+                onEnter();
+                // 確認の窓が閉じたあと、マウスが外れた扱いになっても、載っていれば開いたままにする
+                requestAnimationFrame(() => {
+                  onEnter();
+                  const over = box.current?.matches(":hover") || anchor.matches(":hover");
+                  if (!over) onLeave();
+                });
+                return;
+              }
               const failed = revert(target.entry, target.part);
               setError(failed);
               if (!failed) onClose();
             }}
           >
             <RevertIcon />
-            元に戻す
           </button>
         )}
+        <span
+          className={ui.changeMark}
+          data-change={entry?.kind === "added" ? "added" : "modified"}
+        />
+        <span className={ui.changePopTitle}>{label}</span>
       </div>
       {empty ? (
         <p className={styles.emptyDiff}>
