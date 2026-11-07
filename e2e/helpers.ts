@@ -45,7 +45,8 @@ export async function aimAt(page: Page, target: [number, number, number]): Promi
 }
 
 /**
- * 道具（EquipmentTool）を、player が装備する（ADR 0053）。E で見ている物を拾うのと同じ use の入力を、
+ * 道具（EquipmentTool）を、player が装備する（ADR 0053）。左クリックで開くリングメニューの「装備する」と同じ
+ * equip の入力を、
  * 道具の少し上・手前から送る。ホストでない人の手元の世界は少し遅れる（適用の直後など）ので、
  * 手元で「装備済み」に見えても送る（本当に装備していれば、自分の道具はレイから外れて何も起きない）。
  */
@@ -74,7 +75,7 @@ export async function equip(
       const d = [at[0] - origin[0], at[1] - origin[1], at[2] - origin[2]];
       const len = Math.hypot(d[0], d[1], d[2]);
       const ev = {
-        action: "use",
+        action: "equip",
         phase: "down",
         player: who,
         origin,

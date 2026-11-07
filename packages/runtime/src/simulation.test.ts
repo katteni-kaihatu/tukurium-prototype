@@ -541,7 +541,7 @@ describe("Simulation：Transform は初期値からのずれ", () => {
 
 describe("Simulation：装備（EquipmentTool。ADR 0053）", () => {
   /** 再生を始めた位置（+Z 側 6m、目の高さ）から、置いてある銃を見る */
-  const lookAtGun = (player: string, action = "use") => {
+  const lookAtGun = (player: string, action = "equip") => {
     const origin: Vec3 = [0, 1.6, 6];
     const to: Vec3 = [0, 1.1, 3.6];
     const d = to.map((v, i) => v - (origin[i] ?? 0));
@@ -555,7 +555,7 @@ describe("Simulation：装備（EquipmentTool。ADR 0053）", () => {
     };
   };
 
-  it("E で見ている道具を右手に装備し、装備した人の入力だけが道具に届く", async () => {
+  it("見ている道具を右手に装備し（リングメニューの「装備する」）、装備した人の入力だけが道具に届く", async () => {
     sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "r" });
     const ammo = () => sim?.world.get("ent_gun", "ks_gun")?.f_ammo;
     // 装備する前は、誰が撃っても銃は動かない
@@ -597,5 +597,20 @@ describe("Simulation：装備（EquipmentTool。ADR 0053）", () => {
     sim.input(fire([0, 0, -1]));
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(12);
+  });
+});
+
+describe("Simulation：E（use）では装備しない（ADR 0053）", () => {
+  it("E で見ても道具は拾わない（装備は左クリックのリングメニューから）", async () => {
+    sim = await Simulation.create(gunAndTargetSample(), "out_range", { realm: "r" });
+    sim.input({
+      action: "use",
+      phase: "down",
+      origin: [0, 1.6, 6],
+      direction: [0, -0.2, -0.98],
+      player: "p1",
+    });
+    sim.step(1 / 60);
+    expect(sim.world.get("ent_gun", BUILTIN.EquipmentTool)?.player).toBe("");
   });
 });

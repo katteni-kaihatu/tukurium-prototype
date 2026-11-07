@@ -98,7 +98,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     ],
   },
   {
-    // E で拾うと右手に装備する道具（ADR 0053）。装備した人の入力だけが onInput に届く
+    // 左クリックで開くリングメニューから右手に装備する道具（ADR 0053）。装備した人の入力だけが onInput に届く
     id: BUILTIN.EquipmentTool,
     name: "EquipmentTool",
     role: "interaction",

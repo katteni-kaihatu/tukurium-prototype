@@ -1005,7 +1005,8 @@ export class Simulation {
 
   /**
    * 装備（ADR 0053）。処理したら true（スクリプトの onInput にも Interact にも渡さない）。
-   * - use（E）：見ている物か、その親のうち、置いてある EquipmentTool を右手に装備する。装備していた物は、その場に落とす
+   * - equip（左クリックで開くリングメニューの「装備する」）：見ている物か、その親のうち、置いてある EquipmentTool を
+   *   右手に装備する。装備していた物は、その場に落とす
    * - unequip（リングメニューの「装備を外す」）：装備している物を、その場に落とす
    * セッションでは、Interact と同じく、相手の配置の「外からの見え方」がインタラクション可能なときだけ拾える。
    */
@@ -1015,7 +1016,7 @@ export class Simulation {
       for (const id of equippedBy(this.world, ev.player)) this.dropEquipped(id);
       return true;
     }
-    if (ev.action !== "use") return false;
+    if (ev.action !== "equip") return false;
     const hit = this.physics.raycast(ev.origin, ev.direction, INTERACT_RANGE, [
       ...grabbedBy(this.world, ev.player),
       ...equippedBy(this.world, ev.player),
@@ -1026,11 +1027,11 @@ export class Simulation {
       target = this.world.parentOf(target);
     // 装備できるのは、いちばん上の Entity で、誰も持っていない・装備していない物だけ
     if (!target || this.world.parentOf(target) !== null || isInHand(this.world, target))
-      return false;
+      return true;
     const part = this.partOf(target);
-    if (this.multi && part && this.exposureOf(part) !== "interactive") return false;
+    if (this.multi && part && this.exposureOf(part) !== "interactive") return true;
     const tool = this.world.get(target, BUILTIN.EquipmentTool);
-    if (!tool) return false;
+    if (!tool) return true;
     for (const id of equippedBy(this.world, ev.player)) this.dropEquipped(id);
     tool.player = ev.player;
     const rb = this.world.get(target, BUILTIN.RigidBody);
