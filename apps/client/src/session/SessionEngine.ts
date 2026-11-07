@@ -270,6 +270,12 @@ export class SessionEngine {
     if (!e.isTrusted) return;
     if (e.button === 2) this.rightButton = true;
     if (!this.controller.locked) {
+      // 3D のパネルの右下のつまみ：押している間、ポインターの先まで大きさを変える
+      if (e.button === 0 && this.startPanelResize(e.target as Element)) {
+        this.mouse = { x: e.clientX, y: e.clientY };
+        e.preventDefault();
+        return;
+      }
       // 3D のパネルを、右クリックを押している間持つ
       if (e.button === 2) {
         const id = this.panels.idOf(e.target as Element);
@@ -286,6 +292,8 @@ export class SessionEngine {
       if (e.button === 2) {
         const id = this.panels.idOf(el);
         if (id) this.panels.startMove(id, this.camera, this.ndc);
+      } else if (e.button === 0 && this.startPanelResize(el)) {
+        // 照準でつまみを押したら、押している間、照準の先まで大きさを変える
       } else if (e.button === 0) {
         const target = this.aimedClickTarget(el);
         this.pressed = target;
@@ -334,6 +342,10 @@ export class SessionEngine {
 
   private onMouseUp = (e: MouseEvent): void => {
     if (!e.isTrusted) return;
+    if (e.button === 0 && this.panels.isResizing) {
+      this.panels.endResize();
+      return;
+    }
     if (e.button === 2) {
       this.releaseRight();
       return;
@@ -357,6 +369,13 @@ export class SessionEngine {
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.controller.locked) this.mouse = { x: e.clientX, y: e.clientY };
   };
+
+  /** 要素が 3D のパネルの大きさを変えるつまみなら、大きさを変え始める */
+  private startPanelResize(el: Element | null): boolean {
+    if (!el?.closest("[data-panel-resize]")) return false;
+    const id = this.panels.idOf(el);
+    return id !== null && this.panels.startResize(id, this.camera, this.ndc);
+  }
 
   /** 空間の中の右クリック（持つ・パネルを動かす）でメニューを出さない */
   private onContextMenu = (e: MouseEvent): void => {

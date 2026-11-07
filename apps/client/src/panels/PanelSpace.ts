@@ -19,6 +19,8 @@ interface Placed {
   observer: ResizeObserver;
   /** 穴の中心の、本体の中心からのずれ（パネルの向きでの m。付属パネルがあると右へずれる） */
   local: THREE.Vector3;
+  /** いまの本体の大きさ（px）。変わったときに左上の角を止めておくために覚える */
+  size?: { width: number; height: number };
 }
 
 /**
@@ -40,6 +42,23 @@ export class PanelSpace {
     rotation: Vec3;
     pointer: () => THREE.Vector2;
   } | null = null;
+  /**
+   * 大きさを変えている間のパネル。照準（またはポインター）の先がパネルの面に当たる点を右下の角にする。
+   * つかんだ点と角のずれ（px）を覚えておき、つかんだ瞬間に大きさが跳ねないようにする。
+   */
+  private resizing: {
+    id: string;
+    dx: number;
+    dy: number;
+    pointer: () => THREE.Vector2;
+    camera: THREE.Camera;
+  } | null = null;
+  private readonly resizeListeners = new Set<(id: string, width: number, height: number) => void>();
+  /** 大きさを変えている間、毎フレーム呼ぶ（PanelLayer が大きさを決める） */
+  subscribeResized(listener: (id: string, width: number, height: number) => void): () => void {
+    this.resizeListeners.add(listener);
+    return () => this.resizeListeners.delete(listener);
+  }
   private readonly raycaster = new THREE.Raycaster();
   /** 動かし終えたときに呼ぶ（置き場所を保存する側へ知らせる） */
   private readonly moveListeners = new Set<(id: string, transform: PanelTransform) => void>();
@@ -134,6 +153,54 @@ export class PanelSpace {
     if (t) for (const listener of this.moveListeners) listener(m.id, t);
   }
 
+  /** 右下のつまみで大きさを変え始める。パネルの面に当たらなければ何もしない */
+  startResize(id: string, camera: THREE.Camera, pointer: () => THREE.Vector2): boolean {
+    const p = this.placed.get(id);
+    const el = p?.wrapper.firstElementChild as HTMLElement | null;
+    const at = this.pointOnPanel(id, camera, pointer());
+    if (!p || !el || !at) return false;
+    this.resizing = {
+      id,
+      dx: el.offsetWidth - at.x,
+      dy: el.offsetHeight - at.y,
+      pointer,
+      camera,
+    };
+    return true;
+  }
+
+  endResize(): void {
+    this.resizing = null;
+  }
+
+  get isResizing(): boolean {
+    return this.resizing !== null;
+  }
+
+  /**
+   * ポインターの先がパネルの面に当たる点を、パネルの左上からの px（レイアウト上の大きさ）で返す。
+   * 面の裏側や、面と平行なときは null。
+   */
+  pointOnPanel(
+    id: string,
+    camera: THREE.Camera,
+    pointer: THREE.Vector2,
+  ): { x: number; y: number } | null {
+    const p = this.placed.get(id);
+    const el = p?.wrapper.firstElementChild as HTMLElement | null;
+    if (!p || !el) return null;
+    camera.updateMatrixWorld();
+    p.object.updateMatrixWorld();
+    this.raycaster.setFromCamera(pointer, camera);
+    const normal = new THREE.Vector3(0, 0, 1).applyEuler(p.object.rotation);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, p.object.position);
+    const hit = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3());
+    if (!hit) return null;
+    // object は 1px = PANEL_METERS_PER_PX に縮めてあるので、ローカルの座標は px（上向きが正、中心が原点）
+    const local = p.object.worldToLocal(hit);
+    return { x: local.x + el.offsetWidth / 2, y: el.offsetHeight / 2 - local.y };
+  }
+
   get isMoving(): boolean {
     return this.moving !== null;
   }
@@ -147,6 +214,7 @@ export class PanelSpace {
   /** 空間から取り除く（要素は呼び出し側が別の場所へ移す）。 */
   remove(id: string): void {
     if (this.moving?.id === id) this.moving = null;
+    if (this.resizing?.id === id) this.resizing = null;
     const p = this.placed.get(id);
     if (!p) return;
     p.observer.disconnect();
@@ -162,6 +230,13 @@ export class PanelSpace {
    */
   update(camera: THREE.Camera): void {
     if (this.placed.size === 0) return;
+    const sizing = this.resizing;
+    if (sizing) {
+      const at = this.pointOnPanel(sizing.id, camera, sizing.pointer());
+      if (at) {
+        for (const fn of this.resizeListeners) fn(sizing.id, at.x + sizing.dx, at.y + sizing.dy);
+      }
+    }
     const held = this.moving;
     const m = held ? this.placed.get(held.id) : undefined;
     if (held && m) {
@@ -220,6 +295,20 @@ export class PanelSpace {
     // CSS の変形の影響を受けない大きさ（レイアウト上の px）
     const w = el.offsetWidth;
     const h = el.offsetHeight;
+    // 大きさが変わったら、左上の角が動かないよう中心をずらす（右下へ広がる・縮む）
+    // 隠している間（大きさ 0）は覚えない。出し直したときに大きくずれないように
+    const before = p.size;
+    if (w > 0 && h > 0) p.size = { width: w, height: h };
+    if (before && w > 0 && h > 0 && (before.width !== w || before.height !== h)) {
+      const shift = new THREE.Vector3(
+        ((w - before.width) / 2) * PANEL_METERS_PER_PX,
+        (-(h - before.height) / 2) * PANEL_METERS_PER_PX,
+        0,
+      ).applyEuler(p.object.rotation);
+      p.object.position.add(shift);
+      const t = this.transformOf(id);
+      if (t) for (const listener of this.moveListeners) listener(id, t);
+    }
     let [minX, maxX, minY, maxY] = [0, w, 0, h];
     const drawer = drawerOf(el);
     if (drawer) {

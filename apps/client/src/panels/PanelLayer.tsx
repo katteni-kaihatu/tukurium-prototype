@@ -316,9 +316,18 @@ export function PanelLayer({
     setStates((prev) => {
       const st = prev[spec.id] ?? initialState(spec);
       const next = fitOnScreen(width, height, st.x, st.y, st.pinned);
+      if (st.width === next.width && st.height === next.height) return prev;
       return { ...prev, [spec.id]: { ...st, width: next.width, height: next.height } };
     });
   }, []);
+
+  // 3D に置いたパネルの大きさは、空間の側から毎フレーム届く
+  useLayoutEffect(() => {
+    return engine?.panels.subscribeResized((id, width, height) => {
+      const spec = specs.current.find((p) => p.id === id);
+      if (spec) resizeTo(spec, width, height);
+    });
+  }, [engine, resizeTo]);
 
   const placed = engine ? panels.filter((p) => !p.hidden && !stateOf(p).pinned) : [];
 
@@ -572,12 +581,15 @@ function PanelWindow(props: {
       <button
         type="button"
         className={styles.resize}
+        data-panel-resize=""
         aria-label="大きさを変える"
         title="ドラッグして大きさを変える"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           const host = e.currentTarget.parentElement?.parentElement;
           if (!host || host.offsetWidth === 0 || host.offsetHeight === 0) return;
+          // 3D に置いたパネルは、空間の側（SessionEngine）がポインターの先を面に当てて大きさを変える
+          if (host.closest('[data-mode="3d"]')) return;
           e.preventDefault();
           const rect = host.getBoundingClientRect();
           resize.current = {
