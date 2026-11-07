@@ -790,6 +790,70 @@ function same(a: unknown, b: unknown): boolean {
   return false;
 }
 
+/** エディタの左に出す、行ごとの変化（行番号は今のコードの 1 始まり） */
+export interface LineChanges {
+  /** 新しく足した行 */
+  added: Set<number>;
+  /** 書き換えた行 */
+  modified: Set<number>;
+  /** この行のすぐ下で行を消した（0 は先頭より上） */
+  deletedAfter: Set<number>;
+}
+
+/**
+ * 保存したコードと今のコードを行で比べる（VSCode の溝の印のように）。
+ * 消した行と足した行が並んでいれば、その分は「書き換えた」にし、余った分を足した・消したにする。
+ * 前後の同じ行は先に除いてから比べる（長いコードでも、変えたところが小さければ速い）。
+ */
+export function lineChanges(before: string, after: string): LineChanges {
+  const a = splitLines(before);
+  const b = splitLines(after);
+  const out: LineChanges = { added: new Set(), modified: new Set(), deletedAfter: new Set() };
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+  const midA = a.slice(head, a.length - tail);
+  const midB = b.slice(head, b.length - tail);
+  const rows: CodeRow[] =
+    midA.length * midB.length > 250_000
+      ? [
+          ...midA.map((text) => ({ kind: "del" as const, text })),
+          ...midB.map((text) => ({ kind: "add" as const, text })),
+        ]
+      : align(midA, midB);
+  let line = head;
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i]?.kind === "same") {
+      line++;
+      i++;
+      continue;
+    }
+    let dels = 0;
+    let adds = 0;
+    const start = line;
+    while (i < rows.length && rows[i]?.kind !== "same") {
+      if (rows[i]?.kind === "del") dels++;
+      else adds++;
+      i++;
+    }
+    for (let k = 1; k <= adds; k++) {
+      if (k <= dels) out.modified.add(start + k);
+      else out.added.add(start + k);
+    }
+    if (dels > adds) out.deletedAfter.add(start + adds);
+    line = start + adds;
+  }
+  return out;
+}
+
 function splitLines(text: string): string[] {
   if (text === "") return [];
   const lines = text.split("\n");

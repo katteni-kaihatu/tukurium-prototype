@@ -1,7 +1,7 @@
 import type { ProjectSnapshot } from "@tukurium/repo-model";
 import { BUILTIN, gunAndTargetSample } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
-import { describeDiff, lineDiff } from "./diffView";
+import { describeDiff, lineChanges, lineDiff } from "./diffView";
 
 function snap(partial: Partial<ProjectSnapshot> = {}): ProjectSnapshot {
   return {
@@ -198,5 +198,58 @@ describe("lineDiff", () => {
       "del",
       "add",
     ]);
+  });
+});
+
+describe("lineChanges", () => {
+  const sets = (c: ReturnType<typeof lineChanges>) => ({
+    added: [...c.added],
+    modified: [...c.modified],
+    deletedAfter: [...c.deletedAfter],
+  });
+
+  it("足した行・書き換えた行・消したところを、今の行番号で出す", () => {
+    const before = "a\nb\nc\nd\ne\n";
+    const after = "a\nB\nc\nnew\ne\n";
+    // b → B は書き換え、d → new も書き換え
+    expect(sets(lineChanges(before, after))).toEqual({
+      added: [],
+      modified: [2, 4],
+      deletedAfter: [],
+    });
+  });
+
+  it("足しただけの行は足した、消しただけのところは消した印にする", () => {
+    expect(sets(lineChanges("a\nb\n", "a\nx\ny\nb\n"))).toEqual({
+      added: [2, 3],
+      modified: [],
+      deletedAfter: [],
+    });
+    expect(sets(lineChanges("a\nb\nc\n", "a\nc\n"))).toEqual({
+      added: [],
+      modified: [],
+      deletedAfter: [1],
+    });
+    expect(sets(lineChanges("a\nb\n", "b\n"))).toEqual({
+      added: [],
+      modified: [],
+      deletedAfter: [0],
+    });
+  });
+
+  it("書き換えより足した行が多ければ、余りを足した行にする", () => {
+    expect(sets(lineChanges("a\nb\nc\n", "a\nB1\nB2\nc\n"))).toEqual({
+      added: [3],
+      modified: [2],
+      deletedAfter: [],
+    });
+  });
+
+  it("同じなら何も出さない", () => {
+    expect(sets(lineChanges("a\nb\n", "a\nb\n"))).toEqual({
+      added: [],
+      modified: [],
+      deletedAfter: [],
+    });
   });
 });
