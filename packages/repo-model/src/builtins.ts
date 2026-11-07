@@ -1,4 +1,4 @@
-import { type KokoStateDef, KokoStateRegistry } from "@tukurium/eks";
+import { type KokoStateDef, KokoStateRegistry, type ResourceFieldType } from "@tukurium/eks";
 
 /**
  * Built-in の KokoState。利用者定義と同じ仕組みに載せ、ID は固定する。
@@ -55,11 +55,11 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       { id: "shape", name: "shape", type: "string", default: "box" },
       /** box: 幅・高さ・奥行き／sphere: 直径（x）／cylinder・capsule: 直径（x）と高さ（y）／plane: 幅（x）と奥行き（z） */
       { id: "size", name: "size", type: "vec3", default: [1, 1, 1] },
-      { id: "material", name: "material", type: "resource", default: null },
+      { id: "material", name: "material", type: "material", default: null },
       /** マテリアル未指定のときの色 */
       { id: "color", name: "color", type: "color", default: "#d8d2c6" },
       /** GLB の素材 ID。指定すると形状の代わりにモデルを表示する（当たり判定は size のまま） */
-      { id: "model", name: "model", type: "resource", default: null },
+      { id: "model", name: "model", type: "model", default: null },
     ],
   },
   {
@@ -113,7 +113,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** 音声の素材 ID */
-      { id: "clip", name: "clip", type: "resource", default: null },
+      { id: "clip", name: "clip", type: "audio", default: null },
       { id: "volume", name: "volume", type: "number", default: 1 },
     ],
   },
@@ -132,11 +132,15 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
   },
 ];
 
-/** Resource 型の Built-in フィールドが参照する素材の種類 */
-export const RESOURCE_KIND: Record<string, "material" | "model" | "image" | "audio"> = {
-  [`${BUILTIN.Mesh}/material`]: "material",
-  [`${BUILTIN.Mesh}/model`]: "model",
-  [`${BUILTIN.AudioSource}/clip`]: "audio",
+/** リソースを指す欄の型 → 参照するリソースの種類（マテリアルか、素材の種類） */
+export const RESOURCE_FIELD_KIND: Record<
+  ResourceFieldType,
+  "material" | "model" | "image" | "audio"
+> = {
+  texture: "image",
+  material: "material",
+  model: "model",
+  audio: "audio",
 };
 
 export function isBuiltin(id: string): boolean {

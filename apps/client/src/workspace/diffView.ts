@@ -1,4 +1,4 @@
-import type { FieldType, KokoStateDef } from "@tukurium/eks";
+import { type FieldType, isResourceFieldType, type KokoStateDef } from "@tukurium/eks";
 import {
   type AssetDef,
   BUILTIN_KOKOSTATES,
@@ -765,7 +765,7 @@ function show(value: unknown, type: FieldType | undefined, snap: ProjectSnapshot
   if (typeof value === "number") return String(value);
   if (typeof value === "string") {
     if (value === "") return "（空）";
-    if (type === "resource" || type === "entity") return resourceName(snap, value);
+    if (type === "entity" || (type && isResourceFieldType(type))) return resourceName(snap, value);
     if (type === "string" && SHAPE[value]) return SHAPE[value];
     return value;
   }

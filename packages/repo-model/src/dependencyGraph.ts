@@ -1,4 +1,4 @@
-import type { KokoStateDef } from "@tukurium/eks";
+import { isResourceFieldType, type KokoStateDef } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { parseQuery } from "./queryInfo";
@@ -59,7 +59,6 @@ export class ProjectDependencyGraph {
   }
 
   private constructor(snap: ProjectSnapshot) {
-    const materials = new Set(snap.materials.map((m) => m.id));
     const defs = new Map<string, KokoStateDef>();
     for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
 
@@ -74,8 +73,8 @@ export class ProjectDependencyGraph {
         for (const f of defs.get(kokoId)?.fields ?? []) {
           const v = values[f.id];
           if (typeof v !== "string" || v === "") continue;
-          if (f.type === "resource")
-            this.edge(from, { kind: materials.has(v) ? "material" : "asset", id: v });
+          if (isResourceFieldType(f.type))
+            this.edge(from, { kind: f.type === "material" ? "material" : "asset", id: v });
           else if (f.type === "entity") this.edge(from, { kind: "entity", id: v });
         }
       }

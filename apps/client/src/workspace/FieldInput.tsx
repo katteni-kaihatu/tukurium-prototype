@@ -1,5 +1,5 @@
 import type { FieldDef, FieldValue, Vec3 } from "@tukurium/eks";
-import { BUILTIN, MESH_SHAPES, RESOURCE_KIND, RIGID_BODY_TYPES } from "@tukurium/repo-model";
+import { BUILTIN, MESH_SHAPES, RESOURCE_FIELD_KIND, RIGID_BODY_TYPES } from "@tukurium/repo-model";
 import { useEffect, useId, useState } from "react";
 import ui from "./ui.module.css";
 
@@ -119,18 +119,19 @@ export function FieldInput(props: {
         );
         break;
       }
-      case "resource":
+      case "texture":
+      case "material":
+      case "model":
+      case "audio":
       case "entity": {
-        const kind = RESOURCE_KIND[`${props.koko}/${field.id}`];
         const assets = props.choices.assets ?? [];
+        const kind = field.type === "entity" ? null : RESOURCE_FIELD_KIND[field.type];
         const options =
           field.type === "entity"
             ? props.choices.entities
             : kind === "material"
               ? props.choices.materials
-              : kind
-                ? assets.filter((a) => a.kind === kind)
-                : [...props.choices.materials, ...assets];
+              : assets.filter((a) => a.kind === kind);
         control = (
           <select
             id={id}
