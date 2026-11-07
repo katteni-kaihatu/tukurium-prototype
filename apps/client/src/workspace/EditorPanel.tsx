@@ -1,12 +1,21 @@
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { javascript, javascriptLanguage } from "@codemirror/lang-javascript";
-import { Compartment, EditorSelection, EditorState, RangeSetBuilder } from "@codemirror/state";
-import { Decoration, EditorView } from "@codemirror/view";
+import {
+  Compartment,
+  EditorSelection,
+  EditorState,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
+import { Decoration, EditorView, GutterMarker, gutter } from "@codemirror/view";
+import { systemCodePath } from "@tukurium/repo-model";
 import { hostApiCompletions } from "@tukurium/runtime";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
+import { type LineChanges, lineChanges } from "./diffView";
 import { useProject } from "./hooks";
 import { type ImportCandidate, importCandidates, importCompletionSource } from "./importCompletion";
 import { problemKind, problemPlace } from "./ProblemsPanel";
@@ -14,6 +23,7 @@ import { scriptLine } from "./problems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useProblems } from "./useProblems";
+import { useSavedFiles } from "./useSavedFiles";
 
 installFlatEditorCoords();
 
@@ -117,6 +127,74 @@ function hostApiCompletionSource(context: CompletionContext): CompletionResult |
 
 const errorLine = Decoration.line({ class: "cm-tk-errorLine" });
 
+// ---------------------------------------------------------------------------
+// 最後の保存からの変化（VSCode の溝の印のように）：足した行は緑、書き換えた行は黄色の線、
+// 行を消したところは赤の ▶。保存した内容がまだ読めていないときは出さない
+
+const NO_CHANGES: LineChanges = { added: new Set(), modified: new Set(), deletedAfter: new Set() };
+const setLineChanges = StateEffect.define<LineChanges>();
+const lineChangesField = StateField.define<LineChanges>({
+  create: () => NO_CHANGES,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setLineChanges)) return e.value;
+    return value;
+  },
+});
+
+class ChangeMarker extends GutterMarker {
+  constructor(
+    readonly kind: "added" | "modified" | null,
+    /** この行の下（top は上）で行を消した */
+    readonly deleted: "below" | "top" | null,
+  ) {
+    super();
+  }
+  override eq(other: ChangeMarker): boolean {
+    return other.kind === this.kind && other.deleted === this.deleted;
+  }
+  override toDOM(): Node {
+    const el = document.createElement("div");
+    el.className = "cm-tk-change";
+    if (this.kind) el.dataset.kind = this.kind;
+    if (this.deleted) el.dataset.deleted = this.deleted;
+    el.title = [
+      this.kind === "added" ? "足した行" : this.kind === "modified" ? "書き換えた行" : null,
+      this.deleted ? "ここで行を消した" : null,
+    ]
+      .filter(Boolean)
+      .join("・");
+    return el;
+  }
+}
+
+const changeMarkers = new Map<string, ChangeMarker>();
+function changeMarker(kind: ChangeMarker["kind"], deleted: ChangeMarker["deleted"]): ChangeMarker {
+  const key = `${kind}:${deleted}`;
+  let m = changeMarkers.get(key);
+  if (!m) {
+    m = new ChangeMarker(kind, deleted);
+    changeMarkers.set(key, m);
+  }
+  return m;
+}
+
+const lineChangeGutter = gutter({
+  class: "cm-tk-changes",
+  lineMarker(view, line) {
+    const n = view.state.doc.lineAt(line.from).number;
+    const c = view.state.field(lineChangesField);
+    const kind = c.added.has(n) ? "added" : c.modified.has(n) ? "modified" : null;
+    const deleted = c.deletedAfter.has(n)
+      ? "below"
+      : n === 1 && c.deletedAfter.has(0)
+        ? "top"
+        : null;
+    return kind || deleted ? changeMarker(kind, deleted) : null;
+  },
+  lineMarkerChange: (update) =>
+    update.transactions.some((tr) => tr.effects.some((e) => e.is(setLineChanges))),
+});
+
 /** 問題のある行に印を付ける（編集で行がずれても、いまの行番号で付け直す） */
 function errorLines(lines: number[]) {
   const sorted = [...new Set(lines)].sort((x, y) => x - y);
@@ -143,6 +221,12 @@ function CodeView({ systemId }: { systemId: string }) {
   const jumpTo = useWorkspace((s) => s.jumpTo);
   const project = useProject();
   const awareness = useWorkspace((s) => s.awareness);
+  // 最後に保存したこのスクリプトのコード（新しく作ったものは空）。読めていない間は null
+  const saved = useSavedFiles();
+  const savedCode = saved ? (saved[systemCodePath(systemId)] ?? "") : null;
+  const savedRef = useRef(savedCode);
+  savedRef.current = savedCode;
+  const refreshChanges = useRef<() => void>(() => {});
   const role = useWorkspace((s) => s.role);
   const readOnly = role === "viewer";
 
@@ -171,21 +255,66 @@ function CodeView({ systemId }: { systemId: string }) {
           yCollab(text, awareness),
           EditorState.readOnly.of(readOnly),
           marks.current.of([]),
+          lineChangesField,
+          lineChangeGutter,
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) refreshChanges.current();
+          }),
           EditorView.theme({
             "&": { fontSize: "12.5px", height: "100%" },
             ".cm-scroller": { fontFamily: "var(--font-mono)" },
             ".cm-gutters": { background: "#f6f2ec", border: "none" },
             ".cm-tk-errorLine": { background: "#f6e3e3", boxShadow: "inset 3px 0 #b23b3b" },
+            ".cm-tk-changes .cm-gutterElement": {
+              width: "5px",
+              padding: "0",
+              position: "relative",
+            },
+            ".cm-tk-change": { position: "absolute", inset: "0" },
+            ".cm-tk-change[data-kind='added']": { background: "#3f9b5f" },
+            ".cm-tk-change[data-kind='modified']": { background: "#d9a521" },
+            ".cm-tk-change[data-deleted]::after": {
+              content: "''",
+              position: "absolute",
+              left: "0",
+              width: "0",
+              height: "0",
+              borderTop: "4px solid transparent",
+              borderBottom: "4px solid transparent",
+              borderLeft: "6px solid #c23b3b",
+            },
+            ".cm-tk-change[data-deleted='below']::after": { bottom: "-4px" },
+            ".cm-tk-change[data-deleted='top']::after": { top: "-4px" },
           }),
         ],
       }),
     });
     viewRef.current = view;
+    // 書くたびに比べ直すと重いので、手が止まってから比べる
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const compute = () => {
+      const before = savedRef.current;
+      const value = before === null ? NO_CHANGES : lineChanges(before, view.state.doc.toString());
+      view.dispatch({ effects: setLineChanges.of(value) });
+    };
+    refreshChanges.current = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(compute, 150);
+    };
+    compute();
     return () => {
+      if (timer) clearTimeout(timer);
+      refreshChanges.current = () => {};
       viewRef.current = null;
       view.destroy();
     };
   }, [project, systemId, awareness, readOnly]);
+
+  // 保存し直した・保存した内容を読めたときも比べ直す
+  // biome-ignore lint/correctness/useExhaustiveDependencies: savedCode は比べ直すきっかけ
+  useEffect(() => {
+    refreshChanges.current();
+  }, [savedCode]);
 
   // 問題のある行の印
   useEffect(() => {
