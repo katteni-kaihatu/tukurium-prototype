@@ -18,6 +18,7 @@ import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
+import { KokoRoleIcon } from "./KokoRoleIcon";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { packageAliasOf, useSystemQuery } from "./useProblems";
@@ -480,6 +481,22 @@ function Hierarchy() {
   );
 }
 
+/** 初期値に戻す（左回りの矢印） */
+function ResetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path
+        d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
@@ -899,8 +916,8 @@ function EntityProperties({ id }: { id: EntityId }) {
           const values = entity.states[koko] ?? {};
           const closed = !!closedKoko[kokoKey(koko)];
           return (
-            <section key={koko} className={ui.section} aria-label={def.name}>
-              <div className={ui.sectionHead}>
+            <section key={koko} className={styles.kokoCard} aria-label={def.name}>
+              <div className={styles.kokoHead}>
                 <button
                   type="button"
                   className={styles.fold}
@@ -914,7 +931,10 @@ function EntityProperties({ id }: { id: EntityId }) {
                   kind={marks?.states[koko]?.kind ?? null}
                   target={{ entry: `entity:${id}`, part: `state:${koko}` }}
                 />
-                <h4 className={ui.kokoTitle}>{def.name}</h4>
+                <span className={styles.kokoIcon}>
+                  <KokoRoleIcon role={def.role} />
+                </span>
+                <h4 className={styles.kokoName}>{def.name}</h4>
                 {def.builtin ? (
                   <span className={ui.badge}>Built-in</span>
                 ) : packageAliasOf(project, koko) ? (
@@ -923,6 +943,30 @@ function EntityProperties({ id }: { id: EntityId }) {
                   </span>
                 ) : (
                   <span className={ui.badgeBrand}>KokoState</span>
+                )}
+                <span className={styles.kokoSpacer} />
+                {editing && def.fields.length > 0 && (
+                  <button
+                    type="button"
+                    className={ui.iconBtn}
+                    aria-label={`${def.name} を初期値に戻す`}
+                    title="初期値に戻す"
+                    onClick={() =>
+                      safely(() =>
+                        project.transact(() => {
+                          for (const f of def.fields)
+                            project.setField(
+                              id,
+                              koko,
+                              f.id,
+                              structuredClone(f.default) as FieldValue,
+                            );
+                        }),
+                      )
+                    }
+                  >
+                    <ResetIcon />
+                  </button>
                 )}
                 {editing && (
                   <button
