@@ -1,6 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN } from "@tukurium/repo-model";
+import { isInHand } from "./holding";
 import { quaternionToDegrees, worldTransform, writeTransform } from "./transform";
 
 let initialized: Promise<void> | null = null;
@@ -58,7 +59,7 @@ export class Physics {
       const rb = world.get(id, BUILTIN.RigidBody);
       const collider = world.get(id, BUILTIN.Collider);
       // 手に持っている間は、重力で落ちないよう、Transform に合わせて動かす
-      const type: BodyRecord["type"] = world.hasState(id, BUILTIN.Held)
+      const type: BodyRecord["type"] = isInHand(world, id)
         ? "kinematic"
         : ((rb?.type as BodyRecord["type"] | undefined) ?? "fixed");
       const shape = (mesh?.shape as string | undefined) ?? "box";

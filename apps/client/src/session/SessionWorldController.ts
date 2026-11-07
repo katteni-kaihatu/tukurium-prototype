@@ -1,8 +1,10 @@
+import { playersWithEquipment } from "@tukurium/runtime";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
-import { holdsSomething } from "../workspace/WorkspaceController";
+import { equipsSomething, holdsSomething } from "../workspace/WorkspaceController";
+import { provideRingItems } from "./ringMenu";
 import type { SessionEngine } from "./SessionEngine";
 import {
   queueSessionEffects,
@@ -62,6 +64,23 @@ export class SessionWorldController {
       if (!action || e.repeat || !this.routesHere()) return;
       this.input(action, e.type === "keydown" ? "down" : "up");
     };
+    // リングメニュー（T）の「装備を外す」：セッションの世界で、自分が装備しているとき（ADR 0053）
+    this.disposers.push(
+      provideRingItems(() => {
+        if (useWorkspace.getState().mode !== "edit") return [];
+        const world = useSessionWorld.getState().view()?.world;
+        const me = useApp.getState().me?.id;
+        return [
+          {
+            id: "unequip",
+            label: "装備を外す",
+            hint: "装備していません",
+            enabled: !!world && !!me && equipsSomething(world, me),
+            run: () => this.input("unequip", "down"),
+          },
+        ];
+      }),
+    );
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     this.disposers.push(() => {
@@ -159,6 +178,8 @@ export class SessionWorldController {
     }
     if (this.turning && !this.holding()) this.endTurn();
     const view = s.view();
+    // 装備している人のアバターは、腕を前に出して構える（ADR 0053）
+    this.engine.setEquippedPlayers("session", view ? playersWithEquipment(view.world) : new Set());
     if (!view) {
       this.view.root.visible = false;
       return;
@@ -176,7 +197,8 @@ export class SessionWorldController {
     if (this.holdTimer > 0.1) {
       this.holdTimer = 0;
       const me = useApp.getState().me?.id;
-      if (me && holdsSomething(view.world, me)) this.input("hold", "down");
+      if (me && (holdsSomething(view.world, me) || equipsSomething(view.world, me)))
+        this.input("hold", "down");
     }
   }
 }

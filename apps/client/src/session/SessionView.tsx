@@ -7,6 +7,7 @@ import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
+import { RingMenu } from "./RingMenu";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
 import { SessionWorldController } from "./SessionWorldController";
@@ -161,6 +162,7 @@ export function SessionView() {
         <span className={styles.chH} />
         <span className={styles.chDot} />
       </div>
+      {engine && <RingMenu engine={engine} />}
       {closedReason && (
         <div className={`glass ${styles.closed}`} role="alert">
           <p>{closedReason}</p>
@@ -188,6 +190,7 @@ export function SessionView() {
               ["持って左クリック", "傾きを直す"],
               ["持って E", "マウスで回す"],
               ["Tab", "パネルを隠す"],
+              ["T", "リングメニュー"],
               ["Esc", "マウスを解放"],
             ]
           : [
@@ -196,7 +199,8 @@ export function SessionView() {
               ["右クリック", "押している間、持つ"],
               ["持ってホイール", "前後に動かす"],
               ["R", "リロード"],
-              ["E", "見ている物を使う（持っているときは回す）"],
+              ["E", "見ている物を使う・道具を拾って装備する（持っているときは回す）"],
+              ["T", "リングメニュー（装備を外す）"],
               ["Esc", "マウスを解放"],
             ]
         ).map(([key, label]) => (

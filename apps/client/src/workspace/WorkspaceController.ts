@@ -1,9 +1,17 @@
 import { KokoStateRegistry, World } from "@tukurium/eks";
-import { BUILTIN, type MaterialDef, type ProjectDoc } from "@tukurium/repo-model";
-import { buildWorld, type EffectEvent, type Simulation } from "@tukurium/runtime";
+import type { MaterialDef, ProjectDoc } from "@tukurium/repo-model";
+import {
+  buildWorld,
+  type EffectEvent,
+  equippedBy,
+  grabbedBy,
+  playersWithEquipment,
+  type Simulation,
+} from "@tukurium/runtime";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
+import { provideRingItems } from "../session/ringMenu";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
@@ -20,9 +28,12 @@ const HOLD_SEC = 0.1;
 
 /** この人が右クリックで持っている物があるか */
 export function holdsSomething(world: World, player: string): boolean {
-  return world
-    .query({ with: [BUILTIN.Grabbable, BUILTIN.Held] })
-    .some((id) => world.get(id, BUILTIN.Held)?.player === player);
+  return grabbedBy(world, player).length > 0;
+}
+
+/** この人が道具を装備しているか（ADR 0053） */
+export function equipsSomething(world: World, player: string): boolean {
+  return equippedBy(world, player).length > 0;
 }
 
 /** 編集中の見た目をほかの人へ送る間隔の下限 */
@@ -77,6 +88,24 @@ export class WorkspaceController {
     this.selectionBox.userData.noShot = true;
     engine.scene.add(this.bounds, this.selectionBox);
 
+    // リングメニュー（T）の「装備を外す」：再生中に、自分が装備しているとき（ADR 0053）
+    this.disposers.push(
+      provideRingItems(() => {
+        const ws = useWorkspace.getState();
+        if (ws.mode !== "play") return [];
+        const world = ws.runtime()?.world;
+        return [
+          {
+            id: "unequip",
+            label: "装備を外す",
+            hint: "装備していません",
+            enabled: !!world && equipsSomething(world, this.me()),
+            run: () =>
+              ws.input({ action: "unequip", phase: "down", player: this.me(), ...this.viewRay() }),
+          },
+        ];
+      }),
+    );
     this.disposers.push(
       engine.onFrame((dt) => this.update(dt)),
       engine.onPointer((button, phase) => this.onPointer(button, phase)),
@@ -161,6 +190,12 @@ export class WorkspaceController {
     const materials = this.materials;
 
     this.sendHold(dt);
+    // 装備している人のアバターは、腕を前に出して構える
+    const playing = ws.mode !== "edit" ? ws.runtime()?.world : undefined;
+    this.engine.setEquippedPlayers(
+      "workspace",
+      playing ? playersWithEquipment(playing) : new Set(),
+    );
     if (ws.mode !== "edit" && ws.sim) {
       // ホスト：実行して、状態を配る
       if (ws.mode === "play") {
@@ -301,7 +336,7 @@ export class WorkspaceController {
     if (ws.mode !== "play" || this.holdTimer < HOLD_SEC) return;
     this.holdTimer = 0;
     const world = ws.runtime()?.world;
-    if (!world || !holdsSomething(world, this.me())) return;
+    if (!world || !(holdsSomething(world, this.me()) || equipsSomething(world, this.me()))) return;
     ws.input({ action: "hold", phase: "down", player: this.me(), ...this.viewRay() });
   }
 

@@ -2,6 +2,7 @@ import type { Vec3 } from "@tukurium/eks";
 import { gunSample, type ProjectSnapshot, targetRangeSample } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 /**
  * 公開 Contract と opaque handle（ADR 0012、計画 UGC U2 の最初の縦の一本）。
@@ -92,7 +93,7 @@ describe("公開 Contract と opaque handle", () => {
   it("別の配置に当たった Raycast は、生の Entity ID を持たず token を持つ", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("look"));
+    inputWithTools(s, input("look"));
     s.step(1 / 60);
     expect(said(logs, "look")).toEqual(['look {"entity":null,"token":"string","distance":7}']);
   });
@@ -100,7 +101,7 @@ describe("公開 Contract と opaque handle", () => {
   it("hit.send で公開された Damage を送ると、的の contracts.Damage が受けて hp が減る", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent true"]);
     expect(hp(s)).toBe(2);
@@ -109,7 +110,7 @@ describe("公開 Contract と opaque handle", () => {
   it("handle は一度だけ使える（同じ要求の二重配送を防ぐ）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("twice"));
+    inputWithTools(s, input("twice"));
     s.step(1 / 60);
     expect([...said(logs, "first"), ...said(logs, "second")]).toEqual([
       "first true",
@@ -121,12 +122,12 @@ describe("公開 Contract と opaque handle", () => {
   it("偽の token・作り直した token・期限の切れた token は使えない", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("forge"));
-    s.input(input("copy"));
-    s.input(input("keep"));
+    inputWithTools(s, input("forge"));
+    inputWithTools(s, input("copy"));
+    inputWithTools(s, input("keep"));
     s.step(1 / 60);
     for (let i = 0; i < 90; i++) s.step(1 / 60);
-    s.input(input("reuse"));
+    inputWithTools(s, input("reuse"));
     s.step(1 / 60);
     expect([...said(logs, "forge"), ...said(logs, "copy"), ...said(logs, "reuse")]).toEqual([
       "forge false",
@@ -148,9 +149,9 @@ describe("公開 Contract と opaque handle", () => {
       yaw: 0,
     });
     // gun の Entity の処理で発行した handle を、gun2 の Entity の処理で使う
-    s.input(input("keep"));
+    inputWithTools(s, input("keep"));
     s.step(1 / 60);
-    s.input(input("reuse2"));
+    inputWithTools(s, input("reuse2"));
     s.step(1 / 60);
     expect(said(logs, "reuse2")).toEqual(["reuse2 false"]);
     expect(hp(s)).toBe(3);
@@ -159,7 +160,7 @@ describe("公開 Contract と opaque handle", () => {
   it("相手の公開範囲が「衝突のみ」なら、Raycast は当たるが Contract は届かない", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs, "collision");
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent false"]);
     expect(hp(s)).toBe(3);
@@ -168,7 +169,7 @@ describe("公開 Contract と opaque handle", () => {
   it("相手が「非公開」なら、Raycast は当たらない（見つからない）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs, "private");
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent nohit"]);
   });
@@ -176,7 +177,7 @@ describe("公開 Contract と opaque handle", () => {
   it("payload は Contract の schema で検証し、知らない Contract は使えない", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    s.input(input("bad"));
+    inputWithTools(s, input("bad"));
     s.step(1 / 60);
     expect(s.systemStatus().find((x) => x.name === "Shoot")?.error).toContain("amount");
     expect(hp(s)).toBe(3);
@@ -185,7 +186,7 @@ describe("公開 Contract と opaque handle", () => {
   it("hit.effect で、当たった点に一時的な effect を出せる（一つの handle で一つ。大きさと寿命には上限）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs, "collision");
-    s.input(input("spark"));
+    inputWithTools(s, input("spark"));
     s.step(1 / 60);
     expect([...said(logs, "fx1"), ...said(logs, "fx2")]).toEqual(["fx1 true", "fx2 false"]);
     const fx = s.drainEffects();
@@ -235,7 +236,7 @@ describe("World の上限（外から来た Item に許すこと。ADR 0012）",
   it("初期値（インタラクション可能）なら、外から来た銃も Damage を送れる", async () => {
     const logs: LogEntry[] = [];
     const s = await inWorld(logs);
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent true"]);
     expect(hp(s)).toBe(2);
@@ -244,8 +245,8 @@ describe("World の上限（外から来た Item に許すこと。ADR 0012）",
   it("「衝突のみ」なら、当たって effect は出せるが、Contract は送れない", async () => {
     const logs: LogEntry[] = [];
     const s = await inWorld(logs, "collision");
-    s.input(input("spark"));
-    s.input(input("shoot"));
+    inputWithTools(s, input("spark"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "fx1")).toEqual(["fx1 true"]);
     expect(said(logs, "sent")).toEqual(["sent false"]);
@@ -255,7 +256,7 @@ describe("World の上限（外から来た Item に許すこと。ADR 0012）",
   it("「許さない」なら、外から来た銃からは、自分の配置の外は見つからない", async () => {
     const logs: LogEntry[] = [];
     const s = await inWorld(logs, "deny");
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent nohit"]);
   });
@@ -272,7 +273,7 @@ describe("World の上限（外から来た Item に許すこと。ADR 0012）",
       position: [50, 0, 0],
       yaw: 0,
     });
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(said(logs, "sent")).toEqual(["sent true"]);
   });
@@ -284,9 +285,9 @@ describe("拒否の知らせ（Runtime Diagnostic。ADR 0012）", () => {
   it("公開された相手に拒まれたら、送った System に注意を残す（同じ注意は回数を数える）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs, "collision");
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(warningsOf(s)).toEqual([
       { code: "contract-denied", message: expect.stringContaining("Damage"), count: 2 },
@@ -296,7 +297,7 @@ describe("拒否の知らせ（Runtime Diagnostic。ADR 0012）", () => {
   it("非公開の相手は「見つからない」ので、注意も出さない（存在を漏らさない）", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs, "private");
-    s.input(input("shoot"));
+    inputWithTools(s, input("shoot"));
     s.step(1 / 60);
     expect(warningsOf(s)).toEqual([]);
   });

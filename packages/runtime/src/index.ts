@@ -1,5 +1,6 @@
 export * from "./buildWorld";
 export * from "./capabilities";
+export * from "./holding";
 export * from "./hostApiSpec";
 export * from "./physics";
 export * from "./simulation";

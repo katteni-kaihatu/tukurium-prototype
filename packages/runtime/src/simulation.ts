@@ -4,6 +4,7 @@ import type {
   FieldValue,
   KokoStateId,
   KokoStateRegistry,
+  KokoStateValues,
   Vec3,
 } from "@tukurium/eks";
 import { isResourceFieldType, World, type WorldSnapshot } from "@tukurium/eks";
@@ -39,6 +40,7 @@ import {
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { HOST_ONLY_CONTRACTS, isContractName, parseContractPayload } from "./contracts";
+import { equippedBy, equipper, grabbedBy, isInHand } from "./holding";
 import { type HostArgs, parseHostArgs } from "./hostApi";
 import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
@@ -56,6 +58,15 @@ import {
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
 /** 右クリックで物を持てる距離（m） */
 const GRAB_REACH = 6;
+
+/** 適用の前後で保つ、手に持っている・装備している Entity の状態 */
+interface InHandState {
+  id: EntityId;
+  tool: KokoStateValues | null;
+  grab: KokoStateValues | null;
+  position: Vec3;
+  rotation: Vec3;
+}
 
 export interface InputEvent {
   action: string;
@@ -634,6 +645,9 @@ export class Simulation {
       kept.set(part.id, list);
     }
 
+    // 装備・右クリックで持っている物は、作り直しても手に持ったままにする（遊んでいる最中に手から消えないように。ADR 0053）
+    const inHand = targets.flatMap((part) => this.inHandOf(part));
+
     // 2. System を外し、配置を新しい版で作り直す
     const ids = new Set(targets.map((p) => p.id));
     for (const sys of [...this.systems]) {
@@ -656,6 +670,7 @@ export class Simulation {
         if (values && k.field in values) values[k.field] = k.value;
       }
     }
+    this.restoreInHand(inHand);
 
     // 3. System を読み直し、使われなくなった古い版を片付ける
     // 同じSystemは適用ごとに一度だけ読み直し、ほかの配置の利用者も引き継ぐ。
@@ -663,6 +678,39 @@ export class Simulation {
     for (const part of targets) this.loadSystems(part, reloaded);
     for (const old of oldRealms) if (old !== realm) this.dropUnusedRealm(old);
     return report;
+  }
+
+  /** 配置の中で、手に持っている・装備している Entity と、その持ち方・いまの位置 */
+  private inHandOf(part: Part): InHandState[] {
+    const out: InHandState[] = [];
+    for (const id of part.entities) {
+      if (!this.world.has(id) || !isInHand(this.world, id)) continue;
+      const t = transformOf(this.world, id);
+      out.push({
+        id,
+        tool: structuredClone(this.world.get(id, BUILTIN.EquipmentTool) ?? null),
+        grab: structuredClone(this.world.get(id, BUILTIN.Grabbable) ?? null),
+        position: t.position,
+        rotation: t.rotation,
+      });
+    }
+    return out;
+  }
+
+  /** 作り直した Entity に、持ち方と位置を戻す（新しい版で道具でなくなったものは戻さない） */
+  private restoreInHand(list: InHandState[]): void {
+    for (const h of list) {
+      if (!this.world.has(h.id)) continue;
+      const tool = this.world.get(h.id, BUILTIN.EquipmentTool);
+      if (tool && h.tool) tool.player = h.tool.player ?? "";
+      const grab = this.world.get(h.id, BUILTIN.Grabbable);
+      if (grab && h.grab) {
+        grab.player = h.grab.player ?? "";
+        if (h.grab.offset !== undefined) grab.offset = h.grab.offset;
+        if (h.grab.rotation !== undefined) grab.rotation = h.grab.rotation;
+      }
+      if (isInHand(this.world, h.id)) writeTransform(this.world, h.id, h.position, h.rotation);
+    }
   }
 
   /** リセット：配置を、いまの制作データの初期値で作り直す（実行値は引き継がない） */
@@ -758,10 +806,14 @@ export class Simulation {
     const inputs = this.inputs;
     this.inputs = [];
     for (const ev of inputs) {
+      if (this.equipInput(ev)) continue;
       this.deliverInteract(ev);
       if (this.builtinInput(ev)) continue;
-      for (const sys of this.active("onInput"))
-        this.runSystem(sys, "onInput", this.matches(sys), [ev as unknown as Json]);
+      // 装備する道具（EquipmentTool）は、装備している人の入力だけを受け取る（ADR 0053）
+      for (const sys of this.active("onInput")) {
+        const targets = this.matches(sys).filter((id) => this.acceptsInput(id, ev.player));
+        this.runSystem(sys, "onInput", targets, [ev as unknown as Json]);
+      }
     }
 
     for (const sys of this.active("onUpdate"))
@@ -903,9 +955,10 @@ export class Simulation {
       ev.action !== "reach"
     )
       return false;
-    const mine = this.heldBy(ev.player);
+    const mine = grabbedBy(this.world, ev.player);
     if (ev.action === "hold") {
       for (const id of mine) this.placeHeld(id, ev);
+      for (const id of equippedBy(this.world, ev.player)) this.placeEquipped(id, ev);
       return true;
     }
     if (ev.action === "align") {
@@ -925,7 +978,8 @@ export class Simulation {
       // 放す：見えている位置に置いてから手を放す（動く剛体なら落ちる）
       for (const id of mine) {
         this.placeHeld(id, ev);
-        this.world.remove(id, BUILTIN.Held);
+        const grab = this.world.get(id, BUILTIN.Grabbable);
+        if (grab) grab.player = "";
         const rb = this.world.get(id, BUILTIN.RigidBody);
         if (rb) rb.linvel = [0, 0, 0];
       }
@@ -938,10 +992,87 @@ export class Simulation {
     while (target && !this.world.hasState(target, BUILTIN.Grabbable))
       target = this.world.parentOf(target);
     if (!target || this.world.parentOf(target) !== null) return true;
-    if (this.world.hasState(target, BUILTIN.Held)) return true; // ほかの人が持っている
+    // ほかの人が持っている・装備している物は取れない
+    if (isInHand(this.world, target)) return true;
+    const grab = this.world.get(target, BUILTIN.Grabbable);
+    if (!grab) return true;
     const pose = this.poseInView(target, ev);
-    this.world.add(target, BUILTIN.Held, { ...pose, player: ev.player });
+    grab.player = ev.player;
+    grab.offset = pose.offset;
+    grab.rotation = pose.rotation;
     return true;
+  }
+
+  /**
+   * 装備（ADR 0053）。処理したら true（スクリプトの onInput にも Interact にも渡さない）。
+   * - use（E）：見ている物か、その親のうち、置いてある EquipmentTool を右手に装備する。装備していた物は、その場に落とす
+   * - unequip（リングメニューの「装備を外す」）：装備している物を、その場に落とす
+   * セッションでは、Interact と同じく、相手の配置の「外からの見え方」がインタラクション可能なときだけ拾える。
+   */
+  private equipInput(ev: InputEvent): boolean {
+    if (ev.phase !== "down") return false;
+    if (ev.action === "unequip") {
+      for (const id of equippedBy(this.world, ev.player)) this.dropEquipped(id);
+      return true;
+    }
+    if (ev.action !== "use") return false;
+    const hit = this.physics.raycast(ev.origin, ev.direction, INTERACT_RANGE, [
+      ...grabbedBy(this.world, ev.player),
+      ...equippedBy(this.world, ev.player),
+      ...this.privateEntities(),
+    ]);
+    let target: EntityId | null = hit?.entity ?? null;
+    while (target && !this.world.hasState(target, BUILTIN.EquipmentTool))
+      target = this.world.parentOf(target);
+    // 装備できるのは、いちばん上の Entity で、誰も持っていない・装備していない物だけ
+    if (!target || this.world.parentOf(target) !== null || isInHand(this.world, target))
+      return false;
+    const part = this.partOf(target);
+    if (this.multi && part && this.exposureOf(part) !== "interactive") return false;
+    const tool = this.world.get(target, BUILTIN.EquipmentTool);
+    if (!tool) return false;
+    for (const id of equippedBy(this.world, ev.player)) this.dropEquipped(id);
+    tool.player = ev.player;
+    const rb = this.world.get(target, BUILTIN.RigidBody);
+    if (rb) rb.linvel = [0, 0, 0];
+    this.placeEquipped(target, ev);
+    return true;
+  }
+
+  /** その場に落とす（動く剛体なら落ちる） */
+  private dropEquipped(id: EntityId): void {
+    const tool = this.world.get(id, BUILTIN.EquipmentTool);
+    if (tool) tool.player = "";
+    const rb = this.world.get(id, BUILTIN.RigidBody);
+    if (rb) rb.linvel = [0, 0, 0];
+  }
+
+  /** 装備している道具を、装備している人の右手（視点からの位置）へ置く */
+  private placeEquipped(id: EntityId, ev: InputEvent): void {
+    const tool = this.world.get(id, BUILTIN.EquipmentTool);
+    if (!tool) return;
+    const placed = placeFromView(
+      ev.origin,
+      ev.direction,
+      (tool.offset as Vec3 | undefined) ?? [0.25, -0.22, -0.5],
+      (tool.rotation as Vec3 | undefined) ?? [0, 0, 0],
+    );
+    writeTransform(this.world, id, placed.position, placed.rotation);
+  }
+
+  /** 装備する道具は、装備している人の入力だけを受け取る。ほかの Entity はみんなの入力を受け取る */
+  private acceptsInput(id: EntityId, player: string): boolean {
+    if (!this.world.hasState(id, BUILTIN.EquipmentTool)) return true;
+    return equipper(this.world, id) === player;
+  }
+
+  /** セッションで「外からの見え方」が非公開の配置の Entity（レイキャストで見つからない） */
+  private privateEntities(): EntityId[] {
+    return this.multi
+      ? [...this.parts.values()]
+          .filter((p) => this.exposureOf(p) === "private")
+          .flatMap((p) => [...p.entities])
+      : [];
   }
 
   /**
@@ -952,14 +1083,10 @@ export class Simulation {
    */
   private deliverInteract(ev: InputEvent): void {
     if (ev.action !== "use" || ev.phase !== "down") return;
-    const hidden = this.multi
-      ? [...this.parts.values()]
-          .filter((p) => this.exposureOf(p) === "private")
-          .flatMap((p) => [...p.entities])
-      : [];
     const hit = this.physics.raycast(ev.origin, ev.direction, INTERACT_RANGE, [
-      ...this.heldBy(ev.player),
-      ...hidden,
+      ...grabbedBy(this.world, ev.player),
+      ...equippedBy(this.world, ev.player),
+      ...this.privateEntities(),
     ]);
     if (!hit) return;
     const part = this.partOf(hit.entity);
@@ -974,12 +1101,6 @@ export class Simulation {
     });
   }
 
-  private heldBy(player: string): EntityId[] {
-    return this.world
-      .query({ with: [BUILTIN.Grabbable, BUILTIN.Held] })
-      .filter((id) => this.world.get(id, BUILTIN.Held)?.player === player);
-  }
-
   /** いまの位置と角度を、視点からの差として覚える（持った瞬間に動かさないため） */
   private poseInView(id: EntityId, ev: InputEvent): { offset: Vec3; rotation: Vec3 } {
     const t = transformOf(this.world, id);
@@ -988,7 +1109,7 @@ export class Simulation {
 
   /** 覚えた位置関係のまま、持っている人の視点へ置く（ほかの人にはこの位置で見える） */
   private placeHeld(id: EntityId, ev: InputEvent): void {
-    const held = this.world.get(id, BUILTIN.Held);
+    const held = this.world.get(id, BUILTIN.Grabbable);
     if (!held) return;
     const placed = placeFromView(
       ev.origin,
@@ -1001,7 +1122,7 @@ export class Simulation {
 
   /** 傾きを直し、上下の軸まわりの向きだけ残す */
   private straightenHeld(id: EntityId, ev: InputEvent): void {
-    const held = this.world.get(id, BUILTIN.Held);
+    const held = this.world.get(id, BUILTIN.Grabbable);
     if (!held) return;
     const t = transformOf(this.world, id);
     writeTransform(this.world, id, t.position, straightenRotation(t.rotation));
@@ -1011,7 +1132,7 @@ export class Simulation {
 
   /** ホイールの分だけ、持っている物を前後に動かす（画面上の位置は保つ） */
   private reachHeld(id: EntityId, ev: InputEvent, deltaMeters: number): void {
-    const held = this.world.get(id, BUILTIN.Held);
+    const held = this.world.get(id, BUILTIN.Grabbable);
     if (!held) return;
     held.offset = moveAlongView((held.offset as Vec3 | undefined) ?? [0, 0, 0], deltaMeters);
     this.placeHeld(id, ev);
@@ -1019,7 +1140,7 @@ export class Simulation {
 
   /** マウスの動き（ラジアン）だけ、持っている物を回す */
   private twistHeld(id: EntityId, ev: InputEvent): void {
-    const held = this.world.get(id, BUILTIN.Held);
+    const held = this.world.get(id, BUILTIN.Grabbable);
     const [yaw, pitch] = ev.pointer ?? [0, 0];
     if (!held || (yaw === 0 && pitch === 0)) return;
     const t = transformOf(this.world, id);

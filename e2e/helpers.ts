@@ -44,8 +44,81 @@ export async function aimAt(page: Page, target: [number, number, number]): Promi
   );
 }
 
-/** 視線の先へ fire を入力する（ポインターロックはヘッドレスでは不安定なので、入力を直接渡す） */
+/**
+ * 道具（EquipmentTool）を、player が装備する（ADR 0053）。E で見ている物を拾うのと同じ use の入力を、
+ * 道具の少し上・手前から送る。ホストでない人の手元の世界は少し遅れる（適用の直後など）ので、
+ * 手元で「装備済み」に見えても送る（本当に装備していれば、自分の道具はレイから外れて何も起きない）。
+ */
+export async function equip(
+  page: Page,
+  player: string,
+  where: "workspace" | "session" = "workspace",
+): Promise<void> {
+  const sent = await page.evaluate(
+    ([who, place]) => {
+      const w = window as unknown as { __workspace: any; __sessionWorld: any };
+      const world =
+        place === "workspace"
+          ? w.__workspace.getState().runtime()?.world
+          : w.__sessionWorld.getState().view()?.world;
+      if (!world) return false;
+      const tools: string[] = world.query({ with: ["builtin.EquipmentTool"] });
+      const mine = (id: string) => {
+        const p = world.get(id, "builtin.EquipmentTool")?.player;
+        return p === "" || p === who;
+      };
+      const target = tools.find(mine);
+      if (!target) return false;
+      const at = world.get(target, "builtin.Transform")?.position ?? [0, 0, 0];
+      const origin = [at[0], at[1] + 0.5, at[2] + 1];
+      const d = [at[0] - origin[0], at[1] - origin[1], at[2] - origin[2]];
+      const len = Math.hypot(d[0], d[1], d[2]);
+      const ev = {
+        action: "use",
+        phase: "down",
+        player: who,
+        origin,
+        direction: d.map((v) => v / len),
+      };
+      if (place === "workspace") w.__workspace.getState().input(ev);
+      else w.__sessionWorld.getState().input(ev);
+      return true;
+    },
+    [player, where] as const,
+  );
+  if (sent) await page.waitForTimeout(300);
+}
+
+/** player が装備している道具を外す（リングメニューの「装備を外す」と同じ入力） */
+export async function unequip(
+  page: Page,
+  player: string,
+  where: "workspace" | "session" = "workspace",
+): Promise<void> {
+  await page.evaluate(
+    ([who, place]) => {
+      const w = window as unknown as { __workspace: any; __sessionWorld: any };
+      const ev = {
+        action: "unequip",
+        phase: "down",
+        player: who,
+        origin: [0, 0, 0],
+        direction: [0, 0, -1],
+      };
+      if (place === "workspace") w.__workspace.getState().input(ev);
+      else w.__sessionWorld.getState().input(ev);
+    },
+    [player, where] as const,
+  );
+  await page.waitForTimeout(300);
+}
+
+/**
+ * 視線の先へ fire を入力する（ポインターロックはヘッドレスでは不安定なので、入力を直接渡す）。
+ * 道具（銃）が置いてあれば、先に装備する（装備した人の入力だけが道具に届く。ADR 0053）
+ */
 export async function fire(page: Page): Promise<void> {
+  await equip(page, "e2e");
   await page.evaluate(() => {
     const w = window as unknown as { __tukurium: any; __workspace: any };
     const cam = w.__tukurium.camera;
@@ -133,6 +206,7 @@ export async function sessionState(page: Page, entityName: string, kokoName: str
 
 /** セッションの世界へ、視線の先に向けて入力を送る */
 export async function fireInSession(page: Page): Promise<void> {
+  await equip(page, "e2e", "session");
   await page.evaluate(() => {
     const w = window as unknown as { __tukurium: any; __sessionWorld: any };
     const cam = w.__tukurium.camera;

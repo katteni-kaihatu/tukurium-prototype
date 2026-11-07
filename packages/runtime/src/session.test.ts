@@ -2,12 +2,14 @@ import type { Vec3 } from "@tukurium/eks";
 import {
   BUILTIN,
   emptyProject,
+  gunAndTargetSample,
   gunSample,
   type ProjectSnapshot,
   targetRangeSample,
 } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 let sim: Simulation | undefined;
 afterEach(() => {
@@ -89,7 +91,7 @@ describe("セッションの世界（複数の配置）", () => {
     };
     sim = await Simulation.createSession();
     sim.addPart(part);
-    sim.input(fire([0, 0, 0], [0, 0, -1], "spawn"));
+    inputWithTools(sim, fire([0, 0, 0], [0, 0, -1], "spawn"));
     sim.step(1 / 60);
     const world = sim.world.snapshot();
     const names = Object.fromEntries(
@@ -177,7 +179,7 @@ describe("セッションの世界（複数の配置）", () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
     expect(s.world.get("r1/ent_target2", BUILTIN.Transform)?.position).toEqual([0, 1.5, -7]);
-    s.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(s, fire([0, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(ammo(s)).toBe(11);
     expect(hp(s, "ent_target2")).toBe(2);
@@ -206,7 +208,7 @@ describe("セッションの世界（複数の配置）", () => {
       yaw: 0,
     });
     expect(s.systemStatus().filter((x) => x.name === "TargetHit")).toHaveLength(1);
-    s.input(fire([5, 1.5, 0], [0, 0, -1]));
+    inputWithTools(s, fire([5, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(s.world.get("r2/ent_target2", s.stateIdOf("r2", "ks_target") ?? "")?.f_hp).toBe(2);
     expect(hp(s, "ent_target2")).toBe(3);
@@ -214,7 +216,7 @@ describe("セッションの世界（複数の配置）", () => {
 
   it("適用：マークしたフィールド（残弾）は実行値を保ち、ほかは新しい値・新しいコードになる", async () => {
     const s = await session();
-    s.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(s, fire([0, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(ammo(s)).toBe(11);
 
@@ -233,7 +235,7 @@ describe("セッションの世界（複数の配置）", () => {
     expect(s.world.get("g1/ent_gun", s.stateIdOf("g1", "ks_gun") ?? "")?.f_damage).toBe(3); // マークなし：新しい値
 
     for (let i = 0; i < 15; i++) s.step(1 / 60);
-    s.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(s, fire([0, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(hp(s, "ent_target2")).toBeLessThanOrEqual(0); // 2 - 3 → 倒れる
     // 的の配置はそのまま（適用は銃のリポジトリだけ）
@@ -261,7 +263,7 @@ describe("セッションの世界（複数の配置）", () => {
 
   it("リセット：実行値を捨てて初期値に戻す", async () => {
     const s = await session();
-    s.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(s, fire([0, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(ammo(s)).toBe(11);
     s.resetPart("g1");
@@ -350,10 +352,10 @@ describe("音", () => {
       position: [0, 0, 0],
       yaw: 0,
     });
-    sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(sim, fire([0, 1.5, 0], [0, 0, -1]));
     sim.step(1 / 60);
     const sounds = sim.drainSounds();
-    expect(sounds).toEqual([{ asset: clip, position: [0, 1.1, -1.5], volume: 0.5 }]);
+    expect(sounds).toEqual([{ asset: clip, position: [0, 1.1, 3.6], volume: 0.5 }]);
     expect(sim.drainSounds()).toEqual([]);
   });
 });
@@ -410,7 +412,7 @@ describe("版ごとの realm（ADR 0010 §4）", () => {
     sim.applyPart("ws", "out_gun", v2);
 
     // 射撃場の的は v1 のまま：撃たれると hp が減る（v2 の定義が混ざると e.Target.hp が無くなる）
-    sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(sim, fire([0, 1.5, 0], [0, 0, -1]));
     sim.step(1 / 60);
     const status = sim.systemStatus().find((x) => x.name === "TargetHit");
     expect(status?.error).toBeNull();
@@ -421,5 +423,28 @@ describe("版ごとの realm（ADR 0010 §4）", () => {
       ? sim.world.statesOf(target).find((k) => k.endsWith(":ks_target"))
       : undefined;
     expect(target && koko ? sim.world.get(target, koko)?.f_hp : null).toBe(2);
+  });
+});
+
+describe("セッション：適用しても、装備は手に持ったまま（ADR 0053）", () => {
+  it("装備している道具は、新しい版に作り直しても装備したまま", async () => {
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "p1",
+      realm: "r",
+      outputId: "out_range",
+      snapshot: gunAndTargetSample(),
+      position: [0, 0, 0],
+      yaw: 0,
+    });
+    sim.step(1 / 60);
+    const tool = sim.world.get("p1/ent_gun", BUILTIN.EquipmentTool);
+    if (tool) tool.player = "p";
+    sim.applyPart("r", "out_range", gunAndTargetSample());
+    sim.step(1 / 60);
+    expect(sim.world.get("p1/ent_gun", BUILTIN.EquipmentTool)?.player).toBe("p");
+    // リセットは作り直すだけ（装備も外れる）
+    sim.resetPart("p1");
+    expect(sim.world.get("p1/ent_gun", BUILTIN.EquipmentTool)?.player).toBe("");
   });
 });

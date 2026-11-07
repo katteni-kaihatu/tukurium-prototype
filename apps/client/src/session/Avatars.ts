@@ -17,6 +17,8 @@ function colorFor(id: string): { bg: string; fg: string } {
 interface Avatar {
   root: THREE.Group;
   head: THREE.Group;
+  /** 右腕（肩を軸に回す）。道具を装備している間は前に出して構える */
+  arm: THREE.Group;
   target: THREE.Vector3;
   targetYaw: number;
   targetPitch: number;
@@ -28,6 +30,13 @@ interface Avatar {
  */
 export class Avatars {
   private readonly avatars = new Map<string, Avatar>();
+  /** 道具を装備している参加者（ADR 0053） */
+  private equipped = new Set<string>();
+
+  /** 道具を装備している参加者を入れ替える。腕は update で少しずつ動かす */
+  setEquipped(ids: Set<string>): void {
+    this.equipped = ids;
+  }
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -93,6 +102,11 @@ export class Avatars {
       a.root.rotation.y += shortestAngle(a.root.rotation.y, a.targetYaw) * k;
       a.head.rotation.x += (a.targetPitch - a.head.rotation.x) * k;
     }
+    // 腕：装備している間は視線の高さに合わせて前へ、そうでなければ下ろす
+    for (const [id, a] of this.avatars) {
+      const target = this.equipped.has(id) ? Math.PI / 2 + a.targetPitch * 0.8 : 0;
+      a.arm.rotation.x += (target - a.arm.rotation.x) * k;
+    }
   }
 
   private create(p: Participant): Avatar {
@@ -117,12 +131,30 @@ export class Avatars {
     head.add(visor);
     root.add(head);
 
+    // 右腕（体の右、肩の高さ。下ろした向き（-Y）から、前（-Z）へ回して構える）
+    const arm = new THREE.Group();
+    arm.position.set(0.32, 1.28, 0);
+    const limb = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.42, 4, 10), bodyMat.clone());
+    limb.position.y = -0.27;
+    arm.add(limb);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 14, 10), accentMat.clone());
+    hand.position.y = -0.52;
+    arm.add(hand);
+    root.add(arm);
+
     const label = makeLabel(p.name, c.fg);
     label.position.y = 2.05;
     root.add(label);
 
     this.scene.add(root);
-    return { root, head, target: new THREE.Vector3(), targetYaw: p.yaw, targetPitch: p.pitch };
+    return {
+      root,
+      head,
+      arm,
+      target: new THREE.Vector3(),
+      targetYaw: p.yaw,
+      targetPitch: p.pitch,
+    };
   }
 }
 

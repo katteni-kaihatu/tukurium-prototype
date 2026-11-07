@@ -14,6 +14,7 @@ import {
 } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { Simulation } from "./simulation";
+import { inputWithTools } from "./testInput";
 
 let sim: Simulation | undefined;
 afterEach(() => {
@@ -61,7 +62,7 @@ describe("reference UGC：銃と的（公式 combat を使う。ADR 0016）", ()
     ]);
     const hp = () => sim?.world.get("ent_target2", HEALTH)?.f_hp;
     for (let i = 0; i < 3; i++) {
-      sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+      inputWithTools(sim, fire([0, 1.5, 0], [0, 0, -1]));
       sim.step(1 / 60);
       for (let t = 0; t < 15; t++) sim.step(1 / 60); // 連射の間隔を待つ
     }
@@ -95,7 +96,7 @@ describe("reference UGC：銃と的（公式 combat を使う。ADR 0016）", ()
       position: [0, 0, 0],
       yaw: 0,
     });
-    sim.input(fire([0, 1.5, 0], [0, 0, -1]));
+    inputWithTools(sim, fire([0, 1.5, 0], [0, 0, -1]));
     sim.step(1 / 60);
     expect(sim.world.get("r1/ent_target2", HEALTH)?.f_hp).toBe(2);
   });
@@ -115,7 +116,13 @@ describe("reference UGC：扉とスイッチ（公式 interaction を使う。AD
   const TOGGLE = packageResourceId(interaction, OFFICIAL_INTERACTION.toggle);
   /** スイッチ（[1.2, 1.2, -3]）を見て E を押す */
   const press = (s: Simulation, player = "p") =>
-    s.input({ action: "use", phase: "down", origin: [1.2, 1.2, 0], direction: [0, 0, -1], player });
+    inputWithTools(s, {
+      action: "use",
+      phase: "down",
+      origin: [1.2, 1.2, 0],
+      direction: [0, 0, -1],
+      player,
+    });
 
   it("E でスイッチを押すと扉が開き、もう一度押すと閉じる", async () => {
     sim = await Simulation.create(referenceDoorAndSwitch(interaction), "out_door", {
@@ -144,7 +151,7 @@ describe("reference UGC：扉とスイッチ（公式 interaction を使う。AD
       realm: "ws",
       packages: ipackages,
     });
-    sim.input({
+    inputWithTools(sim, {
       action: "use",
       phase: "down",
       origin: [1.2, 1.2, 10],
@@ -169,7 +176,7 @@ export default system({ query: { with: [Door] }, onInput(e, ev) {
     const out = snap.outputs[0];
     if (out) out.systems.push({ id: "sys_fake", enabled: true });
     sim = await Simulation.create(snap, "out_door", { realm: "ws", packages: ipackages });
-    sim.input({
+    inputWithTools(sim, {
       action: "fire",
       phase: "down",
       origin: [0, 0, 0],

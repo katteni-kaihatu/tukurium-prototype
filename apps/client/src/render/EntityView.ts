@@ -1,4 +1,4 @@
-import type { EntityId, Vec3, World } from "@tukurium/eks";
+import type { EntityId, KokoStateValues, Vec3, World } from "@tukurium/eks";
 import { BUILTIN, type MaterialDef } from "@tukurium/repo-model";
 import { transformOf } from "@tukurium/runtime";
 import * as THREE from "three";
@@ -22,9 +22,12 @@ interface Node {
 
 export interface SyncOptions {
   materials: MaterialDef[];
-  /** Play 中：Held を持つ Entity をこのカメラに付ける */
+  /** Play 中：自分が持っている・装備している Entity をこのカメラに付ける */
   holdCamera?: THREE.Camera | null;
-  /** 自分の ID。Held の player が自分（か空）のものだけカメラに付ける。ほかの人が持つ物はその位置に出す */
+  /**
+   * 自分の ID。右クリックで持っている物（Grabbable）と、装備している道具（EquipmentTool）のうち、
+   * 自分のものだけカメラに付ける（遅れなく手元に見える）。ほかの人のものは、その位置に出す（ADR 0053）
+   */
   player?: string;
 }
 
@@ -74,14 +77,13 @@ export class EntityView {
       this.syncTransform(node, world, id);
     }
 
-    // 親子付け（Held は Play 中はカメラへ）
+    // 親子付け（自分が持っている・装備している物は、Play 中はカメラへ）
     this.held.clear();
     for (const id of ids) {
       const node = this.nodes.get(id);
       if (!node) continue;
-      const held = opts.holdCamera ? world.get(id, BUILTIN.Held) : undefined;
-      const holder = (held?.player as string | undefined) ?? "";
-      const heldState = held && (holder === "" || holder === opts.player) ? held : undefined;
+      const heldState =
+        opts.holdCamera && opts.player ? inHandOf(world, id, opts.player) : undefined;
       let parent: THREE.Object3D = this.root;
       if (heldState && opts.holdCamera) {
         parent = opts.holdCamera;
@@ -98,7 +100,7 @@ export class EntityView {
     }
   }
 
-  /** 画面中央（カメラの視線）にある Entity を返す。Held は除く。 */
+  /** 画面中央（カメラの視線）にある Entity を返す。手に持っている物は除く。 */
   pick(raycaster: THREE.Raycaster): EntityId | null {
     const targets: THREE.Object3D[] = [];
     for (const [id, n] of this.nodes) {
@@ -118,7 +120,7 @@ export class EntityView {
     return this.nodes.get(id)?.object;
   }
 
-  /** 表示中の物体全体の境界（Held は除く）。何もなければ null。 */
+  /** 表示中の物体全体の境界（手に持っている物は除く）。何もなければ null。 */
   bounds(): THREE.Box3 | null {
     const box = new THREE.Box3();
     let any = false;
@@ -364,4 +366,13 @@ function textTexture(text: string, color: string): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   return tex;
+}
+
+/** player が持っている（Grabbable）・装備している（EquipmentTool）なら、その視点からの位置と角度 */
+function inHandOf(world: World, id: EntityId, player: string): KokoStateValues | undefined {
+  const tool = world.get(id, BUILTIN.EquipmentTool);
+  if (tool && tool.player === player) return tool;
+  const grab = world.get(id, BUILTIN.Grabbable);
+  if (grab && grab.player === player) return grab;
+  return undefined;
 }
