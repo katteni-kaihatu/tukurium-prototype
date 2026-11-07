@@ -6,7 +6,7 @@
 
 - [プロジェクトの README](../README.md)：現在できること、必要なもの、起動方法
 - [開発の約束](../CLAUDE.md)：実装・テスト・文言について守ること
-- [構想・設計](design/README.md)：目指す体験、大きな仕組みと役割分担、その理由
+- [Tukurium の原則](design/README.md)：目指すことと、判断に迷ったときに頼る方針。言葉の意味は[用語](design/glossary.md)
 - [UIデザイン](../design.md)：配色・文字・部品・ウィンドウ配置を、現在の画面にそろえるための基準
 - [現在のロードマップ](ROADMAP.md)：利用者向けの機能ごとの実装済み・これから実装するもの・検討中の候補
 - [設計判断の記録](adr/README.md)：採用済みの設計と、その理由
@@ -19,8 +19,6 @@
 | [plans/](plans/) | 実装中・検討中の詳細計画。[リソースパス・System 参照・全体診断](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package](plans/ugc-api-library-permissions.md)。メインメニューは[実装済みUI/UX](plans/social-workshop-experience.md)と[完了記録](archive/main-menu-implementation.md)を参照 |
 | [discovery/](discovery/) | 実装を約束する前の機能候補、比較、Focus と昇格条件。[Creator Platform 機能候補](discovery/creator-platform-capabilities.md) |
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
-| [design/](design/README.md) | 目指す体験、大きな仕組みと役割分担、その理由を表す構想・設計の資料 |
-| [development/workflow-draft.md](development/workflow-draft.md) | メイン／サブ開発の分類・切り替え・レビューを考える草案。分類の基準や固定レビュー役は検討中 |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |
 | [DEPLOY.md](DEPLOY.md) | VPS / Coolify への設置・更新・バックアップ |
 | [AGENT_MCP.md](AGENT_MCP.md) | AI エージェントで制作するための案内（MCP の登録・頼み方）。Claude 以外のツールも |
@@ -31,7 +29,7 @@
 
 ## 情報が食い違うときの優先順位
 
-以下は、現在の動作を調べるための優先順位。目指す設計は資料やADRで確かめ、実装との差を残す。草案と、採用した設計は区別する。
+[原則](design/README.md)は判断の向きを示すもので、個々の仕組みは決めない。個々の仕組みについては、次の順で確かめる。
 
 1. 実際のコード、schema、テスト
 2. 採用済みで、後続 ADR に置き換えられていない ADR
