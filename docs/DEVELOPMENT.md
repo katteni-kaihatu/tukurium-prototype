@@ -57,6 +57,13 @@
 | Windows で開発サーバーが白い画面になり、`DiffTree` が export されていないと出た（型・ビルドも同じ） | `DiffTree.tsx` と `diffTree.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`./DiffTree` が `.ts` の方に当たる | 片方を `diffTreeModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない（Linux の CI では気付けない） |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
+### AI エージェント（リモートの MCP）
+
+- 開発サーバーでは `http://localhost:8787/mcp`。Claude Code なら `claude mcp add --transport http tukurium http://localhost:8787/mcp`。
+- エージェントは、人がいるセッションに入って作る。先にブラウザでセッションとワークスペースを作り、セッションの ID（URL の `/s/` のあと）をエージェントに伝える。
+- MCP のセッションは、サーバーを再起動すると消える。クライアントからつなぎ直す。
+- サーバーの中で Simulation を動かすので、runtime が使う npm パッケージ（rapier・quickjs・three）は `apps/server/package.json` にも書く（バンドルでは外部扱いになる）。
+
 ## React・UI
 
 - メインメニューのキー入力は、中身だけでなくタイトルバーも含むウィンドウ全体で止める。閉じるボタンにフォーカスした状態のTabも、制作側の「パネルを隠す」へ流さない（`PanelSpec.containKeys`）。
