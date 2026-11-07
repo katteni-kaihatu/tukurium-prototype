@@ -313,6 +313,7 @@ function usePublishPanels(engine: SessionEngine, panels: PanelSpec[], hidden: bo
               workspaceId: p.id === "ws-start" ? null : ws.workspaceId,
               mode: t ? "3d" : "2d",
               transform: t ?? null,
+              ...panelGeometry(engine, p.id, !t),
               lines: summarize(p.id),
             };
           });
@@ -332,6 +333,33 @@ function usePublishPanels(engine: SessionEngine, panels: PanelSpec[], hidden: bo
       off();
     };
   }, [engine, client, ids, hidden]);
+}
+
+/**
+ * パネルの大きさ（px）と、2D 表示なら画面（3D の描画領域）の中の中心の位置。
+ * 3D 表示の要素は空間に置いて変形しているので、変形の前の大きさ（offsetWidth）を使う。
+ */
+function panelGeometry(
+  engine: SessionEngine,
+  id: string,
+  flat: boolean,
+): Pick<PanelPublic, "size" | "screen"> {
+  const el = document.querySelector<HTMLElement>(`[data-panel-id="${CSS.escape(id)}"]`);
+  const clamp = (v: number) => Math.round(Math.min(4000, Math.max(1, v)));
+  const size = { width: clamp(el?.offsetWidth || 420), height: clamp(el?.offsetHeight || 280) };
+  if (!flat || !el) return { size, screen: null };
+  const rect = el.getBoundingClientRect();
+  const view = engine.renderer.domElement.getBoundingClientRect();
+  if (view.width < 1 || view.height < 1) return { size, screen: null };
+  return {
+    size,
+    screen: {
+      x: Math.round(rect.left + rect.width / 2 - view.left),
+      y: Math.round(rect.top + rect.height / 2 - view.top),
+      viewWidth: Math.round(view.width),
+      viewHeight: Math.round(view.height),
+    },
+  };
 }
 
 export function WorkspaceStart() {

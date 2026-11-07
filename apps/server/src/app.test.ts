@@ -669,6 +669,8 @@ describe("ワークスペース", () => {
       workspaceId,
       mode: "2d" as const,
       transform: null,
+      size: { width: 420, height: 280 },
+      screen: { x: 300, y: 200, viewWidth: 1280, viewHeight: 720 },
       lines: ["ammo 12"],
     };
     a.send({ t: "panels", panels: [panel] });

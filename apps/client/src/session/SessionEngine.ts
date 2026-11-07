@@ -6,7 +6,7 @@ import { RemotePanels } from "../panels/RemotePanels";
 import { AudioPlayer } from "../render/AudioPlayer";
 import { EffectPlayer } from "../render/EffectPlayer";
 import { Avatars } from "./Avatars";
-import { FpsController } from "./FpsController";
+import { CAMERA_FOV, FpsController } from "./FpsController";
 import { createGridGround } from "./GridGround";
 
 export interface Pose {
@@ -31,7 +31,7 @@ const SHOT_SKY = new THREE.Color("#DCE7F3");
 export class SessionEngine {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(70, 1, 0.05, 500);
+  readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 500);
   readonly controller: FpsController;
   readonly avatars: Avatars;
   readonly panels: PanelSpace;

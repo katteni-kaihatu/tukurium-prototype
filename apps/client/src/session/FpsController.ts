@@ -14,6 +14,11 @@ export interface FpsOptions {
  * FPS 視点の移動。WASD で移動、マウスで見回す（ポインターロック中のみ）、Shift で走る、Space でジャンプ。
  * 地面は y = 0 の平面として扱う（衝突は M1 で物理エンジンに置き換える）。
  */
+/** 足元から目までの高さ（m） */
+export const EYE_HEIGHT = 1.6;
+/** 視点のカメラの縦の画角（度）。他の人の 2D パネルを、その人の視界と同じ所に置くのにも使う */
+export const CAMERA_FOV = 70;
+
 export class FpsController {
   yaw = 0;
   pitch = 0;
@@ -32,7 +37,7 @@ export class FpsController {
     options: FpsOptions = {},
   ) {
     this.opts = {
-      eyeHeight: 1.6,
+      eyeHeight: EYE_HEIGHT,
       walkSpeed: 3.5,
       runSpeed: 7,
       jumpSpeed: 4.5,

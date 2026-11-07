@@ -150,6 +150,8 @@ export function PanelLayer({
     if (!el) {
       const created = document.createElement("div");
       created.className = styles.host ?? "";
+      // 他の人へ位置と大きさを送るときに探す（WorkspacePanels の usePublishPanels）
+      created.dataset.panelId = id;
       // 触ったパネルを最前面に出す
       created.addEventListener("pointerdown", () => {
         created.style.zIndex = String(++front);
