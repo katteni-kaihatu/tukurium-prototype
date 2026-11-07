@@ -181,7 +181,7 @@ function OutputProperties({ id }: { id: string }) {
   };
   const unused = systems.filter((s) => !output.systems.some((o) => o.id === s.id));
   const changed = outputChange(saved, output);
-  // ライブラリは Entity を持たない。Entity があるうちはライブラリにできない（ADR 0054）
+  // ライブラリは Entity を持たない。Entity があるうちはライブラリにできない（ADR 0055）
   const hasEntities = project.entities(id).length > 0;
   const changeKind = (kind: OutputDef["kind"]) => {
     const { resources: _old, ...rest } = output;

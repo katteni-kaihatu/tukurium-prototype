@@ -126,7 +126,7 @@
   background: var(--c-brand-soft);
 }
 
-/* ライブラリの含めるリソース（ADR 0054） */
+/* ライブラリの含めるリソース（ADR 0055） */
 .includeGroup {
   margin: 0 0 8px;
   padding: 0;

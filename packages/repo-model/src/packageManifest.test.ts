@@ -11,7 +11,7 @@ function asLibrary(s: ProjectSnapshot, resources: string[]): ProjectSnapshot {
   return s;
 }
 
-describe("ライブラリに含めるリソース（ADR 0015・0054）", () => {
+describe("ライブラリに含めるリソース（ADR 0015・0055）", () => {
   it("含める・外すができ、消したリソースは制作データに残らない", () => {
     const p = new ProjectDoc();
     p.load(gunAndTargetSample());

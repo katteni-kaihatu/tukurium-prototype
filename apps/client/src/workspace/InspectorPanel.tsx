@@ -70,7 +70,7 @@ function FloatMenu({
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
  * Play 中は実行中の World を読み取り専用で表示する（要件 §7「編集と実行を分ける」）。
- * ライブラリは Entity を持たないので、左は含めるリソースを選ぶ画面にする（ADR 0054）。
+ * ライブラリは Entity を持たないので、左は含めるリソースを選ぶ画面にする（ADR 0055）。
  */
 export function InspectorPanel() {
   const project = useProject();

@@ -42,7 +42,7 @@ export interface OutputDef {
    */
   thumbnail?: string;
   /**
-   * ライブラリのときだけ：含めるリソースの ID（KokoState・System・マテリアル・素材。ADR 0015・0054）。
+   * ライブラリのときだけ：含めるリソースの ID（KokoState・System・マテリアル・素材。ADR 0015・0055）。
    * 含めたものだけが Package に入り、使う側から import できる。ライブラリは Entity を持たない。
    */
   resources?: string[];

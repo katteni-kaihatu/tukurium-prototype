@@ -735,7 +735,7 @@ export class ProjectDoc {
 
   /**
    * ライブラリのアウトプットに、リソースを含める・外す（含めたものだけを使う側から import できる。
-   * ADR 0015・0054）。フォルダと Built-in は含められない。
+   * ADR 0015・0055）。フォルダと Built-in は含められない。
    */
   setIncluded(outputId: string, resourceId: string, included: boolean): void {
     const o = this.outputMap.get(outputId);

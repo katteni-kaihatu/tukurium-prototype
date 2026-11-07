@@ -2,7 +2,7 @@ import { type PathKind, ResourcePathIndex } from "./resourcePath";
 import type { PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
- * Library Package の中身（ADR 0013・0015・0054）。ライブラリのアウトプットに含めたリソースだけを、
+ * Library Package の中身（ADR 0013・0015・0055）。ライブラリのアウトプットに含めたリソースだけを、
  * 決まった並び（ID の順）で書き出す。Registry（サーバー）は、この stableStringify に SHA-256 をかけて
  * content hash にする。含めていないものは入らないので、内部を変えても hash は変わらない。
  */

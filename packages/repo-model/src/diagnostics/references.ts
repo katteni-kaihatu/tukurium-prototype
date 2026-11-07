@@ -220,7 +220,7 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
         });
     }
   }
-  // ライブラリに含めた System は、使う側では同じライブラリに含めたもの・Built-in・そのライブラリの依存しか見えない（ADR 0015・0054）
+  // ライブラリに含めた System は、使う側では同じライブラリに含めたもの・Built-in・そのライブラリの依存しか見えない（ADR 0015・0055）
   let index: ResourcePathIndex | null = null;
   for (const o of snap.outputs) {
     if (o.kind !== "library") continue;

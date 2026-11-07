@@ -14,7 +14,7 @@ interface Row {
 }
 
 /**
- * ライブラリのアウトプットの左側（ADR 0054）。ライブラリは Entity を持たないので、Hierarchy の代わりに
+ * ライブラリのアウトプットの左側（ADR 0055）。ライブラリは Entity を持たないので、Hierarchy の代わりに
  * 含めるリソースを選ぶ。含めたものだけが Package に入り、使う側から import できる。
  */
 export function LibraryContents() {
@@ -42,7 +42,8 @@ export function LibraryContents() {
   for (const g of groups) g.rows.sort((a, b) => a.path.localeCompare(b.path, "ja"));
   const total = groups.reduce((n, g) => n + g.rows.length, 0);
 
-  const included = new Set(output.resources ?? []);
+  // スナップショットの方を使う（消したリソースは入っていない）
+  const included = new Set(snap.outputs.find((o) => o.id === outputId)?.resources ?? []);
   // 含めた System が import しているのに、含めていないもの（使う側では見つからない）
   const neededBy = new Map<string, string[]>();
   for (const s of snap.systems) {

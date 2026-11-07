@@ -40,7 +40,7 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
   for (const o of src.outputs) {
     if (!out.outputs.has(o.id)) continue;
     for (const s of o.systems) out.systems.add(s.id);
-    // ライブラリに含めたリソース（ADR 0054）
+    // ライブラリに含めたリソース（ADR 0055）
     for (const id of o.resources ?? []) {
       if (src.kokostates.some((k) => k.id === id)) out.kokostates.add(id);
       else if (src.systems.some((x) => x.id === id)) out.systems.add(id);
