@@ -40,3 +40,16 @@ export function ringItems(): RingItem[] {
     };
   });
 }
+
+const openers = new Set<(extra: RingItem[]) => void>();
+
+/** リングメニューを開く側（RingMenu）を登録する。戻り値で解除 */
+export function onOpenRing(fn: (extra: RingItem[]) => void): () => void {
+  openers.add(fn);
+  return () => openers.delete(fn);
+}
+
+/** リングメニューを開く。extra は、いつもの項目の前に並べる、その場でできること（左クリックした道具の「装備する」など） */
+export function openRing(extra: RingItem[] = []): void {
+  for (const fn of openers) fn(extra);
+}

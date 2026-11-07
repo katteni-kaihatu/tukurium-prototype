@@ -4,7 +4,7 @@ import { BUILTIN } from "@tukurium/repo-model";
 /**
  * 持つ・装備する（ADR 0053）。
  * - 右クリックで持つ：Grabbable の player に持っている人を入れる
- * - E で拾って右手に装備する：EquipmentTool の player に装備している人を入れる
+ * - 左クリックで開くリングメニューから右手に装備する：EquipmentTool の player に装備している人を入れる
  * どちらも空なら、誰も持っていない（置いてある）。
  */
 
@@ -43,4 +43,15 @@ export function playersWithEquipment(world: World): Set<string> {
     if (p) out.add(p);
   }
   return out;
+}
+
+/**
+ * 当たった Entity か、その親のうち、いま装備できる道具（いちばん上の Entity で、誰も持っていない・装備していない
+ * EquipmentTool）。なければ null。左クリックでリングメニューに「装備する」を出すかを決めるのに使う
+ */
+export function equippableAt(world: World, hit: EntityId | null): EntityId | null {
+  let target: EntityId | null = hit;
+  while (target && !world.hasState(target, BUILTIN.EquipmentTool)) target = world.parentOf(target);
+  if (!target || world.parentOf(target) !== null || isInHand(world, target)) return null;
+  return target;
 }

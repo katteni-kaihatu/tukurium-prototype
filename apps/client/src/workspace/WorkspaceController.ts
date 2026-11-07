@@ -3,6 +3,7 @@ import type { MaterialDef, ProjectDoc } from "@tukurium/repo-model";
 import {
   buildWorld,
   type EffectEvent,
+  equippableAt,
   equippedBy,
   grabbedBy,
   playersWithEquipment,
@@ -11,7 +12,7 @@ import {
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
-import { provideRingItems } from "../session/ringMenu";
+import { openRing, provideRingItems } from "../session/ringMenu";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
@@ -23,6 +24,8 @@ const UI_REFRESH_SEC = 0.2;
 /** ホストが実行状態を配る間隔 */
 const FRAME_SEC = 1 / 15;
 const EMPTY_WORLD = new World(new KokoStateRegistry());
+/** 左クリックで装備できる道具までの距離（m。Host の E の届く距離と同じ） */
+export const EQUIP_REACH = 3;
 /** 持っている物の位置（視点）を送る間隔 */
 const HOLD_SEC = 0.1;
 
@@ -340,6 +343,35 @@ export class WorkspaceController {
     ws.input({ action: "hold", phase: "down", player: this.me(), ...this.viewRay() });
   }
 
+  /** 道具を左クリックしてリングメニューを開いたとき、その押下を離す fire を送らない */
+  private skipFireUp = false;
+
+  /**
+   * 照準の先（3m 以内）に、いま装備できる道具があれば、リングメニューを開いて「装備する」を選べるようにする。
+   * 開いたら true
+   */
+  private offerEquip(): boolean {
+    const ws = useWorkspace.getState();
+    const world = ws.runtime()?.world;
+    if (!world) return false;
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
+    this.raycaster.far = EQUIP_REACH;
+    const hit = this.view.pick(this.raycaster);
+    this.raycaster.far = Number.POSITIVE_INFINITY;
+    if (!equippableAt(world, hit)) return false;
+    const swapping = equipsSomething(world, this.me());
+    openRing([
+      {
+        id: "equip",
+        label: swapping ? "持ち替える" : "装備する",
+        enabled: true,
+        run: () =>
+          ws.input({ action: "equip", phase: "down", player: this.me(), ...this.viewRay() }),
+      },
+    ]);
+    return true;
+  }
+
   /** 再生中に、自分が物を持っているか */
   private holdingPlay(): boolean {
     const ws = useWorkspace.getState();
@@ -407,6 +439,15 @@ export class WorkspaceController {
       // 持っているときの左クリックは、撃たずに傾きを直す
       if (phase === "down" && this.holdingPlay()) {
         ws.input({ action: "align", phase, player: this.me(), ...this.viewRay() });
+        return;
+      }
+      // 置いてある道具への左クリックは、撃たずにリングメニューで「装備する」を選べるようにする（ADR 0053）
+      if (phase === "down" && this.offerEquip()) {
+        this.skipFireUp = true;
+        return;
+      }
+      if (phase === "up" && this.skipFireUp) {
+        this.skipFireUp = false;
         return;
       }
       ws.input({ action: "fire", phase, player: this.me(), ...this.viewRay() });

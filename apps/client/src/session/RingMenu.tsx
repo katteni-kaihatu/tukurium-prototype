@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./RingMenu.module.css";
-import { type RingItem, ringItems } from "./ringMenu";
+import { onOpenRing, type RingItem, ringItems } from "./ringMenu";
 import type { SessionEngine } from "./SessionEngine";
 
 /** マウスをこれだけ動かしたら、その向きの項目を選ぶ（px） */
 const PICK_PX = 24;
 
 /**
- * T で開くリングメニュー（ADR 0053）。空間に入っている（照準）ときは、マウスを動かした向きの項目を選び、
+ * T か、置いてある道具を左クリックすると開くリングメニュー（ADR 0053）。空間に入っている（照準）ときは、マウスを動かした向きの項目を選び、
  * 左クリックで決める。右クリック・T・Esc で閉じる。マウスを解放しているときは、項目を直接押す。
  */
 export function RingMenu({ engine }: { engine: SessionEngine }) {
@@ -54,6 +54,17 @@ export function RingMenu({ engine }: { engine: SessionEngine }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close, setSelected]);
+
+  // 左クリックした道具などから開く（その場でできることを先頭に並べ、最初の項目を選んでおく）
+  useEffect(
+    () =>
+      onOpenRing((extra) => {
+        aim.current = { x: 0, y: 0 };
+        setSelected(extra.length > 0 ? 0 : -1);
+        setItems([...extra, ...ringItems().filter((i) => !extra.some((e) => e.id === i.id))]);
+      }),
+    [setSelected],
+  );
 
   // 開いている間は見回さず、マウスの動きで項目を選ぶ。左クリックで決め、右クリックで閉じる
   useEffect(() => {

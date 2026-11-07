@@ -1,10 +1,10 @@
-import { playersWithEquipment } from "@tukurium/runtime";
+import { equippableAt, playersWithEquipment } from "@tukurium/runtime";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
-import { equipsSomething, holdsSomething } from "../workspace/WorkspaceController";
-import { provideRingItems } from "./ringMenu";
+import { EQUIP_REACH, equipsSomething, holdsSomething } from "../workspace/WorkspaceController";
+import { openRing, provideRingItems } from "./ringMenu";
 import type { SessionEngine } from "./SessionEngine";
 import {
   queueSessionEffects,
@@ -44,6 +44,15 @@ export class SessionWorldController {
         // 持っているときの左クリックは、撃たずに傾きを直す
         if (button === 0 && phase === "down" && this.holding()) {
           this.input("align", "down");
+          return;
+        }
+        // 置いてある道具への左クリックは、撃たずにリングメニューで「装備する」を選べるようにする（ADR 0053）
+        if (button === 0 && phase === "down" && this.routesHere() && this.offerEquip()) {
+          this.skipFireUp = true;
+          return;
+        }
+        if (button === 0 && phase === "up" && this.skipFireUp) {
+          this.skipFireUp = false;
           return;
         }
         if (button === 0 && this.routesHere()) this.input("fire", phase);
@@ -117,6 +126,29 @@ export class SessionWorldController {
       player: useApp.getState().me?.id ?? "me",
       ...(pointer ? { pointer } : {}),
     });
+  }
+
+  /** 道具を左クリックしてリングメニューを開いたとき、その押下を離す fire を送らない */
+  private skipFireUp = false;
+  private readonly raycaster = new THREE.Raycaster();
+
+  /** 照準の先（3m 以内）に、いま装備できる道具があれば、リングメニューで「装備する」を選べるようにする */
+  private offerEquip(): boolean {
+    const world = useSessionWorld.getState().view()?.world;
+    const me = useApp.getState().me?.id;
+    if (!world || !me) return false;
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
+    this.raycaster.far = EQUIP_REACH;
+    if (!equippableAt(world, this.view.pick(this.raycaster))) return false;
+    openRing([
+      {
+        id: "equip",
+        label: equipsSomething(world, me) ? "持ち替える" : "装備する",
+        enabled: true,
+        run: () => this.input("equip", "down"),
+      },
+    ]);
+    return true;
   }
 
   /** セッションの世界で、自分が物を持っているか（ワークスペースの再生中はそちらが優先） */
