@@ -2,6 +2,7 @@ import type { EntityId, FieldValue, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { usePanelPopover } from "../panels/popover";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
 import {
   type ChangeKind,
@@ -24,46 +25,24 @@ import { useSavedFiles } from "./useSavedFiles";
 
 /**
  * 階層の中に置くと、スクロール枠と右の詳細で切れる。
- * 画面の上に出して、はみ出してもよい。
+ * 2D では画面の上に出して、はみ出してもよい。3D に置いたパネルでは、そのパネルの上に出す。
  */
 function FloatMenu({
   anchor,
   align,
-  onClose,
   className,
+  onClose,
   children,
 }: {
   anchor: HTMLElement;
   /** start は左端、end は右端をボタンに合わせる */
   align: "start" | "end";
-  onClose: () => void;
   className?: string;
+  onClose: () => void;
   children: ReactNode;
 }) {
   const menuRef = useRef<HTMLUListElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
-    const place = () => {
-      const button = anchor.getBoundingClientRect();
-      const size = menu.getBoundingClientRect();
-      let top = button.bottom + 4;
-      if (top + size.height > window.innerHeight - 8) {
-        top = Math.max(8, button.top - 4 - size.height);
-      }
-      const raw = align === "start" ? button.left : button.right - size.width;
-      const left = Math.max(8, Math.min(raw, window.innerWidth - size.width - 8));
-      setPos((cur) => (cur && cur.top === top && cur.left === left ? cur : { top, left }));
-    };
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  }, [anchor, align]);
+  const { container, style } = usePanelPopover(anchor, menuRef, align);
   useLayoutEffect(() => {
     const close = (event: PointerEvent) => {
       const target = event.target;
@@ -78,11 +57,11 @@ function FloatMenu({
     <ul
       ref={menuRef}
       className={`${ui.menu} ${ui.menuPop}${className ? ` ${className}` : ""}`}
-      style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
+      style={style}
     >
       {children}
     </ul>,
-    document.body,
+    container,
   );
 }
 

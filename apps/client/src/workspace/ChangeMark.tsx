@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { usePanelPopover } from "../panels/popover";
 import { ChangeDetail, RevertIcon } from "./ChangeList";
 import type { ChangeKind } from "./changeMarks";
 import { describeDiff } from "./diffView";
@@ -164,28 +165,8 @@ function ChangePop({
   }, [head, project, rev, target.entry, target.part]);
 
   const box = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const place = () => {
-      const mark = anchor.getBoundingClientRect();
-      const size = el.getBoundingClientRect();
-      let top = mark.bottom + 6;
-      if (top + size.height > window.innerHeight - 8) {
-        top = Math.max(8, mark.top - 6 - size.height);
-      }
-      const left = Math.max(8, Math.min(mark.left - 10, window.innerWidth - size.width - 8));
-      setPos((cur) => (cur && cur.top === top && cur.left === left ? cur : { top, left }));
-    };
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
-    return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
-    };
-  });
+  // 2D では画面の上、3D に置いたパネルではそのパネルの上に出す
+  const { container, style } = usePanelPopover(anchor, box, "start", 6);
 
   const empty = !entry || (entry.lines.length === 0 && !entry.code?.length && !entry.preview);
   const revertable = canRevert(target.entry, target.part);
@@ -195,7 +176,7 @@ function ChangePop({
       className={ui.changePop}
       role="dialog"
       aria-label={`${label}：どう変わったか`}
-      style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}
+      style={style}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onKeyDown={(e) => {
@@ -233,6 +214,6 @@ function ChangePop({
       )}
       {error && <p className={ui.error}>{error}</p>}
     </div>,
-    document.body,
+    container,
   );
 }
