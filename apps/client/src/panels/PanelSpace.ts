@@ -26,6 +26,7 @@ interface Placed {
  *
  * 前後関係：CSS のレイヤーは WebGL のキャンバスの「後ろ」に置き、パネルの位置に透明な板（occluder）を
  * WebGL で描いてキャンバスに穴を開ける。手前にある物体は穴の上に描かれるので、パネルが正しく隠れる。
+ * 穴は表からだけ開ける。裏から見たときは、穴の代わりに不透明な裏板を描く（穴の奥の空が透けないように）。
  */
 export class PanelSpace {
   private readonly placed = new Map<string, Placed>();
@@ -51,7 +52,12 @@ export class PanelSpace {
     opacity: 0,
     transparent: false,
     blending: THREE.NoBlending,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
+  });
+  /** パネルの裏側。紙の裏のような、少し暗い色 */
+  private readonly backMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd9d3c9,
+    side: THREE.BackSide,
   });
 
   constructor(
@@ -72,6 +78,10 @@ export class PanelSpace {
       const occluder = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.occluderMaterial);
       // 穴はサムネイルに写さない（写すと透明な穴になる。ADR 0046）
       occluder.userData.noShot = true;
+      // 裏板は穴と同じ大きさ・向きで動く（子にしておく）
+      const back = new THREE.Mesh(occluder.geometry, this.backMaterial);
+      back.userData.noShot = true;
+      occluder.add(back);
       const observer = new ResizeObserver(() => this.fitOccluder(id));
       this.scene.add(object, occluder);
       p = { wrapper, object, occluder, observer, local: new THREE.Vector3() };
@@ -185,6 +195,7 @@ export class PanelSpace {
   dispose(): void {
     for (const id of [...this.placed.keys()]) this.remove(id);
     this.occluderMaterial.dispose();
+    this.backMaterial.dispose();
   }
 
   /** ポインターの先（照準なら視線）を、物を持つときと同じ視点の向きとして使う */
