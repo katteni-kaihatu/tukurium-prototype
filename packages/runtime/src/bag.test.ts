@@ -25,7 +25,7 @@ const items: PackageDependency = {
   contentHash: "h",
 };
 const packages: PackageResolution[] = lib
-  ? [{ status: "ready", dependency: items, manifest: packageManifest(lib.snapshot) }]
+  ? [{ status: "ready", dependency: items, manifest: packageManifest(lib.snapshot, lib.outputId) }]
   : [];
 
 /** origin から -z を見て E を押す */

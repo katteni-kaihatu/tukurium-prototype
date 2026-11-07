@@ -283,7 +283,7 @@ export class RepoService {
     const prev = await this.store.releases(workId);
     const version = (prev[0]?.version ?? 0) + 1;
     const contentHash =
-      output?.kind === "library" ? contentHashOf(packageManifest(snap)) : undefined;
+      output?.kind === "library" ? contentHashOf(packageManifest(snap, work.outputId)) : undefined;
     // 版は書き換えない：同じ版がもう違う中身で出ていたら拒む（同時に出したとき）
     const same = prev.find((p) => p.version === version);
     if (same && same.contentHash !== contentHash)
@@ -337,7 +337,7 @@ export class RepoService {
         ? await this.snapshot(lib.repoId, latest.commit).catch(() => null)
         : null;
       if (
-        latest?.contentHash === contentHashOf(packageManifest(lib.snapshot)) &&
+        latest?.contentHash === contentHashOf(packageManifest(lib.snapshot, lib.outputId)) &&
         thumbnail(released) === thumbnail(lib.snapshot)
       )
         continue;
@@ -392,7 +392,7 @@ export class RepoService {
     if (!rel?.contentHash) throw new HttpError(404, "ライブラリの版が見つかりません");
     let manifest = this.manifests.get(rel.id);
     if (!manifest) {
-      manifest = packageManifest(await this.snapshot(work.repoId, rel.commit));
+      manifest = packageManifest(await this.snapshot(work.repoId, rel.commit), work.outputId);
       if (contentHashOf(manifest) !== rel.contentHash)
         throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
       this.manifests.set(rel.id, manifest);

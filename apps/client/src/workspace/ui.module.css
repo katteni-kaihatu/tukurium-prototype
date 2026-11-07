@@ -109,8 +109,10 @@
 .changePopHead button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  width: 26px;
   height: 26px;
+  padding: 0;
 }
 
 .sectionTitle {

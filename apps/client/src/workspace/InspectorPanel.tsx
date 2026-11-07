@@ -19,6 +19,7 @@ import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
 import { KokoRoleIcon } from "./KokoRoleIcon";
+import { LibraryContents } from "./LibraryContents";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { packageAliasOf, useSystemQuery } from "./useProblems";
@@ -69,11 +70,16 @@ function FloatMenu({
 /**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
  * Play 中は実行中の World を読み取り専用で表示する（要件 §7「編集と実行を分ける」）。
+ * ライブラリは Entity を持たないので、左は含めるリソースを選ぶ画面にする（ADR 0055）。
  */
 export function InspectorPanel() {
+  const project = useProject();
+  const outputId = useWorkspace((s) => s.outputId);
+  useWorkspace((s) => s.rev);
+  const library = project.output(outputId)?.kind === "library";
   return (
     <div className={styles.split}>
-      <Hierarchy />
+      {library ? <LibraryContents /> : <Hierarchy />}
       <div className={styles.props}>
         <Properties />
       </div>

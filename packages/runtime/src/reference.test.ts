@@ -31,7 +31,7 @@ const combat: PackageDependency = {
   contentHash: "h",
 };
 const packages: PackageResolution[] = lib
-  ? [{ status: "ready", dependency: combat, manifest: packageManifest(lib.snapshot) }]
+  ? [{ status: "ready", dependency: combat, manifest: packageManifest(lib.snapshot, lib.outputId) }]
   : [];
 const HEALTH = packageResourceId(combat, OFFICIAL_COMBAT.health);
 
@@ -45,9 +45,10 @@ const fire = (origin: Vec3, direction: Vec3) => ({
 
 describe("reference UGC：銃と的（公式 combat を使う。ADR 0016）", () => {
   it("公式ライブラリは Health と Damageable を公開している", () => {
-    expect(
-      packageManifest(lib?.snapshot ?? referenceGunAndTarget(combat)).exports.map((e) => e.path),
-    ).toEqual(["/Health.koko", "/Damageable.system"]);
+    expect(lib && packageManifest(lib.snapshot, lib.outputId).exports.map((e) => e.path)).toEqual([
+      "/Health.koko",
+      "/Damageable.system",
+    ]);
   });
 
   it("撃つと公式の Damageable が hp を減らし、0 で倒れて、しばらくすると戻る", async () => {
@@ -111,7 +112,13 @@ describe("reference UGC：扉とスイッチ（公式 interaction を使う。AD
     contentHash: "hi",
   };
   const ipackages: PackageResolution[] = ilib
-    ? [{ status: "ready", dependency: interaction, manifest: packageManifest(ilib.snapshot) }]
+    ? [
+        {
+          status: "ready",
+          dependency: interaction,
+          manifest: packageManifest(ilib.snapshot, ilib.outputId),
+        },
+      ]
     : [];
   const TOGGLE = packageResourceId(interaction, OFFICIAL_INTERACTION.toggle);
   /** スイッチ（[1.2, 1.2, -3]）を見て E を押す */
