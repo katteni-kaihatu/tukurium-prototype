@@ -431,6 +431,7 @@ export class ProjectDoc {
         states.set(k, new Y.Map<FieldValue>(Object.entries(clone(v))));
       }
       e.set("states", states);
+      this.makeRoomAfter(def.id);
     });
   }
   /** KokoState の値を丸ごと置き直す。null なら外す。 */
@@ -453,7 +454,25 @@ export class ProjectDoc {
       e.set("parent", place.parent);
       e.set("output", place.output);
       e.set("order", place.order);
+      this.makeRoomAfter(id);
     });
+  }
+  /**
+   * 兄弟の並び番号が id と重なったら、id より後ろの兄弟を、重ならなくなるところまで一つずつずらす
+   * （一つだけ戻したときに、並びが同じ番号で重なって崩れないように。離れている番号は動かさない）。
+   */
+  private makeRoomAfter(id: EntityId): void {
+    const self = this.entity(id);
+    if (!self) return;
+    let prev = self.order;
+    const after = this.entities(self.output)
+      .filter((s) => s.parent === self.parent && s.id !== id && s.order >= self.order)
+      .sort((a, b) => a.order - b.order);
+    for (const s of after) {
+      if (s.order > prev) break;
+      prev += 1;
+      this.entityMap.get(s.id)?.set("order", prev);
+    }
   }
   /** System の名前とコードを、渡した形にする（なければ作る）。開いているエディタはそのまま使える。 */
   restoreSystem(def: SystemDef, code: string): void {

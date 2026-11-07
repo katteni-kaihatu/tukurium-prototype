@@ -84,4 +84,19 @@ describe("planRevert", () => {
     expect(planRevert(project, head, "other:folders")).toBeNull();
     expect(planRevert(project, head, "entity:ないもの", "name")).toBeNull();
   });
+
+  it("並びを一つだけ戻しても、兄弟と同じ番号で重ならない", () => {
+    const { head, project, run } = setup();
+    // 的1・的2 を入れ替える（的2 が先頭へ）
+    project.placeEntity("ent_target2", null, 0);
+    // 動かした的2 だけを戻すと、番号 2 が的3 と重なる
+    run("entity:ent_target2", "place");
+    const orders = project
+      .entities("out_range")
+      .filter((e) => e.parent === null)
+      .map((e) => e.order);
+    expect(new Set(orders).size).toBe(orders.length);
+    const saved = head.entities.find((e) => e.id === "ent_target2")?.order;
+    expect(project.entity("ent_target2")?.order).toBe(saved);
+  });
 });
