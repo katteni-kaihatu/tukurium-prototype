@@ -2,7 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN } from "@tukurium/repo-model";
 import { isInHand } from "./holding";
-import { quaternionToDegrees, worldTransform, writeTransform } from "./transform";
+import { worldTransform, writeWorldTransform } from "./transform";
 
 let initialized: Promise<void> | null = null;
 
@@ -110,14 +110,10 @@ export class Physics {
   step(world: World, dt: number): CollisionEvent[] {
     this.rapier.timestep = dt;
     this.rapier.step(this.events);
-    // 動く剛体の結果を書き戻す（親子関係のある dynamic は初版では扱わない＝ワールド座標として書く）
+    // 動く剛体の結果（ワールド座標）を書き戻す。親のある Entity には、親から見た値に直して書く
     for (const [id, rec] of this.bodies) {
       if (rec.type !== "dynamic" || !world.has(id)) continue;
-      const p = rec.body.translation();
-      const rotation = quaternionToDegrees(rec.body.rotation());
-      // 子は親の姿勢に初期値を足したものとして扱う。ワールド座標を子の Transform に書くと二重になる
-      if (world.parentOf(id) !== null && !world.hasState(id, BUILTIN.Transform)) continue;
-      writeTransform(world, id, [p.x, p.y, p.z], rotation);
+      writeWorldTransform(world, id, rec.body.translation(), rec.body.rotation());
       const rb = world.get(id, BUILTIN.RigidBody);
       if (rb) {
         const v = rec.body.linvel();
