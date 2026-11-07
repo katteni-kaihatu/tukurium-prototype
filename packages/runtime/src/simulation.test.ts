@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
 import { inputWithTools } from "./testInput";
+import { worldTransform } from "./transform";
 
 let sim: Simulation | undefined;
 afterEach(() => {
@@ -612,5 +613,63 @@ describe("Simulation：E（use）では装備しない（ADR 0053）", () => {
     });
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", BUILTIN.EquipmentTool)?.player).toBe("");
+  });
+});
+
+describe("Simulation：親のある動く剛体", () => {
+  // 親（剛体なし）の下に、床と、その上に落ちる箱。配置の位置・向きをずらしてセッションに出す
+  const crate = () => {
+    const snap = emptyProject("crate");
+    snap.entities = [
+      { id: "root", name: "根", parent: null, output: "out_main", order: 0, states: {} },
+      {
+        id: "floor",
+        name: "床",
+        parent: "root",
+        output: "out_main",
+        order: 1,
+        states: {
+          [BUILTIN.Mesh]: { shape: "box", size: [6, 0.2, 6] },
+          [BUILTIN.Collider]: {},
+        },
+      },
+      {
+        id: "box",
+        name: "箱",
+        parent: "root",
+        output: "out_main",
+        order: 2,
+        states: {
+          [BUILTIN.Transform]: { position: [1, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: { shape: "box", size: [0.5, 0.5, 0.5] },
+          [BUILTIN.Collider]: {},
+          [BUILTIN.RigidBody]: { type: "dynamic", linvel: [0, 0, 0] },
+        },
+      },
+    ];
+    return snap;
+  };
+
+  it("配置の位置・向きをずらしても、親から見た位置のまま床に落ちる", async () => {
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "a",
+      realm: "r",
+      outputId: "out_main",
+      snapshot: crate(),
+      position: [10, 0, -5],
+      yaw: Math.PI / 2,
+    });
+    for (let i = 0; i < 120; i++) sim.step(1 / 60);
+    expect(sim.world.parentOf("a/box")).toBe("a/root");
+    // 親から見た位置：横はそのまま、高さは床（厚さ 0.2）の上に箱（0.5）が乗る所
+    const local = sim.world.get("a/box", BUILTIN.Transform)?.position as Vec3;
+    expect(local[0]).toBeCloseTo(1, 2);
+    expect(local[1]).toBeCloseTo(0.35, 1);
+    expect(local[2]).toBeCloseTo(0, 2);
+    // ワールドでは、配置の位置に、向きを足した位置（+X が -Z に回る）
+    const w = worldTransform(sim.world, "a/box").position;
+    expect(w.x).toBeCloseTo(10, 2);
+    expect(w.z).toBeCloseTo(-6, 2);
   });
 });

@@ -60,6 +60,38 @@ export function writeTransform(world: World, id: EntityId, position: Vec3, rotat
   t.rotation = [rotation[0], rotation[1], rotation[2]];
 }
 
+/**
+ * ワールド座標系での位置と向き（物理の結果など）を、親から見た値に直して Transform に書く。
+ * Transform は親から見た値なので、親のある Entity にワールド座標をそのまま書くと、親の姿勢の分だけずれる。
+ * 拡大率は書き換えない。
+ */
+export function writeWorldTransform(
+  world: World,
+  id: EntityId,
+  position: { x: number; y: number; z: number },
+  quaternion: { x: number; y: number; z: number; w: number },
+): void {
+  const parent = world.parentOf(id);
+  if (parent === null || !world.has(parent)) {
+    writeTransform(
+      world,
+      id,
+      [position.x, position.y, position.z],
+      quaternionToDegrees(quaternion),
+    );
+    return;
+  }
+  const p = worldTransform(world, parent);
+  const local = new Vector3(position.x, position.y, position.z).applyMatrix4(
+    p.matrix.clone().invert(),
+  );
+  const rotation = p.quaternion
+    .clone()
+    .invert()
+    .multiply(new Quaternion(quaternion.x, quaternion.y, quaternion.z, quaternion.w));
+  writeTransform(world, id, [local.x, local.y, local.z], quaternionToDegrees(rotation));
+}
+
 /** 親をたどって、Entity のワールド座標系での姿勢を求める。Transform がなければ初期値として扱う。 */
 export function worldTransform(world: World, id: EntityId, root?: Matrix4): WorldTransform {
   const chain: EntityId[] = [];
