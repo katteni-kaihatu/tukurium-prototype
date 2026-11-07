@@ -20,6 +20,7 @@
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |
 | [DEPLOY.md](DEPLOY.md) | VPS / Coolify への設置・更新・バックアップ |
+| [AGENT_MCP.md](AGENT_MCP.md) | AI エージェントで制作するための案内（MCP の登録・頼み方）。Claude 以外のツールも |
 
 ## 歴史資料
 
