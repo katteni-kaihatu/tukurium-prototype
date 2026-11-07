@@ -181,6 +181,12 @@ function OutputProperties({ id }: { id: string }) {
   };
   const unused = systems.filter((s) => !output.systems.some((o) => o.id === s.id));
   const changed = outputChange(saved, output);
+  // ライブラリは Entity を持たない。Entity があるうちはライブラリにできない（ADR 0055）
+  const hasEntities = project.entities(id).length > 0;
+  const changeKind = (kind: OutputDef["kind"]) => {
+    const { resources: _old, ...rest } = output;
+    project.updateOutput(kind === "library" ? { ...rest, kind, resources: [] } : { ...rest, kind });
+  };
 
   return (
     <>
@@ -211,11 +217,15 @@ function OutputProperties({ id }: { id: string }) {
               className={ui.select}
               value={output.kind}
               disabled={!editing}
-              onChange={(e) => update({ kind: e.target.value as OutputDef["kind"] })}
+              onChange={(e) => changeKind(e.target.value as OutputDef["kind"])}
             >
               <option value="item">アイテム</option>
               <option value="world">ワールド</option>
-              <option value="library">ライブラリ</option>
+              <option value="library" disabled={hasEntities && output.kind !== "library"}>
+                {hasEntities && output.kind !== "library"
+                  ? "ライブラリ（Entity があると選べません）"
+                  : "ライブラリ"}
+              </option>
             </select>
           </div>
         </MarkedLine>

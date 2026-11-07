@@ -126,6 +126,47 @@
   background: var(--c-brand-soft);
 }
 
+/* ライブラリの含めるリソース（ADR 0055） */
+.includeGroup {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+}
+
+.includeGroup > legend {
+  padding: 4px 6px;
+}
+
+.includeRow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 4px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.includeName {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.includePath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--c-ink-3);
+}
+
 .props {
   width: 380px;
   max-width: 380px;

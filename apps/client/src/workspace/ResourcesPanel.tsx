@@ -127,14 +127,13 @@ export function ResourcesPanel() {
       return { tone: "nestedWarning", label: `中や関係するものに注意 ${s.nestedWarnings} 件` };
     return null;
   };
-  /** ライブラリとして公開できるもの（フォルダ・Built-in 以外。ADR 0015） */
-  const exportable = (it: ResItem) => it.kind !== "folder" && it.kind !== "builtin";
-  const exported = (it: ResItem) => exportable(it) && project.isExported(it.id);
   const kindText = (it: ResItem) => {
     const b = badgeOf(it);
-    const text =
-      b?.tone === "error" ? "エラー" : b?.tone === "warning" ? "注意" : KIND_META[it.kind].label;
-    return exported(it) ? `${text} · 公開` : text;
+    return b?.tone === "error"
+      ? "エラー"
+      : b?.tone === "warning"
+        ? "注意"
+        : KIND_META[it.kind].label;
   };
 
   /** ここで選んだものは、Resources にくっついた「リソースの詳細」に出す（ADR 0044） */
@@ -624,17 +623,6 @@ export function ResourcesPanel() {
             }}
           >
             素材を外す
-          </button>
-        )}
-        {selected && exportable(selected) && editing && (
-          <button
-            type="button"
-            className={styles.footBtn}
-            aria-pressed={exported(selected)}
-            title="公開したものだけ、このプロジェクトをライブラリとして使う側から import できる"
-            onClick={() => project.setExported(selected.id, !exported(selected))}
-          >
-            {exported(selected) ? "公開をやめる" : "公開する"}
           </button>
         )}
         <span style={{ flex: 1 }} />

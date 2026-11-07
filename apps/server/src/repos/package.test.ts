@@ -22,8 +22,8 @@ const bob = { id: "u_b", name: "b" };
 /** 銃と的を、Gun だけ公開したライブラリにする */
 function library(): ProjectSnapshot {
   const s = gunAndTargetSample();
-  s.outputs = s.outputs.map((o) => ({ ...o, kind: "library" as const }));
-  s.exports = ["ks_gun"];
+  s.outputs = s.outputs.map((o) => ({ ...o, kind: "library" as const, resources: ["ks_gun"] }));
+  s.entities = [];
   return s;
 }
 
@@ -156,7 +156,7 @@ describe("Library Package（ADR 0015）", () => {
     const fork = await repos.fork(bob, repo.id);
     const forked = await repos.snapshot(fork.id);
     expect(forked.dependencies).toEqual([dep]);
-    expect(forked.exports).toEqual(["ks_gun"]);
+    expect(forked.outputs[0]?.resources).toEqual(["ks_gun"]);
   });
 
   it("公式ライブラリを、決まった ID で用意する。何度呼んでも版は増えず、中身が違えば新しい版を出す", async () => {
@@ -175,7 +175,9 @@ describe("Library Package（ADR 0015）", () => {
     // 最新の版が同梱の中身と違えば（ここでは手で別の中身を出す）、起動のときに同梱の中身を新しい版で出す
     const official = { ...OFFICIAL_PUBLISHER };
     const snap = await repos.snapshot(OFFICIAL_COMBAT.repoId);
-    snap.exports = [OFFICIAL_COMBAT.health];
+    snap.outputs = snap.outputs.map((o) =>
+      o.id === OFFICIAL_COMBAT.outputId ? { ...o, resources: [OFFICIAL_COMBAT.health] } : o,
+    );
     await repos.commit(OFFICIAL_COMBAT.repoId, snap, "変更", official, []);
     await repos.release(official, id);
     await repos.ensureOfficialLibraries();

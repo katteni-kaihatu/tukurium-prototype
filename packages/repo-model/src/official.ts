@@ -94,11 +94,11 @@ function combatLibrary(): ProjectSnapshot {
         systems: [],
         keep: [],
         thumbnail: OFFICIAL_THUMBNAILS.combat,
+        resources: [OFFICIAL_COMBAT.damageable, OFFICIAL_COMBAT.health].sort(),
       },
     ],
     assets: [thumbnailAsset("combat")],
     entities: [],
-    exports: [OFFICIAL_COMBAT.damageable, OFFICIAL_COMBAT.health].sort(),
   };
 }
 
@@ -151,11 +151,11 @@ function interactionLibrary(): ProjectSnapshot {
         systems: [],
         keep: [],
         thumbnail: OFFICIAL_THUMBNAILS.interaction,
+        resources: [OFFICIAL_INTERACTION.toggle, OFFICIAL_INTERACTION.toggleable].sort(),
       },
     ],
     assets: [thumbnailAsset("interaction")],
     entities: [],
-    exports: [OFFICIAL_INTERACTION.toggle, OFFICIAL_INTERACTION.toggleable].sort(),
   };
 }
 
@@ -209,11 +209,11 @@ function itemsLibrary(): ProjectSnapshot {
         systems: [],
         keep: [],
         thumbnail: OFFICIAL_THUMBNAILS.items,
+        resources: [OFFICIAL_ITEMS.key, OFFICIAL_ITEMS.keyPickup].sort(),
       },
     ],
     assets: [thumbnailAsset("items")],
     entities: [],
-    exports: [OFFICIAL_ITEMS.key, OFFICIAL_ITEMS.keyPickup].sort(),
   };
 }
 

@@ -140,3 +140,28 @@ describe("抽出で出所と結び付けを保つ（ADR 0015）", () => {
     expect(b.entities[0]?.states[HEALTH]).toEqual({});
   });
 });
+
+describe("ライブラリのアウトプットを取り込む（ADR 0055）", () => {
+  it("含めたリソースを一緒に持ってきて、付け替えた ID で含め直す", () => {
+    const s = source();
+    s.entities = [];
+    s.outputs = [
+      {
+        id: "lib",
+        name: "銃の部品",
+        kind: "library",
+        systems: [],
+        keep: [],
+        resources: ["sys_shoot"],
+      },
+    ];
+    const dst = target();
+    dst.kokostates = [{ id: "ks_gun", name: "Other", fields: [] }];
+    const out = extractInto(s, { ...none, outputs: ["lib"] }, src, dst);
+    expect(out.systems.map((x) => x.id)).toEqual(["sys_shoot"]);
+    // Shoot が import する Gun も来る（ID がぶつかったので付け替わる）
+    const gun = out.kokostates.find((k) => k.name === "Gun");
+    expect(gun?.id).not.toBe("ks_gun");
+    expect(out.outputs.find((o) => o.kind === "library")?.resources).toEqual(["sys_shoot"]);
+  });
+});
