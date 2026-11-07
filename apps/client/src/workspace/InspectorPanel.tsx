@@ -522,6 +522,25 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
+/** KokoState を追加（積み木に＋） */
+function AddKokoIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <rect
+        x="1.5"
+        y="4.5"
+        width="9"
+        height="9"
+        rx="1.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path d="M12.5 1v5M10 3.5h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function ChildIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -794,6 +813,16 @@ function EntityProperties({ id }: { id: EntityId }) {
             onClick={addChild}
           >
             <ChildIcon />
+          </button>
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label="KokoState を追加"
+            title="KokoState を追加"
+            disabled={!editing}
+            onClick={() => useWorkspace.setState({ kokoPickerOpen: true })}
+          >
+            <AddKokoIcon />
           </button>
           <button
             type="button"
