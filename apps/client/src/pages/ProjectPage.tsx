@@ -326,7 +326,7 @@ function kindLabel(kind: string | null): string {
   return (kind && KIND_LABEL[kind]) || "アウトプット";
 }
 
-/** 左はアウトプット、右はそのバージョン。作品はアウトプットごとに一つ。 */
+/** 左はアウトプット、右はそのバージョン。リリースはアウトプットごとに一つ。 */
 function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
   const rows = releaseRows(repo);
   const [picked, setPicked] = useState(rows[0]?.key ?? "");
@@ -343,7 +343,7 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
     }
   };
   return (
-    <section className={styles.card} aria-label="作品とリリース">
+    <section className={styles.card} aria-label="リリースとバージョン">
       <h2 className={styles.h2}>リリース</h2>
       <p className={styles.sub}>
         左のアウトプットを選ぶと、右にそのバージョンが出ます。出したバージョンは、その後の開発では変わりません。
@@ -421,7 +421,7 @@ function ReleaseDetail({
             className={styles.primary}
             onClick={() => void onRun(() => api.release(work.id))}
           >
-            最新のコミットからリリース
+            最新のコミットからバージョンを出す
           </button>
         )}
       </div>
@@ -452,7 +452,7 @@ function ReleaseDetail({
           <WorkTagsEditor work={work} onSaved={onChange} />
           <h3 className={styles.h2}>バージョン · {work.releases.length}</h3>
           {work.releases.length === 0 ? (
-            <p className={styles.sub}>リリースはまだありません。</p>
+            <p className={styles.sub}>バージョンはまだありません。</p>
           ) : (
             <ol className={styles.history}>
               {work.releases.map((release, index) => (
@@ -472,7 +472,7 @@ function ReleaseDetail({
         </>
       ) : (
         <div>
-          <p className={styles.sub}>このアウトプットは、まだ作品として公開していません。</p>
+          <p className={styles.sub}>このアウトプットは、まだリリースしていません。</p>
           {repo.isOwner && row.outputId && (
             <>
               <PublicTagsField value={publishTags} onChange={onTags} />
@@ -492,7 +492,7 @@ function ReleaseDetail({
                     })
                   }
                 >
-                  作品として公開
+                  リリースする
                 </button>
               </div>
             </>

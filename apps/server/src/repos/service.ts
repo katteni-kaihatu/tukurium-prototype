@@ -242,7 +242,7 @@ export class RepoService {
   ): Promise<Work> {
     const repo = await this.require(repoId);
     if (repo.owner !== user.id)
-      throw new HttpError(403, "作品として公開できるのはリポジトリの持ち主です");
+      throw new HttpError(403, "リリースできるのはプロジェクトの持ち主です");
     const snap = await this.snapshot(repoId);
     const output = snap.outputs.find((o) => o.id === outputId);
     if (!output)
@@ -265,13 +265,14 @@ export class RepoService {
 
   async release(user: User, workId: string, commit?: string): Promise<Release> {
     const work = await this.store.work(workId);
-    if (!work) throw new HttpError(404, "作品が見つかりません");
-    if (work.owner !== user.id) throw new HttpError(403, "リリースできるのは作品の持ち主です");
+    if (!work) throw new HttpError(404, "リリースが見つかりません");
+    if (work.owner !== user.id)
+      throw new HttpError(403, "バージョンを出せるのは、リリースの持ち主です");
     const at = commit ?? (await this.git.head(work.repoId));
     if (!at) throw new HttpError(409, "まだコミットがありません");
     const snap = await this.snapshot(work.repoId, at);
     if (!snap.outputs.some((o) => o.id === work.outputId)) {
-      throw new HttpError(409, "このコミットには作品のアウトプットがありません");
+      throw new HttpError(409, "このコミットには、リリースのアウトプットがありません");
     }
     const output = snap.outputs.find((o) => o.id === work.outputId);
     // ライブラリが（依存の依存を通してでも）自分自身に依存していたら、輪になるので出さない
@@ -385,7 +386,7 @@ export class RepoService {
     version: number,
   ): Promise<{ owner: string; contentHash: string; manifest: PackageManifest }> {
     const work = await this.store.work(workId);
-    if (!work) throw new HttpError(404, "作品が見つかりません");
+    if (!work) throw new HttpError(404, "リリースが見つかりません");
     if (!work.perms.use && work.owner !== user?.id)
       throw new HttpError(403, "このライブラリを使う許可がありません");
     const rel = (await this.store.releases(workId)).find((r) => r.version === version);

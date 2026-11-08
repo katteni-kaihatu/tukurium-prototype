@@ -328,8 +328,9 @@ export function registerRepoRoutes(
     handle<{ id: string }>(async (req) => {
       const user = await needUser(req);
       const work = await store.work(req.params.id);
-      if (!work) throw new HttpError(404, "作品が見つかりません");
-      if (work.owner !== user.id) throw new HttpError(403, "作品の情報を変更できるのは作者です");
+      if (!work) throw new HttpError(404, "リリースが見つかりません");
+      if (work.owner !== user.id)
+        throw new HttpError(403, "リリースの情報を変更できるのは作者です");
       const body = z
         .object({
           name: z.string().min(1).max(64).optional(),

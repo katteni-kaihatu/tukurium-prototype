@@ -931,10 +931,10 @@ export class Hub {
       const result = (async () => {
         try {
           const loaded = await this.loadRelease(msg.releaseId);
-          if (!loaded) return failure("リリースが見つかりません");
+          if (!loaded) return failure("バージョンが見つかりません");
           const current = await this.store.work(loaded.work.id);
           if (!current || (!current.perms.use && current.owner !== user.id))
-            return failure("この作品を利用する権限がありません");
+            return failure("このリリースを利用する権限がありません");
           if (conn.session !== s || !this.sessions.has(s.id))
             return failure("取り出し先のセッションが変わりました");
           if (loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind !== "item")
@@ -957,9 +957,9 @@ export class Hub {
     const user = conn.user;
     if (!s || !user || !this.repos) return;
     const loaded = await this.loadRelease(msg.releaseId);
-    if (!loaded) return this.deny(conn, "リリースが見つかりません");
+    if (!loaded) return this.deny(conn, "バージョンが見つかりません");
     if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
-      return this.deny(conn, "この作品を利用する権限がありません");
+      return this.deny(conn, "このリリースを利用する権限がありません");
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
     if (kind === "library") {
@@ -978,9 +978,9 @@ export class Hub {
     const user = conn.user;
     if (!s || !user || !this.repos) return;
     const loaded = await this.loadRelease(releaseId);
-    if (!loaded) return this.deny(conn, "リリースが見つかりません");
+    if (!loaded) return this.deny(conn, "バージョンが見つかりません");
     if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
-      return this.deny(conn, "この作品を利用する権限がありません");
+      return this.deny(conn, "このリリースを利用する権限がありません");
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
     if (kind !== "world") return this.deny(conn, "ワールドではありません");

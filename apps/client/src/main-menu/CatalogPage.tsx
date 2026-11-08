@@ -24,7 +24,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 function kindLabel(kind: string | null | undefined): string {
-  return (kind && KIND_LABEL[kind]) || "作品";
+  return (kind && KIND_LABEL[kind]) || "リリース";
 }
 
 export function CatalogPage({ active }: { active: boolean }) {
@@ -65,7 +65,7 @@ export function CatalogPage({ active }: { active: boolean }) {
           aria-selected={tab === "mine"}
           onClick={() => setTab("mine")}
         >
-          自分の作品
+          自分のリリース
         </button>
       </div>
       {tab === "mine" ? (
@@ -228,13 +228,13 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }) 
     if (detail?.project) useMainMenu.getState().showProject(`/p/${detail.project.id}`);
   };
   return (
-    <section className={styles.workDetail} aria-label="作品の詳細">
+    <section className={styles.workDetail} aria-label="リリースの詳細">
       <button type="button" className={styles.button} onClick={onBack}>
         一覧へ戻る
       </button>
       {loading && !detail && (
         <p className={styles.muted} role="status">
-          作品を読み込んでいます…
+          リリースを読み込んでいます…
         </p>
       )}
       {error && (
@@ -266,7 +266,7 @@ function WorkDetail({ workId, onBack }: { workId: string; onBack: () => void }) 
           <WorkTagsEditor key={detail.id} work={detail} />
           <h2 className={styles.versionHeading}>バージョン · {detail.releases.length}</h2>
           {detail.releases.length === 0 ? (
-            <p className={styles.muted}>リリースはまだありません。</p>
+            <p className={styles.muted}>バージョンはまだありません。</p>
           ) : (
             <ol className={styles.versionList}>
               {detail.releases.map((release, index) => (
@@ -297,7 +297,7 @@ function MyWorks({ onOpen }: { onOpen: (id: string) => void }) {
   const loading = useCatalog((s) => s.mineLoading);
   const error = useCatalog((s) => s.mineError);
   if (!owner) {
-    return <p className={styles.muted}>ログインすると、自分の作品を見られます。</p>;
+    return <p className={styles.muted}>ログインすると、自分のリリースを見られます。</p>;
   }
   return (
     <>
@@ -308,12 +308,12 @@ function MyWorks({ onOpen }: { onOpen: (id: string) => void }) {
       )}
       {loading && mine.length === 0 && (
         <p className={styles.muted} role="status">
-          作品を読み込んでいます…
+          リリースを読み込んでいます…
         </p>
       )}
       {!loading && !error && mine.length === 0 && (
         <div className={styles.empty}>
-          <p>公開した作品はまだありません。</p>
+          <p>リリースはまだありません。</p>
         </div>
       )}
       <ul className={styles.workList}>
@@ -322,7 +322,7 @@ function MyWorks({ onOpen }: { onOpen: (id: string) => void }) {
             <button type="button" onClick={() => onOpen(work.id)}>
               <strong>{work.name}</strong>
               <span>{kindLabel(work.outputKind)}</span>
-              <span>{work.latest ? `v${work.latest.version}` : "リリースなし"}</span>
+              <span>{work.latest ? `v${work.latest.version}` : "バージョンなし"}</span>
             </button>
           </li>
         ))}
@@ -338,7 +338,7 @@ export function ItemAction({ work, item }: { work: Work | null; item?: OwnedItem
   const allowed = !!work && (work.perms.use || work.owner === me?.id);
   const unavailable = item ? !item.available : !work?.latest || !allowed;
   const reason = unavailable
-    ? (item?.reason ?? (!work?.latest ? "リリースがありません" : "利用する権限がありません"))
+    ? (item?.reason ?? (!work?.latest ? "バージョンがありません" : "利用する権限がありません"))
     : status !== "online"
       ? "接続を待っています"
       : !ownedLoaded

@@ -117,7 +117,7 @@ function ToolContent({ id }: { id: ToolWindow }) {
             <div className={styles.pageHeader}>
               <div>
                 <h1>ライブラリ</h1>
-                <p className={styles.muted}>公開された作品を、制作やセッションで使う。</p>
+                <p className={styles.muted}>リリースを、制作やセッションで使う。</p>
               </div>
             </div>
             <LibraryPanel active={visible} />

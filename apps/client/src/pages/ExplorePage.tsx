@@ -6,7 +6,7 @@ import { api, type RepoMeta, type Work } from "../net/api";
 import { ProjectLink as Link } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
-/** 探す：公開されている作品とプロジェクト */
+/** 探す：リリースとプロジェクト */
 export function ExplorePage({ embedded = false }: { embedded?: boolean }) {
   const me = useApp((s) => s.me);
   const [works, setWorks] = useState<Work[]>([]);
@@ -20,13 +20,13 @@ export function ExplorePage({ embedded = false }: { embedded?: boolean }) {
     <div className={embedded ? styles.embedded : styles.page}>
       {!embedded && <Header />}
       <main className={embedded ? styles.embeddedMain : styles.main}>
-        <section className={styles.card} aria-label="作品">
-          <h1 className={styles.title}>作品</h1>
+        <section className={styles.card} aria-label="リリース">
+          <h1 className={styles.title}>リリース</h1>
           <p className={styles.sub}>
-            作品の中身や制作に使うプロジェクトを見られます。遊ぶアイテムはマーケットから入手できます。
+            リリースの中身や、制作に使うプロジェクトを見られます。遊ぶアイテムはマーケットから入手できます。
           </p>
           <ul className={styles.list}>
-            {works.length === 0 && <li className={styles.sub}>まだ公開された作品はありません</li>}
+            {works.length === 0 && <li className={styles.sub}>まだリリースはありません</li>}
             {works.map((w) => (
               <li key={w.id}>
                 <Thumbnail id={w.thumbnail} name={w.name} size="small" />

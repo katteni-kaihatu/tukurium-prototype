@@ -8,7 +8,7 @@ import ui from "./ui.module.css";
 
 const KIND_LABEL = { item: "アイテム", world: "ワールド", library: "ライブラリ" } as const;
 
-/** 作品の名前から、別名の初めの案を作る（空白・@・/ は - にする） */
+/** リリースの名前から、別名の初めの案を作る（空白・@・/ は - にする） */
 const aliasFrom = (name: string) =>
   name
     .trim()
@@ -16,8 +16,8 @@ const aliasFrom = (name: string) =>
     .slice(0, 64) || "lib";
 
 /**
- * ライブラリ：公開されたワールドとアイテム（最新のリリース）をセッションに置く。
- * ライブラリの作品は、開いているプロジェクトの依存に足して import で使う（ADR 0015）。
+ * ライブラリ：公開されたワールドとアイテム（最新のバージョン）をセッションに置く。
+ * ライブラリのリリースは、開いているプロジェクトの依存に足して import で使う（ADR 0015）。
  */
 export function LibraryPanel({ active = true }: { active?: boolean }) {
   const { client, session, me, status } = useApp();
@@ -30,7 +30,7 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
   const canEdit = useCanEdit();
   const [works, setWorks] = useState<Work[]>([]);
   const [error, setError] = useState<string | null>(null);
-  /** 依存に足そうとしている作品と、入力中の別名 */
+  /** 依存に足そうとしているリリースと、入力中の別名 */
   const [adding, setAdding] = useState<{ work: Work; alias: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const deps = project?.dependencies() ?? [];
@@ -150,18 +150,18 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
         </div>
       )}
       <div className={ui.section}>
-        <h3 className={ui.sectionTitle}>公開された作品</h3>
+        <h3 className={ui.sectionTitle}>リリース</h3>
         {!session && (
           <p className={ui.notice}>
-            作品の閲覧はここでできます。配置するときはセッションに参加してください。
+            リリースの閲覧はここでできます。配置するときはセッションに参加してください。
           </p>
         )}
         <p className={ui.muted}>
           ワールドは原点に、アイテムは視線の先に置きます。置いたあとは、作っているワークスペースとは別です。
         </p>
         {error && <p className={ui.error}>{error}</p>}
-        {works.length === 0 && <p className={ui.muted}>公開された作品はまだありません。</p>}
-        <ul className={ui.list} aria-label="作品">
+        {works.length === 0 && <p className={ui.muted}>リリースはまだありません。</p>}
+        <ul className={ui.list} aria-label="リリース">
           {works.map((w) => {
             const canUse = w.perms.use || w.owner === me?.id;
             // ライブラリは置くものではなく、プロジェクトの依存に足して import で使う（ADR 0015）
@@ -183,7 +183,7 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
                   {w.official && (
                     <span
                       className={ui.badgeBrand}
-                      title="公式の発行者の作品（名前ではなく発行者で決まる）"
+                      title="公式の発行者のリリース（名前ではなく発行者で決まる）"
                     >
                       公式
                     </span>
@@ -192,7 +192,7 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
                   {w.latest ? (
                     <span className={ui.badge}>v{w.latest.version}</span>
                   ) : (
-                    <span className={ui.badge}>未リリース</span>
+                    <span className={ui.badge}>バージョンなし</span>
                   )}
                   {isLibrary ? (
                     project &&

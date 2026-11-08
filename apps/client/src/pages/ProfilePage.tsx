@@ -6,7 +6,7 @@ import { api, type RepoMeta, type Work } from "../net/api";
 import { ProjectLink as Link } from "./ProjectNavigation";
 import styles from "./pages.module.css";
 
-/** プロフィール：その人のプロジェクトと作品（/u/me は自分） */
+/** プロフィール：その人のプロジェクトとリリース（/u/me は自分） */
 export function ProfilePage({
   embedded = false,
   profileId,
@@ -53,9 +53,7 @@ export function ProfilePage({
             <aside className={styles.card}>
               <h1 className={styles.title}>{user.name}</h1>
               <p className={styles.sub}>
-                {user.id === me?.id
-                  ? "自分のプロジェクトと公開した作品"
-                  : "プロジェクトと公開した作品"}
+                {user.id === me?.id ? "自分のプロジェクトとリリース" : "プロジェクトとリリース"}
               </p>
               {user.id === me?.id && (
                 <Link to="/new" className={styles.primary}>
@@ -83,8 +81,8 @@ export function ProfilePage({
                   ))}
                 </ul>
               </section>
-              <section className={styles.card} aria-label="作品">
-                <h2 className={styles.h2}>作品 · {user.works.length}</h2>
+              <section className={styles.card} aria-label="リリース">
+                <h2 className={styles.h2}>リリース · {user.works.length}</h2>
                 <ul className={styles.list}>
                   {user.works.length === 0 && <li className={styles.sub}>まだありません</li>}
                   {user.works.map((w) => (
