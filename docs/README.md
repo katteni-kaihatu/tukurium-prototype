@@ -17,7 +17,7 @@
 | 文書 | 役割 |
 | --- | --- |
 | [FEATURES.md](FEATURES.md) | いまできること。利用者の行動ごとにまとめる |
-| [roadmap/](roadmap/README.md) | ロードマップの項目。計画・進行中・完了のフォルダに分け、項目ごとに構想と実装計画を置く |
+| [roadmap/](roadmap/README.md) | ロードマップの項目。計画・進行中・完了のフォルダに分け、項目ごとに構想と実装計画を置く。計画者・設計者・実装者で分担する |
 | [adr/](adr/) | 採用・変更・廃止した設計判断の記録。[ADR 一覧](adr/README.md) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 開発中に実際に詰まった点と対策 |
 | [DEPLOY.md](DEPLOY.md) | VPS / Coolify への設置・更新・バックアップ |
@@ -33,10 +33,10 @@
 
 1. 実際のコード、schema、テスト
 2. 採用済みで、後続 ADR に置き換えられていない ADR
-3. `roadmap/in-progress/` の構想と実装計画、[FEATURES.md](FEATURES.md)
+3. `roadmap/進行中/` の構想と実装計画、[FEATURES.md](FEATURES.md)
 4. ルートの [README.md](../README.md) と [CLAUDE.md](../CLAUDE.md)
-5. `roadmap/planned/` の構想
-6. `archive/` の歴史資料と、`roadmap/done/` の完了の記録
+5. `roadmap/計画/` の構想
+6. `archive/` の歴史資料と、`roadmap/完了/` の記録
 
 食い違いを見つけたら、黙って都合のよい文書を選ばない。実装と意図を確認し、必要なら ADR または現役文書を更新する。
 

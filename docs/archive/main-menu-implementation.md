@@ -7,7 +7,7 @@
 - 実装状況: 初期範囲を[ADR 0022](../adr/0022-main-menu-first-release.md)で確定し、下表の単位で実装・確認・コミットした。現在の仕様は[ADR 0027](../adr/0027-main-menu-integration.md)と[UI/UX](social-workshop-experience.md)を参照。
 - 方向性: [ADR 0020](../adr/0020-social-workshop-direction.md)、[ADR 0021](../adr/0021-main-menu-window.md)
 - 画面の設計: メインメニューの [UI/UX](social-workshop-experience.md)
-- 接続する計画: UGC API・権限・Library Package（ロードマップの ugc-api-library-permissions）、制作・診断（ロードマップの resource-paths-and-diagnostics）
+- 接続する計画: UGC API・権限・Library Package（ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」）、制作・診断（ロードマップの「リソースをパスで迷わず参照し問題をまとめて確かめる」）
 
 ## 1. 左上から開く一つのウィンドウに、集まる・持ち寄る操作をまとめる
 

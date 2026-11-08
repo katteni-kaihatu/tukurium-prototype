@@ -6,7 +6,7 @@
 - 実装順: **未決定**
 - この文書で管理する範囲: UGC の制作・表現・配布を広げる候補の比較と昇格判断
 - ロードマップ: [古いロードマップ](ROADMAP-2026-11.md)
-- 関連する Active 計画: ロードマップの ugc-api-library-permissions
+- 関連する Active 計画: ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」
 
 ## 1. この文書の位置付け
 
@@ -191,7 +191,7 @@ Particle、Timeline、Brush、Post processing は上記の基盤から利益を�
 - 状態: **Focus**
 - 価値と例: 作者、利用者、依存先が、asset / Package の出所、表示義務、fork / extract 後の由来を失わず確認できる
 - 主な層・利用時点: Package / release / asset / dependency / Work の metadata、公開・install UI、server validation。主に制作・配布時だが Runtime 配布物にも随伴する
-- 既存 Active 範囲: U3（ロードマップの ugc-api-library-permissions） は Package identity、dependency lock、content hash と、extract / fork で出所と binding を保つ基盤を扱う。U6（ロードマップの ugc-api-library-permissions） は publish / install / fork と license / provenance / dependency の表示を扱う。この Focus は両者の実装・表示の受け入れ条件を重複管理しない
+- 既存 Active 範囲: U3（ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」） は Package identity、dependency lock、content hash と、extract / fork で出所と binding を保つ基盤を扱う。U6（ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」） は publish / install / fork と license / provenance / dependency の表示を扱う。この Focus は両者の実装・表示の受け入れ条件を重複管理しない
 - 境界・前提: Package / release / asset / author / derived-from identity を使う。編集・公開権限を分け、Registry が immutable release の metadata を固定する。実行時同期や Host API にはせず、version 付き metadata schema と asset 単位・Package 単位の宣言を配布物へ随伴させる
 - 最小スコープ: U3 の provenance を前提に、SPDX identifier またはカスタム文面への参照、copyright / author、source、attribution の metadata schema と継承規則を、依存・fork / extract を模した release graph fixture で検証する。結果は attribution manifest と不足時の Diagnostic とし、publish / install / fork の UI と表示は U6 へ委ねる。自動の法的適合判定はしない
 - 後回し: 完全なライセンス互換性 solver、収益分配、地域別規約、法的助言、外部 registry との自動照合
@@ -216,7 +216,7 @@ Particle、Timeline、Brush、Post processing は上記の基盤から利益を�
 - 状態: **Focus**
 - 価値と例: 初学者が遊べる作品から学び、fork / extract して改造できる。開発側は公式 API の不足、権限、Diagnostic、互換性を実作で検証できる
 - 主な層・利用時点: Reference UGC、学習用 Sample、showcase、Package metadata、継続的な回帰シナリオ。制作・実行・公開の全経路
-- 既存 Active 範囲: U4（ロードマップの ugc-api-library-permissions） は「銃と的」「扉とスイッチ」「収集物と Inventory」を reference UGC として実装し、公式 API を検証する。この Focus は三本の実装・API 昇格・conformance の受け入れ条件を重複管理しない
+- 既存 Active 範囲: U4（ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」） は「銃と的」「扉とスイッチ」「収集物と Inventory」を reference UGC として実装し、公式 API を検証する。この Focus は三本の実装・API 昇格・conformance の受け入れ条件を重複管理しない
 - 境界・前提: sample Package / immutable release / 対象 API identity を持つ。公式 sample の公開・更新は保守 owner に限定し、要求 Capability と dependency lock を表示する。作品は通常の Package / release 形式、説明は同梱 document asset として保存する候補とし、tutorial metadata の schema / format は未決定。実行時同期は各 UGC の API に従う。特権 API は使わず、明確なライセンスを付ける
 - 最小スコープ: U4 の reference UGC 一つを、遊び方、構成、要求 Capability、fork / extract 手順、対象 API と難易度を持つ学習用 Sample として配布し、reference から Sample へ育てる保守手順を確立する
 - 後回し: 大規模 showcase、全ジャンル網羅、ランキング、ユーザー投稿サンプルの公式認定、多数の tutorial series
