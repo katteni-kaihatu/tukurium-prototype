@@ -25,7 +25,7 @@ description: Tukurium で、ひとまとまりの作業（マイルストーン�
 ## 3. ドキュメント
 
 - 設計の判断をしたら `docs/adr/` に ADR を足す
-- `docs/ROADMAP.md` の進み具合、`README.md` の「いまできること」を更新する
+- 機能を足したり変えたりしたら `docs/FEATURES.md` を直す。ロードマップの項目を進めたら、その実装計画の「段階」を直す（進め方は `docs/roadmap/README.md`）
 - 詰まった点があれば `docs/DEVELOPMENT.md` に書き足す
 
 ## 4. コミットと PR

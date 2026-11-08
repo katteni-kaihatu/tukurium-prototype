@@ -1,8 +1,10 @@
-# Tukurium ロードマップ
+# Tukurium ロードマップ（2026-11 まで）
+
+> 古いロードマップの記録。2026-11 にロードマップを [docs/roadmap/](../roadmap/README.md) へ、できることを [FEATURES.md](../FEATURES.md) へ移した。ここの状態は更新しない。
 
 - 状態: **Active**
 - M0〜M6: 完了。制作・共同編集・再生・公開・再利用までの一周は実装済み。
-- 初期プロトタイプの完了記録: [`archive/PLAN-v0.2.md`](archive/PLAN-v0.2.md)
+- 初期プロトタイプの完了記録: [`PLAN-v0.2.md`](PLAN-v0.2.md)
 
 Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、その場で試して遊べる制作環境。作る人と遊ぶ人が同じセッションにいて、作業を見たり、一緒に編集したり、別々に作った作品を組み合わせたりできる。
 
@@ -35,7 +37,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 
 ### メインメニューの初期版
 
-[メインメニューの UI/UX](plans/social-workshop-experience.md)と[ADR 0021](adr/0021-main-menu-window.md)をもとに初期版を実装した。2Dクライアントは追加せず、既存の3Dクライアントの中で使う。全体の結果と残す範囲は[ADR 0027](adr/0027-main-menu-integration.md)にまとめる。参加と編集を分ける判断は[ADR 0028](adr/0028-session-and-optional-workspace.md)、独立したウィンドウへの変更は[ADR 0029](adr/0029-independent-tool-windows.md)、現在の入口の配置は[ADR 0031](adr/0031-global-navigation-and-session-bar.md)に記録した。
+[メインメニューの UI/UX](social-workshop-experience.md)と[ADR 0021](../adr/0021-main-menu-window.md)をもとに初期版を実装した。2Dクライアントは追加せず、既存の3Dクライアントの中で使う。全体の結果と残す範囲は[ADR 0027](../adr/0027-main-menu-integration.md)にまとめる。参加と編集を分ける判断は[ADR 0028](../adr/0028-session-and-optional-workspace.md)、独立したウィンドウへの変更は[ADR 0029](../adr/0029-independent-tool-windows.md)、現在の入口の配置は[ADR 0031](../adr/0031-global-navigation-and-session-bar.md)に記録した。
 
 `feat/main-menu` でA1〜A7に分けて実装した。音声・DM・参加確認メッセージ、画像設定・カテゴリ・課金はこの初期版の対象外。
 
@@ -72,7 +74,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - Video player / HUD（Candidate）: 動画を面に表示する。残弾・体力・スコアなどを 2D の画面に表示する。現在の音声・3D の文字・一時的な火花とは別の機能として検討する。
 - TypeScript を正式な利用者スクリプト形式にするかは、型付き JavaScript の必要性を確かめてから判断する。
 
-詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)、[ADR 0010](adr/0010-resource-identity-paths-diagnostics.md)、[機能候補](discovery/creator-platform-capabilities.md)
+詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)、[ADR 0010](../adr/0010-resource-identity-paths-diagnostics.md)、[機能候補](creator-platform-capabilities.md)
 
 ## 3. 一緒に編集する
 
@@ -100,9 +102,9 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - [ ] 構造化した `ScriptDiagnostic` を Runtime・通信・問題一覧まで保持し、原因や発生場所を失わずに表示する。
 - [ ] 実行時の問題が編集前の結果になったかを、依存関係に基づいて判定する。
 - [ ] QuickJS とやり取りするすべての境界で、入力・出力を `unknown` から検証する。
-- [ ] メモリ超過時の復旧動作を [ADR 0001](adr/0001-script-runtime-quickjs.md) と一致させる。
+- [ ] メモリ超過時の復旧動作を [ADR 0001](../adr/0001-script-runtime-quickjs.md) と一致させる。
 
-詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)
+詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)
 
 ## 5. 作品を組み合わせる
 
@@ -134,7 +136,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 
 - 公式 API の experimental → preview → stable → deprecated の運用。上の三つの検証作品で実測した段階では、すべて experimental。ワークショップができ、利用者の作品で使われてから昇格を判断する。
 
-詳細: [UGC API・権限・Library Package の計画](plans/ugc-api-library-permissions.md)、[ADR 0011](adr/0011-kokostate-event-capability-package.md)・[0012](adr/0012-runtime-authority-target-policy.md)・[0013](adr/0013-package-identity-version.md)・[0015](adr/0015-library-package-minimal.md)・[0016](adr/0016-official-library-reference-ugc.md)・[0017](adr/0017-label-and-player-name.md)・[0018](adr/0018-player-bag.md)・[0019](adr/0019-api-stability-all-experimental.md)
+詳細: [UGC API・権限・Library Package の計画](../plans/ugc-api-library-permissions.md)、[ADR 0011](../adr/0011-kokostate-event-capability-package.md)・[0012](../adr/0012-runtime-authority-target-policy.md)・[0013](../adr/0013-package-identity-version.md)・[0015](../adr/0015-library-package-minimal.md)・[0016](../adr/0016-official-library-reference-ugc.md)・[0017](../adr/0017-label-and-player-name.md)・[0018](../adr/0018-player-bag.md)・[0019](../adr/0019-api-stability-all-experimental.md)
 
 ## 6. 残す・渡す・作り直す
 
@@ -163,9 +165,9 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - Localization（Candidate）: Tukurium 本体と作品のタイトル・説明・字幕・ゲーム内テキストを多言語化する。
 - Library marketplace のランキング・評価・収益化・自動推薦は、実測や利用経験を得てから判断する。
 
-公開アイテムの検索・入手・所持一覧からの取り出しは実装済み（[メインメニューの UI/UX](plans/social-workshop-experience.md)）。ライブラリ配布・依存・明示的な更新の残作業は、既存のUGC計画で引き続き扱う。
+公開アイテムの検索・入手・所持一覧からの取り出しは実装済み（[メインメニューの UI/UX](social-workshop-experience.md)）。ライブラリ配布・依存・明示的な更新の残作業は、既存のUGC計画で引き続き扱う。
 
-詳細: [リソースパス・System 参照・全体診断の計画](plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package の計画](plans/ugc-api-library-permissions.md)、[機能候補](discovery/creator-platform-capabilities.md)
+詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package の計画](../plans/ugc-api-library-permissions.md)、[機能候補](creator-platform-capabilities.md)
 
 ## 共通基盤で後から判断するもの
 
@@ -183,4 +185,4 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - 完了した機能はこの文書の「実装済み」へ移す。一部だけ完了した場合は、使える範囲と残作業を分ける。
 - Phase 完了時に、決定事項は ADR、再利用できる注意点は DEVELOPMENT、現在できることは README へ反映する。
 - Active な詳細計画が完了したら、結果をその内容を管理する文書へ移して計画自体は archive へ移す。
-- 機能候補の仕様・比較・昇格条件は [Discovery](discovery/creator-platform-capabilities.md) で管理する。Focus は最大 5 件とし、Active な計画の Phase やロードマップの機能項目の完了、重大な前提変更、Focus の昇格時に見直す。
+- 機能候補の仕様・比較・昇格条件は [Discovery](creator-platform-capabilities.md) で管理する。Focus は最大 5 件とし、Active な計画の Phase やロードマップの機能項目の完了、重大な前提変更、Focus の昇格時に見直す。

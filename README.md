@@ -3,7 +3,8 @@
 ブラウザの 3D 空間で交流しながら、複数人でアイテムやワールドを制作する環境のプロトタイプ。
 
 - 文書の案内：[docs/README.md](docs/README.md)
-- 現在のロードマップ：[docs/ROADMAP.md](docs/ROADMAP.md)
+- できること：[docs/FEATURES.md](docs/FEATURES.md)
+- ロードマップ：[docs/roadmap/](docs/roadmap/README.md)
 - 決定記録：[docs/adr/](docs/adr/)
 - 開発メモ（詰まりやすい点）：[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。開発の約束は [CLAUDE.md](CLAUDE.md)
 
@@ -63,7 +64,7 @@ PostgreSQL（`localhost:5432`）と S3 互換ストレージの SeaweedFS（`loc
 
 公開タグは作者が公開時に付け、あとから編集できる。タグは作品の情報として保存し、所持している版の内容は変えない。お気に入りと表示方法はアカウント別にブラウザへ保存する。
 
-招待を受け取ると参加先を確認でき、本人が参加ボタンを押すまで移動しない。招待の期限は10分。課金、DM、参加確認メッセージ、作者が設定するサムネイルとカテゴリは初期版に含めない。現在の画面は[UI/UX資料](docs/plans/social-workshop-experience.md)、実装判断は[ADR一覧](docs/adr/README.md)を参照。
+招待を受け取ると参加先を確認でき、本人が参加ボタンを押すまで移動しない。招待の期限は10分。課金、DM、参加確認メッセージ、作者が設定するサムネイルとカテゴリは初期版に含めない。現在の画面は[UI/UX資料](docs/archive/social-workshop-experience.md)、実装判断は[ADR一覧](docs/adr/README.md)を参照。
 
 ## いまできること
 

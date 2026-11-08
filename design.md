@@ -27,7 +27,7 @@ colors:
 
 2026-11-05 時点の画面と実装から整理した、UIを追加・調整するときの基準。直近のステータス画面のテーマ調整を含む。フロントエンドは React / Vite と CSS Modules で構成し、共通の色とフォントを [global.css](apps/client/src/styles/global.css) に定義している。
 
-この文書は見た目と操作の一貫性を扱う。機能の範囲は [UI/UX資料](docs/plans/social-workshop-experience.md)、採用した設計と理由は [ADR一覧](docs/adr/README.md) を参照する。
+この文書は見た目と操作の一貫性を扱う。機能の範囲は [できること](docs/FEATURES.md)、採用した設計と理由は [ADR一覧](docs/adr/README.md) を参照する。
 
 ## 1. 全体の雰囲気
 

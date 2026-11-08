@@ -1,9 +1,11 @@
 # Creator Platform 機能候補
 
+> 2026-11 に仕組みから外した、機能候補の記録。ここの状態は更新しない。
+
 - 状態: **Discovery**
 - 実装順: **未決定**
 - この文書で管理する範囲: UGC の制作・表現・配布を広げる候補の比較と昇格判断
-- ロードマップ: [`../ROADMAP.md`](../ROADMAP.md)
+- ロードマップ: [古いロードマップ](ROADMAP-2026-11.md)
 - 関連する Active 計画: [`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md)
 
 ## 1. この文書の位置付け
