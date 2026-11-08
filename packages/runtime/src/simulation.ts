@@ -53,14 +53,17 @@ import { type HostArgs, parseHostArgs } from "./hostApi";
 import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
 import {
+  degreesToQuaternion,
   moveAlongView,
   placeFromView,
   poseInView as poseRelativeToView,
+  quaternionToDegrees,
   straightenRotation,
   transformOf,
   twistRotation,
   worldTransform,
   writeTransform,
+  writeWorldTransform,
 } from "./transform";
 
 /** 入力の動作。利用者のスクリプトは action 名で受け取る。 */
@@ -1067,7 +1070,7 @@ export class Simulation {
       (tool.offset as Vec3 | undefined) ?? [0.25, -0.22, -0.5],
       (tool.rotation as Vec3 | undefined) ?? [0, 0, 0],
     );
-    writeTransform(this.world, id, placed.position, placed.rotation);
+    this.writeWorldPose(id, placed.position, placed.rotation);
   }
 
   /** 装備する道具は、装備している人の入力だけを受け取る。ほかの Entity はみんなの入力を受け取る */
@@ -1111,10 +1114,29 @@ export class Simulation {
     });
   }
 
-  /** いまの位置と角度を、視点からの差として覚える（持った瞬間に動かさないため） */
+  /** いまのワールドでの位置と角度を、視点からの差として覚える（持った瞬間に動かさないため） */
   private poseInView(id: EntityId, ev: InputEvent): { offset: Vec3; rotation: Vec3 } {
-    const t = transformOf(this.world, id);
+    const t = this.worldPose(id);
     return poseRelativeToView(ev.origin, ev.direction, t.position, t.rotation);
+  }
+
+  /** Entity の、ワールド座標系での位置と角度 */
+  private worldPose(id: EntityId): { position: Vec3; rotation: Vec3 } {
+    const t = worldTransform(this.world, id);
+    return { position: t.position.toArray() as Vec3, rotation: quaternionToDegrees(t.quaternion) };
+  }
+
+  /**
+   * ワールドの位置と角度を、親から見たずれとして Transform に書く。
+   * 動作上の親が配置の位置を持っているため、そのまま書くと二重になる（ADR 0050・0057）。
+   */
+  private writeWorldPose(id: EntityId, position: Vec3, rotation: Vec3): void {
+    writeWorldTransform(
+      this.world,
+      id,
+      { x: position[0], y: position[1], z: position[2] },
+      degreesToQuaternion(rotation),
+    );
   }
 
   /** 覚えた位置関係のまま、持っている人の視点へ置く（ほかの人にはこの位置で見える） */
@@ -1127,15 +1149,15 @@ export class Simulation {
       (held.offset as Vec3 | undefined) ?? [0, 0, 0],
       (held.rotation as Vec3 | undefined) ?? [0, 0, 0],
     );
-    writeTransform(this.world, id, placed.position, placed.rotation);
+    this.writeWorldPose(id, placed.position, placed.rotation);
   }
 
   /** 傾きを直し、上下の軸まわりの向きだけ残す */
   private straightenHeld(id: EntityId, ev: InputEvent): void {
     const held = this.world.get(id, BUILTIN.Grabbable);
     if (!held) return;
-    const t = transformOf(this.world, id);
-    writeTransform(this.world, id, t.position, straightenRotation(t.rotation));
+    const t = this.worldPose(id);
+    this.writeWorldPose(id, t.position, straightenRotation(t.rotation));
     const pose = this.poseInView(id, ev);
     held.rotation = pose.rotation;
   }
@@ -1153,8 +1175,8 @@ export class Simulation {
     const held = this.world.get(id, BUILTIN.Grabbable);
     const [yaw, pitch] = ev.pointer ?? [0, 0];
     if (!held || (yaw === 0 && pitch === 0)) return;
-    const t = transformOf(this.world, id);
-    writeTransform(this.world, id, t.position, twistRotation(t.rotation, yaw, pitch));
+    const t = this.worldPose(id);
+    this.writeWorldPose(id, t.position, twistRotation(t.rotation, yaw, pitch));
     const pose = this.poseInView(id, ev);
     held.rotation = pose.rotation;
   }

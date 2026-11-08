@@ -610,6 +610,36 @@ describe("Simulation：装備（EquipmentTool。ADR 0053）", () => {
     sim.step(1 / 60);
     expect(sim.world.get("ent_gun", "ks_gun")?.f_ammo).toBe(12);
   });
+
+  it("配置してある道具を装備しても、見た目の位置は視点のそばに残る", async () => {
+    sim = await Simulation.createSession();
+    sim.addPart({
+      id: "g",
+      realm: "range",
+      outputId: "out_range",
+      snapshot: gunAndTargetSample(),
+      position: [4, 0, 0],
+      yaw: 0,
+    });
+    const origin: Vec3 = [4, 1.6, 6];
+    const to: Vec3 = [4, 1.1, 3.6];
+    const d = to.map((v, i) => v - (origin[i] ?? 0));
+    const len = Math.hypot(...d);
+    sim.input({
+      action: "equip",
+      phase: "down",
+      origin,
+      direction: d.map((v) => v / len) as Vec3,
+      player: "p1",
+    });
+    sim.step(1 / 60);
+    expect(sim.world.get("g/ent_gun", BUILTIN.EquipmentTool)?.player).toBe("p1");
+    const seen = worldTransform(sim.world, "g/ent_gun").position.toArray();
+    expect(seen[0]).toBeCloseTo(4, 0);
+    expect(seen[2]).toBeGreaterThan(5);
+    const local = sim.world.get("g/ent_gun", BUILTIN.Transform)?.position as Vec3;
+    expect(local[0]).toBeCloseTo(seen[0] - 4, 4);
+  });
 });
 
 describe("Simulation：E（use）では装備しない（ADR 0053）", () => {
