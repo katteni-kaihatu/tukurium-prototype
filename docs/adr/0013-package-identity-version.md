@@ -2,7 +2,7 @@
 
 - 状態：採用
 - 関連：ADR 0007（リポジトリ・コミット・抽出）、ADR 0010（リソースの同一性）、ADR 0011（役割）、ADR 0012（権限）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md)
+- 詳細計画：ロードマップの ugc-api-library-permissions
 
 ## 背景
 

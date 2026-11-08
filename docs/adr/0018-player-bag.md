@@ -2,7 +2,7 @@
 
 - 状態：採用（2026-11-04）
 - 関連：ADR 0012（権限・境界）、ADR 0015（ライブラリ）、ADR 0016（公式ライブラリ・Interact）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md) の U4（収集物と Inventory）
+- 詳細計画：ロードマップの ugc-api-library-permissions の U4（収集物と Inventory）
 
 ## 背景
 

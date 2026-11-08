@@ -2,7 +2,7 @@
 
 - 状態：採用
 - 関連：ADR 0005（セッションとホスト）、ADR 0006（セッションの世界）、ADR 0008（権限）、ADR 0011（役割）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md)
+- 詳細計画：ロードマップの ugc-api-library-permissions
 
 ## 背景
 

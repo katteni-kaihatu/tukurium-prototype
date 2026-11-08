@@ -74,7 +74,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - Video player / HUD（Candidate）: 動画を面に表示する。残弾・体力・スコアなどを 2D の画面に表示する。現在の音声・3D の文字・一時的な火花とは別の機能として検討する。
 - TypeScript を正式な利用者スクリプト形式にするかは、型付き JavaScript の必要性を確かめてから判断する。
 
-詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)、[ADR 0010](../adr/0010-resource-identity-paths-diagnostics.md)、[機能候補](creator-platform-capabilities.md)
+詳細: リソースパス・System 参照・全体診断の計画（ロードマップの resource-paths-and-diagnostics）、[ADR 0010](../adr/0010-resource-identity-paths-diagnostics.md)、[機能候補](creator-platform-capabilities.md)
 
 ## 3. 一緒に編集する
 
@@ -104,7 +104,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 - [ ] QuickJS とやり取りするすべての境界で、入力・出力を `unknown` から検証する。
 - [ ] メモリ超過時の復旧動作を [ADR 0001](../adr/0001-script-runtime-quickjs.md) と一致させる。
 
-詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)
+詳細: リソースパス・System 参照・全体診断の計画（ロードマップの resource-paths-and-diagnostics）
 
 ## 5. 作品を組み合わせる
 
@@ -136,7 +136,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 
 - 公式 API の experimental → preview → stable → deprecated の運用。上の三つの検証作品で実測した段階では、すべて experimental。ワークショップができ、利用者の作品で使われてから昇格を判断する。
 
-詳細: [UGC API・権限・Library Package の計画](../plans/ugc-api-library-permissions.md)、[ADR 0011](../adr/0011-kokostate-event-capability-package.md)・[0012](../adr/0012-runtime-authority-target-policy.md)・[0013](../adr/0013-package-identity-version.md)・[0015](../adr/0015-library-package-minimal.md)・[0016](../adr/0016-official-library-reference-ugc.md)・[0017](../adr/0017-label-and-player-name.md)・[0018](../adr/0018-player-bag.md)・[0019](../adr/0019-api-stability-all-experimental.md)
+詳細: UGC API・権限・Library Package の計画（ロードマップの ugc-api-library-permissions）、[ADR 0011](../adr/0011-kokostate-event-capability-package.md)・[0012](../adr/0012-runtime-authority-target-policy.md)・[0013](../adr/0013-package-identity-version.md)・[0015](../adr/0015-library-package-minimal.md)・[0016](../adr/0016-official-library-reference-ugc.md)・[0017](../adr/0017-label-and-player-name.md)・[0018](../adr/0018-player-bag.md)・[0019](../adr/0019-api-stability-all-experimental.md)
 
 ## 6. 残す・渡す・作り直す
 
@@ -167,7 +167,7 @@ Tukurium はブラウザの 3D 空間でアイテムやワールドを作り、�
 
 公開アイテムの検索・入手・所持一覧からの取り出しは実装済み（[メインメニューの UI/UX](social-workshop-experience.md)）。ライブラリ配布・依存・明示的な更新の残作業は、既存のUGC計画で引き続き扱う。
 
-詳細: [リソースパス・System 参照・全体診断の計画](../plans/resource-paths-and-diagnostics.md)、[UGC API・権限・Library Package の計画](../plans/ugc-api-library-permissions.md)、[機能候補](creator-platform-capabilities.md)
+詳細: リソースパス・System 参照・全体診断の計画（ロードマップの resource-paths-and-diagnostics）、UGC API・権限・Library Package の計画（ロードマップの ugc-api-library-permissions）、[機能候補](creator-platform-capabilities.md)
 
 ## 共通基盤で後から判断するもの
 
