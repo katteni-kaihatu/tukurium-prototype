@@ -2,6 +2,24 @@ import type { EntityId, World } from "@tukurium/eks";
 import { BUILTIN } from "@tukurium/repo-model";
 
 /**
+ * アイテムとワールドの、動作上の親 Entity の ID（ADR 0057）。
+ * セッションでは「配置ID/__root」、ワークスペースの再生では「__root」。
+ * 制作データの Entity がこの ID を使うことは想定しない。
+ */
+export const SPACE_ROOT_ID = "__root";
+
+/** 動作上の親 Entity か（配置の位置と向きを持つ。中の Entity の親） */
+export function isSpaceRoot(id: EntityId): boolean {
+  return id === SPACE_ROOT_ID || id.endsWith(`/${SPACE_ROOT_ID}`);
+}
+
+/** 制作データで親がない Entity。動作上の親の直下も、いちばん上として扱う */
+export function isAuthoredTop(world: World, id: EntityId): boolean {
+  const parent = world.parentOf(id);
+  return parent === null || isSpaceRoot(parent);
+}
+
+/**
  * 持つ・装備する（ADR 0053）。
  * - 右クリックで持つ：Grabbable の player に持っている人を入れる
  * - 左クリックで開くリングメニューから右手に装備する：EquipmentTool の player に装備している人を入れる
@@ -52,6 +70,6 @@ export function playersWithEquipment(world: World): Set<string> {
 export function equippableAt(world: World, hit: EntityId | null): EntityId | null {
   let target: EntityId | null = hit;
   while (target && !world.hasState(target, BUILTIN.EquipmentTool)) target = world.parentOf(target);
-  if (!target || world.parentOf(target) !== null || isInHand(world, target)) return null;
+  if (!target || !isAuthoredTop(world, target) || isInHand(world, target)) return null;
   return target;
 }
