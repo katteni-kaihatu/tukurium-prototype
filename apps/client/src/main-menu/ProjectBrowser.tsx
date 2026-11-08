@@ -41,7 +41,7 @@ export function ProjectBrowser({ path }: { path: string }) {
             className={styles.button}
             onClick={() => useMainMenu.getState().showProject("/explore")}
           >
-            作品・プロジェクトを探す
+            リリース・プロジェクトを探す
           </button>
           <button
             type="button"

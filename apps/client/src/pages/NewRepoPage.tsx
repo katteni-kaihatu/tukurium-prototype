@@ -138,7 +138,7 @@ export function NewRepoPage({ embedded = false }: { embedded?: boolean }) {
                     <small>
                       {v === "public"
                         ? "誰でも見られ、フォーク・抽出できる"
-                        : "自分だけ（作品の権限で個別に許可）"}
+                        : "自分だけ（リリースの権限で個別に許可）"}
                     </small>
                   </span>
                 </label>

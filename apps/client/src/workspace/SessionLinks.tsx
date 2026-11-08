@@ -99,7 +99,7 @@ export function SessionLinks() {
           className={ui.btn}
           onClick={() => useMainMenu.getState().showWindow("library")}
         >
-          公開された作品
+          リリース
         </button>
       </div>
       {!session?.host && links.length > 0 && (

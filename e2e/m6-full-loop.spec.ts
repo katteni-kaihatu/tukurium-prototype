@@ -10,7 +10,7 @@ import {
 } from "./helpers";
 
 // M6：「銃と的のミニゲーム」を 3 人で一周する
-// 作る → 一緒に編集 → セッションに出して遊ぶ → 遊んでいる横で改造して適用 → コミット → 作品として公開 → ライブラリから置く
+// 作る → 一緒に編集 → セッションに出して遊ぶ → 遊んでいる横で改造して適用 → コミット → リリース → ライブラリから置く
 
 test.describe.configure({ timeout: 240_000 });
 const panel = (page: Page, name: string) => page.locator(`section[aria-label="${name}"]`);
@@ -80,7 +80,7 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   const hist = panel(a, "履歴");
   await expect(hist.getByRole("button", { name: /的の名前と威力を調整/ })).toBeVisible();
 
-  // 6. プロジェクトのページで作品として公開し、リリースする（別のタブで）
+  // 6. プロジェクトのページでリリースし、バージョンを出す（別のタブで）
   const repoId = await a.evaluate(() =>
     (window as unknown as { __workspace: any }).__workspace
       .getState()
@@ -88,18 +88,22 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   );
   const web = await a.context().newPage();
   await web.goto(`/p/${repoId}`);
-  await web.getByRole("tab", { name: "Commits" }).click();
-  await expect(web.getByLabel("コミット")).toContainText("共同制作");
-  await web.getByRole("tab", { name: "Releases" }).click();
-  await web.getByRole("button", { name: "作品として公開" }).click();
-  await web.getByRole("button", { name: "最新のコミットからリリース" }).click();
+  await web.getByRole("tab", { name: "履歴" }).click();
+  await expect(web.getByLabel("履歴", { exact: true })).toContainText("共同制作");
+  await web.getByRole("tab", { name: "リリース" }).click();
+  await web.getByRole("button", { name: "リリースする" }).click();
+  await web.getByRole("button", { name: "最新のコミットからバージョンを出す" }).click();
   await expect(web.getByLabel("射撃場 のリリース")).toContainText("v1");
   await web.close();
 
-  // 7. かかおがライブラリから、公開された作品を同じセッションに置く
+  // 7. かかおがライブラリから、リリースを同じセッションに置く
   await c.getByRole("button", { name: "ライブラリ", exact: true }).click();
   const lib = panel(c, "ライブラリ");
-  await lib.getByLabel("作品").getByRole("button", { name: "セッションに置く" }).first().click();
+  await lib
+    .getByLabel("リリース")
+    .getByRole("button", { name: "セッションに置く" })
+    .first()
+    .click();
   await expect(lib.getByLabel("置いた作品")).toContainText("射撃場 v1");
   await expect
     .poll(() =>

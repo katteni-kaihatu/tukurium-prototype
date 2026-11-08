@@ -33,7 +33,7 @@ export class ItemCatalog {
     const work = await this.store.work(workId);
     const visible =
       !!work && (work.owner === user?.id || work.perms.use || work.perms.view || work.perms.fork);
-    if (!work || !visible) throw new HttpError(404, "作品が見つかりません");
+    if (!work || !visible) throw new HttpError(404, "リリースが見つかりません");
     const info = await this.describe(work);
     const repo = await this.store.repo(work.repoId);
     const releases = await Promise.all(
@@ -87,9 +87,9 @@ export class ItemCatalog {
     const work = await this.store.work(workId);
     const release = await this.store.release(releaseId);
     if (!work || !release || release.workId !== work.id)
-      throw new HttpError(404, "作品のリリースが見つかりません");
+      throw new HttpError(404, "リリースのバージョンが見つかりません");
     if (!work.perms.use && work.owner !== user.id)
-      throw new HttpError(403, "この作品を利用する権限がありません");
+      throw new HttpError(403, "このリリースを利用する権限がありません");
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
     if (snapshot.outputs.find((o) => o.id === work.outputId)?.kind !== "item")
       throw new HttpError(400, "所持できるのはアイテムです");
@@ -121,8 +121,8 @@ export class ItemCatalog {
       reason: available
         ? null
         : !work || !release
-          ? "作品のリリースが見つかりません"
-          : "この作品を利用する権限がありません",
+          ? "リリースのバージョンが見つかりません"
+          : "このリリースを利用する権限がありません",
     };
   }
 }

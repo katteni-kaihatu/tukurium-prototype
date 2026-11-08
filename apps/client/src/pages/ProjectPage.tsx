@@ -20,7 +20,7 @@ import styles from "./pages.module.css";
 type Tab = "code" | "commits" | "releases" | "settings";
 
 /** GitHub 風の機能のうち、初版では見た目だけのもの（計画 §9） */
-const LATER = ["Issues", "Pull requests", "Actions", "Branches"];
+const LATER = ["変更提案"];
 
 const shortOid = (oid: string) => oid.slice(0, 7);
 const when = (ts: number) => new Date(ts * 1000).toLocaleString("ja-JP");
@@ -78,7 +78,7 @@ export function ProjectPage({
                 <span style={{ color: "var(--c-ink-4)" }}>/</span>
                 <b>{repo.name}</b>
                 <span className={styles.badge}>
-                  {repo.visibility === "public" ? "Public" : "Private"}
+                  {repo.visibility === "public" ? "公開" : "非公開"}
                 </span>
               </h1>
               {repo.forkedFrom && (
@@ -98,7 +98,7 @@ export function ProjectPage({
                   disabled={!repo.canFork}
                   onClick={() => void fork()}
                 >
-                  Fork
+                  フォーク
                 </button>
                 <button
                   type="button"
@@ -112,9 +112,9 @@ export function ProjectPage({
               <div className={styles.tabs} role="tablist" aria-label="プロジェクト">
                 {(
                   [
-                    ["code", "Code"],
-                    ["commits", "Commits"],
-                    ["releases", "Releases"],
+                    ["code", "リソース"],
+                    ["commits", "履歴"],
+                    ["releases", "リリース"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -148,7 +148,7 @@ export function ProjectPage({
                     aria-selected={tab === "settings"}
                     onClick={() => setTab("settings")}
                   >
-                    Settings
+                    設定
                   </button>
                 )}
               </div>
@@ -217,8 +217,8 @@ function CodeTab({ repo }: { repo: RepoDetail }) {
           ))}
         </ul>
       </section>
-      <aside className={styles.card} aria-label="About">
-        <h2 className={styles.h2}>About</h2>
+      <aside className={styles.card} aria-label="このプロジェクトについて">
+        <h2 className={styles.h2}>このプロジェクトについて</h2>
         <p className={styles.sub}>{repo.description || "（説明はありません）"}</p>
         <h2 className={styles.h2}>アウトプット</h2>
         <ul className={styles.list}>
@@ -267,8 +267,8 @@ function CommitsTab({ repo }: { repo: RepoDetail }) {
     if (open) void api.diff(repo.id, open).then(setDiff);
   }, [repo.id, open]);
   return (
-    <section className={styles.card} aria-label="コミット">
-      <h2 className={styles.h2}>Commits · {commits.length}</h2>
+    <section className={styles.card} aria-label="履歴">
+      <h2 className={styles.h2}>履歴 · {commits.length}</h2>
       <ul className={styles.list}>
         {commits.map((c) => (
           <li key={c.oid} style={{ flexDirection: "column", alignItems: "stretch" }}>
@@ -326,7 +326,7 @@ function kindLabel(kind: string | null): string {
   return (kind && KIND_LABEL[kind]) || "アウトプット";
 }
 
-/** 左はアウトプット、右はそのバージョン。作品はアウトプットごとに一つ。 */
+/** 左はアウトプット、右はそのバージョン。リリースはアウトプットごとに一つ。 */
 function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => void }) {
   const rows = releaseRows(repo);
   const [picked, setPicked] = useState(rows[0]?.key ?? "");
@@ -343,7 +343,7 @@ function ReleasesTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
     }
   };
   return (
-    <section className={styles.card} aria-label="作品とリリース">
+    <section className={styles.card} aria-label="リリースとバージョン">
       <h2 className={styles.h2}>リリース</h2>
       <p className={styles.sub}>
         左のアウトプットを選ぶと、右にそのバージョンが出ます。出したバージョンは、その後の開発では変わりません。
@@ -421,7 +421,7 @@ function ReleaseDetail({
             className={styles.primary}
             onClick={() => void onRun(() => api.release(work.id))}
           >
-            最新のコミットからリリース
+            最新のコミットからバージョンを出す
           </button>
         )}
       </div>
@@ -452,7 +452,7 @@ function ReleaseDetail({
           <WorkTagsEditor work={work} onSaved={onChange} />
           <h3 className={styles.h2}>バージョン · {work.releases.length}</h3>
           {work.releases.length === 0 ? (
-            <p className={styles.sub}>リリースはまだありません。</p>
+            <p className={styles.sub}>バージョンはまだありません。</p>
           ) : (
             <ol className={styles.history}>
               {work.releases.map((release, index) => (
@@ -472,7 +472,7 @@ function ReleaseDetail({
         </>
       ) : (
         <div>
-          <p className={styles.sub}>このアウトプットは、まだ作品として公開していません。</p>
+          <p className={styles.sub}>このアウトプットは、まだリリースしていません。</p>
           {repo.isOwner && row.outputId && (
             <>
               <PublicTagsField value={publishTags} onChange={onTags} />
@@ -492,7 +492,7 @@ function ReleaseDetail({
                     })
                   }
                 >
-                  作品として公開
+                  リリースする
                 </button>
               </div>
             </>
@@ -543,7 +543,7 @@ function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
   };
   return (
     <section className={styles.card} aria-label="設定">
-      <h2 className={styles.h2}>General</h2>
+      <h2 className={styles.h2}>基本</h2>
       <div className={styles.field}>
         <label htmlFor="repo-name">プロジェクト名</label>
         <input
@@ -583,7 +583,7 @@ function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
         </button>
       </div>
       <h2 className={styles.h2}>
-        公開範囲（現在 {repo.visibility === "public" ? "Public" : "Private"}）
+        公開範囲（現在 {repo.visibility === "public" ? "公開" : "非公開"}）
       </h2>
       <div className={styles.row}>
         <button
@@ -597,16 +597,16 @@ function SettingsTab({ repo, onChange }: { repo: RepoDetail; onChange: () => voi
               .then(onChange)
           }
         >
-          {repo.visibility === "public" ? "Private にする" : "Public にする"}
+          {repo.visibility === "public" ? "非公開にする" : "公開にする"}
         </button>
       </div>
-      <h2 className={styles.h2}>Danger Zone</h2>
+      <h2 className={styles.h2}>危険な操作</h2>
       <div className={styles.row}>
         <button type="button" className={styles.btn} disabled title="初版では見た目だけです">
-          Transfer ownership
+          持ち主を移す
         </button>
         <button type="button" className={styles.btn} disabled title="初版では見た目だけです">
-          Delete this repository
+          このプロジェクトを消す
         </button>
       </div>
     </section>

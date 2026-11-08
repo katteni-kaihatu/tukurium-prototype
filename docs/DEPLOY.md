@@ -7,7 +7,7 @@ docker compose の構成（`docker-compose.yml`）を、そのまま Coolify で
 | サービス | 内容 | 保存するもの |
 | --- | --- | --- |
 | `app` | クライアント（静的ファイル）とサーバー（HTTP・WebSocket）。ポート 8787 | `git-data`（リポジトリの Git）、`asset-data`（S3 を使わないときの素材） |
-| `postgres` | PostgreSQL 17 | `pg-data`（利用者、ワークスペースの内容、リポジトリの情報、作品、リリース。セッションは保存しない） |
+| `postgres` | PostgreSQL 17 | `pg-data`（利用者、ワークスペースの内容、リポジトリの情報、リリース、バージョン。セッションは保存しない） |
 
 素材は S3 互換ストレージに置く。S3 の設定がなければ `asset-data` ボリュームに置く。
 
