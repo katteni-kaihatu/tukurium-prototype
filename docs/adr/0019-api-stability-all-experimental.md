@@ -2,7 +2,7 @@
 
 - 状態：採用（2026-11-04）
 - 関連：ADR 0012（権限・authority）、ADR 0016（公式ライブラリ）、ADR 0018（バッグ）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md) の U4（安定性）
+- 詳細計画：ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」の U4（安定性）
 
 ## 背景
 

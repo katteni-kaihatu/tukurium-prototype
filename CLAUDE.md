@@ -1,6 +1,6 @@
 # Tukurium プロトタイプ：開発の約束
 
-ブラウザの 3D 空間で、複数人がアイテムやワールドを作るプロトタイプ。文書の入口は `docs/README.md`、現在の作業は `docs/ROADMAP.md`、決めたことの記録は `docs/adr/`。
+ブラウザの 3D 空間で、複数人がアイテムやワールドを作るプロトタイプ。文書の入口は `docs/README.md`、できることは `docs/FEATURES.md`、ロードマップは `docs/roadmap/`、決めたことの記録は `docs/adr/`。
 
 ## 進め方
 

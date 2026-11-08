@@ -3,7 +3,7 @@
 - 状態：採用（2026-11-03）
 - 追記：公開の印は ADR 0055 で、ライブラリのアウトプットごとの「含めるリソース」に置き換えた
 - 関連：ADR 0007（作品・リリース）、ADR 0010（論理パス・import）、ADR 0013（Package の同一性・版）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md) の U3
+- 詳細計画：ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」の U3
 
 ## 背景
 

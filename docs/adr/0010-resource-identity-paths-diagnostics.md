@@ -2,7 +2,7 @@
 
 - 状態：採用
 - 関連：ADR 0001（QuickJS）、ADR 0006（適用）、ADR 0009（Resources のフォルダ。§3 の「フォルダは並べ方だけ」を一部置き換える）
-- 詳細計画：[`../plans/resource-paths-and-diagnostics.md`](../plans/resource-paths-and-diagnostics.md)
+- 詳細計画：ロードマップの「リソースをパスで迷わず参照し問題をまとめて確かめる」
 
 ## 背景
 

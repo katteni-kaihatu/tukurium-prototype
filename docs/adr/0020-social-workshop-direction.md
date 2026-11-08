@@ -2,7 +2,7 @@
 
 - 状態: 採用（2026-11-05、体験の方向性のみ）
 - 関連: [ADR 0003](0003-panels-2d-3d.md)、[ADR 0005](0005-sessions-identity-host.md)、[ADR 0007](0007-repos-commits-works.md)、[ADR 0019](0019-api-stability-all-experimental.md)
-- 画面仕様: [メインメニューの UI/UX](../plans/social-workshop-experience.md)（初期版実装済み）
+- 画面仕様: [メインメニューの UI/UX](../archive/social-workshop-experience.md)（初期版実装済み）
 - 後続の判断: [ADR 0021](0021-main-menu-window.md)で、五つの画面と左上から開くウィンドウを採用。[ADR 0027](0027-main-menu-integration.md)に初期版の実装結果を集約した。
 
 ## 背景

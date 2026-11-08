@@ -2,7 +2,7 @@
 
 - 状態：採用（2026-11-04）
 - 関連：ADR 0012（権限）、ADR 0013（Package の同一性）、ADR 0015（最小の Library Package）
-- 詳細計画：[`../plans/ugc-api-library-permissions.md`](../plans/ugc-api-library-permissions.md) の U4
+- 詳細計画：ロードマップの「別々の作品を中身を壊さず組み合わせて部品として使う」の U4
 
 ## 背景
 
