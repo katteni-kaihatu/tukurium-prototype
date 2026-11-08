@@ -88,9 +88,9 @@ test("3 人で、作って・遊んで・改造して・公開するまでを一
   );
   const web = await a.context().newPage();
   await web.goto(`/p/${repoId}`);
-  await web.getByRole("tab", { name: "Commits" }).click();
-  await expect(web.getByLabel("コミット")).toContainText("共同制作");
-  await web.getByRole("tab", { name: "Releases" }).click();
+  await web.getByRole("tab", { name: "履歴" }).click();
+  await expect(web.getByLabel("履歴", { exact: true })).toContainText("共同制作");
+  await web.getByRole("tab", { name: "リリース" }).click();
   await web.getByRole("button", { name: "リリースする" }).click();
   await web.getByRole("button", { name: "最新のコミットからバージョンを出す" }).click();
   await expect(web.getByLabel("射撃場 のリリース")).toContainText("v1");
