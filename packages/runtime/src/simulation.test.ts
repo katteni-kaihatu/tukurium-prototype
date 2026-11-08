@@ -191,10 +191,11 @@ describe("Simulation：System の扱い", () => {
       { realm: "r" },
     );
     sim.step(0.1);
-    const child = sim.world.entityIds().find((id) => id !== "e1");
+    const child = sim.world.entityIds().find((id) => id.startsWith("rt:"));
+    expect(child && sim.world.parentOf(child)).toBe("__root");
     expect(child && sim.world.get(child, "ks_c")?.n).toBe(42);
     sim.step(0.1);
-    expect(sim.world.entityIds()).toEqual(["e1"]);
+    expect(sim.world.entityIds()).toEqual(["__root", "e1"]);
   });
 
   it("動く剛体は重力で落ち、床にぶつかると onCollision が呼ばれる", async () => {
@@ -500,19 +501,24 @@ describe("Simulation：Transform は初期値からのずれ", () => {
     return snap;
   };
 
-  it("再生の位置が初期値なら、Transform は付かない", async () => {
+  it("再生の位置が初期値なら、中の Transform は付かない", async () => {
     sim = await Simulation.create(bare(), "out_main", { realm: "r" });
+    expect(sim.world.parentOf("root")).toBe("__root");
+    expect(sim.world.parentOf("child")).toBe("root");
     expect(sim.world.hasState("root", BUILTIN.Transform)).toBe(false);
     expect(sim.world.hasState("child", BUILTIN.Transform)).toBe(false);
+    // 動作上の親は、ずれが無くても姿勢を持つ（あとからワークスペースを動かすため）
+    expect(sim.world.get("__root", BUILTIN.Transform)?.position).toEqual([0, 0, 0]);
+    expect(sim.world.get("__root", BUILTIN.Transform)?.rotation).toEqual([0, 0, 0]);
   });
 
-  it("配置の位置は、初期値にそのずれを足したものになる", async () => {
+  it("配置の位置は動作上の親に残り、中のローカル座標は変わらない", async () => {
     const withDefault = bare();
     const root = withDefault.entities[0];
     if (!root) throw new Error("root がない");
     root.states = {
       ...root.states,
-      [BUILTIN.Transform]: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      [BUILTIN.Transform]: { position: [1, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     };
     sim = await Simulation.createSession();
     sim.addPart({
@@ -529,14 +535,19 @@ describe("Simulation：Transform は初期値からのずれ", () => {
       outputId: "out_main",
       snapshot: withDefault,
       position: [3, 1, -2],
-      yaw: 0,
+      yaw: Math.PI / 2,
     });
-    expect(sim.world.get("a/root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
-    expect(sim.world.get("a/root", BUILTIN.Transform)?.rotation).toEqual([0, 0, 0]);
-    expect(sim.world.get("a/root", BUILTIN.Transform)?.scale).toEqual([1, 1, 1]);
-    expect(sim.world.get("b/root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
-    // 子は親からのずれがないので、Transform は付かない
+    expect(sim.world.parentOf("a/root")).toBe("a/__root");
+    expect(sim.world.get("a/__root", BUILTIN.Transform)?.position).toEqual([3, 1, -2]);
+    expect(sim.world.hasState("a/root", BUILTIN.Transform)).toBe(false);
     expect(sim.world.hasState("a/child", BUILTIN.Transform)).toBe(false);
+    // 中に位置があっても、配置の位置は足さず、親からのずれのまま
+    expect(sim.world.get("b/root", BUILTIN.Transform)?.position).toEqual([1, 0, 0]);
+    expect(sim.world.get("b/__root", BUILTIN.Transform)?.rotation).toEqual([0, 90, 0]);
+    const seen = worldTransform(sim.world, "b/root").position.toArray();
+    expect(seen[0]).toBeCloseTo(3);
+    expect(seen[1]).toBeCloseTo(1);
+    expect(seen[2]).toBeCloseTo(-3);
   });
 });
 

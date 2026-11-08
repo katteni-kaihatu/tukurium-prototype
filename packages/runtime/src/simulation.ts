@@ -40,7 +40,15 @@ import {
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { HOST_ONLY_CONTRACTS, isContractName, parseContractPayload } from "./contracts";
-import { equippedBy, equipper, grabbedBy, isInHand } from "./holding";
+import {
+  equippedBy,
+  equipper,
+  grabbedBy,
+  isAuthoredTop,
+  isInHand,
+  isSpaceRoot,
+  SPACE_ROOT_ID,
+} from "./holding";
 import { type HostArgs, parseHostArgs } from "./hostApi";
 import { HOST_API_SPEC } from "./hostApiSpec";
 import { type CollisionEvent, initPhysics, Physics } from "./physics";
@@ -128,7 +136,7 @@ export interface PartSpec {
   snapshot: ProjectSnapshot;
   /** 依存の中身（制作データの依存ごとの解決。ないものは使えない依存になる。ADR 0015） */
   packages?: PackageResolution[];
-  /** 配置の位置と向き（ルートの Entity に足す） */
+  /** 配置の位置と向き（動作上の親 Entity の姿勢。中の Entity には足さない） */
   position: Vec3;
   yaw: number;
   /**
@@ -295,6 +303,8 @@ export type HostName = (typeof HOST_API)[number];
  *
  * - ワークスペースの再生では、1 つのアウトプットをそのまま（ID を付け替えずに）実行する（create）。
  * - セッションでは、複数のリポジトリのアウトプットを「配置」として同じ世界に置く（createSession / addPart）。
+ *   どちらの実行でも、アイテムとワールドには動作上の親 Entity を一つ作る。配置の位置と向きは
+ *   その親だけが持ち、中の Entity の姿勢は制作データのまま（親からのずれ）にする（ADR 0057）。
  *   Entity の ID は配置ごと（「配置ID/EntityID」）、KokoState とマテリアルの ID はリポジトリごと
  *   （「領域:ID」）に付け替え、KokoState の名前はリポジトリごとのスコープで引く。物理とイベントは共通なので、
  *   別のリポジトリの銃で別のリポジトリの的を撃てる。
@@ -991,7 +1001,7 @@ export class Simulation {
     let target: EntityId | null = hit?.entity ?? null;
     while (target && !this.world.hasState(target, BUILTIN.Grabbable))
       target = this.world.parentOf(target);
-    if (!target || this.world.parentOf(target) !== null) return true;
+    if (!target || !isAuthoredTop(this.world, target)) return true;
     // ほかの人が持っている・装備している物は取れない
     if (isInHand(this.world, target)) return true;
     const grab = this.world.get(target, BUILTIN.Grabbable);
@@ -1026,8 +1036,7 @@ export class Simulation {
     while (target && !this.world.hasState(target, BUILTIN.EquipmentTool))
       target = this.world.parentOf(target);
     // 装備できるのは、いちばん上の Entity で、誰も持っていない・装備していない物だけ
-    if (!target || this.world.parentOf(target) !== null || isInHand(this.world, target))
-      return true;
+    if (!target || !isAuthoredTop(this.world, target) || isInHand(this.world, target)) return true;
     const part = this.partOf(target);
     if (this.multi && part && this.exposureOf(part) !== "interactive") return true;
     const tool = this.world.get(target, BUILTIN.EquipmentTool);
@@ -1150,7 +1159,7 @@ export class Simulation {
     held.rotation = pose.rotation;
   }
 
-  /** 配置の Entity を World に作る（ID の付け替え、ルートへの配置の位置・向き） */
+  /** 配置の Entity を World に作る（ID の付け替え、動作上の親に配置の位置・向き） */
   private instantiate(part: Part): void {
     const { world, names } = buildWorld(
       part.snapshot,
@@ -1161,22 +1170,24 @@ export class Simulation {
       ]),
     );
     const snap = world.snapshot();
-    const cos = Math.cos(part.yaw);
-    const sin = Math.sin(part.yaw);
-    const moved = part.yaw !== 0 || part.position.some((v) => v !== 0);
-    const place = (p: Vec3, r: Vec3) => ({
-      position: [
-        part.position[0] + p[0] * cos + p[2] * sin,
-        part.position[1] + p[1],
-        part.position[2] - p[0] * sin + p[2] * cos,
-      ] as Vec3,
-      rotation: [r[0], r[1] + (part.yaw * 180) / Math.PI, r[2]] as Vec3,
+    // アイテムとワールドの座標の親。配置の位置と向きはここだけに置く（ADR 0057）
+    const rootId = this.eid(part, SPACE_ROOT_ID);
+    if (this.world.has(rootId)) this.world.destroy(rootId);
+    this.world.spawn(rootId, null);
+    this.world.add(rootId, BUILTIN.Transform, {
+      position: [part.position[0], part.position[1], part.position[2]],
+      rotation: [0, (part.yaw * 180) / Math.PI, 0],
+      scale: [1, 1, 1],
     });
+    const outputName = part.snapshot.outputs.find((o) => o.id === part.outputId)?.name;
+    this.names.set(rootId, outputName || part.outputId);
+    part.entities.add(rootId);
     for (const e of snap.entities) {
       const id = this.eid(part, e.id);
+      // 予約した ID は、動作上の親に使う
+      if (id === rootId) continue;
       if (this.world.has(id)) this.world.destroy(id);
-      this.world.spawn(id, e.parent === null ? null : this.eid(part, e.parent));
-      let sawTransform = false;
+      this.world.spawn(id, e.parent === null ? rootId : this.eid(part, e.parent));
       for (const [koko, values] of Object.entries(e.states)) {
         const k = this.kid(part.realm, koko);
         if (!this.registry.get(k)) continue;
@@ -1188,21 +1199,7 @@ export class Simulation {
           if (f.type === "entity" && typeof v[f.id] === "string")
             v[f.id] = this.eid(part, v[f.id] as string);
         }
-        if (koko === BUILTIN.Transform) sawTransform = true;
-        if (koko === BUILTIN.Transform && e.parent === null && moved) {
-          const placed = place(
-            (v.position as Vec3 | undefined) ?? [0, 0, 0],
-            (v.rotation as Vec3 | undefined) ?? [0, 0, 0],
-          );
-          v.position = placed.position;
-          v.rotation = placed.rotation;
-        }
         this.world.add(id, k, v);
-      }
-      // 付いていなければ初期値。ルートだけ、その初期値に配置の位置と向きを足して残す
-      if (!sawTransform && e.parent === null && moved) {
-        const placed = place([0, 0, 0], [0, 0, 0]);
-        this.world.add(id, BUILTIN.Transform, { ...placed, scale: [1, 1, 1] });
       }
       this.names.set(id, names.get(e.id) ?? e.id);
       part.entities.add(id);
@@ -1553,11 +1550,16 @@ export class Simulation {
         return true;
       },
       "world.find": ([name]) => {
-        for (const [id, n] of this.names) if (n === name && own(id)) return id;
+        for (const [id, n] of this.names) if (n === name && own(id) && !isSpaceRoot(id)) return id;
         return null;
       },
       "world.spawn": ([desc]) => {
-        const parent = own(desc?.parent) ? desc.parent : null;
+        const space = callers[0] ? this.eid(callers[0], SPACE_ROOT_ID) : null;
+        const parent = own(desc?.parent)
+          ? desc.parent
+          : space && this.world.has(space)
+            ? space
+            : null;
         const id = this.world.spawn(undefined, parent);
         this.names.set(id, desc?.name ?? id);
         // 作った Entity は、呼んだ System の配置のものにする
@@ -1573,7 +1575,8 @@ export class Simulation {
         return id;
       },
       "world.destroy": ([id]) => {
-        if (own(id)) this.world.destroy(id);
+        // 動作上の親を消すと、中の Entity も一緒に消える
+        if (own(id) && !isSpaceRoot(id)) this.world.destroy(id);
         return undefined;
       },
       "bag.add": ([type, values]) => {

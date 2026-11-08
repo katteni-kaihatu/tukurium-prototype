@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { type LogEntry, Simulation } from "./simulation";
 import { inputWithTools } from "./testInput";
+import { worldTransform } from "./transform";
 
 let sim: Simulation | undefined;
 afterEach(() => {
@@ -99,7 +100,7 @@ describe("セッションの世界（複数の配置）", () => {
     );
     const time = sim.time;
     const ownership = sim.partEntitiesSnapshot();
-    expect(world.entities).toHaveLength(2);
+    expect(world.entities).toHaveLength(3);
     sim.dispose();
     sim = await Simulation.createSession();
     sim.addPart(part);
@@ -114,7 +115,7 @@ describe("セッションの世界（複数の配置）", () => {
     sim.addPart(part);
     sim.restore(world, names, time, ownership);
     sim.resetPart("p");
-    expect(sim.world.entityIds()).toEqual(["p/original"]);
+    expect(sim.world.entityIds()).toEqual(["p/__root", "p/original"]);
     sim.removePart("p");
     expect(sim.world.entityIds()).toEqual([]);
   });
@@ -178,7 +179,9 @@ describe("セッションの世界（複数の配置）", () => {
   it("別のリポジトリの銃で、別のリポジトリの的を撃てる。配置の位置が反映される", async () => {
     const logs: LogEntry[] = [];
     const s = await session(logs);
-    expect(s.world.get("r1/ent_target2", BUILTIN.Transform)?.position).toEqual([0, 1.5, -7]);
+    // 的の位置は制作データのまま。配置の -2 は動作上の親が持つ
+    expect(s.world.get("r1/ent_target2", BUILTIN.Transform)?.position).toEqual([0, 1.5, -5]);
+    expect(worldTransform(s.world, "r1/ent_target2").position.toArray()).toEqual([0, 1.5, -7]);
     inputWithTools(s, fire([0, 1.5, 0], [0, 0, -1]));
     s.step(1 / 60);
     expect(ammo(s)).toBe(11);
