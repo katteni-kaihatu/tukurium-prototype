@@ -50,7 +50,9 @@ describe("IncrementalCheck", () => {
     f.codes.set("a", "bad").set("b", "ok");
     c.update(snap({ a: "bad", b: "ok" }), 1);
     await c.check(1);
+    expect(c.hasPending()).toBe(false);
     c.markAll();
+    expect(c.hasPending()).toBe(true);
     expect(versions(c)).toEqual({ a: 1 });
     expect(await c.check(1)).toBe(true);
     expect(f.calls).toEqual([

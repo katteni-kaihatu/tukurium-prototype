@@ -54,6 +54,11 @@ export class IncrementalCheck {
     for (const s of this.snap?.systems ?? []) this.pending.set(s.id, this.seq);
   }
 
+  /** 調べ直しの印が付いた System があるか */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   /** 印の付いた System を調べる。結果を受け取れたら true */
   async check(version: number): Promise<boolean> {
     const targets = [...this.pending];

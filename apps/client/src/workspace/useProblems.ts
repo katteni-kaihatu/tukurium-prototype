@@ -43,6 +43,7 @@ export function useScriptCheck(): void {
     useWorkspace.setState({ checkProblems: checker.sets() });
     const timer = setTimeout(
       () => {
+        if (!checker.hasPending()) return;
         useWorkspace.setState({ checking: true });
         void checker.check(rev).then((accepted) => {
           if (useWorkspace.getState().project !== project) return;
