@@ -1,6 +1,7 @@
 import {
   gunAndTargetSample,
   marubatsuSample,
+  NEW_SYSTEM_CODE,
   type OfficialLibrary,
   officialLibraries,
   type PackageDependency,
@@ -144,6 +145,10 @@ describe("公式のもの（ADR 0058：公式のものは型の誤りなく書�
     expect(errors(referenceGunAndTarget(dep(combat)), resolved(combat))).toEqual([]);
     expect(errors(referenceDoorAndSwitch(dep(interaction)), resolved(interaction))).toEqual([]);
     expect(errors(referenceKeyAndDoor(dep(items)), resolved(items))).toEqual([]);
+  });
+
+  it("新しい System の雛形は、型の誤りなしで始まる", () => {
+    expect(errors(withSystem(NEW_SYSTEM_CODE))).toEqual([]);
   });
 
   it("マルバツ", () => {

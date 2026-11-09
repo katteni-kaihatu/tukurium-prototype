@@ -13,4 +13,7 @@ export default defineConfig({
     },
   },
   build: { target: "es2022", sourcemap: true },
+  // 型を確かめる Worker で初めて読む TypeScript（ADR 0058）を、開発サーバーの起動時に取り込んでおく。
+  // 取り込んでいないと、初めて型を確かめたときに Vite が取り込み直してページを読み込み直す
+  optimizeDeps: { include: ["typescript6", "sucrase"] },
 });

@@ -42,6 +42,14 @@
 - エラーの行番号はスタックの `<領域>/<System ID>.js:<行>` から取る（`lineInStack`）。
 - 1 ステップの重さの大半はEntity の値を JSON にして VM に渡す部分。計測は `pnpm bench:sim`。
 
+### 利用者のスクリプトの TypeScript（ADR 0058）
+
+- 利用者のスクリプトの型を確かめる TypeScript は 6.0 系で、リポジトリの開発に使う TypeScript 7（Go の版。ブラウザで動かない）とは別に入れている。同じ名前の `typescript` では二つの版を一つの package.json に書けないので、`typescript6`（`npm:typescript@6.0.3`）という名前で入れ、`import ts from "typescript6"` で読む。
+- 日本語の型の誤りの文は、TypeScript の公開の型に無い `setLocalizedDiagnosticMessages` で差し替えている。版を上げるときは、この関数が残っているかを `packages/typecheck` のテスト（文が日本語になるか）で確かめる。
+- 型を消すのは sucrase。型を消しても行の数は変わらないが、行の中の位置はずれる。import のパスの範囲は `rangeInSource()` で元のコードの範囲に戻してから書き換える。
+- ブラウザでは型を確かめる処理を Worker（`typecheck.worker.ts`）に入れ、TypeScript の本体（約 4.7 MB）を画面の本体に入れない。ワークスペースの準備が終わる前に制作データを書き換えても、型の確かめは走らない（確かめ用のスクリプトでは少し待ってから書き換える）。
+- 開発サーバー（Vite）は、Worker で初めて読む `typescript6` をその場で取り込み直し、ページを読み込み直してしまう（背骨の E2E の m1 が途中で落ちた）。`apps/client/vite.config.ts` の `optimizeDeps.include` に入れて、起動時に取り込んでおく。
+
 ## 物理（Rapier）
 
 - Collider は物理を 1 回進めるまでレイキャストに当たらない。そのため各ステップでは物理を先に進めてから、入力とスクリプトを処理する。
