@@ -20,7 +20,7 @@ import {
 import { useEffect, useMemo, useRef } from "react";
 import { IncrementalCheck } from "./incrementalCheck";
 import { resolvePackagePool, resolvePackages } from "./packages";
-import { checkScripts, type Problem, trackErrorPrints } from "./problems";
+import { checkScripts, type Problem, runSetsByChanges, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
 
 /** 制作データが変わるたびに、影響を受ける System だけを（少し待って）確かめ、「問題」を更新する */
@@ -63,9 +63,18 @@ export function useScriptCheck(): void {
 /** いまのスクリプトの問題の一覧（current → stale、実行して止まったもの → 編集中の確認の順） */
 export function useProblems(): Problem[] {
   const run = useWorkspace((s) => s.runProblems);
+  const runSnap = useWorkspace((s) => s.runSnapshot);
+  const project = useWorkspace((s) => s.project);
   const check = useWorkspace((s) => s.checkProblems);
   const rev = useWorkspace((s) => s.rev);
-  return useMemo(() => viewDiagnostics([run, ...check], rev), [run, check, rev]);
+  return useMemo(
+    () =>
+      viewDiagnostics(
+        [...runSetsByChanges(run, runSnap, project?.snapshot() ?? null, rev), ...check],
+        rev,
+      ),
+    [run, runSnap, project, check, rev],
+  );
 }
 
 /**

@@ -87,6 +87,8 @@ interface WorkspaceState {
   checking: boolean;
   /** 実行して止まった System と、Play を始めたときの版（次の Play まで残す。Stop しても消さない） */
   runProblems: ObservedDiagnostics;
+  /** Play を始めたときの制作データ（実行の問題が、その後の変更で古くなったかを依存で決める） */
+  runSnapshot: ProjectSnapshot | null;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
   jumpTo: { systemId: string; line: number | null; seq: number } | null;
   /** Inspector で開いて目立たせる Entity の KokoState と欄（問題の場所から移るとき。seq は何度でも移れるように） */
@@ -232,6 +234,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     recheckSeq: 0,
     checking: false,
     runProblems: NO_DIAGNOSTICS,
+    runSnapshot: null,
     jumpTo: null,
     focusField: null,
     showProblem: (p) => {
@@ -323,6 +326,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         checkProblems: [],
         checking: false,
         runProblems: NO_DIAGNOSTICS,
+        runSnapshot: null,
         jumpTo: null,
         focusField: null,
         sessionOpen: false,
@@ -363,6 +367,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         checkProblems: [],
         checking: false,
         runProblems: NO_DIAGNOSTICS,
+        runSnapshot: null,
         jumpTo: null,
         focusField: null,
         openSystems: [],
@@ -693,6 +698,7 @@ useWorkspace.subscribe((s, prev) => {
   if (s.mode !== "edit" && prev.mode === "edit") {
     useWorkspace.setState({
       runProblems: { diagnostics: runDiagnostics(s.systemStatus), observedVersion: s.rev },
+      runSnapshot: s.project?.snapshot() ?? null,
     });
   } else if (
     s.systemStatus !== prev.systemStatus &&

@@ -2,11 +2,14 @@ import {
   compileSystem,
   type Diagnostic,
   type DiagnosticView,
+  dirtyRefs,
   inferCapabilities,
   makeDiagnostic,
+  type ObservedDiagnostics,
   type PackageDependency,
   type PackageResolution,
   type ProjectDoc,
+  type ProjectSnapshot,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import type { SystemStatus } from "@tukurium/runtime";
@@ -191,4 +194,29 @@ export function mergeRun(prev: readonly Diagnostic[], next: readonly Diagnostic[
 function lineOf(code: string, text: string): number | null {
   const i = code.indexOf(`"${text}"`);
   return i < 0 ? null : code.slice(0, i).split("\n").length;
+}
+
+/**
+ * 実行の問題の新しさを、依存で決める（計画 Phase 3）。Play を始めたあとに制作データを変えても、
+ * その変更が届かない System の問題は今の版のまま（current）にし、届いた System の問題だけを
+ * 編集前の結果（stale）にする。runSnap は Play を始めたときの制作データ。
+ */
+export function runSetsByChanges(
+  run: ObservedDiagnostics,
+  runSnap: ProjectSnapshot | null,
+  now: ProjectSnapshot | null,
+  version: number,
+): ObservedDiagnostics[] {
+  if (run.diagnostics.length === 0 || run.observedVersion === version || !runSnap || !now)
+    return [run];
+  const dirty = new Set(
+    dirtyRefs(runSnap, now)
+      .filter((r) => r.kind === "system")
+      .map((r) => r.id),
+  );
+  const touched = (d: Diagnostic) => d.subject.kind !== "system" || dirty.has(d.subject.id);
+  return [
+    { diagnostics: run.diagnostics.filter((d) => !touched(d)), observedVersion: version },
+    { diagnostics: run.diagnostics.filter(touched), observedVersion: run.observedVersion },
+  ];
 }
