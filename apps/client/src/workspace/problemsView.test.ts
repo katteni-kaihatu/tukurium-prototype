@@ -6,6 +6,7 @@ import {
   folderOfPath,
   groupProblems,
   type ProblemContext,
+  problemDetail,
 } from "./problemsView";
 
 const view = (
@@ -45,6 +46,7 @@ const ctx: ProblemContext = {
     ({ sys_a: ["out_gun"], ent_1: ["out_range"] })[d.subject.id as "sys_a" | "ent_1"] ?? [],
   folderOf: (d) =>
     ({ sys_a: "/Combat", k_gun: "/Combat/States" })[d.subject.id as "sys_a" | "k_gun"] ?? null,
+  refName: (r) => (r.id === "k_gun" ? "/Combat/States/Gun.koko" : r.id),
   outputName: (id) => ({ out_gun: "銃", out_range: "射撃場" })[id as "out_gun"] ?? id,
 };
 
@@ -147,5 +149,39 @@ describe("folderOfPath", () => {
     expect(folderOfPath("/Combat/States/Gun.koko")).toBe("/Combat/States");
     expect(folderOfPath("/Gun.koko")).toBe("/");
     expect(folderOfPath(null)).toBeNull();
+  });
+});
+
+describe("problemDetail", () => {
+  it("対象・場所・関係するもの・時点・出どころ・コードを、分かるものだけ出す", () => {
+    const d: DiagnosticView = {
+      ...makeDiagnostic({
+        code: "query-kokostate-missing",
+        severity: "error",
+        phase: "authoring",
+        provider: "script",
+        subject: { kind: "system", id: "sys_a" },
+        location: { kind: "script", line: 4, symbol: "Gun" },
+        related: [{ kind: "kokostate", id: "k_gun" }],
+        message: "見つかりません",
+      }),
+      freshness: "stale",
+    };
+    expect(problemDetail(d, ctx)).toEqual([
+      ["対象", "/Combat/Shoot.js"],
+      ["場所", "4 行目 「Gun」"],
+      ["関係するもの", "/Combat/States/Gun.koko"],
+      ["時点", "作っている途中（編集前の結果）"],
+      ["出どころ", "スクリプト"],
+      ["種類のコード", "query-kokostate-missing"],
+    ]);
+  });
+
+  it("欄の場所はパスでつなぐ", () => {
+    const rows = problemDetail(
+      { ...ent, location: { kind: "property", path: ["Mesh", "material"] } },
+      ctx,
+    );
+    expect(rows).toContainEqual(["場所", "Mesh › material"]);
   });
 });

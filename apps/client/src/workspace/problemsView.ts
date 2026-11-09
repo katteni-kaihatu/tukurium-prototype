@@ -1,4 +1,4 @@
-import type { DiagnosticView, Severity } from "@tukurium/repo-model";
+import type { DiagnosticView, ResourceRef, Severity } from "@tukurium/repo-model";
 
 /**
  * 問題パネルの絞り込みとまとめ方（計画 §8.2）。画面から切り離した純粋関数にして、テストで守る。
@@ -31,6 +31,8 @@ export interface ProblemContext {
   /** 対象が入っているフォルダの論理パス。フォルダに入らない対象（Entity・アウトプット）は null */
   folderOf(d: DiagnosticView): string | null;
   outputName(id: string): string;
+  /** 関係するリソースの呼び方（詳細に出す） */
+  refName(ref: ResourceRef): string;
 }
 
 export const DEFAULT_FILTER: ProblemFilter = {
@@ -138,4 +140,30 @@ export function folderOfPath(path: string | null): string | null {
   if (path === null) return null;
   const i = path.lastIndexOf("/");
   return i <= 0 ? "/" : path.slice(0, i);
+}
+
+/**
+ * 問題の詳細（計画 §8.4）。見出しと中身の組を、出す順に返す。分からない項目は出さない。
+ */
+export function problemDetail(d: DiagnosticView, ctx: ProblemContext): [string, string][] {
+  const rows: [string, string][] = [["対象", ctx.subjectOf(d)]];
+  const loc = d.location;
+  if (loc?.kind === "script") {
+    const at = [loc.line ? `${loc.line} 行目` : null, loc.symbol ? `「${loc.symbol}」` : null]
+      .filter(Boolean)
+      .join(" ");
+    if (at) rows.push(["場所", at]);
+  } else if (loc?.kind === "property" && loc.path.length > 0) {
+    rows.push(["場所", loc.path.join(" › ")]);
+  }
+  if (d.related.length > 0) rows.push(["関係するもの", d.related.map(ctx.refName).join("、")]);
+  if (d.detail) rows.push(["説明", d.detail]);
+  rows.push([
+    "時点",
+    `${d.phase === "runtime" ? "実行" : "作っている途中"}${d.freshness === "stale" ? "（編集前の結果）" : ""}`,
+  ]);
+  if (d.count && d.count > 1) rows.push(["回数", `${d.count} 回`]);
+  rows.push(["出どころ", PROVIDER_LABEL[d.provider] ?? d.provider]);
+  rows.push(["種類のコード", d.code]);
+  return rows;
 }

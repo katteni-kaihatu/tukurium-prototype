@@ -594,3 +594,38 @@ div.problem:hover {
   font-weight: 600;
   color: var(--c-ink-2);
 }
+
+/* 問題の一行と「詳しく」のボタン */
+.problemRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.problemRow > .problem {
+  flex: 1;
+  min-width: 0;
+}
+
+.problemDetail {
+  display: grid;
+  gap: 2px;
+  margin: 0 30px 6px 10px;
+  font-size: 12px;
+  color: var(--c-ink-2);
+}
+
+.problemDetail > div {
+  display: grid;
+  grid-template-columns: 7em 1fr;
+  gap: 6px;
+}
+
+.problemDetail dt {
+  color: var(--c-ink-3);
+}
+
+.problemDetail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
