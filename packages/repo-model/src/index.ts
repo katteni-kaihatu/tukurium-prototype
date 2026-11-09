@@ -9,7 +9,6 @@ export * from "./official";
 export * from "./packageDependency";
 export * from "./packageManifest";
 export * from "./projectDoc";
-export * from "./queryInfo";
 export * from "./resourcePath";
 export * from "./sampleModels";
 export * from "./samples";

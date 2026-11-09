@@ -19,11 +19,15 @@ function base(): ProjectSnapshot {
       { id: "ks_hp", name: "Health", fields: [] },
     ],
     systems: [
-      { id: "sys_shoot", name: "Shoot", code: 'export default { query: { with: ["Gun"] } }' },
+      {
+        id: "sys_shoot",
+        name: "Shoot",
+        code: 'import Gun from "./Gun.koko";\nexport default { query: { with: [Gun] } }',
+      },
       {
         id: "sys_hp",
         name: "Hp",
-        code: 'export default { query: { with: ["Health", "Shield"] } }',
+        code: 'import Health from "./Health.koko";\nimport Shield from "./Shield.koko";\nexport default { query: { with: [Health, Shield] } }',
       },
     ],
     materials: [{ id: "m", name: "Wood", color: "#fff", roughness: 1, metalness: 0, map: "img" }],
@@ -73,13 +77,14 @@ describe("ProjectDependencyGraph", () => {
     ]);
   });
 
-  it("System → Query の KokoState（見つからない名前は名前の節で持つ）", () => {
+  it("System → import した KokoState とパスの構造（見つからない import はパスの構造だけ）", () => {
     expect(keys(g.dependenciesOf({ kind: "system", id: "sys_shoot" }))).toEqual([
-      "name:kokostate/Gun",
+      "kokostate:ks_gun",
+      "name:paths",
     ]);
     expect(keys(g.dependenciesOf({ kind: "system", id: "sys_hp" }))).toEqual([
-      "name:kokostate/Health",
-      "name:kokostate/Shield",
+      "kokostate:ks_hp",
+      "name:paths",
     ]);
   });
 
@@ -104,14 +109,12 @@ describe("usersOf", () => {
     expect(keys(usersOf(g, { kind: "system", id: "sys_shoot" }))).toEqual(["output:out"]);
   });
 
-  it("KokoState は、持っている Entity と、名前で Query を書いた System を合わせる", () => {
-    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_gun" }, "Gun"))).toEqual([
+  it("KokoState は、持っている Entity と、import した System を合わせる", () => {
+    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_gun" }))).toEqual([
       "entity:e",
       "system:sys_shoot",
     ]);
-    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_hp" }, "Health"))).toEqual([
-      "system:sys_hp",
-    ]);
+    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_hp" }))).toEqual(["system:sys_hp"]);
   });
 });
 
@@ -119,7 +122,7 @@ describe("増分の無効化", () => {
   it("素材を消すと、関係する Material・Entity（とその子）・アウトプットだけが dirty になる", () => {
     const prev = base();
     const next = { ...base(), assets: [] };
-    // 素材が消えるとパスの構造も変わる（import を書いた System がなければ、誰も依存していない）
+    // 素材が消えるとパスの構造も変わる（import を書いた System は、解決先が変わりうるので調べ直す）
     expect(keys(changedRefs(prev, next))).toEqual(["asset:img", "name:paths"]);
     expect(keys(dirtyRefs(prev, next))).toEqual([
       "asset:img",
@@ -128,6 +131,8 @@ describe("増分の無効化", () => {
       "material:m",
       "name:paths",
       "output:out",
+      "system:sys_hp",
+      "system:sys_shoot",
     ]);
   });
 
@@ -143,16 +148,14 @@ describe("増分の無効化", () => {
     expect(dirty).toContain("output:out");
   });
 
-  it("KokoState の名前を変えると、古い名前・新しい名前を Query に書いた System が dirty になる", () => {
+  it("KokoState の名前を変えると、それを import した System が dirty になる", () => {
     const prev = base();
     const next = base();
     next.kokostates = next.kokostates.map((k) => (k.id === "ks_hp" ? { ...k, name: "Shield" } : k));
-    const dirty = keys(dirtyRefs(prev, next));
-    expect(dirty).toContain("system:sys_hp");
-    expect(dirty).not.toContain("system:sys_shoot");
+    expect(keys(dirtyRefs(prev, next))).toContain("system:sys_hp");
   });
 
-  it("見つからなかった名前の KokoState を作ると、それを書いた System が dirty になる", () => {
+  it("見つからなかった import の KokoState を作ると、それを書いた System が dirty になる", () => {
     const prev = base();
     const next = base();
     next.kokostates = [...next.kokostates, { id: "ks_sh", name: "Shield", fields: [] }];
@@ -179,7 +182,8 @@ describe("import で書いた System の依存", () => {
             ...x,
             code: 'import Gun from "/States/Gun.koko";\nexport default system({ query: { with: [Gun] } });',
           }
-        : x,
+        : // import を書かない System（パスの構造に依存しない）
+          { ...x, code: "export default system({ query: { with: [] } });" },
     );
     return s;
   }

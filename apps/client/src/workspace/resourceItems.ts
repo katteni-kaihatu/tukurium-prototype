@@ -95,11 +95,10 @@ export function itemRef(item: ResItem): GraphRef | null {
   }
 }
 
-/** item を直接使っているもの（依存グラフから。KokoState は名前で書いた Query も含める） */
+/** item を直接使っているもの（依存グラフから） */
 export function usersOfItem(graph: ProjectDependencyGraph, item: ResItem): GraphRef[] {
   const ref = itemRef(item);
-  if (!ref) return [];
-  return usersOf(graph, ref, ref.kind === "kokostate" ? item.name : undefined);
+  return ref ? usersOf(graph, ref) : [];
 }
 
 const USER_LABEL: [GraphRef["kind"], string][] = [

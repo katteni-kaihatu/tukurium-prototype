@@ -3,23 +3,27 @@ import { aimAt, createSessionAndWorkspace, fire, runtimeState, test } from "./he
 
 // M1 の完了条件：一人で、独自の KokoState と System を作り、Play で撃って当てられる（シナリオ 4）
 
-const SHOOT = `export default system({
-  query: { with: ["Gun"] },
+const SHOOT = `import Gun from "./Gun.koko";
+export default system({
+  query: { with: [Gun] },
   onInput(e, ev) {
-    if (ev.action !== "fire" || ev.phase !== "down" || e.Gun.ammo <= 0) return;
-    e.Gun.ammo -= 1;
+    const gun = e.get(Gun);
+    if (ev.action !== "fire" || ev.phase !== "down" || gun.ammo <= 0) return;
+    gun.ammo -= 1;
     const hit = world.raycast(ev.origin, ev.direction, 100);
     if (hit) world.emit(hit.entity, "hit", {});
   },
 });
 `;
 
-const TARGET = `export default system({
-  query: { with: ["Target"] },
+const TARGET = `import Target from "./Target.koko";
+export default system({
+  query: { with: [Target] },
   onEvent(e, ev) {
     if (ev.name === "hit") {
-      e.Target.hp -= 1;
-      log("hit", e.Target.hp);
+      const t = e.get(Target);
+      t.hp -= 1;
+      log("hit", t.hp);
     }
   },
 });

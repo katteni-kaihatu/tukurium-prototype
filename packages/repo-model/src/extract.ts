@@ -67,16 +67,11 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
         if (typeof v === "string" && assetIds.has(v)) out.assets.add(v);
     }
   }
-  // System が使う KokoState（import したもの・Query に名前で書いたもの）
+  // System が使う KokoState（import したもの）
   for (const s of src.systems) {
     if (!out.systems.has(s.id)) continue;
     for (const dep of graph.dependenciesOf({ kind: "system", id: s.id })) {
       if (dep.kind === "kokostate" && !isBuiltin(dep.id)) out.kokostates.add(dep.id);
-      if (dep.kind === "name" && dep.id.startsWith("kokostate/")) {
-        const name = dep.id.slice("kokostate/".length);
-        const def = src.kokostates.find((k) => k.name === name);
-        if (def) out.kokostates.add(def.id);
-      }
     }
   }
   // マテリアルが使う画像
