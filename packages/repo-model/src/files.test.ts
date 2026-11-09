@@ -110,7 +110,7 @@ describe("抽出", () => {
     );
     const gun = out.kokostates.find((k) => k.id === "ks_gun");
     expect(gun?.name).toBe("Gun_2");
-    expect(out.systems.find((s) => s.id === "sys_shoot")?.code).toContain('"Gun_2"');
+    expect(out.systems.find((s) => s.id === "sys_shoot")?.code).toContain('"./Gun_2.koko"');
     expect(out.outputs.map((o) => o.id).sort()).toEqual(["out_gun", "out_range"]);
     expect(out.entities.filter((e) => e.output === "out_gun").map((e) => e.id)).toEqual([
       "ent_gun",
