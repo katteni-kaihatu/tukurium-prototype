@@ -61,3 +61,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0055](0055-library-included-resources.md) | 採用・実装済み | ライブラリは Entity を持たず、含めるリソースをアウトプットごとに選ぶ。公開の印（exports）はなくす | 含めた System が import するのに含めていないものは「要る」と出す |
 | [0056](0056-change-revert-confirm.md) | 採用・実装済み | 変わった欄の戻す印は、出たパネルの左端に置く。文字は出さず、確認してから戻す | 保存パネルと履歴の戻す印は、これまでどおり確認しない |
 | [0057](0057-runtime-space-root.md) | 採用・実装済み | アイテムとワールドは、動作上の親 Entity を一つ持つ。配置の位置と向きはその親だけが持つ | ワークスペースの再生も同じ。中の Transform は制作データのまま |
+| [0058](0058-typescript-scripts.md) | 採用 | スクリプトはすべて TypeScript で書く。型を消すのは sucrase、型を確かめるのは TypeScript 6.0 の Language Service。名前で書いた Query はやめ、`e.get()` は Query に書いた KokoState だけ | 型の誤りでは再生を止めない。ADR 0010 の名前の Query の扱いを置き換える |
