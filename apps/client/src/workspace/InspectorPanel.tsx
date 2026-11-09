@@ -20,9 +20,10 @@ import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
 import { KokoRoleIcon } from "./KokoRoleIcon";
 import { LibraryContents } from "./LibraryContents";
+import { BadgeDot, badgeFor } from "./ProblemBadge";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { packageAliasOf, useSystemQuery } from "./useProblems";
+import { packageAliasOf, useProblemSummary, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
 
 /**
@@ -110,6 +111,7 @@ function Hierarchy() {
   const project = useProject();
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
+  const { hierarchy: problems } = useProblemSummary();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -331,6 +333,7 @@ function Hierarchy() {
             >
               {n.name}
             </button>
+            <BadgeDot badge={badgeFor(problems.get(n.id), "中")} inline />
             {editing && (
               <span className={styles.actions} data-no-drag="">
                 <button
@@ -477,6 +480,7 @@ function Hierarchy() {
             >
               <b>{output?.name ?? "（アウトプットなし）"}</b>
             </button>
+            <BadgeDot badge={badgeFor(problems.get(outputId), "中")} inline />
             <span className={ui.badge}>{output?.kind === "world" ? "world" : "item"}</span>
           </div>
         </li>
