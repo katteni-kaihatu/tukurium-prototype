@@ -115,7 +115,8 @@ export function useWorkspaceProblems(): {
 
 /**
  * Resources と Hierarchy の印に使う件数（計画 §8.6）。制作データの問題と、
- * 今の版のスクリプトの問題を合わせて数える（編集前の古い結果は数えない）。
+ * スクリプトの問題を合わせて数える。編集した直後に印が消えて点滅しないよう、
+ * 確かめ直すまでの編集前の結果も数える。
  * フォルダはその中の問題を、Entity は子の問題を、アウトプットは中の Entity と使う System の問題を数える。
  */
 export function useProblemSummary(): {
@@ -127,11 +128,10 @@ export function useProblemSummary(): {
   const { items, index } = useWorkspaceProblems();
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(() => {
-    const current = items.filter((d) => d.freshness === "current");
     return {
-      resources: index ? summarizeDiagnostics(current, index) : new Map(),
+      resources: index ? summarizeDiagnostics(items, index) : new Map(),
       hierarchy: project
-        ? summarizeHierarchy(current, project.entities(), project.outputs())
+        ? summarizeHierarchy(items, project.entities(), project.outputs())
         : new Map(),
     };
   }, [items, index, project, rev]);
