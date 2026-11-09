@@ -198,6 +198,26 @@ export default system({
     });
     expect(shot.entities[0].states.Gun.ammo).toBe(11);
 
+    // 型の誤りも check で返る（人と同じ。ADR 0058）。型の誤りがあっても simulate は動く
+    await call("create_system", {
+      name: "Typo",
+      code: `import Spinner from "./Spinner.koko";
+export default system({
+  query: { with: [Spinner] },
+  onUpdate(e) { e.get(Spinner).sped = 1; },
+});
+`,
+    });
+    const problems = await call("check");
+    expect(problems).toEqual([
+      expect.objectContaining({
+        severity: "error",
+        code: "ts2551",
+        location: expect.objectContaining({ kind: "script", line: 4 }),
+        message: expect.stringContaining("sped"),
+      }),
+    ]);
+
     // 間違えると、直せる形で返る
     await expect(call("get_entity", { entity: "ない箱" })).rejects.toThrow(/見つかりません/);
     await client.close();
