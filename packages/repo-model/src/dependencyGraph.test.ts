@@ -6,6 +6,7 @@ import {
   type GraphRef,
   ProjectDependencyGraph,
   refKey,
+  usersOf,
 } from "./dependencyGraph";
 import type { ProjectSnapshot } from "./schema";
 
@@ -90,6 +91,26 @@ describe("ProjectDependencyGraph", () => {
       "entity:e",
       "material:m",
       "output:out",
+    ]);
+  });
+});
+
+describe("usersOf", () => {
+  const g = ProjectDependencyGraph.fromSnapshot(base());
+
+  it("直接使っているものだけを返す（名前の節は含めない）", () => {
+    expect(keys(usersOf(g, { kind: "asset", id: "img" }))).toEqual(["material:m"]);
+    expect(keys(usersOf(g, { kind: "material", id: "m" }))).toEqual(["entity:e"]);
+    expect(keys(usersOf(g, { kind: "system", id: "sys_shoot" }))).toEqual(["output:out"]);
+  });
+
+  it("KokoState は、持っている Entity と、名前で Query を書いた System を合わせる", () => {
+    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_gun" }, "Gun"))).toEqual([
+      "entity:e",
+      "system:sys_shoot",
+    ]);
+    expect(keys(usersOf(g, { kind: "kokostate", id: "ks_hp" }, "Health"))).toEqual([
+      "system:sys_hp",
     ]);
   });
 });

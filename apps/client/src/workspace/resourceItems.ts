@@ -1,4 +1,10 @@
-import { BUILTIN, isPackageResourceId, type ProjectDoc } from "@tukurium/repo-model";
+import {
+  type GraphRef,
+  isPackageResourceId,
+  type ProjectDependencyGraph,
+  type ProjectDoc,
+  usersOf,
+} from "@tukurium/repo-model";
 
 /** Resources に並ぶものの種類 */
 export type ResKind =
@@ -70,43 +76,48 @@ export function sortItems(items: ResItem[]): ResItem[] {
   );
 }
 
-/** 「どこで使っているか」の短い説明（詳細表示の Usage） */
-export function usageOf(project: ProjectDoc, item: ResItem, all: ResItem[]): string {
-  const entities = project.entities();
-  const count = (n: number, unit: string, none = "未使用") => (n > 0 ? `${unit} ${n}` : none);
+/** Resources に並ぶものを、依存グラフの節にする（フォルダは節にならない） */
+export function itemRef(item: ResItem): GraphRef | null {
   switch (item.kind) {
     case "folder":
-      return `${all.filter((x) => x.parent === item.id).length} 項目`;
+      return null;
     case "koko":
     case "builtin":
-      return count(
-        entities.filter((e) => item.id in e.states).length,
-        "Entity",
-        "誰も持っていない",
-      );
+      return { kind: "kokostate", id: item.id };
     case "system":
-      return count(
-        project.outputs().filter((o) => o.systems.some((s) => s.id === item.id && s.enabled))
-          .length,
-        "アウトプット",
-        "どこでも有効でない",
-      );
+      return { kind: "system", id: item.id };
     case "material":
-      return count(
-        entities.filter((e) => e.states[BUILTIN.Mesh]?.material === item.id).length,
-        "使用中",
-      );
-    case "model":
-      return count(
-        entities.filter((e) => e.states[BUILTIN.Mesh]?.model === item.id).length,
-        "使用中",
-      );
+      return { kind: "material", id: item.id };
     case "image":
-      return count(project.materials().filter((m) => m.map === item.id).length, "マテリアル");
+    case "model":
     case "audio":
-      return count(
-        entities.filter((e) => e.states[BUILTIN.AudioSource]?.clip === item.id).length,
-        "使用中",
-      );
+      return { kind: "asset", id: item.id };
   }
+}
+
+/** item を直接使っているもの（依存グラフから。KokoState は名前で書いた Query も含める） */
+export function usersOfItem(graph: ProjectDependencyGraph, item: ResItem): GraphRef[] {
+  const ref = itemRef(item);
+  if (!ref) return [];
+  return usersOf(graph, ref, ref.kind === "kokostate" ? item.name : undefined);
+}
+
+const USER_LABEL: [GraphRef["kind"], string][] = [
+  ["entity", "Entity"],
+  ["system", "System"],
+  ["output", "アウトプット"],
+  ["material", "マテリアル"],
+];
+
+/**
+ * 「どこで使っているか」の短い説明（詳細表示の Usage）。使っているものを種類ごとに数える
+ * （例：「Entity 3・System 1」）。フォルダは中の項目の数。
+ */
+export function usageOf(item: ResItem, all: ResItem[], users: readonly GraphRef[]): string {
+  if (item.kind === "folder") return `${all.filter((x) => x.parent === item.id).length} 項目`;
+  const parts = USER_LABEL.flatMap(([kind, label]) => {
+    const n = users.filter((u) => u.kind === kind).length;
+    return n > 0 ? [`${label} ${n}`] : [];
+  });
+  return parts.length > 0 ? parts.join("・") : "未使用";
 }

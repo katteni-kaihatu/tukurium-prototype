@@ -137,6 +137,32 @@ export class ProjectDependencyGraph {
   }
 }
 
+/**
+ * ref を直接使っているもの（Entity・System・アウトプット・マテリアル）。「どこで使われているか」の表示に使う。
+ * KokoState は、名前で書いた Query（移行の間の書き方）も数えるため、kokoName を渡す。
+ * 同じものは一度だけ返す。
+ */
+export function usersOf(
+  graph: ProjectDependencyGraph,
+  ref: GraphRef,
+  kokoName?: string,
+): GraphRef[] {
+  const seen = new Set<string>();
+  const out: GraphRef[] = [];
+  const add = (users: GraphRef[]) => {
+    for (const u of users) {
+      if (u.kind === "name") continue;
+      const k = refKey(u);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(u);
+    }
+  };
+  add(graph.dependentsOf(ref));
+  if (kokoName !== undefined) add(graph.dependentsOf(kokoNameRef(kokoName)));
+  return out;
+}
+
 /** 制作データのリソースを、ref ごとの中身（比べるための文字列）にする */
 function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
   const out = new Map<string, string>();

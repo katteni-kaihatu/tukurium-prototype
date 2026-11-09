@@ -12,10 +12,11 @@ import {
   resourceItems,
   sortItems,
   usageOf,
+  usersOfItem,
 } from "./resourceItems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblemSummary } from "./useProblems";
+import { useDependencyGraph, useProblemSummary } from "./useProblems";
 
 type View = "icon" | "list" | "detail";
 const VIEWS: { id: View; label: string }[] = [
@@ -48,6 +49,7 @@ export function ResourcesPanel() {
   const project = useProject();
   const editing = useCanEdit();
   const { resources: summary } = useProblemSummary();
+  const graph = useDependencyGraph();
   const rev = useWorkspace((s) => s.rev);
   const [cwd, setCwd] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(loadView);
@@ -525,7 +527,9 @@ export function ResourcesPanel() {
                     <span className={styles.rowName}>{it.name}</span>
                   </span>
                   <span>{kindText(it)}</span>
-                  <span className={styles.usage}>{usageOf(project, it, all)}</span>
+                  <span className={styles.usage}>
+                    {usageOf(it, all, graph ? usersOfItem(graph, it) : [])}
+                  </span>
                 </button>
               ))}
             </section>

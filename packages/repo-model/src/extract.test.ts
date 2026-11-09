@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractInto } from "./extract";
+import { collectSelection, extractInto } from "./extract";
 import { packageResourceId } from "./packageDependency";
 import { ResourcePathIndex } from "./resourcePath";
 import type { PackageDependency, ProjectSnapshot } from "./schema";
@@ -163,5 +163,49 @@ describe("ライブラリのアウトプットを取り込む（ADR 0055）", ()
     const gun = out.kokostates.find((k) => k.name === "Gun");
     expect(gun?.id).not.toBe("ks_gun");
     expect(out.outputs.find((o) => o.kind === "library")?.resources).toEqual(["sys_shoot"]);
+  });
+});
+
+describe("取り出すものを依存グラフで集める", () => {
+  const snap: ProjectSnapshot = {
+    version: 1,
+    name: "元",
+    kokostates: [
+      {
+        id: "ks_skin",
+        name: "Skin",
+        fields: [
+          { id: "f_mat", name: "mat", type: "material", default: null },
+          { id: "f_tex", name: "tex", type: "texture", default: null },
+        ],
+      },
+    ],
+    systems: [],
+    materials: [
+      { id: "m_red", name: "Red", color: "#f00", roughness: 1, metalness: 0, map: "img_a" },
+      { id: "m_unused", name: "Unused", color: "#000", roughness: 1, metalness: 0 },
+    ],
+    assets: [
+      { id: "img_a", name: "A", kind: "image", contentType: "image/png" },
+      { id: "img_b", name: "B", kind: "image", contentType: "image/png" },
+    ],
+    outputs: [{ id: "out", name: "箱", kind: "item", systems: [], keep: [] }],
+    entities: [
+      {
+        id: "e",
+        name: "箱",
+        parent: null,
+        output: "out",
+        order: 0,
+        states: { ks_skin: { f_mat: "m_red", f_tex: "img_b" } },
+      },
+    ],
+  };
+
+  it("自作の KokoState の欄で指したマテリアルと画像、マテリアルの画像も持ってくる", () => {
+    const sel = collectSelection(snap, { ...none, outputs: ["out"] });
+    expect(sel.kokostates).toEqual(["ks_skin"]);
+    expect(sel.materials).toEqual(["m_red"]);
+    expect([...sel.assets].sort()).toEqual(["img_a", "img_b"]);
   });
 });
