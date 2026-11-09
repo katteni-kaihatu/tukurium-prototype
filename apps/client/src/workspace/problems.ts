@@ -42,13 +42,11 @@ export function trackErrorPrints(
   known: ReadonlySet<string>,
   items: readonly DiagnosticView[],
 ): { appeared: string[]; known: Set<string> } {
-  const present = new Set(items.filter((d) => d.severity === "error").map((d) => d.fingerprint));
+  // 型の誤りは書いている途中にたくさん出るので、パネルを自動で開く合図にはしない（ADR 0058）
+  const errors = items.filter((d) => d.severity === "error" && d.provider !== "types");
+  const present = new Set(errors.map((d) => d.fingerprint));
   const appeared = [
-    ...new Set(
-      items
-        .filter((d) => d.severity === "error" && d.freshness === "current")
-        .map((d) => d.fingerprint),
-    ),
+    ...new Set(errors.filter((d) => d.freshness === "current").map((d) => d.fingerprint)),
   ].filter((fp) => !known.has(fp));
   const next = new Set([...known].filter((fp) => present.has(fp)));
   for (const fp of appeared) next.add(fp);

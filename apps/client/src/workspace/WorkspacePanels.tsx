@@ -36,7 +36,12 @@ import { SessionLinks } from "./SessionLinks";
 import { useWorkspace } from "./store";
 import { summarize } from "./summary";
 import ui from "./ui.module.css";
-import { useOpenProblemsOnError, usePackageDefinitions, useScriptCheck } from "./useProblems";
+import {
+  useOpenProblemsOnError,
+  usePackageDefinitions,
+  useScriptCheck,
+  useTypeCheck,
+} from "./useProblems";
 
 const MAIN: PanelSpec = {
   id: "ws-main",
@@ -70,6 +75,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const editorFocus = useWorkspace((s) => `${s.activeSystem}:${s.jumpTo?.seq ?? 0}`);
   const hidden = useWorkspace((s) => s.panelsHidden);
   useScriptCheck();
+  useTypeCheck();
   usePackageDefinitions();
   useOpenProblemsOnError();
   const [members, setMembers] = useState(false);

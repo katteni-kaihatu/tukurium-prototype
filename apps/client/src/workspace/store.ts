@@ -81,6 +81,8 @@ interface WorkspaceState {
   systemStatus: SystemStatus[];
   /** 編集中の確認で見つかった問題（構文など）。System ごとに、調べたときの版（rev）と組で持つ */
   checkProblems: ObservedDiagnostics[];
+  /** 型の誤り（Worker で確かめた結果と、調べたときの版。ADR 0058） */
+  typeProblems: ObservedDiagnostics;
   /** 「確かめ直す」を押した回数（変わったら、すべての System を調べ直す） */
   recheckSeq: number;
   /** スクリプトを確かめている最中 */
@@ -231,6 +233,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     simRev: 0,
     systemStatus: [],
     checkProblems: [],
+    typeProblems: NO_DIAGNOSTICS,
     recheckSeq: 0,
     checking: false,
     runProblems: NO_DIAGNOSTICS,
@@ -324,6 +327,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         editorPlace: null,
         detailPlace: null,
         checkProblems: [],
+        typeProblems: NO_DIAGNOSTICS,
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,
@@ -365,6 +369,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         packages: new Map(),
         packagePool: [],
         checkProblems: [],
+        typeProblems: NO_DIAGNOSTICS,
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,

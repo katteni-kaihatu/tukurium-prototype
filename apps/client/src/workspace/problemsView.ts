@@ -50,6 +50,7 @@ export const PROVIDER_LABEL: Record<string, string> = {
   packages: "ライブラリ",
   script: "スクリプト",
   runtime: "実行",
+  types: "型",
 };
 
 export const GROUP_LABEL: Record<ProblemGroupBy, string> = {

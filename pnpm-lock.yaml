@@ -53,6 +53,9 @@ importers:
       '@tukurium/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@tukurium/typecheck':
+        specifier: workspace:*
+        version: link:../../packages/typecheck
       codemirror:
         specifier: 6.0.2
         version: 6.0.2
@@ -68,6 +71,9 @@ importers:
       three:
         specifier: 0.187.0
         version: 0.187.0
+      typescript6:
+        specifier: npm:typescript@6.0.3
+        version: typescript@6.0.3
       y-codemirror.next:
         specifier: 0.3.6
         version: 0.3.6(@codemirror/state@6.7.6)(@codemirror/view@6.43.15)(yjs@13.6.33)
