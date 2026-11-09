@@ -17,7 +17,7 @@ export function marubatsuCellPosition(index: number): [number, number, number] {
 /** リセットのボタンの中心 */
 export const MARUBATSU_RESET: [number, number, number] = [0, 0.38, 3.08];
 
-const CLEAR_BOARD = `function clearBoard(board) {
+const CLEAR_BOARD = `function clearBoard(board: BoardValues) {
   for (let i = 0; i < 9; i++) {
     const id = world.find("マス" + i);
     if (!id) continue;
@@ -47,6 +47,9 @@ import Label from "@builtin/Label.koko";
 import Mesh from "@builtin/Mesh.koko";
 import Transform from "@builtin/Transform.koko";
 
+type BoardValues = FieldsOf<typeof Board>;
+type CellValues = FieldsOf<typeof Cell>;
+
 const LINES = [
   [0, 1, 2],
   [3, 4, 5],
@@ -58,7 +61,7 @@ const LINES = [
   [2, 4, 6],
 ];
 
-function judge(marks) {
+function judge(marks: string): { winner: string; line: string } | null {
   for (let i = 0; i < LINES.length; i++) {
     const line = LINES[i];
     const a = marks[line[0]];
@@ -71,7 +74,7 @@ function judge(marks) {
 }
 
 ${CLEAR_BOARD}
-function putMark(board, cellId, cell, mark) {
+function putMark(board: BoardValues, cellId: string, cell: CellValues, mark: string) {
   const chars = board.marks.split("");
   if (chars.length !== 9 || chars[cell.index] !== " ") return;
   chars[cell.index] = mark;
@@ -82,12 +85,12 @@ function putMark(board, cellId, cell, mark) {
     name: mark === "O" ? "まる" : "ばつ",
     parent: cellId,
     states: {
-      [Transform]: {
+      [Transform.id]: {
         position: [0, 0, 0.05],
         rotation: mark === "O" ? [90, 0, 0] : [0, 0, 42],
         scale: [1, 1, 1],
       },
-      [Mesh]: {
+      [Mesh.id]: {
         shape: mark === "O" ? "cylinder" : "box",
         size: mark === "O" ? [0.3, 0.03, 0.3] : [0.34, 0.06, 0.03],
         color: color,
@@ -100,12 +103,12 @@ function putMark(board, cellId, cell, mark) {
           name: "ばつ",
           parent: cellId,
           states: {
-            [Transform]: {
+            [Transform.id]: {
               position: [0, 0, 0.055],
               rotation: [0, 0, -42],
               scale: [1, 1, 1],
             },
-            [Mesh]: { shape: "box", size: [0.34, 0.06, 0.03], color: color },
+            [Mesh.id]: { shape: "box", size: [0.34, 0.06, 0.03], color: color },
           },
         })
       : null;
@@ -118,7 +121,7 @@ function putMark(board, cellId, cell, mark) {
   }
 }
 
-function statusText(board) {
+function statusText(board: BoardValues): string {
   if (board.result === "draw") return "引き分け";
   if (board.result === "O") return "先行の勝ち";
   if (board.result === "X") return "後攻の勝ち";
@@ -127,12 +130,12 @@ function statusText(board) {
   return board.turn === "X" ? "後攻の番" : "先行の番";
 }
 
-function seatText(role, name, filled) {
+function seatText(role: string, name: string, filled: string): string {
   if (!filled) return role + "　空き";
   return role + "　" + (name || "参加中");
 }
 
-function lampColor(mark, board) {
+function lampColor(mark: string, board: BoardValues): string {
   const filled = mark === "O" ? board.first : board.second;
   if (!filled) return "#d5cfc3";
   if (board.result === "draw") return "#9aa7b5";
@@ -142,7 +145,7 @@ function lampColor(mark, board) {
   return mark === "O" ? "#314e86" : "#8d3d3d";
 }
 
-function paint(board) {
+function paint(board: BoardValues) {
   const status = world.find("様子");
   if (status) world.set(status, Label, { text: statusText(board) });
   const first = world.find("先行の表示");
@@ -214,6 +217,8 @@ const RESET = `// リセットのボタン。近いところで E を押すと�
 import Board from "../States/Board.koko";
 import Cell from "../States/Cell.koko";
 import Reset from "../States/Reset.koko";
+
+type BoardValues = FieldsOf<typeof Board>;
 
 ${CLEAR_BOARD}
 export default system({

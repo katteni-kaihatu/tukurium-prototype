@@ -197,8 +197,8 @@ export const HOST_API_SPEC = {
     authority: "runtime-host",
     note: "U1 で、自分の配置の Entity だけにした（同じ領域でも別の配置は「見つからない」）",
     denied: null,
-    params: "(entity: string, koko: KokoState | string)",
-    returns: "Record<string, unknown> | null",
+    params: "<K extends KokoState>(entity: string, koko: K)",
+    returns: "FieldsOf<K> | null",
     doc: "同じ配置の Entity の KokoState の値を読む",
   }),
   "world.set": entry({
@@ -209,7 +209,7 @@ export const HOST_API_SPEC = {
     authority: "server-revalidate",
     note: "別の持ち主の永続状態を変えるものは、サーバーの判定なしに保護済みとしない",
     denied: false,
-    params: "(entity: string, koko: KokoState | string, values: Record<string, unknown>)",
+    params: "<K extends KokoState>(entity: string, koko: K, values: Partial<FieldsOf<K>>)",
     returns: "boolean",
     doc: "同じ配置の Entity の KokoState の値を書く",
   }),
@@ -331,12 +331,67 @@ const namespaces = () => {
 const note = (capability: CapabilityId, stability: Stability = DEFAULT_STABILITY) =>
   `要る権限：${capability}・${stability}`;
 
+/**
+ * System の書き方の型（ADR 0058）。Query の with に書いた KokoState から、e.get() に渡せるものと
+ * その欄の型を決める。ハンドラに渡る値の形は Simulation（InputEvent など）と BUILTIN_CONTRACTS に合わせる。
+ */
+const SYSTEM_DECLARATIONS = [
+  "/** System が処理する Entity。get() に渡せるのは、その System の query.with に書いた KokoState だけ */",
+  "interface SystemEntity<Q extends KokoState> {",
+  "  readonly id: string;",
+  "  /** KokoState の値を取る。書き換えると、その Entity の値が変わる */",
+  "  get<K extends KokoState>(",
+  "    koko: K & ([K] extends [Q] ? unknown : { queryのwithに書いていないKokoStateです: never }),",
+  "  ): FieldsOf<K>;",
+  "}",
+  "/** 入力（onInput） */",
+  "interface InputEvent {",
+  "  action: string;",
+  '  phase: "down" | "up";',
+  "  /** 入力した人の視点（レイの始点と向き） */",
+  "  origin: Vec3;",
+  "  direction: Vec3;",
+  "  /** 入力した人の ID（サーバーが本人で決める） */",
+  "  player: string;",
+  "  playerName?: string;",
+  "  /** 追加の数値（twist ではマウスの移動、reach では前後の移動） */",
+  "  pointer?: [number, number];",
+  "}",
+  "/** world.emit で届いたイベント（onEvent） */",
+  "interface ScriptEvent { name: string; data?: unknown }",
+  "/** ぶつかった・離れた（onCollision） */",
+  "interface CollisionEvent { other: string; started: boolean }",
+  "/** 外に公開する操作（ほかの作者の物からも届く。ADR 0012） */",
+  "interface SystemContracts<E> {",
+  "  Damage?(e: E, payload: { amount: number; type?: string }): void;",
+  "  /** E で押された（送れるのはホストだけ） */",
+  "  Interact?(e: E, payload: { player: string }): void;",
+  "}",
+  "interface SystemDef<W extends readonly KokoState[]> {",
+  "  /** この System が処理する Entity の条件（import した KokoState） */",
+  "  query?: { with?: W; without?: readonly KokoState[] };",
+  "  onUpdate?(e: SystemEntity<W[number]>, dt: number): void;",
+  "  onInput?(e: SystemEntity<W[number]>, ev: InputEvent): void;",
+  "  onEvent?(e: SystemEntity<W[number]>, ev: ScriptEvent): void;",
+  "  onCollision?(e: SystemEntity<W[number]>, ev: CollisionEvent): void;",
+  "  contracts?: SystemContracts<SystemEntity<W[number]>>;",
+  "}",
+  "declare function system<const W extends readonly KokoState[] = []>(def: SystemDef<W>): SystemDef<W>;",
+];
+
 export function hostApiDeclarations(): string {
   const lines = [
     "// Host API の宣言（packages/runtime/src/hostApiSpec.ts から作った。手で書き換えない）",
     "type Vec3 = [number, number, number];",
-    "/** import した KokoState */",
-    "interface KokoState { readonly id: string; readonly name: string }",
+    "/** import した KokoState。Id は KokoState の ID、F は欄の型（ADR 0058） */",
+    "interface KokoState<Id extends string = string, F = Record<string, unknown>> {",
+    "  readonly id: Id;",
+    "  readonly name: string;",
+    "  /** 型のためだけの印（実行時にはない） */",
+    "  readonly __fields?: F;",
+    "}",
+    "/** KokoState の欄の型 */",
+    "type FieldsOf<K> = K extends KokoState<string, infer F> ? F : never;",
     "interface EffectOptions { color?: string; size?: number; life?: number }",
     "/** Raycast の結果（opaque handle）。別の作者の物に当たったときは entity が null */",
     "interface Hit {",
@@ -359,7 +414,7 @@ export function hostApiDeclarations(): string {
     }
     lines.push("};");
   }
-  lines.push("declare function system<T>(def: T): T;");
+  lines.push(...SYSTEM_DECLARATIONS);
   lines.push("declare function log(...args: unknown[]): void;");
   return `${lines.join("\n")}\n`;
 }

@@ -16,6 +16,7 @@ COPY packages/eks/package.json packages/eks/
 COPY packages/script/package.json packages/script/
 COPY packages/runtime/package.json packages/runtime/
 COPY packages/repo-model/package.json packages/repo-model/
+COPY packages/typecheck/package.json packages/typecheck/
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm --filter @tukurium/client build && pnpm --filter @tukurium/server build
