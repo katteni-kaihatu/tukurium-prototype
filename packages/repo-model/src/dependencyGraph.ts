@@ -1,7 +1,6 @@
 import { isResourceFieldType, type KokoStateDef } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
-import { parseQuery } from "./queryInfo";
 import { ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
 import { compileSystem } from "./systemCompiler";
@@ -13,12 +12,11 @@ import { compileSystem } from "./systemCompiler";
  * - Material → 画像の素材
  * - Entity → 持っている KokoState・指しているリソースや Entity・親の Entity
  * - Output → その System・その Entity
- * - System → Query に書いた KokoState の名前（`name:kokostate/<名前>`）
+ * - System → import した KokoState（安定 ID）
  * - System → `@別名/...` で import したライブラリ（`name:package/<別名>`。ADR 0015）
+ * - import を書いた System → パスの構造（`name:paths`）
  *
- * System の Query は今は表示名で書くため、名前の節を介して KokoState の変更とつなぐ
- * （見つからない名前も節として持つので、その名前の KokoState を作ったときにも気付ける）。
- * Phase 4 で仮想 import の結び付け（安定 ID）に置き換える。
+ * 名前で書いた Query はやめた（ADR 0058）ので、KokoState の名前の節は持たない。
  */
 
 export interface GraphRef {
@@ -38,9 +36,6 @@ function parseKey(key: string): GraphRef {
  * （フォルダの移動や名前の変更で、同じ書き方の解決先が変わりうるため）。
  */
 export const PATHS_REF: GraphRef = { kind: "name", id: "paths" };
-
-/** KokoState の名前の節 */
-export const kokoNameRef = (name: string): GraphRef => ({ kind: "name", id: `kokostate/${name}` });
 
 /** 依存の別名の節（別名が指す Package・版を変えると、それを import した System に届く） */
 export const packageAliasRef = (alias: string): GraphRef => ({
@@ -88,9 +83,6 @@ export class ProjectDependencyGraph {
     let index: ResourcePathIndex | null = null;
     for (const s of snap.systems) {
       const from: GraphRef = { kind: "system", id: s.id };
-      // 移行の間の書き方：Query に KokoState の名前を書く
-      const q = parseQuery(s.code);
-      for (const name of [...q.with, ...q.without]) this.edge(from, kokoNameRef(name));
       // import で書いた KokoState（ADR 0010）
       if (!s.code.includes("import")) continue;
       index ??= ResourcePathIndex.fromSnapshot(snap);
@@ -138,28 +130,19 @@ export class ProjectDependencyGraph {
 }
 
 /**
- * ref を直接使っているもの（Entity・System・アウトプット・マテリアル）。「どこで使われているか」の表示に使う。
- * KokoState は、名前で書いた Query（移行の間の書き方）も数えるため、kokoName を渡す。
+ * ref を直接使っているもの（Entity・System・アウトプット・マテリアル）。「どこで使っているか」の表示に使う。
  * 同じものは一度だけ返す。
  */
-export function usersOf(
-  graph: ProjectDependencyGraph,
-  ref: GraphRef,
-  kokoName?: string,
-): GraphRef[] {
+export function usersOf(graph: ProjectDependencyGraph, ref: GraphRef): GraphRef[] {
   const seen = new Set<string>();
   const out: GraphRef[] = [];
-  const add = (users: GraphRef[]) => {
-    for (const u of users) {
-      if (u.kind === "name") continue;
-      const k = refKey(u);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(u);
-    }
-  };
-  add(graph.dependentsOf(ref));
-  if (kokoName !== undefined) add(graph.dependentsOf(kokoNameRef(kokoName)));
+  for (const u of graph.dependentsOf(ref)) {
+    if (u.kind === "name") continue;
+    const k = refKey(u);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(u);
+  }
   return out;
 }
 
@@ -198,23 +181,12 @@ export function changedRefs(prev: ProjectSnapshot, next: ProjectSnapshot): Graph
   const changed = new Set<string>();
   for (const [k, v] of a) if (b.get(k) !== v) changed.add(k);
   for (const k of b.keys()) if (!a.has(k)) changed.add(k);
-  const names = new Map<string, string>();
-  for (const k of prev.kokostates) names.set(`prev:${k.id}`, k.name);
-  for (const k of next.kokostates) names.set(`next:${k.id}`, k.name);
   if (pathSignature(prev) !== pathSignature(next)) changed.add(refKey(PATHS_REF));
   const deps = (snap: ProjectSnapshot) =>
     new Map((snap.dependencies ?? []).map((d) => [d.alias, JSON.stringify(d)] as const));
   const [depsA, depsB] = [deps(prev), deps(next)];
   for (const alias of new Set([...depsA.keys(), ...depsB.keys()]))
     if (depsA.get(alias) !== depsB.get(alias)) changed.add(refKey(packageAliasRef(alias)));
-  for (const key of [...changed]) {
-    const r = parseKey(key);
-    if (r.kind !== "kokostate") continue;
-    for (const side of ["prev", "next"]) {
-      const name = names.get(`${side}:${r.id}`);
-      if (name !== undefined) changed.add(refKey(kokoNameRef(name)));
-    }
-  }
   return [...changed].map(parseKey);
 }
 

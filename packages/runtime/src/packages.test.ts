@@ -174,12 +174,12 @@ describe("依存の KokoState を再生で使う（ADR 0015）", () => {
     expect(sim.registry.get(HEALTH)).toBeUndefined();
   });
 
-  it("依存の KokoState は、名前での書き方（移行の間）では引けない", async () => {
+  it("Query に名前の文字列は書けない（依存の KokoState も。ADR 0058）", async () => {
     const snap = project();
     const sys = snap.systems[0];
     if (sys) sys.code = `export default system({ query: { with: ["Health"] }, onUpdate() {} });`;
     sim = await Simulation.create(snap, "out", { realm: "ws", packages: ready });
-    expect(sim.systemStatus()[0]?.error).toContain("見つかりません");
+    expect(sim.systemStatus()[0]?.error).toContain("名前の文字列は使えません");
   });
 
   it("適用で依存の版を変えると、新しい版の中身で作り直す", async () => {

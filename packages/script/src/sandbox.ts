@@ -8,16 +8,14 @@ import {
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
-/** スクリプトから見える Entity。KokoState 名 → フィールド名 → 値。 */
+/** スクリプトから見える Entity。KokoState の ID → フィールド名 → 値。 */
 export interface ScriptEntity {
   id: string;
-  /** KokoState の ID（その領域の中の ID）→ フィールド名 → 値。names がなければ、キーは名前として扱う */
+  /** KokoState の ID（その領域の中の ID）→ フィールド名 → 値 */
   states: Record<string, Record<string, Json>>;
-  /** 名前 → states のキー。名前が一つに決まる KokoState だけ（移行の間の e.Gun のため。ADR 0010） */
-  names?: Record<string, string>;
 }
 
-/** スクリプトが宣言した System の情報（Query は KokoState 名で書かれる）。 */
+/** スクリプトが宣言した System の情報（Query は import した KokoState の ID。ADR 0058） */
 export interface SystemMeta {
   query: { with: string[]; without: string[] };
   handlers: string[];
@@ -77,18 +75,15 @@ globalThis.system = (def) => {
   return def;
 };
 // import した KokoState（コンパイラが const X = __koko(ID, 名前) に書き換える。ADR 0010）
-// 文字列としては ID になる（Query の with に入れる・e[X]・world.get(id, X) で ID として届く）
+// 文字列としては ID になる（world.get(id, X) などで ID として届く）
 globalThis.__koko = (id, name) => Object.freeze({
   id, name,
   toString() { return id; },
   toJSON() { return id; },
 });
-// KokoState を指すもの（import した値・ID・名前）を、その Entity の states のキーにする
-const __kokoKey = (k, names) => {
-  if (k !== null && typeof k === "object" && typeof k.id === "string") return k.id;
-  const s = String(k);
-  return names && Object.hasOwn(names, s) ? names[s] : s;
-};
+const __isKoko = (k) => k !== null && typeof k === "object" && typeof k.id === "string" && typeof k.name === "string";
+// System ごとの、e.get() で触れてよい KokoState（Query の with に書いたもの。ADR 0058）
+const __allowed = {};
 globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
 globalThis.console = { log: globalThis.log, warn: globalThis.log, error: globalThis.log };
 const __ns = {};
@@ -120,15 +115,26 @@ for (const [ns, obj] of Object.entries(__ns)) globalThis[ns] = Object.freeze(obj
 
 globalThis.__define = (id, def) => {
   const q = def.query ?? {};
-  const asList = (v) => Array.isArray(v) ? v.map(String) : [];
+  // Query には import した KokoState だけを書く。名前の文字列は使えない（ADR 0058）
+  const asList = (v, key) => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v)) throw new TypeError("query." + key + " には、import した KokoState の配列を書きます");
+    return v.map((k) => {
+      if (__isKoko(k)) return k.id;
+      throw new TypeError("query." + key + " には、import した KokoState を書きます（" + JSON.stringify(k) + " のような名前の文字列は使えません。import Gun from './Gun.koko' のように読み込んでください）");
+    });
+  };
   const handlers = Object.keys(def).filter((k) => k.startsWith("on") && typeof def[k] === "function");
   // 公開 Contract：contracts: { Damage(e, payload) {...} }（ADR 0012）
   const contracts = def.contracts !== null && typeof def.contracts === "object" ? def.contracts : {};
   for (const k of Object.keys(contracts)) if (typeof contracts[k] === "function") handlers.push("contract:" + k);
+  const withIds = asList(q.with, "with");
+  const withoutIds = asList(q.without, "without");
   __systems[id] = def;
-  return JSON.stringify({ query: { with: asList(q.with), without: asList(q.without) }, handlers });
+  __allowed[id] = new Set(withIds);
+  return JSON.stringify({ query: { with: withIds, without: withoutIds }, handlers });
 };
-globalThis.__undefine = (id) => { delete __systems[id]; };
+globalThis.__undefine = (id) => { delete __systems[id]; delete __allowed[id]; };
 globalThis.__run = (id, handler, entitiesJson, argsJson) => {
   const def = __systems[id];
   const fn = def && (handler.startsWith("contract:")
@@ -142,16 +148,17 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
     for (const e of entities) {
       __entity = e.id;
       const st = e.states;
-      // names がないとき（古い形）は、states のキーをそのまま名前として扱う
-      const names = e.names ?? Object.fromEntries(Object.keys(st).map((k) => [k, k]));
+      const allowed = __allowed[id] ?? new Set();
       const view = { id: e.id };
-      const slot = (key) => ({ get: () => st[key], set: (v) => { st[key] = v; }, configurable: true });
-      // ID でも引ける（e[Gun]）。一覧には出さない
-      for (const key of Object.keys(st)) Object.defineProperty(view, key, { ...slot(key), enumerable: false });
-      // 名前が一つに決まる KokoState は、名前でも使える（e.Gun。移行の間の書き方）
-      for (const [name, key] of Object.entries(names)) Object.defineProperty(view, name, { ...slot(key), enumerable: true });
-      // entity.get(Gun)：import した KokoState（または ID・名前）でその値を取る
-      Object.defineProperty(view, "get", { value: (k) => st[__kokoKey(k, names)], enumerable: false });
+      // e.get(Gun)：import した KokoState で、その値を取る。触れられるのは Query の with に書いたものだけ（ADR 0058）
+      Object.defineProperty(view, "get", {
+        value: (k) => {
+          if (!__isKoko(k)) throw new TypeError("e.get() には、import した KokoState を渡します");
+          if (!allowed.has(k.id)) throw new Error("「" + k.name + "」はこの System の query.with にないので、e.get() では使えません");
+          return st[k.id];
+        },
+        enumerable: false,
+      });
       fn.call(handler.startsWith("contract:") ? def.contracts : def, view, ...args);
     }
   } finally {

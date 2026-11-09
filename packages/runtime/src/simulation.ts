@@ -1703,7 +1703,7 @@ export class Simulation {
 
   private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Json[]): void {
     if (ids.length === 0 || !sys.enabled) return;
-    const before = ids.map((id) => this.toScriptEntity(id, sys.realm));
+    const before = ids.map((id) => this.toScriptEntity(id, sys));
     try {
       const after = this.sandbox.run(sys.id, handler, before, args);
       after.forEach((e, i) => {
@@ -1723,28 +1723,19 @@ export class Simulation {
   }
 
   /**
-   * スクリプトに渡す Entity。状態は領域の中の KokoState ID をキーにし、名前が一つに決まるものだけ
-   * 名前でも引けるようにする（移行の間の e.Gun）。別の領域の KokoState は見せない（ADR 0012）。
+   * スクリプトに渡す Entity。状態は領域の中の KokoState ID をキーにする。渡すのは、その System の
+   * Query の with に書いた KokoState だけ（e.get() で触れられるのもそれだけ。ADR 0058）。
+   * 別の領域の KokoState は見せない（ADR 0012）。
    */
-  private toScriptEntity(id: EntityId, realm: string): ScriptEntity {
+  private toScriptEntity(id: EntityId, sys: LoadedSystem): ScriptEntity {
     const states: ScriptEntity["states"] = {};
-    const byName = new Map<string, string[]>();
-    const scope = this.scopeOfRealm(realm);
-    for (const koko of this.world.statesOf(id)) {
-      const def = this.registry.get(koko);
-      if (!def) continue;
+    const scope = this.scopeOfRealm(sys.realm);
+    for (const koko of sys.with) {
+      if (!this.world.hasState(id, koko) || !this.registry.get(koko)) continue;
       if (this.multi && !isShared(koko) && this.registry.scopeOf(koko) !== scope) continue;
-      const key = this.localKey(koko, realm);
-      states[key] = this.toNamed(koko, this.world.get(id, koko) ?? {});
-      byName.set(def.name, [...(byName.get(def.name) ?? []), koko]);
+      states[this.localKey(koko, sys.realm)] = this.toNamed(koko, this.world.get(id, koko) ?? {});
     }
-    const names: Record<string, string> = {};
-    for (const [name, kokos] of byName) {
-      const only = kokos.length === 1 ? kokos[0] : undefined;
-      if (only && this.registry.idOf(name, scope) === only)
-        names[name] = this.localKey(only, realm);
-    }
-    return { id, states, names };
+    return { id, states };
   }
 
   private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Json> {

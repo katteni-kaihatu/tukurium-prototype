@@ -66,7 +66,7 @@ describe("セッションの世界（複数の配置）", () => {
       {
         id: "step",
         name: "Step",
-        code: 'export default system({query:{with:["Counter"]},onInput(e,input){if(input.action==="spawn") world.spawn({name:"generated",states:{Counter:{n:0}}});},onUpdate(e){e.Counter.n+=1;}});',
+        code: 'import C from "./Counter.koko"; export default system({query:{with:[C]},onInput(e,input){if(input.action==="spawn") world.spawn({name:"generated",states:{Counter:{n:0}}});},onUpdate(e){e.get(C).n+=1;}});',
       },
     ];
     snapshot.outputs = [
@@ -132,7 +132,7 @@ describe("セッションの世界（複数の配置）", () => {
       {
         id: "step",
         name: "Step",
-        code: 'export default system({query:{with:["Counter"]},onUpdate(e){e.Counter.n += 1;}});',
+        code: 'import C from "./Counter.koko"; export default system({query:{with:[C]},onUpdate(e){e.get(C).n += 1;}});',
       },
     ];
     snapshot.outputs = ["a", "b"].map((id) => ({
@@ -288,7 +288,7 @@ describe("セッションの世界（複数の配置）", () => {
         {
           id: "sys_x",
           name: "X",
-          code: `export default system({ query: { with: ["Gun"] }, onUpdate(e) { e.Gun.x += 1; } });`,
+          code: `import Gun from "./Gun.koko";\nexport default system({ query: { with: [Gun] }, onUpdate(e) { e.get(Gun).x += 1; } });`,
         },
       ],
       outputs: [
