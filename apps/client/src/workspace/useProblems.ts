@@ -30,19 +30,32 @@ export function useScriptCheck(): void {
     () => (project ? new IncrementalCheck((ids) => checkScripts(project, ids)) : null),
     [project],
   );
+  const recheckSeq = useWorkspace((s) => s.recheckSeq);
+  const lastRecheck = useRef(recheckSeq);
   useEffect(() => {
     if (!project || !ready || !checker) return;
     // 影響を受けない System の結果はすぐ今の版にする。受ける System は、確かめ終わるまで stale
     checker.update(project.snapshot(), rev);
+    // 「確かめ直す」が押されたら、すべての System を調べ直す
+    const forced = lastRecheck.current !== recheckSeq;
+    lastRecheck.current = recheckSeq;
+    if (forced) checker.markAll();
     useWorkspace.setState({ checkProblems: checker.sets() });
-    const timer = setTimeout(() => {
-      void checker.check(rev).then((accepted) => {
-        if (accepted && useWorkspace.getState().project === project)
-          useWorkspace.setState({ checkProblems: checker.sets() });
-      });
-    }, 400);
+    const timer = setTimeout(
+      () => {
+        if (!checker.hasPending()) return;
+        useWorkspace.setState({ checking: true });
+        void checker.check(rev).then((accepted) => {
+          if (useWorkspace.getState().project !== project) return;
+          useWorkspace.setState(
+            accepted ? { checkProblems: checker.sets(), checking: false } : { checking: false },
+          );
+        });
+      },
+      forced ? 0 : 400,
+    );
     return () => clearTimeout(timer);
-  }, [project, ready, rev, checker]);
+  }, [project, ready, rev, checker, recheckSeq]);
 }
 
 /** いまのスクリプトの問題の一覧（current → stale、実行して止まったもの → 編集中の確認の順） */

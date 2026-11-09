@@ -44,6 +44,24 @@ const versions = (c: IncrementalCheck) =>
   Object.fromEntries(c.sets().map((s) => [s.diagnostics[0]?.subject.id ?? "?", s.observedVersion]));
 
 describe("IncrementalCheck", () => {
+  it("markAll で、変更がなくてもすべての System を調べ直す。調べ終わるまで前の結果は残る", async () => {
+    const f = fakeRun();
+    const c = new IncrementalCheck(f.run);
+    f.codes.set("a", "bad").set("b", "ok");
+    c.update(snap({ a: "bad", b: "ok" }), 1);
+    await c.check(1);
+    expect(c.hasPending()).toBe(false);
+    c.markAll();
+    expect(c.hasPending()).toBe(true);
+    expect(versions(c)).toEqual({ a: 1 });
+    expect(await c.check(1)).toBe(true);
+    expect(f.calls).toEqual([
+      ["a", "b"],
+      ["a", "b"],
+    ]);
+    expect(await c.check(1)).toBe(false);
+  });
+
   it("最初は全部の System を調べる", async () => {
     const f = fakeRun();
     const c = new IncrementalCheck(f.run);

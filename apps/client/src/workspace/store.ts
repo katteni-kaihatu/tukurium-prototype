@@ -81,6 +81,10 @@ interface WorkspaceState {
   systemStatus: SystemStatus[];
   /** 編集中の確認で見つかった問題（構文など）。System ごとに、調べたときの版（rev）と組で持つ */
   checkProblems: ObservedDiagnostics[];
+  /** 「確かめ直す」を押した回数（変わったら、すべての System を調べ直す） */
+  recheckSeq: number;
+  /** スクリプトを確かめている最中 */
+  checking: boolean;
   /** 実行して止まった System と、Play を始めたときの版（次の Play まで残す。Stop しても消さない） */
   runProblems: ObservedDiagnostics;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
@@ -223,6 +227,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     simRev: 0,
     systemStatus: [],
     checkProblems: [],
+    recheckSeq: 0,
+    checking: false,
     runProblems: NO_DIAGNOSTICS,
     jumpTo: null,
     showProblem: (p) => {
@@ -312,6 +318,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         editorPlace: null,
         detailPlace: null,
         checkProblems: [],
+        checking: false,
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
         sessionOpen: false,
@@ -350,6 +357,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         packages: new Map(),
         packagePool: [],
         checkProblems: [],
+        checking: false,
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
         openSystems: [],

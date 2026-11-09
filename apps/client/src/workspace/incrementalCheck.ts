@@ -45,6 +45,20 @@ export class IncrementalCheck {
     this.snap = next;
   }
 
+  /**
+   * すべての System に調べ直しの印を付ける（問題パネルの「確かめ直す」）。
+   * 前の結果は、調べ終わるまで今のまま残す（点滅を避ける）。
+   */
+  markAll(): void {
+    this.seq += 1;
+    for (const s of this.snap?.systems ?? []) this.pending.set(s.id, this.seq);
+  }
+
+  /** 調べ直しの印が付いた System があるか */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   /** 印の付いた System を調べる。結果を受け取れたら true */
   async check(version: number): Promise<boolean> {
     const targets = [...this.pending];

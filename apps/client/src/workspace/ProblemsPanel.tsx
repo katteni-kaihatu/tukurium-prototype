@@ -3,6 +3,7 @@ import type {
   DiagnosticView,
   ProjectDoc,
   ResourcePathIndex,
+  ResourceRef,
 } from "@tukurium/repo-model";
 import { useMemo, useState } from "react";
 import { useProject } from "./hooks";
@@ -16,6 +17,7 @@ import {
   type ProblemContext,
   type ProblemFilter,
   type ProblemGroupBy,
+  problemDetail,
 } from "./problemsView";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -51,17 +53,20 @@ export function ProblemsPanel() {
   const [groupBy, setGroupBy] = useState<ProblemGroupBy>("none");
   /** 「選んでいるアウトプットだけ」。アウトプットを選び直したら、その新しいアウトプットで絞る */
   const [onlyOutput, setOnlyOutput] = useState(false);
+  /** 詳しく開いている問題（指紋） */
+  const [opened, setOpened] = useState<string | null>(null);
+  const checking = useWorkspace((s) => s.checking);
   const ctx = useMemo<ProblemContext>(
     () => ({
       placeOf: (d) =>
         isScript(d)
           ? problemPlace(project.system(d.subject.id)?.name ?? d.subject.id, d)
-          : placeOf(d, project, index),
+          : placeOf(d.subject, project, index),
       subjectOf: (d) =>
         isScript(d)
           ? (index?.pathOf(d.subject.id) ??
             `${project.system(d.subject.id)?.name ?? d.subject.id}.js`)
-          : placeOf(d, project, index),
+          : placeOf(d.subject, project, index),
       outputsOf: (d) => {
         const { kind, id } = d.subject;
         if (kind === "output") return [id];
@@ -82,6 +87,7 @@ export function ProblemsPanel() {
         return folderOfPath(index?.pathOf(id) ?? null);
       },
       outputName: (id) => project.output(id)?.name ?? id,
+      refName: (r) => placeOf(r, project, index),
     }),
     [project, index],
   );
@@ -152,6 +158,15 @@ export function ProblemsPanel() {
             {count.stale}
           </span>
         )}
+        <button
+          type="button"
+          className={ui.btn}
+          disabled={checking}
+          title="すべての System を、もう一度確かめる"
+          onClick={() => useWorkspace.setState((s) => ({ recheckSeq: s.recheckSeq + 1 }))}
+        >
+          {checking ? "確かめています…" : "確かめ直す"}
+        </button>
       </div>
       <div className={ui.toolbar}>
         <input
@@ -268,29 +283,52 @@ export function ProblemsPanel() {
                 "data-tone": d.severity,
                 "data-fresh": d.freshness,
               };
+              const open = opened === d.fingerprint;
               return (
                 <li key={`${d.freshness}:${d.id}`}>
-                  {go ? (
+                  <div className={ui.problemRow}>
+                    {go ? (
+                      <button
+                        type="button"
+                        {...attrs}
+                        title={
+                          isScript(d)
+                            ? "コードを開く"
+                            : d.subject.kind === "kokostate" ||
+                                d.subject.kind === "system" ||
+                                d.subject.kind === "material"
+                              ? "詳細パネルで開く"
+                              : (d.detail ?? "Inspector で選ぶ")
+                        }
+                        onClick={go}
+                      >
+                        {body}
+                      </button>
+                    ) : (
+                      <div {...attrs} title={d.detail}>
+                        {body}
+                      </div>
+                    )}
                     <button
                       type="button"
-                      {...attrs}
-                      title={
-                        isScript(d)
-                          ? "コードを開く"
-                          : d.subject.kind === "kokostate" ||
-                              d.subject.kind === "system" ||
-                              d.subject.kind === "material"
-                            ? "詳細パネルで開く"
-                            : (d.detail ?? "Inspector で選ぶ")
-                      }
-                      onClick={go}
+                      className={ui.iconBtn}
+                      aria-expanded={open}
+                      aria-label={open ? "詳しくを閉じる" : "詳しく"}
+                      title={open ? "詳しくを閉じる" : "詳しく"}
+                      onClick={() => setOpened(open ? null : d.fingerprint)}
                     >
-                      {body}
+                      {open ? "▾" : "▸"}
                     </button>
-                  ) : (
-                    <div {...attrs} title={d.detail}>
-                      {body}
-                    </div>
+                  </div>
+                  {open && (
+                    <dl className={ui.problemDetail}>
+                      {problemDetail(d, ctx).map(([k, v]) => (
+                        <div key={k}>
+                          <dt>{k}</dt>
+                          <dd>{v}</dd>
+                        </div>
+                      ))}
+                    </dl>
                   )}
                 </li>
               );
@@ -303,8 +341,8 @@ export function ProblemsPanel() {
 }
 
 /** 問題の対象の場所（リソースは論理パス、Entity・アウトプットは名前） */
-function placeOf(d: Diagnostic, project: ProjectDoc, index: ResourcePathIndex | null): string {
-  const { kind, id } = d.subject;
+function placeOf(ref: ResourceRef, project: ProjectDoc, index: ResourcePathIndex | null): string {
+  const { kind, id } = ref;
   if (kind === "project") return "/（いちばん上）";
   if (kind === "entity") return `Entity「${project.entity(id)?.name ?? id}」`;
   if (kind === "output") return `アウトプット「${project.output(id)?.name ?? id}」`;
