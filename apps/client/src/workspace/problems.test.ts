@@ -1,6 +1,11 @@
-import { type DiagnosticView, makeDiagnostic } from "@tukurium/repo-model";
+import {
+  type DiagnosticView,
+  makeDiagnostic,
+  type ProjectSnapshot,
+  viewDiagnostics,
+} from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
-import { trackErrorPrints } from "./problems";
+import { runSetsByChanges, trackErrorPrints } from "./problems";
 
 const view = (
   id: string,
@@ -52,5 +57,43 @@ describe("trackErrorPrints", () => {
   it("注意（warning）と stale のエラーは appeared にしない", () => {
     const r = trackErrorPrints(new Set(), [view("a", "current", "warning"), view("b", "stale")]);
     expect(r.appeared).toEqual([]);
+  });
+});
+
+describe("runSetsByChanges", () => {
+  const snap = (codes: Record<string, string>): ProjectSnapshot => ({
+    version: 1,
+    name: "p",
+    kokostates: [],
+    systems: Object.entries(codes).map(([id, code]) => ({ id, name: id, code })),
+    materials: [],
+    outputs: [],
+    entities: [],
+  });
+  const stopped = (id: string) =>
+    makeDiagnostic({
+      code: "script-stopped",
+      severity: "error",
+      phase: "runtime",
+      provider: "runtime",
+      subject: { kind: "system", id },
+      location: { kind: "script", line: 1 },
+      related: [],
+      message: id,
+    });
+  const run = { diagnostics: [stopped("a"), stopped("b")], observedVersion: 1 };
+  const before = snap({ a: "export default {}", b: "export default {}" });
+
+  it("変更が届いた System の問題だけを古い版のままにし、ほかは今の版にする", () => {
+    const after = snap({ a: "export default {}", b: "export default { x: 1 }" });
+    const views = viewDiagnostics(runSetsByChanges(run, before, after, 2), 2);
+    expect(Object.fromEntries(views.map((v) => [v.subject.id, v.freshness]))).toEqual({
+      a: "current",
+      b: "stale",
+    });
+  });
+
+  it("Play を始めたときの版のままなら、そのまま返す", () => {
+    expect(runSetsByChanges(run, before, before, 1)).toEqual([run]);
   });
 });
