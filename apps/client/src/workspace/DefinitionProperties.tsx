@@ -8,6 +8,7 @@ import {
   type OutputExposure,
   packageSystems,
   ResourcePathIndex,
+  usersOf,
 } from "@tukurium/repo-model";
 import { createContext, useContext, useState } from "react";
 import {
@@ -28,7 +29,7 @@ import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
 import { ThumbnailField } from "./ThumbnailField";
 import ui from "./ui.module.css";
-import { useProblems, useSystemQuery } from "./useProblems";
+import { useDependencyGraph, useProblems, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
 
 const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
@@ -914,7 +915,15 @@ function AssetProperties({ id }: { id: string }) {
   // undefined は読んでいる間、null は読めなかった
   const [image, setImage] = useState<ImageInfo | null | undefined>(undefined);
   const [model, setModel] = useState<ModelInfo | null | undefined>(undefined);
+  const graph = useDependencyGraph();
+  const { select, openDetail, outputId, setOutput } = useWorkspace();
   const asset = project.asset(id);
+  /** 使っている Entity を選ぶ（別のアウトプットの Entity なら、そのアウトプットに切り替える） */
+  const pickEntity = (entityId: string) => {
+    const out = project.entity(entityId)?.output;
+    if (out && out !== outputId) setOutput(out);
+    select({ kind: "entity", id: entityId });
+  };
   if (!asset) return <p className={ui.empty}>素材が見つかりません</p>;
   const title = asset.kind === "model" ? "モデル" : asset.kind === "image" ? "テクスチャ" : "音声";
   const num = (n: number) => n.toLocaleString("ja-JP");
@@ -967,6 +976,35 @@ function AssetProperties({ id }: { id: string }) {
         <p className={ui.muted}>音声は、Resources の下の「試聴」で聞けます。</p>
       )}
       <InfoList label={`${title}の情報`} rows={rows} />
+      <h3 className={ui.sectionTitle}>使っているもの</h3>
+      {(() => {
+        // 消したり差し替えたりする前に、どこへ影響するかが分かるように（依存グラフから）
+        const users = graph ? usersOf(graph, { kind: "asset", id }) : [];
+        if (users.length === 0) return <p className={ui.muted}>まだどこでも使われていません。</p>;
+        return (
+          <ul className={ui.list}>
+            {users.map((u) => (
+              <li key={`${u.kind}:${u.id}`}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() =>
+                    u.kind === "material"
+                      ? openDetail({ kind: "material", id: u.id })
+                      : pickEntity(u.id)
+                  }
+                >
+                  <span className={ui.itemName}>
+                    {u.kind === "material"
+                      ? `マテリアル「${project.material(u.id)?.name ?? u.id}」`
+                      : `Entity「${project.entity(u.id)?.name ?? u.id}」`}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        );
+      })()}
     </div>
   );
 }

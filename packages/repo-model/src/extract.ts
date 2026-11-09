@@ -1,5 +1,5 @@
 import type { KokoStateDef } from "@tukurium/eks";
-import { BUILTIN, isBuiltin } from "./builtins";
+import { isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
 import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
 import { ResourcePathIndex } from "./resourcePath";
@@ -47,21 +47,27 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
       else if (src.materials.some((m) => m.id === id)) out.materials.add(id);
       else if ((src.assets ?? []).some((a) => a.id === id)) out.assets.add(id);
     }
-    for (const e of src.entities) {
-      if (e.output !== o.id) continue;
-      for (const [koko, values] of Object.entries(e.states)) {
-        if (!isBuiltin(koko)) out.kokostates.add(koko);
-        if (koko === BUILTIN.Mesh && typeof values.material === "string")
-          out.materials.add(values.material);
-        for (const v of Object.values(values)) {
-          if (typeof v === "string" && (src.assets ?? []).some((a) => a.id === v))
-            out.assets.add(v);
-        }
-      }
+  }
+  // Entity と System が使うものは、依存グラフから集める（計画 Phase 3）
+  const graph = ProjectDependencyGraph.fromSnapshot(src);
+  const assetIds = new Set((src.assets ?? []).map((a) => a.id));
+  for (const e of src.entities) {
+    if (!out.outputs.has(e.output)) continue;
+    // 持っている KokoState と、欄で指しているマテリアル・素材（Built-in も自作の KokoState の欄も）
+    for (const dep of graph.dependenciesOf({ kind: "entity", id: e.id })) {
+      if (dep.kind === "kokostate" && !isBuiltin(dep.id)) out.kokostates.add(dep.id);
+      else if (dep.kind === "material") out.materials.add(dep.id);
+      else if (dep.kind === "asset") out.assets.add(dep.id);
+    }
+    // 定義がこのプロジェクトにない KokoState（ライブラリのもの）の欄は、グラフでは読めないので、
+    // 素材の ID と同じ文字列を拾う
+    for (const [koko, values] of Object.entries(e.states)) {
+      if (src.kokostates.some((k) => k.id === koko) || isBuiltin(koko)) continue;
+      for (const v of Object.values(values))
+        if (typeof v === "string" && assetIds.has(v)) out.assets.add(v);
     }
   }
-  // System が使う KokoState（import したもの・Query に名前で書いたもの）。依存グラフから集める
-  const graph = ProjectDependencyGraph.fromSnapshot(src);
+  // System が使う KokoState（import したもの・Query に名前で書いたもの）
   for (const s of src.systems) {
     if (!out.systems.has(s.id)) continue;
     for (const dep of graph.dependenciesOf({ kind: "system", id: s.id })) {
@@ -73,7 +79,10 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
       }
     }
   }
-  for (const m of src.materials) if (out.materials.has(m.id) && m.map) out.assets.add(m.map);
+  // マテリアルが使う画像
+  for (const id of out.materials)
+    for (const dep of graph.dependenciesOf({ kind: "material", id }))
+      if (dep.kind === "asset") out.assets.add(dep.id);
   return {
     outputs: [...out.outputs],
     kokostates: [...out.kokostates],

@@ -7,6 +7,7 @@ import {
   type Diagnostic,
   type DiagnosticSummary,
   type DiagnosticView,
+  ProjectDependencyGraph,
   type ProjectDoc,
   packageKokoStates,
   type QueryItem,
@@ -91,6 +92,17 @@ export function useProjectDiagnostics(): {
     ];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
   }, [project, rev]);
+}
+
+/** 制作データの依存グラフ（「どこで使っているか」の表示に使う）。制作データが変わるたびに作り直す */
+export function useDependencyGraph(): ProjectDependencyGraph | null {
+  const project = useWorkspace((s) => s.project);
+  const rev = useWorkspace((s) => s.rev);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
+  return useMemo(
+    () => (project ? ProjectDependencyGraph.fromSnapshot(project.snapshot()) : null),
+    [project, rev],
+  );
 }
 
 /**
