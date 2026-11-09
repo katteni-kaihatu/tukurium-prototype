@@ -2,6 +2,7 @@ import { NEW_SYSTEM_CODE } from "@tukurium/repo-model";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ASSET_ACCEPT, assetUrl, uploadAsset } from "./assets";
 import { useCanEdit, useProject } from "./hooks";
+import { type Badge, BadgeDot, badgeFor } from "./ProblemBadge";
 import styles from "./ResourcesPanel.module.css";
 import {
   BUILTIN_FOLDER,
@@ -14,7 +15,7 @@ import {
 } from "./resourceItems";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
-import { useProblems, useProjectDiagnostics } from "./useProblems";
+import { useProblemSummary } from "./useProblems";
 
 type View = "icon" | "list" | "detail";
 const VIEWS: { id: View; label: string }[] = [
@@ -46,8 +47,7 @@ export function ResourcesPanel() {
   const detailId = useWorkspace((s) => s.resourceDetail?.id ?? null);
   const project = useProject();
   const editing = useCanEdit();
-  const problems = useProblems();
-  const { summary } = useProjectDiagnostics();
+  const { resources: summary } = useProblemSummary();
   const rev = useWorkspace((s) => s.rev);
   const [cwd, setCwd] = useState<string | null>(null);
   const [view, setViewState] = useState<View>(loadView);
@@ -111,22 +111,9 @@ export function ResourcesPanel() {
 
   /**
    * 問題の印。自分の問題（塗りつぶし）と、中や関係するものの問題（輪郭）を分ける。
-   * スクリプトの問題（構文など）は System 自身の問題に数える。
+   * スクリプトの問題（構文など）も System 自身の問題に数え、入っているフォルダの中にも数える。
    */
-  const badgeOf = (it: ResItem): Badge | null => {
-    const s = summary.get(it.id);
-    const script = it.kind === "system" ? problems.filter((p) => p.subject.id === it.id) : [];
-    const count = (severity: string) => script.filter((p) => p.severity === severity).length;
-    const errors = (s?.errors ?? 0) + count("error");
-    const warnings = (s?.warnings ?? 0) + count("warning");
-    if (errors > 0) return { tone: "error", label: `エラー ${errors} 件` };
-    if (warnings > 0) return { tone: "warning", label: `注意 ${warnings} 件` };
-    if (s?.nestedErrors)
-      return { tone: "nestedError", label: `中や関係するものにエラー ${s.nestedErrors} 件` };
-    if (s?.nestedWarnings)
-      return { tone: "nestedWarning", label: `中や関係するものに注意 ${s.nestedWarnings} 件` };
-    return null;
-  };
+  const badgeOf = (it: ResItem): Badge | null => badgeFor(summary.get(it.id));
   const kindText = (it: ResItem) => {
     const b = badgeOf(it);
     return b?.tone === "error"
@@ -769,23 +756,4 @@ function KindIcon({ item, size, large }: { item: ResItem; size: number; large?: 
         </svg>
       );
   }
-}
-
-interface Badge {
-  tone: "error" | "warning" | "nestedError" | "nestedWarning";
-  label: string;
-}
-
-/** 問題の印（色だけに頼らず、title と aria-label で件数を伝える） */
-function BadgeDot({ badge, inline }: { badge: Badge | null; inline?: boolean }) {
-  if (!badge) return null;
-  return (
-    <span
-      className={inline ? styles.badgeInline : styles.errorDot}
-      data-tone={badge.tone}
-      role="img"
-      aria-label={badge.label}
-      title={badge.label}
-    />
-  );
 }

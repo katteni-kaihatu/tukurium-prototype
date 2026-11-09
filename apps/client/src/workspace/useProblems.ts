@@ -13,6 +13,7 @@ import {
   ResourcePathIndex,
   readSystemQuery,
   summarizeDiagnostics,
+  summarizeHierarchy,
   viewDiagnostics,
 } from "@tukurium/repo-model";
 import { useEffect, useMemo, useRef } from "react";
@@ -110,6 +111,30 @@ export function useWorkspaceProblems(): {
   );
   const count = useMemo(() => countCurrent(items), [items]);
   return { items, count, index };
+}
+
+/**
+ * Resources と Hierarchy の印に使う件数（計画 §8.6）。制作データの問題と、
+ * スクリプトの問題を合わせて数える。編集した直後に印が消えて点滅しないよう、
+ * 確かめ直すまでの編集前の結果も数える。
+ * フォルダはその中の問題を、Entity は子の問題を、アウトプットは中の Entity と使う System の問題を数える。
+ */
+export function useProblemSummary(): {
+  resources: Map<string, DiagnosticSummary>;
+  hierarchy: Map<string, DiagnosticSummary>;
+} {
+  const project = useWorkspace((s) => s.project);
+  const rev = useWorkspace((s) => s.rev);
+  const { items, index } = useWorkspaceProblems();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
+  return useMemo(() => {
+    return {
+      resources: index ? summarizeDiagnostics(items, index) : new Map(),
+      hierarchy: project
+        ? summarizeHierarchy(items, project.entities(), project.outputs())
+        : new Map(),
+    };
+  }, [items, index, project, rev]);
 }
 
 /**

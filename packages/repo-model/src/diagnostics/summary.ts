@@ -64,3 +64,57 @@ export function summarizeDiagnostics(
   }
   return out;
 }
+
+/**
+ * Hierarchy の印に使う件数（計画 §8.6）。Entity の問題は、その Entity 自身に数え、
+ * 親の Entity とアウトプットの「中」にも数える。System の問題は、その System を
+ * 使っているアウトプットの「中」に数える。アウトプット自身の問題は、アウトプットに数える。
+ * 戻り値のキーは Entity の ID かアウトプットの ID。info は数えない。
+ */
+export function summarizeHierarchy(
+  diagnostics: readonly Diagnostic[],
+  entities: readonly { id: string; parent: string | null; output: string }[],
+  outputs: readonly { id: string; systems: readonly { id: string }[] }[],
+): Map<string, DiagnosticSummary> {
+  const out = new Map<string, DiagnosticSummary>();
+  const at = (id: string) => {
+    let s = out.get(id);
+    if (!s) {
+      s = empty();
+      out.set(id, s);
+    }
+    return s;
+  };
+  const byId = new Map(entities.map((e) => [e.id, e]));
+  for (const d of diagnostics) {
+    if (d.severity === "info") continue;
+    const err = d.severity === "error";
+    const own = (id: string) => {
+      const s = at(id);
+      if (err) s.errors++;
+      else s.warnings++;
+    };
+    const nested = (id: string) => {
+      const s = at(id);
+      if (err) s.nestedErrors++;
+      else s.nestedWarnings++;
+    };
+    const { kind, id } = d.subject;
+    if (kind === "entity") {
+      const e = byId.get(id);
+      if (!e) continue;
+      own(id);
+      const seen = new Set<string>([id]);
+      for (let p = e.parent; p && !seen.has(p); p = byId.get(p)?.parent ?? null) {
+        seen.add(p);
+        nested(p);
+      }
+      nested(e.output);
+    } else if (kind === "output") {
+      own(id);
+    } else if (kind === "system") {
+      for (const o of outputs) if (o.systems.some((s) => s.id === id)) nested(o.id);
+    }
+  }
+  return out;
+}
