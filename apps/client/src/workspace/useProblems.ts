@@ -17,11 +17,15 @@ import {
   summarizeHierarchy,
   viewDiagnostics,
 } from "@tukurium/repo-model";
+import { hostApiDeclarations } from "@tukurium/runtime";
 import { useEffect, useMemo, useRef } from "react";
 import { IncrementalCheck } from "./incrementalCheck";
 import { resolvePackagePool, resolvePackages } from "./packages";
 import { checkScripts, type Problem, runSetsByChanges, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
+
+/** Host API の宣言（型を確かめるときに Worker へ渡す） */
+const HOST_DECLARATIONS = hostApiDeclarations();
 
 /** 制作データが変わるたびに、影響を受ける System だけを（少し待って）確かめ、「問題」を更新する */
 export function useScriptCheck(): void {
@@ -60,20 +64,66 @@ export function useScriptCheck(): void {
   }, [project, ready, rev, checker, recheckSeq]);
 }
 
+/**
+ * スクリプトの型を確かめる（ADR 0058）。TypeScript の本体は大きいので Worker で動かし、
+ * ワークスペースを開いたときに初めて読み込む。制作データが変わるたびに（少し待って）確かめ直す。
+ * 型の誤りは作っている途中の問題で、再生は止めない。
+ */
+export function useTypeCheck(): void {
+  const project = useWorkspace((s) => s.project);
+  const ready = useWorkspace((s) => s.ready);
+  const rev = useWorkspace((s) => s.rev);
+  const packages = useWorkspace((s) => s.packages);
+  const worker = useRef<Worker | null>(null);
+  const seq = useRef(0);
+  useEffect(
+    () => () => {
+      worker.current?.terminate();
+      worker.current = null;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!project || !ready) return;
+    const timer = setTimeout(() => {
+      worker.current ??= new Worker(new URL("./typecheck.worker.ts", import.meta.url), {
+        type: "module",
+      });
+      const w = worker.current;
+      const id = ++seq.current;
+      w.onmessage = (e: MessageEvent<{ id: number; diagnostics: Diagnostic[] }>) => {
+        // 最後に頼んだものの結果だけを受け取る
+        if (e.data.id !== seq.current || useWorkspace.getState().project !== project) return;
+        useWorkspace.setState({
+          typeProblems: { diagnostics: e.data.diagnostics, observedVersion: rev },
+        });
+      };
+      w.postMessage({
+        id,
+        snapshot: project.snapshot(),
+        packages: [...packages],
+        hostDeclarations: HOST_DECLARATIONS,
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [project, ready, rev, packages]);
+}
+
 /** いまのスクリプトの問題の一覧（current → stale、実行して止まったもの → 編集中の確認の順） */
 export function useProblems(): Problem[] {
   const run = useWorkspace((s) => s.runProblems);
   const runSnap = useWorkspace((s) => s.runSnapshot);
   const project = useWorkspace((s) => s.project);
   const check = useWorkspace((s) => s.checkProblems);
+  const types = useWorkspace((s) => s.typeProblems);
   const rev = useWorkspace((s) => s.rev);
   return useMemo(
     () =>
       viewDiagnostics(
-        [...runSetsByChanges(run, runSnap, project?.snapshot() ?? null, rev), ...check],
+        [...runSetsByChanges(run, runSnap, project?.snapshot() ?? null, rev), ...check, types],
         rev,
       ),
-    [run, runSnap, project, check, rev],
+    [run, runSnap, project, check, types, rev],
   );
 }
 
