@@ -135,6 +135,9 @@ importers:
       '@tukurium/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@tukurium/typecheck':
+        specifier: workspace:*
+        version: link:../../packages/typecheck
       fastify:
         specifier: 5.12.8
         version: 5.12.8
@@ -153,6 +156,9 @@ importers:
       three:
         specifier: 0.187.0
         version: 0.187.0
+      typescript6:
+        specifier: npm:typescript@6.0.3
+        version: typescript@6.0.3
       yjs:
         specifier: ^13.6.33
         version: 13.6.33

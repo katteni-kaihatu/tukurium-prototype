@@ -251,7 +251,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
     {
       title: "System を作る",
       description:
-        "System（JavaScript）を作る。既定でアウトプットに入れて有効にする。書き方は guide を参照",
+        "System（TypeScript）を作る。既定でアウトプットに入れて有効にする。書き方は guide を参照",
       inputSchema: {
         name: z.string().min(1).max(64),
         code: z.string().max(200_000),

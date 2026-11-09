@@ -13,6 +13,8 @@ import {
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import { hostApiDeclarations, type LogEntry, Simulation } from "@tukurium/runtime";
+import { TypeChecker } from "@tukurium/typecheck";
+import { nodeTypeCheckerOptions } from "@tukurium/typecheck/node";
 import type { RepoService } from "../repos/service";
 import type { AgentClient } from "./AgentClient";
 
@@ -415,7 +417,14 @@ const showDiagnostic = (d: Diagnostic) => ({
   ...(d.detail ? { detail: d.detail } : {}),
 });
 
-/** 作っている途中の問題：構造・参照・System の import（スクリプトの実行時の問題は simulate で） */
+/** スクリプトの型を確かめる（ADR 0058）。TypeScript の本体は重いので、初めて使うときに作り、使い回す */
+let typeChecker: TypeChecker | null = null;
+const HOST_DECLARATIONS = hostApiDeclarations();
+
+/**
+ * 作っている途中の問題：構造・参照・System の書き方と import・型の誤り
+ * （スクリプトの実行時の問題は simulate で）。型の誤りがあっても simulate は動く。
+ */
 export async function check(
   project: ProjectDoc,
   packages: Map<string, PackageResolution>,
@@ -430,6 +439,8 @@ export async function check(
     const compiled = compileSystem(s.id, s.code, index, packages);
     if (!compiled.ok) out.push(...compiled.diagnostics);
   }
+  typeChecker ??= new TypeChecker(nodeTypeCheckerOptions());
+  out.push(...typeChecker.check({ snapshot: snap, packages, hostDeclarations: HOST_DECLARATIONS }));
   return out.map(showDiagnostic);
 }
 
@@ -535,7 +546,10 @@ export function guide(): string {
     "## 考え方",
     "- プロジェクトは、アウトプット（アイテム・ワールド・ライブラリ）と、その中の Entity の木でできている。",
     "- Entity には KokoState（続く状態。欄を持つ）を付ける。Transform・Mesh・Collider などは Built-in。",
-    "- 動きは System（JavaScript）で書く。System はアウトプットに入れて有効にすると動く。",
+    "- 動きは System（TypeScript）で書く。System はアウトプットに入れて有効にすると動く。",
+    '- KokoState は import して使う（例：import Gun from "./Gun.koko";、Built-in は @builtin/Transform.koko、ライブラリは @別名/...）。Query の with・without にも import した値を書く（"Gun" のような名前の文字列は使えない）。',
+    "- Entity の値は e.get(Gun) で読み書きする。e.get() に渡せるのは、その System の query.with に書いた KokoState だけ。",
+    "- 型の判定は厳しい（TypeScript の strict）。check が型の誤りも返す（出どころ types）。型の誤りがあっても simulate は動くが、直してから人に渡す。",
     "- 変更は、人の画面にそのまま届く。保存（コミット）は人が行う。エージェントは保存できない。",
     "",
     "## 進め方のおすすめ",
@@ -550,7 +564,7 @@ export function guide(): string {
     `## 欄の型: ${FIELD_TYPES.join(", ")}`,
     "",
     "## System の書き方（見本：サンプル「銃と的」の Shoot）",
-    "```js",
+    "```ts",
     shoot.trim(),
     "```",
     "",
