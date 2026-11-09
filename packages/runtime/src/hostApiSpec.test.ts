@@ -25,7 +25,10 @@ describe("Host API の一つの定義（HOST_API_SPEC）", () => {
       'send(contract: "Damage", payload: { amount: number; type?: string }): boolean;',
     );
     expect(d).toContain("declare const audio: {");
-    for (const name of HOST_API) expect(d).toContain(`${name.split(".")[1]}(`);
+    for (const name of HOST_API) expect(d).toMatch(new RegExp(`${name.split(".")[1]}[(<]`));
+    // System の書き方の型：e.get() は Query の with に書いた KokoState だけ（ADR 0058）
+    expect(d).toContain("interface SystemEntity<Q extends KokoState>");
+    expect(d).toContain("declare function system<const W extends readonly KokoState[] = []>");
   });
 
   it("エディタの入力補完の候補を、名前空間ごとに作る（説明と要る権限つき）", () => {
