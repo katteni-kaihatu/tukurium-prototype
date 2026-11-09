@@ -37,11 +37,11 @@ const view = (
 const ctx: ProblemContext = {
   placeOf: (d) =>
     ({
-      sys_a: "Shoot.js 4 行目",
+      sys_a: "Shoot.ts 4 行目",
       ent_1: "Entity「的」",
       k_gun: "/Combat/States/Gun.koko",
     })[d.subject.id] ?? d.subject.id,
-  subjectOf: (d) => (d.subject.id === "sys_a" ? "/Combat/Shoot.js" : ctx.placeOf(d)),
+  subjectOf: (d) => (d.subject.id === "sys_a" ? "/Combat/Shoot.ts" : ctx.placeOf(d)),
   outputsOf: (d) =>
     ({ sys_a: ["out_gun"], ent_1: ["out_range"] })[d.subject.id as "sys_a" | "ent_1"] ?? [],
   folderOf: (d) =>
@@ -118,7 +118,7 @@ describe("groupProblems", () => {
 
   it("リソースごとにまとめる（同じ System の問題は一つに）", () => {
     expect(labels("resource")).toEqual([
-      ["/Combat/Shoot.js", 2],
+      ["/Combat/Shoot.ts", 2],
       ["/Combat/States/Gun.koko", 1],
       ["Entity「的」", 1],
     ]);
@@ -168,7 +168,7 @@ describe("problemDetail", () => {
       freshness: "stale",
     };
     expect(problemDetail(d, ctx)).toEqual([
-      ["対象", "/Combat/Shoot.js"],
+      ["対象", "/Combat/Shoot.ts"],
       ["場所", "4 行目 「Gun」"],
       ["関係するもの", "/Combat/States/Gun.koko"],
       ["時点", "作っている途中（編集前の結果）"],

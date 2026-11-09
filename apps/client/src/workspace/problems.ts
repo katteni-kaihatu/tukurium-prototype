@@ -102,13 +102,9 @@ export async function checkScripts(
   for (const def of project.systems()) {
     if (only && !only.has(def.id)) continue;
     const code = project.code(def.id)?.toString() ?? "";
-    // import を安定 ID に結び付ける（見つからない・曖昧な import はその行の問題にする）
-    if (code.includes("import")) {
-      index ??= ResourcePathIndex.fromSnapshot(project.snapshot());
-    }
-    const compiled = index
-      ? compileSystem(def.id, code, index, packages)
-      : { ok: true, javascript: code, diagnostics: [], bindings: [] };
+    // 型を消し（ADR 0058）、import を安定 ID に結び付ける（見つからない・曖昧な import はその行の問題にする）
+    index ??= ResourcePathIndex.fromSnapshot(project.snapshot());
+    const compiled = compileSystem(def.id, code, index, packages);
     if (!compiled.ok) {
       problems.push(...compiled.diagnostics);
       continue;

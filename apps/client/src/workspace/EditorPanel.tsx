@@ -53,7 +53,7 @@ export function EditorPanel() {
                 aria-selected={activeSystem === id}
                 onClick={() => openSystem(id)}
               >
-                {project.system(id)?.name ?? id}.js
+                {project.system(id)?.name ?? id}.ts
                 {allProblems.some((p) => p.subject.id === id && p.freshness === "current") && (
                   <span className={ui.badgeError} style={{ marginLeft: 6 }}>
                     !
@@ -248,7 +248,7 @@ function CodeView({ systemId }: { systemId: string }) {
         doc: text.toString(),
         extensions: [
           basicSetup,
-          javascript(),
+          javascript({ typescript: true }),
           javascriptLanguage.data.of({ autocomplete: hostApiCompletionSource }),
           javascriptLanguage.data.of({ autocomplete: importCompletionSource(candidates) }),
           // カーソル・選択の共有（awareness は閲覧権限のある人にだけ中継される）

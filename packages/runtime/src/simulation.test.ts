@@ -161,6 +161,29 @@ describe("Simulation：System の扱い", () => {
     expect(sim.world.get("e1", "ks_c")?.n).toBe(2);
   });
 
+  it("TypeScript で書いた System を、型を消して動かす。誤りの行は TypeScript の行のまま（ADR 0058）", async () => {
+    sim = await Simulation.create(
+      project(
+        [
+          "interface Step { by: number }",
+          "const step: Step = { by: 1 };",
+          'export default system({ query: { with: ["Counter"] }, onUpdate(e: any, dt: number) {',
+          "  e.Counter.n += step.by as number;",
+          '  if (e.Counter.n > 1) throw new Error("line 5");',
+          "} });",
+        ].join("\n"),
+      ),
+      "out",
+      { realm: "r" },
+    );
+    sim.step(0.1);
+    expect(sim.world.get("e1", "ks_c")?.n).toBe(1);
+    sim.step(0.1);
+    const status = sim.systemStatus().find((x) => x.id === "sys_a");
+    expect(status?.error).toMatch(/line 5/);
+    expect(status?.line).toBe(5);
+  });
+
   it("型の合わない値の書き込みは無視する", async () => {
     sim = await Simulation.create(
       project(

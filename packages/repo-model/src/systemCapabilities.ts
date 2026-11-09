@@ -1,5 +1,6 @@
 import { parse } from "acorn";
 import { type Diagnostic, makeDiagnostic } from "./diagnostics/types";
+import { stripTypes } from "./typescriptStrip";
 
 /**
  * System のコードから、要る Capability を読み取る（ADR 0012。利用者は宣言を書かない）。
@@ -66,9 +67,16 @@ export interface InferredCapabilities {
 }
 
 export function inferCapabilities(systemId: string, source: string): InferredCapabilities {
+  // スクリプトは TypeScript。型を消してから読む（行の数は変わらない。ADR 0058）
+  const stripped = stripTypes(source);
+  if (!stripped.ok) return { capabilities: [], diagnostics: [] };
   let ast: AstNode;
   try {
-    ast = parse(source, { ecmaVersion: "latest", sourceType: "module", locations: true }) as never;
+    ast = parse(stripped.javascript, {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      locations: true,
+    }) as never;
   } catch {
     return { capabilities: [], diagnostics: [] };
   }
