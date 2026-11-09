@@ -320,3 +320,21 @@
   grid-template-columns: 72px minmax(0, 1fr);
   gap: 6px;
 }
+
+/* 問題の場所から移ってきた KokoState と欄を、少しの間目立たせる */
+.kokoCard[data-flash],
+.fieldRow[data-flash] {
+  animation: focusFlash 1.6s ease-out;
+  border-radius: 8px;
+}
+
+@keyframes focusFlash {
+  0%,
+  40% {
+    box-shadow: 0 0 0 2px #b23b3b;
+    background: #fbeaea;
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
