@@ -117,9 +117,20 @@ export function ProblemsPanel() {
     if (kind === "entity") {
       const e = project.entity(id);
       if (!e || !project.output(e.output)) return null;
+      const path = d.location?.kind === "property" ? d.location.path : [];
       return () => {
         if (e.output !== outputId) setOutput(e.output);
         select({ kind: "entity", id });
+        // 欄の問題なら、その KokoState と欄まで開いて目立たせる
+        if (path[0])
+          useWorkspace.setState((s) => ({
+            focusField: {
+              entity: id,
+              koko: path[0] ?? "",
+              field: path[1] ?? null,
+              seq: (s.focusField?.seq ?? 0) + 1,
+            },
+          }));
       };
     }
     if (kind === "output")

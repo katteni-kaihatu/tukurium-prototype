@@ -1,6 +1,6 @@
 import type { EntityId, FieldValue, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePanelPopover } from "../panels/popover";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
@@ -646,6 +646,27 @@ function EntityProperties({ id }: { id: EntityId }) {
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [error, setError] = useState<string | null>(null);
   const [closedKoko, setClosedKoko] = useState<Record<string, boolean>>({});
+  const focus = useWorkspace((s) => s.focusField);
+  /** 問題の場所から移ってきたとき、少しの間目立たせる KokoState か欄（"koko" か "koko:field"） */
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  // 問題の場所から移ってきたら、その KokoState を開き、欄まで送って目立たせる。
+  // 一度使ったら記録を消す（あとで選び直したときに、また目立たせないように）
+  useEffect(() => {
+    if (!focus || focus.entity !== id) return;
+    useWorkspace.setState({ focusField: null });
+    setClosedKoko((c) => ({ ...c, [`${id}:${focus.koko}`]: false }));
+    const key = focus.field ? `${focus.koko}:${focus.field}` : focus.koko;
+    setFlash(key);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-focus-key="${CSS.escape(`${id}:${key}`)}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 1600);
+  }, [focus, id]);
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
   const [dupAnchor, setDupAnchor] = useState<HTMLElement | null>(null);
   const [systemAnchor, setSystemAnchor] = useState<HTMLElement | null>(null);
   const editing = canEdit;
@@ -926,7 +947,13 @@ function EntityProperties({ id }: { id: EntityId }) {
           const values = entity.states[koko] ?? {};
           const closed = !!closedKoko[kokoKey(koko)];
           return (
-            <section key={koko} className={styles.kokoCard} aria-label={def.name}>
+            <section
+              key={koko}
+              className={styles.kokoCard}
+              aria-label={def.name}
+              data-focus-key={`${id}:${koko}`}
+              data-flash={flash === koko || undefined}
+            >
               <div className={styles.kokoHead}>
                 <button
                   type="button"
@@ -999,7 +1026,12 @@ function EntityProperties({ id }: { id: EntityId }) {
                     <p className={ui.muted}>フィールドなし（タグとして使う KokoState）</p>
                   )}
                   {def.fields.map((f) => (
-                    <div key={f.id} className={styles.fieldRow}>
+                    <div
+                      key={f.id}
+                      className={styles.fieldRow}
+                      data-focus-key={`${id}:${koko}:${f.id}`}
+                      data-flash={flash === `${koko}:${f.id}` || undefined}
+                    >
                       <ChangeMark
                         kind={marks?.states[koko]?.fields[f.id] ?? null}
                         target={{ entry: `entity:${id}`, part: `field:${koko}:${f.id}` }}

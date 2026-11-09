@@ -89,6 +89,8 @@ interface WorkspaceState {
   runProblems: ObservedDiagnostics;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
   jumpTo: { systemId: string; line: number | null; seq: number } | null;
+  /** Inspector で開いて目立たせる Entity の KokoState と欄（問題の場所から移るとき。seq は何度でも移れるように） */
+  focusField: { entity: string; koko: string; field: string | null; seq: number } | null;
   /** 問題の場所をエディタで開く */
   showProblem(p: Diagnostic): void;
   logs: WorkspaceLog[];
@@ -231,6 +233,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     checking: false,
     runProblems: NO_DIAGNOSTICS,
     jumpTo: null,
+    focusField: null,
     showProblem: (p) => {
       if (p.subject.kind !== "system") return;
       const systemId = p.subject.id;
@@ -321,6 +324,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
+        focusField: null,
         sessionOpen: false,
         inspectorOpen: true,
         resourcesOpen: true,
@@ -360,6 +364,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         jumpTo: null,
+        focusField: null,
         openSystems: [],
         activeSystem: null,
         editorPlace: null,
