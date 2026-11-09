@@ -8,6 +8,7 @@ import {
 } from "./packageDependency";
 import { BUILTIN_PREFIX, ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
+import { rangeInSource, stripTypes } from "./typescriptStrip";
 
 /**
  * System スクリプトのコンパイル（ADR 0010 §3、計画 Phase 4）。
@@ -55,10 +56,35 @@ const KOKO_EXT = ".koko";
  */
 export function compileSystem(
   systemId: string,
-  source: string,
+  typescript: string,
   index: ResourcePathIndex,
   packages?: ReadonlyMap<string, PackageResolution>,
 ): CompiledSystem {
+  // スクリプトは TypeScript。型を消して JavaScript にしてから読む（行の数は変わらない。ADR 0058）
+  const stripped = stripTypes(typescript);
+  if (!stripped.ok)
+    return {
+      ok: false,
+      javascript: "",
+      bindings: [],
+      packageImports: [],
+      diagnostics: [
+        makeDiagnostic({
+          code: "script-syntax",
+          severity: "error",
+          phase: "authoring",
+          provider: "script",
+          subject: { kind: "system", id: systemId },
+          location: { kind: "script", line: stripped.line },
+          related: [],
+          message: `書き方の誤り：${stripped.message}`,
+        }),
+      ],
+    };
+  const source = stripped.javascript;
+  /** import のパスの範囲は、元のコード（TypeScript）の範囲で返す（名前の変更での書き直しに使う） */
+  const original = (range: [number, number]): [number, number] =>
+    rangeInSource(source, typescript, range) ?? range;
   let imports: ImportDeclaration[];
   try {
     const ast = parse(source, { ecmaVersion: "latest", sourceType: "module", locations: true });
@@ -155,7 +181,7 @@ export function compileSystem(
             name: def.name,
             package: alias,
             line,
-            range: [node.source.start, node.source.end],
+            range: original([node.source.start, node.source.end]),
           });
           replacement = `const ${only.local.name} = __koko(${JSON.stringify(id)}, ${JSON.stringify(def.name)});`;
         }
@@ -171,7 +197,7 @@ export function compileSystem(
           resourceId: r.id,
           name,
           line,
-          range: [node.source.start, node.source.end],
+          range: original([node.source.start, node.source.end]),
         });
         replacement = `const ${only.local.name} = __koko(${JSON.stringify(r.id)}, ${JSON.stringify(name)});`;
       } else if (!r.ok && r.reason === "ambiguous") {
@@ -186,9 +212,8 @@ export function compileSystem(
       }
     }
     // 行の数を保つ：元の範囲にあった改行を足す
-    const original = source.slice(node.start, node.end);
-    out +=
-      source.slice(at, node.start) + replacement + "\n".repeat(original.split("\n").length - 1);
+    const spanned = source.slice(node.start, node.end);
+    out += source.slice(at, node.start) + replacement + "\n".repeat(spanned.split("\n").length - 1);
     at = node.end;
   }
   out += source.slice(at);
@@ -221,9 +246,11 @@ export function readSystemQuery(
   packages?: ReadonlyMap<string, PackageResolution>,
 ): { with: QueryItem[]; without: QueryItem[] } {
   const empty = { with: [], without: [] };
+  const stripped = stripTypes(source);
+  if (!stripped.ok) return empty;
   let ast: ReturnType<typeof parse>;
   try {
-    ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+    ast = parse(stripped.javascript, { ecmaVersion: "latest", sourceType: "module" });
   } catch {
     return empty;
   }
@@ -323,20 +350,27 @@ export function planImportRefactor(prev: ProjectSnapshot, next: ProjectSnapshot)
  * パスの文字列だけを置き換えるので、ほかのコードと行の数は変わらない。`next` が null を返したものはそのまま。
  */
 export function rewriteImports(source: string, next: (spelling: string) => string | null): string {
+  // 型を消した JavaScript で import を探し、元のコード（TypeScript）の同じ範囲を書き換える
+  const stripped = stripTypes(source);
+  if (!stripped.ok) return source;
   let imports: ImportDeclaration[];
   try {
-    const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+    const ast = parse(stripped.javascript, { ecmaVersion: "latest", sourceType: "module" });
     imports = ast.body.filter((n): n is ImportDeclaration => n.type === "ImportDeclaration");
   } catch {
     return source;
   }
-  let out = source;
-  // 後ろから置き換えて、前の位置をずらさない
-  for (const node of [...imports].sort((a, b) => b.source.start - a.source.start)) {
+  const edits: { range: [number, number]; text: string }[] = [];
+  for (const node of imports) {
     const spelling = String(node.source.value);
     const to = next(spelling);
     if (to === null || to === spelling) continue;
-    out = out.slice(0, node.source.start) + JSON.stringify(to) + out.slice(node.source.end);
+    const range = rangeInSource(stripped.javascript, source, [node.source.start, node.source.end]);
+    if (range) edits.push({ range, text: JSON.stringify(to) });
   }
+  let out = source;
+  // 後ろから置き換えて、前の位置をずらさない
+  for (const e of edits.sort((a, b) => b.range[0] - a.range[0]))
+    out = out.slice(0, e.range[0]) + e.text + out.slice(e.range[1]);
   return out;
 }

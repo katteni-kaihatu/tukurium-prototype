@@ -28,7 +28,7 @@ export function systemMetaPath(id: string): string {
   return `systems/${safe(id)}.json`;
 }
 export function systemCodePath(id: string): string {
-  return `systems/${safe(id)}.js`;
+  return `systems/${safe(id)}.ts`;
 }
 export function materialFilePath(id: string): string {
   return `materials/${safe(id)}.json`;
@@ -39,7 +39,7 @@ export function outputFilePath(id: string): string {
 
 /**
  * 制作データを、人が差分を読めるファイルの集まりにする（計画 §5）。
- * 1 要素 1 ファイルの JSON と、System のスクリプト（.js）。
+ * 1 要素 1 ファイルの JSON と、System のスクリプト（.ts。ADR 0058）。
  */
 export function toFiles(snap: ProjectSnapshot): FileMap {
   const files: FileMap = {};
@@ -88,7 +88,9 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
     else if (p.startsWith("assets/")) snap.assets?.push(parse<AssetDef>(p));
     else if (p.startsWith("systems/") && p.endsWith(".json")) {
       const def = parse<SystemDef>(p);
-      snap.systems.push({ ...def, code: files[p.replace(/\.json$/, ".js")] ?? "" });
+      // スクリプトは .ts。以前の保存の .js も読む
+      const base = p.replace(/\.json$/, "");
+      snap.systems.push({ ...def, code: files[`${base}.ts`] ?? files[`${base}.js`] ?? "" });
     } else if (/^outputs\/[^/]+\/output\.json$/.test(p)) snap.outputs.push(parse<OutputDef>(p));
   }
   for (const o of snap.outputs) {

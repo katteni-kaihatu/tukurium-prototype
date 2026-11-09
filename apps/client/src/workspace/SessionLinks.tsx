@@ -153,7 +153,7 @@ export function SessionLinks() {
             <li key={`${w.system}:${w.code}`}>
               <div className={ui.problem} data-tone="warning">
                 <span className={ui.problemPlace}>
-                  {w.system}.js
+                  {w.system}.ts
                   <span className={ui.problemKind}>セッションでの注意</span>
                 </span>
                 <span>

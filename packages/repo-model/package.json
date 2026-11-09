@@ -12,6 +12,7 @@
   "dependencies": {
     "@tukurium/eks": "workspace:*",
     "acorn": "8.14.1",
+    "sucrase": "3.35.1",
     "yjs": "^13.6.33",
     "zod": "^4.6.7"
   }

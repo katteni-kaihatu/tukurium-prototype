@@ -23,10 +23,10 @@ import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useWorkspaceProblems } from "./useProblems";
 
-/** 問題 1 件の場所の表示（「Shoot.js 4 行目」） */
+/** 問題 1 件の場所の表示（「Shoot.ts 4 行目」） */
 export function problemPlace(name: string, p: Diagnostic): string {
   const line = scriptLine(p);
-  return `${name}.js${line ? ` ${line} 行目` : ""}`;
+  return `${name}.ts${line ? ` ${line} 行目` : ""}`;
 }
 
 const isScript = (d: Diagnostic) =>
@@ -65,7 +65,7 @@ export function ProblemsPanel() {
       subjectOf: (d) =>
         isScript(d)
           ? (index?.pathOf(d.subject.id) ??
-            `${project.system(d.subject.id)?.name ?? d.subject.id}.js`)
+            `${project.system(d.subject.id)?.name ?? d.subject.id}.ts`)
           : placeOf(d.subject, project, index),
       outputsOf: (d) => {
         const { kind, id } = d.subject;

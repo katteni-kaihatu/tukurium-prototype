@@ -1065,7 +1065,7 @@ describe("リポジトリ・コミット・作品", () => {
     const commits = (await B.get(`/api/repos/${repo.id}/commits`)).json();
     expect(commits.map((c: { message: string }) => c.message)).toEqual(["最初のコミット"]);
     const files = (await B.get(`/api/repos/${repo.id}/files`)).json();
-    expect(files["systems/sys_shoot.js"]).toContain("system(");
+    expect(files["systems/sys_shoot.ts"]).toContain("system(");
     const diff = (await B.get(`/api/repos/${repo.id}/commits/${commits[0].oid}/diff`)).json();
     expect(diff.every((d: { change: string }) => d.change === "added")).toBe(true);
 

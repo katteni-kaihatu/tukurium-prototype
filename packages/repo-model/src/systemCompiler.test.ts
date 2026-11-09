@@ -102,7 +102,7 @@ describe("compileSystem", () => {
     ]);
   });
 
-  it("import がなければそのまま。構文の誤りは QuickJS に任せる（そのまま返す）", () => {
+  it("import がなければそのまま。書き方の誤りは、型を消す段階でその行の問題にする", () => {
     const plain = `export default system({ query: { with: ["Gun"] } });`;
     expect(compile(plain)).toEqual({
       ok: true,
@@ -111,8 +111,30 @@ describe("compileSystem", () => {
       diagnostics: [],
       packageImports: [],
     });
-    const broken = `let = ;\nexport default system({});`;
-    expect(compile(broken)).toMatchObject({ ok: true, javascript: broken });
+    const broken = `export default system({});\nlet = ;`;
+    const r = compile(broken);
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics).toEqual([
+      expect.objectContaining({ code: "script-syntax", location: { kind: "script", line: 2 } }),
+    ]);
+  });
+
+  it("TypeScript の型を消して読む。行の数は変わらず、import のパスの範囲は元のコードを指す", () => {
+    const ts = [
+      "interface Cfg { speed: number }",
+      `const cfg: Cfg = { speed: 2 }; import Gun from "../States/Gun.koko";`,
+      "export default system({",
+      "  query: { with: [Gun] },",
+      "  onUpdate(e, dt: number) { const n = dt as number; },",
+      "});",
+    ].join("\n");
+    const r = compile(ts);
+    expect(r.ok).toBe(true);
+    expect(r.javascript.split("\n")).toHaveLength(6);
+    expect(r.javascript).not.toContain("interface");
+    const b = r.bindings[0];
+    expect(b?.line).toBe(2);
+    expect(ts.slice(b?.range[0], b?.range[1])).toBe('"../States/Gun.koko"');
   });
 });
 

@@ -19,7 +19,7 @@ describe("ファイル形式", () => {
   it("制作データ → ファイル → 制作データ で元に戻る", () => {
     const snap = gunAndTargetSample();
     const files = toFiles(snap);
-    expect(files["systems/sys_shoot.js"]).toContain("export default system");
+    expect(files["systems/sys_shoot.ts"]).toContain("export default system");
     expect(files["outputs/out_range/entities/ent_gun.json"]).toBeDefined();
     expect(norm(fromFiles(files))).toEqual(norm(snap));
   });
@@ -33,8 +33,8 @@ describe("ファイル形式", () => {
     const d = diffFiles(a, toFiles(s));
     expect(d.map((c) => [c.path, c.change])).toEqual([
       ["outputs/out_range/entities/ent_gun.json", "modified"],
-      ["systems/sys_target.js", "removed"],
       ["systems/sys_target.json", "removed"],
+      ["systems/sys_target.ts", "removed"],
     ]);
     expect(d[0]).toMatchObject({ add: 1, del: 1 });
   });

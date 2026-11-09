@@ -16,3 +16,4 @@ export * from "./samples";
 export * from "./schema";
 export * from "./systemCapabilities";
 export * from "./systemCompiler";
+export * from "./typescriptStrip";
