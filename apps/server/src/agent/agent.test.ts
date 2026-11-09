@@ -168,10 +168,13 @@ describe("リモートの MCP（/mcp）", () => {
     });
     await call("create_system", {
       name: "Spin",
-      code: `export default system({
-  query: { with: ["Spinner", "Transform"] },
+      code: `import Spinner from "./Spinner.koko";
+import Transform from "@builtin/Transform.koko";
+export default system({
+  query: { with: [Spinner, Transform] },
   onUpdate(e, dt) {
-    e.Transform.rotation = [0, e.Transform.rotation[1] + e.Spinner.speed * dt, 0];
+    const t = e.get(Transform);
+    t.rotation = [0, t.rotation[1] + e.get(Spinner).speed * dt, 0];
   },
 });
 `,

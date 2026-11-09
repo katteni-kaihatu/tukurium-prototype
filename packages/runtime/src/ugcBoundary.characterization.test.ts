@@ -18,8 +18,9 @@ afterEach(() => {
 });
 
 /** 入力を受けると、別の配置へ届くかを試して log に出す System（銃のサンプルの Gun を Query に使う） */
-const PROBE = `export default system({
-  query: { with: ["Gun"] },
+const PROBE = `import Gun from "./Gun.koko";
+export default system({
+  query: { with: [Gun] },
   onInput(e, ev) {
     if (ev.phase !== "down") return;
     if (ev.action === "probe") {

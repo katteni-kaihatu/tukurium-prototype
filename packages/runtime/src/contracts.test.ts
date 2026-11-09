@@ -16,8 +16,9 @@ afterEach(() => {
   sim = undefined;
 });
 
-const PROBE = `export default system({
-  query: { with: ["Gun"] },
+const PROBE = `import Gun from "./Gun.koko";
+export default system({
+  query: { with: [Gun] },
   onInput(e, ev) {
     if (ev.phase !== "down") return;
     const hit = world.raycast(ev.origin, ev.direction, 100);

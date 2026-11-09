@@ -1,17 +1,23 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { type ScriptEntity, ScriptError, ScriptSandbox } from "./sandbox";
 
+// import した KokoState は、コンパイラが __koko(ID, 名前) に書き換える（ここでは直接書く）
 const SHOOT = `
+const Gun = __koko("Gun", "Gun");
+const Transform = __koko("Transform", "Transform");
+const Disabled = __koko("Disabled", "Disabled");
 export default system({
-  query: { with: ["Gun", "Transform"], without: ["Disabled"] },
+  query: { with: [Gun, Transform], without: [Disabled] },
   onUpdate(e, dt) {
-    e.Gun.cooldown = Math.max(0, e.Gun.cooldown - dt);
+    const gun = e.get(Gun);
+    gun.cooldown = Math.max(0, gun.cooldown - dt);
   },
   onInput(e, ev) {
-    if (ev.action === "fire" && e.Gun.ammo > 0 && e.Gun.cooldown === 0) {
-      e.Gun.ammo -= 1;
-      e.Gun.cooldown = e.Gun.interval;
-      const hit = world.raycast(e.Transform.position, [0, 0, 1], 100);
+    const gun = e.get(Gun);
+    if (ev.action === "fire" && gun.ammo > 0 && gun.cooldown === 0) {
+      gun.ammo -= 1;
+      gun.cooldown = gun.interval;
+      const hit = world.raycast(e.get(Transform).position, [0, 0, 1], 100);
       if (hit) world.emit(hit.entity, "hit", { damage: 1 });
     }
   },
@@ -63,8 +69,9 @@ describe("ScriptSandbox", () => {
     sandbox = await ScriptSandbox.create();
     sandbox.loadSystem(
       "peek",
-      `export default system({ query: { with: [] }, onUpdate(e) {
-        e.out = { fetch: typeof fetch, process: typeof process, window: typeof window, require: typeof require };
+      `const Out = __koko("out", "out");
+      export default system({ query: { with: [Out] }, onUpdate(e) {
+        Object.assign(e.get(Out), { fetch: typeof fetch, process: typeof process, window: typeof window, require: typeof require });
       } });`,
     );
     const [e] = sandbox.run("peek", "onUpdate", [{ id: "x", states: { out: {} } }]);
@@ -167,7 +174,7 @@ describe("ScriptSandbox", () => {
     );
     sandbox.loadSystem(
       "victim",
-      `export default system({ onUpdate(e) { e.out = { hacked: ({}).hacked === true }; } });`,
+      `const Out = __koko("out", "out"); export default system({ query: { with: [Out] }, onUpdate(e) { e.get(Out).hacked = ({}).hacked === true; } });`,
       "repo-victim",
     );
     const [v] = sandbox.run("victim", "onUpdate", [{ id: "x", states: { out: {} } }]);
@@ -178,10 +185,28 @@ describe("ScriptSandbox", () => {
     ).toThrowError(/hijacked/);
   });
 
+  it("Query に名前の文字列は書けない。e.get() で触れるのは Query の with に書いた KokoState だけ（ADR 0058）", async () => {
+    sandbox = await ScriptSandbox.create();
+    expect(() =>
+      sandbox?.loadSystem("named", `export default system({ query: { with: ["Gun"] } });`),
+    ).toThrowError(/名前の文字列は使えません/);
+    sandbox.loadSystem(
+      "peek",
+      `const Gun = __koko("Gun", "Gun");
+       const Hp = __koko("Hp", "Hp");
+       export default system({ query: { with: [Gun] }, onUpdate(e) { e.get(Hp); } });`,
+    );
+    expect(() =>
+      sandbox?.run("peek", "onUpdate", [{ id: "x", states: { Gun: {}, Hp: { hp: 1 } } }]),
+    ).toThrowError(/Hp」はこの System の query.with にない/);
+  });
+
   it("System を別の領域へ読み込み直すと、元の領域からは消える", async () => {
     sandbox = await ScriptSandbox.create();
-    sandbox.loadSystem("s", `export default system({ onUpdate(e) { e.out = { v: 1 }; } });`, "a");
-    sandbox.loadSystem("s", `export default system({ onUpdate(e) { e.out = { v: 2 }; } });`, "b");
+    const sys = (v: number) =>
+      `const Out = __koko("out", "out"); export default system({ query: { with: [Out] }, onUpdate(e) { e.get(Out).v = ${v}; } });`;
+    sandbox.loadSystem("s", sys(1), "a");
+    sandbox.loadSystem("s", sys(2), "b");
     const [e] = sandbox.run("s", "onUpdate", [{ id: "x", states: { out: {} } }]);
     expect(e?.states.out).toEqual({ v: 2 });
     sandbox.disposeRealm("b");

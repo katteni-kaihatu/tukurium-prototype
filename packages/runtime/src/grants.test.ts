@@ -25,8 +25,9 @@ function gunWith(code: string): ProjectSnapshot {
   return s;
 }
 
-const RAYCAST = `export default system({
-  query: { with: ["Gun"] },
+const RAYCAST = `import Gun from "./Gun.koko";
+export default system({
+  query: { with: [Gun] },
   onInput(e, ev) {
     if (ev.phase !== "down") return;
     const hit = world.raycast(ev.origin, ev.direction, 100);
@@ -34,8 +35,9 @@ const RAYCAST = `export default system({
   },
 });`;
 
-const DYNAMIC = `export default system({
-  query: { with: ["Gun"] },
+const DYNAMIC = `import Gun from "./Gun.koko";
+export default system({
+  query: { with: [Gun] },
   onInput(e, ev) {
     if (ev.phase !== "down") return;
     const name = "find";

@@ -120,11 +120,13 @@ function project(code: string, extra: Partial<ProjectSnapshot> = {}): ProjectSna
 
 describe("Simulation：System の扱い", () => {
   it("Query に存在しない KokoState を書くと、その System だけ止まる", async () => {
-    const p = project(`export default system({ query: { with: ["Nope"] }, onUpdate() {} });`);
+    const p = project(
+      `import Nope from "./Nope.koko"; export default system({ query: { with: [Nope] }, onUpdate() {} });`,
+    );
     p.systems.push({
       id: "sys_b",
       name: "B",
-      code: `export default system({ query: { with: ["Counter"] }, onUpdate(e) { e.Counter.n += 1; } });`,
+      code: `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate(e) { e.get(C).n += 1; } });`,
     });
     p.outputs[0]?.systems.push({ id: "sys_b", enabled: true });
     sim = await Simulation.create(p, "out", { realm: "r" });
@@ -135,18 +137,18 @@ describe("Simulation：System の扱い", () => {
 
   it("実行中に例外を出した System と、無限ループの System は止まり、ほかは動き続ける", async () => {
     const p = project(
-      `export default system({ query: { with: ["Counter"] }, onUpdate() { throw new Error("boom"); } });`,
+      `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate() { throw new Error("boom"); } });`,
     );
     p.systems.push(
       {
         id: "sys_loop",
         name: "Loop",
-        code: `export default system({ query: { with: ["Counter"] }, onUpdate() { for(;;){} } });`,
+        code: `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate() { for(;;){} } });`,
       },
       {
         id: "sys_ok",
         name: "Ok",
-        code: `export default system({ query: { with: ["Counter"] }, onUpdate(e) { e.Counter.n += 1; } });`,
+        code: `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate(e) { e.get(C).n += 1; } });`,
       },
     );
     p.outputs[0]?.systems.push({ id: "sys_loop", enabled: true }, { id: "sys_ok", enabled: true });
@@ -167,9 +169,9 @@ describe("Simulation：System の扱い", () => {
         [
           "interface Step { by: number }",
           "const step: Step = { by: 1 };",
-          'export default system({ query: { with: ["Counter"] }, onUpdate(e: any, dt: number) {',
-          "  e.Counter.n += step.by as number;",
-          '  if (e.Counter.n > 1) throw new Error("line 5");',
+          'import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate(e: any, dt: number) {',
+          "  e.get(C).n += step.by as number;",
+          '  if (e.get(C).n > 1) throw new Error("line 5");',
           "} });",
         ].join("\n"),
       ),
@@ -187,7 +189,7 @@ describe("Simulation：System の扱い", () => {
   it("型の合わない値の書き込みは無視する", async () => {
     sim = await Simulation.create(
       project(
-        `export default system({ query: { with: ["Counter"] }, onUpdate(e) { e.Counter.n = "x"; } });`,
+        `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate(e) { e.get(C).n = "x"; } });`,
       ),
       "out",
       { realm: "r" },
@@ -198,16 +200,17 @@ describe("Simulation：System の扱い", () => {
 
   it("spawn / destroy / find / get / set が使える", async () => {
     sim = await Simulation.create(
-      project(`export default system({
-        query: { with: ["Counter"] },
+      project(`import C from "./Counter.koko";
+      export default system({
+        query: { with: [C] },
         onUpdate(e) {
-          if (e.Counter.n === 0) {
+          if (e.get(C).n === 0) {
             const id = world.spawn({ name: "child", states: { Counter: { n: 41 } } });
             world.set(id, "Counter", { n: world.get(id, "Counter").n + 1 });
-          } else if (e.Counter.n === 1) {
+          } else if (e.get(C).n === 1) {
             world.destroy(world.find("child"));
           }
-          e.Counter.n += 1;
+          e.get(C).n += 1;
         },
       });`),
       "out",
@@ -223,7 +226,7 @@ describe("Simulation：System の扱い", () => {
 
   it("動く剛体は重力で落ち、床にぶつかると onCollision が呼ばれる", async () => {
     const p = project(
-      `export default system({ query: { with: ["Counter"] }, onCollision(e, ev) { if (ev.started) e.Counter.n += 1; } });`,
+      `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onCollision(e, ev) { if (ev.started) e.get(C).n += 1; } });`,
     );
     p.entities = [
       {
@@ -270,7 +273,9 @@ describe("Simulation：System の扱い", () => {
 
 describe("Simulation：右クリックで持つ（Grabbable）", () => {
   const box = (rotation: Vec3 = [0, 0, 0], rigid = true) => {
-    const p = project(`export default system({ query: { with: ["Counter"] }, onUpdate() {} });`);
+    const p = project(
+      `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate() {} });`,
+    );
     p.entities.push({
       id: "box",
       name: "箱",
