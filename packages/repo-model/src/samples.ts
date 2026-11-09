@@ -26,15 +26,18 @@ export default system({
 `;
 
 const SHOOT = `// 射撃：Gun を持つ Entity が、入力 fire で視線の先に弾を撃つ
+import Gun from "./Gun.koko";
+
 export default system({
-  query: { with: ["Gun"] },
+  query: { with: [Gun] },
 
   onUpdate(e, dt) {
-    e.Gun.cooldown = Math.max(0, e.Gun.cooldown - dt);
+    const gun = e.get(Gun);
+    gun.cooldown = Math.max(0, gun.cooldown - dt);
   },
 
   onInput(e, ev) {
-    const gun = e.Gun;
+    const gun = e.get(Gun);
     if (ev.action === "reload" && ev.phase === "down") {
       gun.ammo = gun.maxAmmo;
       log("リロード", gun.ammo);
@@ -58,33 +61,39 @@ export default system({
 `;
 
 const TARGET = `// 的：Damage を受けると hp が減り、0 になると倒れて、しばらくすると戻る
+import Target from "./Target.koko";
+import Transform from "@builtin/Transform.koko";
+import Mesh from "@builtin/Mesh.koko";
+
 export default system({
-  query: { with: ["Target", "Transform", "Mesh"] },
+  query: { with: [Target, Transform, Mesh] },
 
   // 外に公開する操作（ほかの作者の銃からも呼べる）
   contracts: {
     Damage(e, damage) {
-      if (e.Target.hp <= 0) return;
-      e.Target.hp -= damage.amount;
-      if (e.Target.hp <= 0) {
-        e.Target.downTime = e.Target.respawn;
-        e.Transform.rotation = [0, 0, 0];
-        e.Mesh.color = "#8a8792";
+      const t = e.get(Target);
+      if (t.hp <= 0) return;
+      t.hp -= damage.amount;
+      if (t.hp <= 0) {
+        t.downTime = t.respawn;
+        e.get(Transform).rotation = [0, 0, 0];
+        e.get(Mesh).color = "#8a8792";
         log(e.id, "命中！倒れた");
       } else {
-        e.Mesh.color = "#fdd046";
-        log(e.id, "命中 残り", e.Target.hp);
+        e.get(Mesh).color = "#fdd046";
+        log(e.id, "命中 残り", t.hp);
       }
     },
   },
 
   onUpdate(e, dt) {
-    if (e.Target.hp > 0) return;
-    e.Target.downTime -= dt;
-    if (e.Target.downTime <= 0) {
-      e.Target.hp = e.Target.maxHp;
-      e.Transform.rotation = [90, 0, 0];
-      e.Mesh.color = "#c0392b";
+    const t = e.get(Target);
+    if (t.hp > 0) return;
+    t.downTime -= dt;
+    if (t.downTime <= 0) {
+      t.hp = t.maxHp;
+      e.get(Transform).rotation = [90, 0, 0];
+      e.get(Mesh).color = "#c0392b";
     }
   },
 });
