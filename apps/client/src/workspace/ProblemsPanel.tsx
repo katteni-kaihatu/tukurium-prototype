@@ -49,6 +49,8 @@ export function ProblemsPanel() {
   const { select, setOutput, outputId, showProblem, openDetail, placeDetail } = useWorkspace();
   const [filter, setFilter] = useState<ProblemFilter>(DEFAULT_FILTER);
   const [groupBy, setGroupBy] = useState<ProblemGroupBy>("none");
+  /** 「選んでいるアウトプットだけ」。アウトプットを選び直したら、その新しいアウトプットで絞る */
+  const [onlyOutput, setOnlyOutput] = useState(false);
   const ctx = useMemo<ProblemContext>(
     () => ({
       placeOf: (d) =>
@@ -84,8 +86,13 @@ export function ProblemsPanel() {
     [project, index],
   );
   const groups = useMemo(
-    () => groupProblems(filterProblems(items, filter, ctx), groupBy, ctx),
-    [items, filter, groupBy, ctx],
+    () =>
+      groupProblems(
+        filterProblems(items, { ...filter, outputId: onlyOutput ? outputId : null }, ctx),
+        groupBy,
+        ctx,
+      ),
+    [items, filter, onlyOutput, outputId, groupBy, ctx],
   );
   const toggle = <T,>(list: readonly T[], values: readonly T[], on: boolean): T[] =>
     on ? [...new Set([...list, ...values])] : list.filter((v) => !values.includes(v));
@@ -229,11 +236,9 @@ export function ProblemsPanel() {
         <label>
           <input
             type="checkbox"
-            checked={filter.outputId !== null}
+            checked={onlyOutput}
             disabled={!outputId}
-            onChange={(e) =>
-              setFilter({ ...filter, outputId: e.target.checked ? (outputId ?? null) : null })
-            }
+            onChange={(e) => setOnlyOutput(e.target.checked)}
           />
           選んでいるアウトプットだけ
         </label>
@@ -252,9 +257,7 @@ export function ProblemsPanel() {
               const body = (
                 <>
                   <span className={ui.problemPlace}>
-                    {isScript(d)
-                      ? problemPlace(project.system(d.subject.id)?.name ?? d.subject.id, d)
-                      : placeOf(d, project, index)}
+                    {ctx.placeOf(d)}
                     <span className={ui.problemKind}>{problemKind(d)}</span>
                   </span>
                   <span>{d.message}</span>
