@@ -19,7 +19,7 @@ import { openRing, provideRingItems } from "../session/ringMenu";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
-import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
+import { ARRIVAL_OFFSET, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
@@ -46,9 +46,9 @@ export function equipsSomething(world: World, player: string): boolean {
 /** 編集中の見た目をほかの人へ送る間隔の下限 */
 const PREVIEW_SEC = 0.4;
 
-/** その場所の手前（+Z 側 6m）に、そこを向いて立つ */
+/** その場所の手前（+Z 側）に、そこを向いて立つ */
 export function enterSpace(engine: SessionEngine, at: [number, number, number]): void {
-  engine.teleport([at[0], 0, at[2] + 6], 0);
+  engine.teleport([at[0], 0, at[2] + ARRIVAL_OFFSET], 0);
 }
 
 /** キー → 入力の動作名（スクリプトの onInput で受け取る） */
