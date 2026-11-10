@@ -4,14 +4,11 @@ import type { WorkspacePreview } from "@tukurium/shared";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
-import { workspaceAnchor } from "../workspace/anchor";
+import { exitPortalAt, PORTAL_RADIUS, workspaceAnchor } from "../workspace/anchor";
 import { useWorkspace } from "../workspace/store";
 import { enterSpace } from "../workspace/WorkspaceController";
 import { makeLabel } from "./Avatars";
 import type { SessionEngine } from "./SessionEngine";
-
-/** ポータルに入ったとみなす距離（水平） */
-const PORTAL_RADIUS = 1.2;
 
 interface Entry {
   name: string;
@@ -20,12 +17,15 @@ interface Entry {
   view: EntityView | null;
   box: THREE.LineSegments;
   label: THREE.Sprite;
+  /** セッションの区画から、独立した空間へ入る */
   portal: THREE.Group | null;
+  /** 独立した空間から、セッションへ戻る */
+  exit: THREE.Group | null;
 }
 
 /**
  * 自分が開いていないワークスペースの、編集中の見た目（要件 §8）。
- * - 閲覧できる：中身をそのまま表示する（独立した空間なら、セッションの区画にポータルを置く）
+ * - 閲覧できる：中身をそのまま表示する（独立した空間なら、セッションの区画に入り口を、中に出口を置く）
  * - 閲覧できない：セッションの区画に「作業中」の境界だけを出す
  * 中身はワークスペースのホストが送り、サーバーが権限で見せ分ける。
  */
@@ -33,8 +33,8 @@ export class WorkspacePreviews {
   private readonly root = new THREE.Group();
   /** テストから参照する */
   readonly entries = new Map<string, Entry>();
-  /** 自分が開いているワークスペースが独立した空間のとき、そこへ入るポータル */
-  private ownPortal: { key: string; group: THREE.Group } | null = null;
+  /** 自分が開いているワークスペースが独立した空間のとき、入り口と出口 */
+  private ownGate: { key: string; entrance: THREE.Group; exit: THREE.Group } | null = null;
   private readonly disposers: (() => void)[] = [];
 
   constructor(private readonly engine: SessionEngine) {
@@ -81,7 +81,7 @@ export class WorkspacePreviews {
     box.userData.noShot = true;
     label.userData.noShot = true;
     this.root.add(box, label);
-    this.entries.set(id, { name, restricted, preview, view, box, label, portal: null });
+    this.entries.set(id, { name, restricted, preview, view, box, label, portal: null, exit: null });
   }
 
   private remove(id: string): void {
@@ -89,21 +89,34 @@ export class WorkspacePreviews {
     if (!e) return;
     e.view?.root.removeFromParent();
     e.view?.dispose();
-    for (const o of [e.box, e.label, e.portal]) if (o) disposeObject(o);
+    for (const o of [e.box, e.label, e.portal, e.exit]) if (o) disposeObject(o);
     this.entries.delete(id);
   }
 
   private clear(): void {
     for (const id of [...this.entries.keys()]) this.remove(id);
-    if (this.ownPortal) disposeObject(this.ownPortal.group);
-    this.ownPortal = null;
+    this.disposeOwnGate();
+  }
+
+  private disposeOwnGate(): void {
+    if (!this.ownGate) return;
+    disposeObject(this.ownGate.entrance);
+    disposeObject(this.ownGate.exit);
+    this.ownGate = null;
   }
 
   private update(): void {
     const session = useApp.getState().session;
     const workspaces = session?.workspaces ?? [];
     const open = useWorkspace.getState().workspaceId;
-    const me = this.engine.controller.position;
+    // フレーム開始時の位置で、一つのポータルだけ使う
+    const here = this.engine.controller.position.clone();
+    let used = false;
+    const stepThrough = (at: [number, number, number], dest: [number, number, number]) => {
+      if (used || !near(here, at)) return;
+      used = true;
+      enterSpace(this.engine, dest);
+    };
 
     for (const [id, e] of this.entries) {
       // 閉じられたワークスペース・自分が開いたワークスペースの見た目は消す
@@ -124,55 +137,96 @@ export class WorkspacePreviews {
       e.label.position.set(center.x, center.y + size.y / 2 + 0.35, center.z);
 
       if (e.preview.isolated && !e.restricted) {
-        e.portal ??= this.makePortal(`ポータル：${e.name}`);
+        const exitAt = exitPortalAt(e.preview.anchor);
+        e.portal ??= this.makePortal(`ポータル：${e.name}`, ENTRANCE);
         e.portal.position.set(...portal);
-        if (near(me, portal)) enterSpace(this.engine, e.preview.anchor);
-      } else if (e.portal) {
-        disposeObject(e.portal);
+        e.exit ??= this.makePortal("出口：セッション", EXIT);
+        e.exit.position.set(...exitAt);
+        stepThrough(portal, e.preview.anchor);
+        stepThrough(exitAt, slot);
+      } else {
+        if (e.portal) disposeObject(e.portal);
+        if (e.exit) disposeObject(e.exit);
         e.portal = null;
+        e.exit = null;
       }
     }
 
-    // 自分が開いているワークスペースが独立した空間なら、区画にポータルを置く（戻ってこられるように）
+    // 自分が開いているワークスペースが独立した空間なら、区画に入り口を、中に出口を置く。
+    // 名前はワークスペースの一覧が遅れて届くことがあるので、札のキーに含める。
     const anchor = useWorkspace.getState().anchor;
-    const key = anchor?.isolated ? JSON.stringify(anchor) : "";
-    if (key !== (this.ownPortal?.key ?? "")) {
-      if (this.ownPortal) disposeObject(this.ownPortal.group);
-      this.ownPortal = null;
+    const name = workspaces.find((w) => w.id === open)?.name ?? "";
+    const key = anchor?.isolated ? `${name}:${JSON.stringify(anchor)}` : "";
+    if (key !== (this.ownGate?.key ?? "")) {
+      this.disposeOwnGate();
       if (anchor?.isolated) {
-        const name = workspaces.find((w) => w.id === open)?.name ?? "";
-        const group = this.makePortal(`ポータル：${name}`);
-        group.position.set(...anchor.portal);
-        this.ownPortal = { key, group };
+        const entrance = this.makePortal(`ポータル：${name}`, ENTRANCE);
+        entrance.position.set(...anchor.portal);
+        const exit = this.makePortal("出口：セッション", EXIT);
+        exit.position.set(...exitPortalAt(anchor.position));
+        this.ownGate = { key, entrance, exit };
       }
     }
-    if (anchor?.isolated && near(me, anchor.portal)) enterSpace(this.engine, anchor.position);
+    if (anchor?.isolated) {
+      stepThrough(anchor.portal, anchor.position);
+      stepThrough(exitPortalAt(anchor.position), anchor.slot);
+    }
   }
 
-  private makePortal(text: string): THREE.Group {
+  private makePortal(text: string, tone: PortalTone): THREE.Group {
     const group = new THREE.Group();
+    group.name = tone === EXIT ? "exit-portal" : "entrance-portal";
+    // ポータルは編集の手伝いなので、サムネイルに写さない（ADR 0046）
+    group.userData.noShot = true;
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(1, 0.08, 12, 48),
-      new THREE.MeshStandardMaterial({ color: "#7a5fd0", emissive: "#4a2fa0", roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({
+        color: tone.ring,
+        emissive: tone.emissive,
+        roughness: 0.4,
+      }),
     );
     ring.position.y = 1.1;
     const disc = new THREE.Mesh(
       new THREE.CircleGeometry(0.95, 48),
       new THREE.MeshBasicMaterial({
-        color: "#b9a8f0",
+        color: tone.disc,
         transparent: true,
         opacity: 0.35,
         side: THREE.DoubleSide,
       }),
     );
     disc.position.y = 1.1;
-    const label = makeLabel(text, "#4a2fa0");
+    const label = makeLabel(text, tone.label);
     label.position.y = 2.45;
     group.add(ring, disc, label);
     this.root.add(group);
     return group;
   }
 }
+
+interface PortalTone {
+  ring: string;
+  emissive: string;
+  disc: string;
+  label: string;
+}
+
+/** 独立した空間へ入る（紫） */
+const ENTRANCE: PortalTone = {
+  ring: "#7a5fd0",
+  emissive: "#4a2fa0",
+  disc: "#b9a8f0",
+  label: "#4a2fa0",
+};
+
+/** セッションへ戻る（緑） */
+const EXIT: PortalTone = {
+  ring: "#1f6b47",
+  emissive: "#145c38",
+  disc: "#b7e0c8",
+  label: "#145c38",
+};
 
 function near(p: THREE.Vector3, at: [number, number, number]): boolean {
   return Math.hypot(p.x - at[0], p.z - at[2]) < PORTAL_RADIUS;
