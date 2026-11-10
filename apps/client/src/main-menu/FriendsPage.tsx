@@ -71,6 +71,14 @@ export function FriendsPage({ active }: { active: boolean }) {
           フレンドを追加
         </button>
       </div>
+      {/* 表示の切り替え。いまは「すべて」だけで、ほかはボタンだけ置く（ADR 0064） */}
+      <div className={styles.tabs}>
+        {["すべて", "フレンドの今", "フォロワー", "フォロー中", "ブロック中"].map((label, i) => (
+          <button key={label} type="button" aria-pressed={i === 0}>
+            {label}
+          </button>
+        ))}
+      </div>
       <div className={styles.myStatus}>
         <div>
           <span className={styles.caption}>自分の状態</span>
@@ -235,16 +243,24 @@ export function FriendsPage({ active }: { active: boolean }) {
               <button
                 type="button"
                 key={f.user.id}
-                className={styles.listCard}
+                className={`${styles.listCard} ${styles.friendCard}`}
                 aria-pressed={chosen?.user.id === f.user.id}
                 onClick={() => menu.select("friends", f.user.id)}
               >
-                <StatusBadge availability={f.profile.availability} online={f.presence.online} />
-                <strong>{f.user.name}</strong>
-                {f.profile.note && <span>{f.profile.note}</span>}
-                <span className={styles.caption}>
-                  {f.presence.sessions.map((s) => s.name).join("・") ||
-                    (f.presence.online ? "セッション未参加" : "")}
+                <span
+                  className={styles.avatar}
+                  data-status={f.presence.online ? f.profile.availability : "offline"}
+                >
+                  {f.user.name.slice(0, 1)}
+                </span>
+                <span className={styles.friendText}>
+                  <strong>{f.user.name}</strong>
+                  <span className={styles.caption}>
+                    {f.presence.sessions.map((s) => `${s.name}にいます`).join("・") ||
+                      (f.presence.online ? "セッション未参加" : "")}
+                  </span>
+                  <StatusBadge availability={f.profile.availability} online={f.presence.online} />
+                  {f.profile.note && <span className={styles.caption}>{f.profile.note}</span>}
                 </span>
               </button>
             ))}
@@ -300,6 +316,19 @@ export function FriendsPage({ active }: { active: boolean }) {
                     : "このセッションへ招待"}
                 </button>
               )}
+              {/* メッセージはまだ仕組みがないので、入力欄とボタンだけ置く */}
+              <div className={styles.compose}>
+                <input
+                  aria-label={`${chosen.user.name} にメッセージを送信`}
+                  placeholder="メッセージはまだ使えません"
+                  disabled
+                />
+                <button type="button" className={styles.iconButton} aria-label="送信">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M4 12l16-8-6 16-2-7z" />
+                  </svg>
+                </button>
+              </div>
             </aside>
           )}
         </div>
