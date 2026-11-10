@@ -92,7 +92,7 @@ export function kokoOf(project: ProjectDoc, ref: string): KokoStateDef {
 }
 
 function fieldOf(def: KokoStateDef, ref: string): FieldDef {
-  return pick(def.fields, ref, `${def.name} の欄`);
+  return pick(def.fields, ref, `${def.name} のフィールド`);
 }
 
 function outputOf(project: ProjectDoc, ref: string | undefined) {
@@ -134,7 +134,7 @@ function imageOf(project: ProjectDoc, value: string, what: string): string {
 function coerce(project: ProjectDoc, field: FieldDef, value: unknown): FieldValue {
   const bad = () =>
     new AgentError(
-      `欄「${field.name}」（${field.type}）に使えない値です: ${JSON.stringify(value)}`,
+      `フィールド「${field.name}」（${field.type}）に使えない値です: ${JSON.stringify(value)}`,
     );
   switch (field.type) {
     case "number":
@@ -160,7 +160,7 @@ function coerce(project: ProjectDoc, field: FieldDef, value: unknown): FieldValu
     case "material":
       if (value === null) return null;
       if (typeof value === "string")
-        return resolveNamed(project.materials(), value, `欄「${field.name}」の Material`);
+        return resolveNamed(project.materials(), value, `フィールド「${field.name}」の Material`);
       throw bad();
     case "model":
     case "texture":
@@ -169,7 +169,7 @@ function coerce(project: ProjectDoc, field: FieldDef, value: unknown): FieldValu
       if (typeof value !== "string") throw bad();
       const kind = field.type === "model" ? "model" : field.type === "texture" ? "image" : "audio";
       const label = field.type === "model" ? "モデル" : field.type === "texture" ? "画像" : "音声";
-      return resolveNamed(assetsOf(project, kind), value, `欄「${field.name}」の${label}`);
+      return resolveNamed(assetsOf(project, kind), value, `フィールド「${field.name}」の${label}`);
     }
     default:
       if (value === null || typeof value === "string") return value as FieldValue;
@@ -1113,15 +1113,15 @@ export function guide(): string {
     "",
     "## 考え方",
     "- プロジェクトは、アウトプット（アイテム・ワールド・ライブラリ）と、その中の Entity の木でできている。",
-    "- Entity には KokoState（続く状態。欄を持つ）を付ける。Transform・Mesh・Collider などは Built-in。",
+    "- Entity には KokoState（続く状態。フィールドを持つ）を付ける。Transform・Mesh・Collider などは Built-in。",
     "- 動きは System（TypeScript）で書く。System はアウトプットに入れて有効にすると動く。",
     '- KokoState は import して使う（例：import Gun from "./Gun.koko";、Built-in は @builtin/Transform.koko、ライブラリは @別名/...）。Query の with・without にも import した値を書く（"Gun" のような名前の文字列は使えない）。',
     "- Entity の値は e.get(Gun) で読み書きする。e.get() に渡せるのは、その System の query.with に書いた KokoState だけ。",
-    "- 型の判定は厳しい（TypeScript の strict）。check が型の誤りも返す（出どころ types）。型の誤りがあっても simulate は動くが、直してから人に渡す。",
+    "- 型の判定は厳しい（TypeScript の strict）。check が型エラーも返す（出どころ types）。型エラーがあっても simulate は動くが、直してから人に渡す。",
     "- 変更は、人の画面にそのまま届く。保存（コミット）は人が行う。エージェントは保存できない。",
     "",
     "## 進め方のおすすめ",
-    "1. get_project で全体を見る。欄の値が要る Entity は get_entities でまとめて読む（世界座標も付く）。",
+    "1. get_project で全体を見る。フィールドの値が要る Entity は get_entities でまとめて読む（世界座標も付く）。",
     "2. 足りない KokoState を create_kokostate で作り、Entity は apply_entities でまとめて作る・変える・消す・複製する。",
     "   - 同じ呼び出しの中では ref で親を指す。複製は画面の「中も含めて複製」と同じで、根の名前は「のコピー」が付く。",
     "   - 成功と失敗は操作ごとに分かれる。成功時は id と name が返る。",
@@ -1134,7 +1134,7 @@ export function guide(): string {
     "6. 終わったら、人に「保存してください」と伝える。",
     "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
-    `## 欄の型: ${FIELD_TYPES.join(", ")}`,
+    `## フィールドの型: ${FIELD_TYPES.join(", ")}`,
     "",
     "## System の書き方（見本：サンプル「銃と的」の Shoot）",
     "```ts",

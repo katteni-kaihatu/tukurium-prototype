@@ -218,7 +218,7 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
       const name = nf?.name ?? pf?.name ?? "";
       if (!pf || !nf) {
         lines.push({
-          label: `欄 ${name}`,
+          label: `フィールド ${name}`,
           before: pf ? fieldSummary(pf, before) : null,
           after: nf ? fieldSummary(nf, after) : null,
           part: `field:${fid}`,
@@ -227,7 +227,7 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
       }
       if (pf.name !== nf.name || pf.type !== nf.type || !same(pf.default, nf.default)) {
         lines.push({
-          label: `欄 ${nf.name}`,
+          label: `フィールド ${nf.name}`,
           before: fieldSummary(pf, before),
           after: fieldSummary(nf, after),
           part: `field:${fid}`,

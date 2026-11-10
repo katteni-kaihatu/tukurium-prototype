@@ -37,7 +37,7 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const states = z
   .record(z.string(), z.record(z.string(), z.unknown()))
   .describe(
-    '{ KokoState の名前か ID: { 欄の名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }',
+    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }',
   );
 const fieldSpec = z.object({
   name: z.string().min(1).max(64),
@@ -151,7 +151,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "get_entity",
     {
       title: "Entity を読む",
-      description: "Entity の KokoState と欄の値",
+      description: "Entity の KokoState とフィールドの値",
       inputSchema: { entity: z.string().describe("Entity の ID か名前") },
     },
     ({ entity }) => run(() => T.entityDetail(T.projectOf(agent).project, entity)),
@@ -162,7 +162,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "Entity をまとめて読む",
       description:
-        "条件をすべて満たす Entity の欄と、親をたどった世界座標を返す。total と truncated は毎回付き、200 件を超えると続きは含まれない",
+        "条件をすべて満たす Entity のフィールドと、親をたどった世界座標を返す。total と truncated は毎回付き、200 件を超えると続きは含まれない",
       inputSchema: {
         entities: z.array(z.string()).max(200).optional().describe("ID か名前"),
         name: z.string().min(1).max(64).optional().describe("名前の部分一致"),
@@ -205,7 +205,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "Entity を変える",
       description:
-        "名前・親・KokoState の欄を変える。付いていない KokoState は付ける。removeStates で外す",
+        "名前・親・KokoState のフィールドを変える。付いていない KokoState は付ける。removeStates で外す",
       inputSchema: {
         entity: z.string(),
         name: z.string().min(1).max(64).optional(),
@@ -275,7 +275,8 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "create_kokostate",
     {
       title: "KokoState を作る",
-      description: "自作の KokoState（続く状態）を作る。欄がない KokoState はタグとして使える",
+      description:
+        "自作の KokoState（続く状態）を作る。フィールドがない KokoState はタグとして使える",
       inputSchema: {
         name: z.string().min(1).max(64),
         fields: z.array(fieldSpec),
@@ -289,7 +290,8 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "update_kokostate",
     {
       title: "KokoState を変える",
-      description: "名前・欄・役割を変える。fields は欄の全部（同じ名前の欄は値を引き継ぐ）",
+      description:
+        "名前・フィールド・役割を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ）",
       inputSchema: {
         kokostate: z.string(),
         name: z.string().min(1).max(64).optional(),
@@ -347,7 +349,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "create_material",
     {
       title: "Material を作る",
-      description: "Material を作る（Mesh の material 欄で使う）",
+      description: "Material を作る（Mesh の material フィールドで使う）",
       inputSchema: {
         name: z.string().min(1).max(64),
         color: z
