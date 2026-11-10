@@ -1,6 +1,6 @@
 # ADR 0031：上のセッションバーに、左の補助アイコン列をつなぐ
 
-- 状態: 採用・実装済み（2026-11-05）。バーとの接続表示は [ADR 0032](0032-navigation-island-labels.md) で変更。
+- 状態: 採用・実装済み（2026-11-05）。バーとの接続表示は [ADR 0032](0032-navigation-island-labels.md) で変更。上のバーは [ADR 0062](0062-session-tag-and-sidebar.md) でなくした。
 - 変更: [ADR 0029](0029-independent-tool-windows.md) の入口の置き方
 - 継続: [ADR 0030](0030-workspace-switcher-display.md) のワークスペース表示、各機能の独立ウィンドウ
 

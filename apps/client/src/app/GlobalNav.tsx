@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCatalog } from "../main-menu/catalogStore";
 import { MenuIcon, type MenuIconName } from "../main-menu/MenuIcon";
 import { AVAILABILITY, useSocial } from "../main-menu/socialStore";
 import { type ToolWindow, useMainMenu } from "../main-menu/store";
 import styles from "./GlobalNav.module.css";
+import { useLayoutEdge } from "./layoutEdges";
 import { useApp } from "./store";
 
 type Entry = {
@@ -53,24 +54,7 @@ export function GlobalNav({ inSession }: { inSession: boolean }) {
   }, []);
   const open = expanded && !locked;
   const nav = useRef<HTMLElement>(null);
-  // ウィンドウの初期位置と呼び戻し先が、メニューを避けるようにする
-  useLayoutEffect(() => {
-    const element = nav.current;
-    if (!element) return;
-    const update = () =>
-      document.documentElement.style.setProperty(
-        "--app-content-left",
-        `${element.getBoundingClientRect().right + 16}px`,
-      );
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    window.addEventListener("resize", update);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, []);
+  useLayoutEdge(nav);
   const windows = useMainMenu((s) => s.windows);
   const owned = useCatalog((s) => s.owned.length);
   const unread = useSocial(
@@ -84,6 +68,8 @@ export function GlobalNav({ inSession }: { inSession: boolean }) {
       className={`glass ${styles.nav}`}
       aria-label="グローバルメニュー"
       data-expanded={open}
+      data-app-edge
+      data-app-nav
     >
       <div className={styles.top}>
         <button
