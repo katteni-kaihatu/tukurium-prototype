@@ -39,6 +39,7 @@ colors:
 
 - **左はグローバルメニュー**。トナリウムと同じ項目（ホーム・タイムライン・フレンド・セッション・イベント・グループ・ワールド・アイテム・マーケット）に、プロジェクト・ワークスペース・ライブラリを続けて縦に並べる。名前つきの形とアイコンの列を切り替える。下に退出と自分のステータスを置く。画面のない項目はボタンだけ置く（[ADR 0061](docs/adr/0061-global-navigation-menu.md)）。
 - **上のバーは置かない**。左上の小さな札に、今いるセッションの名前・ワールド・人数と接続の状態だけを出す。セッション内では、その下の左の欄にプレイヤー・ワークスペース・アイテム（セッションに出ている作品・バッグ）をまとめる。制作中は左の欄をたたむ（[ADR 0062](docs/adr/0062-session-tag-and-sidebar.md)）。
+- **右は通知とコミュニケーション**。参加前は「フレンドの今」と通知、セッション内は通知・チャット・通話の操作を置く。チャットと通話はまだ仕組みがないので、ボタンだけ置く（[ADR 0063](docs/adr/0063-right-panel.md)）。
 - **セッションと編集を分ける**。空間にいるだけなら編集画面を開かず、制作するときにワークスペースを開く。
 - **機能ごとに独立したウィンドウを使う**。複数を開いてもセッションを維持し、移動・サイズ変更・開き直しで作業を続けられるようにする。
 
@@ -178,7 +179,7 @@ colors:
 ↑ グローバルメニュー
 ```
 
-グローバルメニューは画面の上・左・下から16px離し、角丸18pxの島にする。左上の札はメニューの右に12px空け、高さ44px・角丸16pxで置く。セッション内の左の欄は札の下に10px空け、幅300px・下16px・角丸18pxにする。たたむと幅52pxの列になり、開くボタン・参加者の頭文字・人数だけを出す。
+グローバルメニューは画面の上・左・下から16px離し、角丸18pxの島にする。左上の札はメニューの右に12px空け、高さ44px・角丸16pxで置く。セッション内の左の欄は札の下に10px空け、幅300px・下16px・角丸18pxにする。たたむと幅52pxの列になり、開くボタン・参加者の頭文字・人数だけを出す。右の欄は上・右・下から16px離し、幅300px・角丸18pxにする。重なり順はウィンドウより下にする。たたむと幅52pxの列になる。
 
 グローバルメニューは、開いた形（幅228px・名前つき）とたたんだ形（幅64px・アイコンだけ）を、いちばん上のボタンで切り替える。参加前は開き、セッション内と幅1000px以下ではたたんで始める。3D操作中はいつもアイコンだけにする。選択中の項目は薄紫の背景と紫の文字、フレンドの未読は赤い数字で示す。機能を「その他」にまとめず、入口を並べて見せる。
 
@@ -189,6 +190,7 @@ colors:
 | 条件 | 現在の切り替え |
 | --- | --- |
 | 画面幅1000px以下 | グローバルメニューはたたんだ形で始める |
+| 画面幅1100px以下 | 右の欄はたたんだ形で始める |
 | 画面幅760px以下 | セッション内の左の欄はたたんだ形で始める |
 | ホームのウィンドウ幅740px以下 | 本文と補助欄を1列にし、補助欄を先に出す |
 | アイテム・マーケット等のウィンドウ幅720px以下 | 一覧と詳細を縦に並べ、詳細を上へ移す |
@@ -232,7 +234,7 @@ colors:
 | 内容 | 参照先 |
 | --- | --- |
 | 共通色・フォント・半透明の面 | [global.css](apps/client/src/styles/global.css)、[index.html](apps/client/index.html) |
-| 左上の札・左の欄・グローバルメニュー | [Header.module.css](apps/client/src/app/Header.module.css)、[GlobalNav.module.css](apps/client/src/app/GlobalNav.module.css) |
+| 左上の札・左右の欄・グローバルメニュー | [Header.module.css](apps/client/src/app/Header.module.css)、[RightPanel.module.css](apps/client/src/app/RightPanel.module.css)、[GlobalNav.module.css](apps/client/src/app/GlobalNav.module.css) |
 | ウィンドウ・配置・入力の扱い | [Panels.module.css](apps/client/src/panels/Panels.module.css)、[PanelLayer.tsx](apps/client/src/panels/PanelLayer.tsx)、[MainMenuHost.tsx](apps/client/src/main-menu/MainMenuHost.tsx) |
 | メニューのボタン・フォーム・一覧 | [MainMenu.module.css](apps/client/src/main-menu/MainMenu.module.css) |
 | 所持アイテム・公開タグ | [OwnedItemsPage.module.css](apps/client/src/main-menu/OwnedItemsPage.module.css)、[WorkTags.module.css](apps/client/src/main-menu/WorkTags.module.css) |
