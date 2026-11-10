@@ -285,16 +285,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-[data-status="joinable"] {
+.me [data-status="joinable"] {
   --status-color: var(--c-blue);
 }
-[data-status="ask"] {
+.me [data-status="ask"] {
   --status-color: #8a5a20;
 }
-.avatar[data-status="ask"] {
+.me .avatar[data-status="ask"] {
   --status-color: #b77730;
 }
-[data-status="busy"] {
+.me [data-status="busy"] {
   --status-color: #962f3b;
 }
 .settings {

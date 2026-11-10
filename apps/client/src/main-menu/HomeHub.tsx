@@ -23,11 +23,18 @@ export function HomeHub({ active }: { active: boolean }) {
   useEffect(() => {
     if (active && menu.open && status === "online" && catalog.owner) void refreshRecent();
   }, [active, menu.open, status, catalog.owner]);
+  const friends = social.data?.friends ?? [];
+  // フレンドがいるセッションを、フレンドが多い順に
   const rooms = [
-    ...new Map(
-      (social.data?.friends ?? []).flatMap((f) => f.presence.sessions).map((s) => [s.id, s]),
-    ).values(),
-  ];
+    ...new Map(friends.flatMap((f) => f.presence.sessions).map((s) => [s.id, s])).values(),
+  ]
+    .map((room) => ({
+      ...room,
+      friends: friends.filter((f) => f.presence.sessions.some((s) => s.id === room.id)).length,
+    }))
+    .sort((a, b) => b.friends - a.friends);
+  // 参加できるセッションにいないフレンド
+  const online = friends.filter((f) => f.presence.online && f.presence.sessions.length === 0);
   const showSession = (id: string) => {
     menu.setQuery("sessions", "");
     menu.select("sessions", id);
@@ -58,9 +65,14 @@ export function HomeHub({ active }: { active: boolean }) {
       <CatalogNotice />
       <div className={styles.homeColumns}>
         <div className={styles.homeMain}>
-          <section aria-label="フレンドがいるセッション">
+          <section aria-label="フレンドの今">
             <div className={styles.sectionHeader}>
-              <h2>フレンドがいるセッション</h2>
+              <h2>
+                フレンドの今
+                <span className={styles.sectionNote}>
+                  フレンドがいるセッションを、フレンドが多い順に
+                </span>
+              </h2>
               <button type="button" onClick={() => menu.selectPage("friends")}>
                 フレンドを見る
               </button>
@@ -70,18 +82,37 @@ export function HomeHub({ active }: { active: boolean }) {
             ) : !social.data ? null : rooms.length ? (
               <div className={styles.roomGrid}>
                 {rooms.map((s) => (
-                  <button
-                    type="button"
-                    className={styles.listCard}
-                    key={s.id}
-                    onClick={() => showSession(s.id)}
-                  >
-                    <span className={styles.eyebrow}>{s.count}人が参加中</span>
-                    <strong>{s.name}</strong>
-                    <span className={styles.caption}>
-                      {s.participants.map((p) => p.name).join("・")}
-                    </span>
-                  </button>
+                  <article className={styles.roomCard} key={s.id}>
+                    <div className={styles.roomBand}>
+                      <span className={styles.countChip}>{s.count} 人</span>
+                      <span className={styles.spacer} />
+                      {session?.id === s.id ? (
+                        <span className={styles.hereChip}>参加中</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.primary}
+                          disabled={status !== "online" || menu.pendingSession}
+                          onClick={() =>
+                            void enterSession({ t: "session.join", sessionId: s.id }, navigate)
+                          }
+                        >
+                          参加する
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.roomBody}
+                      onClick={() => showSession(s.id)}
+                    >
+                      <strong>{s.name}</strong>
+                      <b className={styles.friendCount}>フレンド {s.friends} 人</b>
+                      <span className={styles.caption}>
+                        {s.participants.map((p) => p.name).join("・")}
+                      </span>
+                    </button>
+                  </article>
                 ))}
               </div>
             ) : (
@@ -106,6 +137,56 @@ export function HomeHub({ active }: { active: boolean }) {
                 >
                   再読み込み
                 </button>
+              </p>
+            )}
+          </section>
+          <section aria-label="オンラインのフレンド">
+            <div className={styles.sectionHeader}>
+              <h2>
+                オンラインのフレンド
+                <span className={styles.sectionNote}>参加できるセッションにいないフレンド</span>
+              </h2>
+            </div>
+            {online.length ? (
+              <div className={styles.friendGrid}>
+                {online.map((f) => (
+                  <div className={styles.friendRow} key={f.user.id}>
+                    <span className={styles.avatar} data-status={f.profile.availability}>
+                      {f.user.name.slice(0, 1)}
+                    </span>
+                    <span className={styles.friendText}>
+                      <strong>{f.user.name}</strong>
+                      <small data-status={f.profile.availability}>
+                        {AVAILABILITY[f.profile.availability]}
+                        {f.profile.note && ` · ${f.profile.note}`}
+                      </small>
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.button}
+                      onClick={() => {
+                        menu.select("friends", f.user.id);
+                        menu.selectPage("friends");
+                      }}
+                    >
+                      誘う
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.iconButton}
+                      aria-label={`${f.user.name} にメッセージ`}
+                      title="メッセージ"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 5h16v11H9l-5 4z" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className={styles.muted}>
+                いまオンラインで、セッションにいないフレンドはいません。
               </p>
             )}
           </section>
@@ -260,31 +341,6 @@ export function HomeHub({ active }: { active: boolean }) {
             <button type="button" className={styles.button} onClick={() => go("/u/me")}>
               自分のプロジェクト
             </button>
-          </section>
-          <section>
-            <h2>オンラインのフレンド</h2>
-            {(social.data?.friends ?? [])
-              .filter((f) => f.presence.online)
-              .map((f) => (
-                <button
-                  type="button"
-                  className={styles.onlineFriend}
-                  key={f.user.id}
-                  onClick={() => {
-                    menu.select("friends", f.user.id);
-                    menu.selectPage("friends");
-                  }}
-                >
-                  <span className={styles.avatar}>{f.user.name.slice(0, 1)}</span>
-                  <span>
-                    <strong>{f.user.name}</strong>
-                    <small>{AVAILABILITY[f.profile.availability]}</small>
-                  </span>
-                </button>
-              ))}
-            {!social.data?.friends.some((f) => f.presence.online) && (
-              <p className={styles.muted}>いまオンラインのフレンドはいません。</p>
-            )}
           </section>
         </aside>
       </div>
