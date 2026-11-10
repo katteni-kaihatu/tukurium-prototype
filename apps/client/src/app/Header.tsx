@@ -15,10 +15,11 @@ import { useWorkspace } from "../workspace/store";
 import { GlobalNav } from "./GlobalNav";
 import styles from "./Header.module.css";
 import { useLayoutEdge } from "./layoutEdges";
+import { RightPanel } from "./RightPanel";
 import { useApp } from "./store";
 
 /**
- * 画面の枠。左のグローバルメニュー、左上のセッションの札、セッション内なら左の欄を置く。
+ * 画面の枠。左のグローバルメニュー、左上のセッションの札、右の欄、セッション内なら左の欄を置く。
  * 上のバーは置かない（ADR 0062）。
  */
 export function Header({ inSession = false }: { inSession?: boolean }) {
@@ -29,6 +30,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
       <GlobalNav inSession={inSession} />
       <SessionTag session={present} />
       {present && <SessionSidebar session={present} />}
+      <RightPanel inSession={Boolean(present)} />
     </>,
     document.body,
   );

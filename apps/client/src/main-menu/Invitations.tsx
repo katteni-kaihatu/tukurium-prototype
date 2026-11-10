@@ -12,6 +12,20 @@ const LABELS = {
   cancelled: "取り消し済み",
   expired: "期限切れ",
 };
+/** 招待されたセッションを、セッションのウィンドウで選んで見せる */
+export function showInvitedSession(invite: InvitationView) {
+  if (!invite.session) return;
+  const menu = useMainMenu.getState();
+  menu.setQuery("sessions", "");
+  menu.select("sessions", invite.session.id);
+  menu.selectPage("sessions");
+}
+
+/** 招待を受け取り、参加先を見せる */
+export async function acceptInvitation(invite: InvitationView) {
+  if (await changeSocial(() => api.respondInvite(invite.id, "accept"))) showInvitedSession(invite);
+}
+
 export function Invitations({ compact = false }: { compact?: boolean }) {
   const { data, busy } = useSocial();
   const status = useApp((s) => s.status);
@@ -28,16 +42,8 @@ export function Invitations({ compact = false }: { compact?: boolean }) {
     );
     return () => clearTimeout(timer);
   }, [expires, open]);
-  const show = (invite: InvitationView) => {
-    if (!invite.session) return;
-    const menu = useMainMenu.getState();
-    menu.setQuery("sessions", "");
-    menu.select("sessions", invite.session.id);
-    menu.selectPage("sessions");
-  };
-  const accept = async (invite: InvitationView) => {
-    if (await changeSocial(() => api.respondInvite(invite.id, "accept"))) show(invite);
-  };
+  const show = showInvitedSession;
+  const accept = acceptInvitation;
   const render = (invite: InvitationView, received: boolean) => (
     <article className={styles.invitation} key={invite.id}>
       <div>
