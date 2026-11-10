@@ -56,22 +56,6 @@
   flex: 1;
 }
 
-.leave {
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--c-ink-2);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.leave:hover {
-  background: rgba(138, 42, 42, 0.08);
-  color: #8a2a2a;
-}
-
 .people {
   display: flex;
   align-items: center;
@@ -383,10 +367,6 @@
   .switcher {
     flex-grow: 1;
   }
-  .leave {
-    padding: 0 6px;
-    font-size: 11px;
-  }
 }
 @media (max-width: 600px) {
   .header {
@@ -407,12 +387,9 @@
     left: 0;
     right: auto;
   }
-  .leave {
-    margin-left: auto;
-  }
 }
 
-/* 主役の上部バー。補助メニューは独立した島として置く。 */
+/* 主役の上部バー。グローバルメニューは独立した島として置く。 */
 .header {
   left: 16px;
   border-bottom-left-radius: 18px;
