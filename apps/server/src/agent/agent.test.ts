@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { gunAndTargetSample, ProjectDoc } from "@tukurium/repo-model";
+import { buildWorld, worldTransform } from "@tukurium/runtime";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
@@ -11,6 +12,7 @@ import { buildApp } from "../app";
 import { Hub } from "../hub";
 import { MemoryStore } from "../store/store";
 import { AgentClient } from "./AgentClient";
+import * as Tools from "./tools";
 
 /** hub に内部でつなぐ人のクライアント（テスト用）。届いたメッセージを覚え、文書を同期する */
 function human(hub: Hub, name: string) {
@@ -184,6 +186,8 @@ export default system({
     expect(await call("check")).toBe("問題はありません");
 
     const result = await call("simulate", { seconds: 1, watch: ["回る箱"] });
+    expect(result.truncated).toBe(false);
+    expect(result.total).toBe(1);
     expect(result.systems.every((s: { error?: string }) => !s.error)).toBe(true);
     const rot = result.entities[0].states.Transform.rotation[1];
     expect(rot).toBeGreaterThan(170);
@@ -222,5 +226,211 @@ export default system({
     await expect(call("get_entity", { entity: "ない箱" })).rejects.toThrow(/見つかりません/);
     await client.close();
     a.close();
+  });
+
+  it("まとめて作り、素材を貼り、開いている画面を撮る", async () => {
+    const app = await buildApp(
+      {
+        host: "127.0.0.1",
+        port: 0,
+        clientDir: undefined,
+        databaseUrl: undefined,
+        s3: undefined,
+        assetDir: await mkdtemp(join(tmpdir(), "tk-assets-")),
+        gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
+      },
+      { store: new MemoryStore(), hub: { saveDelayMs: 10 } },
+    );
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    close = () => app.close();
+    const addr = app.server.address();
+    if (!addr || typeof addr === "string") throw new Error("no address");
+    const hub = (app as unknown as { tukuriumHub: Hub }).tukuriumHub;
+    const { a, sessionId, workspaceId } = await roomWithWorkspace(hub);
+
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${addr.port}/mcp`)),
+    );
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = (await client.callTool({ name, arguments: args })) as {
+        content: { type: string; text?: string; data?: string; mimeType?: string }[];
+        isError?: boolean;
+      };
+      const text = r.content.find((c) => c.type === "text")?.text ?? "";
+      if (r.isError) throw new Error(text);
+      try {
+        return { value: JSON.parse(text) as Record<string, unknown>, raw: r };
+      } catch {
+        return { value: text, raw: r };
+      }
+    };
+
+    await call("join_session", { sessionId, name: "テスト" });
+    await call("open_workspace", { workspaceId });
+
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    await expect(
+      call("import_asset", {
+        name: "壊れた画像",
+        contentType: "image/png",
+        data: Buffer.from("hello").toString("base64"),
+      }),
+    ).rejects.toThrow(/種類と違います/);
+    const imported = await call("import_asset", {
+      name: "木目",
+      contentType: "image/png",
+      data: png,
+    });
+    expect(imported.value).toMatchObject({ name: "木目", kind: "image" });
+    const material = await call("create_material", {
+      name: "木肌",
+      color: "#8a5a3a",
+      roughness: 0.8,
+      map: "木目",
+    });
+    expect(material.value).toMatchObject({ name: "木肌" });
+    expect(await call("check")).toEqual({ value: "問題はありません", raw: expect.anything() });
+
+    const updatesBefore = a.inbox.filter((m) => m.t === "ws.update").length;
+    const applied = await call("apply_entities", {
+      ops: [
+        {
+          op: "create",
+          ref: "trunk",
+          name: "木",
+          states: { Transform: { position: [0, 0, 0], rotation: [0, 90, 0] } },
+        },
+        {
+          op: "create",
+          ref: "leaf",
+          name: "樹冠",
+          parent: "trunk",
+          states: {
+            Transform: { position: [1, 0, 0] },
+            Mesh: { shape: "sphere", material: "木肌" },
+          },
+        },
+        { op: "update", entity: "ない箱", name: "失敗" },
+        { op: "duplicate", entity: "trunk", copies: [{ position: [5, 0, 0] }] },
+      ],
+    });
+    const results = applied.value as unknown as {
+      ok: boolean;
+      op: string;
+      id?: string;
+      name?: string;
+      error?: string;
+      copies?: {
+        id: string;
+        name: string;
+        entities: { id: string; name: string; parent: string | null }[];
+      }[];
+    }[];
+    expect(results.map((r) => r.ok)).toEqual([true, true, false, true]);
+    expect(results[2]?.error).toMatch(/見つかりません/);
+    expect(results[3]?.name).toMatch(/のコピー/);
+    const copy = results[3]?.copies?.[0];
+    const copyLeaf = copy?.entities.find((e) => e.name === "樹冠");
+    expect(copyLeaf?.parent).toBe(copy?.id);
+    await expect
+      .poll(() => a.inbox.filter((m) => m.t === "ws.update").length)
+      .toBe(updatesBefore + 1);
+    await expect.poll(() => a.project.entities().some((e) => e.name === "木")).toBe(true);
+    expect(a.project.entities().some((e) => e.name === "失敗")).toBe(false);
+
+    const leaf = await call("get_entity", { entity: copyLeaf?.id ?? "" });
+    const leafValue = leaf.value as { states: { Transform: { position: number[] } } };
+    expect(leafValue.states.Transform.position[0]).toBeCloseTo(1);
+    expect(leafValue.states.Transform.position[1]).toBeCloseTo(0);
+
+    const renamed = await call("update_entity", { entity: "木", name: "親木" });
+    expect(renamed.value).toMatchObject({ name: "親木" });
+
+    const found = await call("get_entities", { name: "樹冠", material: "木肌" });
+    const foundValue = found.value as {
+      total: number;
+      truncated: boolean;
+      entities: { name: string; worldPosition: number[] }[];
+    };
+    expect(foundValue.truncated).toBe(false);
+    expect(foundValue.total).toBe(foundValue.entities.length);
+    expect(foundValue.entities.every((e) => e.name === "樹冠")).toBe(true);
+    const original = foundValue.entities.find((e) => Math.abs((e.worldPosition[0] ?? 0) - 5) > 1);
+    expect(original).toBeTruthy();
+    const built = buildWorld(a.project.snapshot(), a.project.outputs()[0]?.id ?? "");
+    const originalId = a.project
+      .entities()
+      .find((e) => e.name === "樹冠" && e.parent !== copy?.id)?.id;
+    const expected = worldTransform(built.world, originalId ?? "");
+    expect(original?.worldPosition[0]).not.toBeCloseTo(1);
+    expect(original?.worldPosition[0]).toBeCloseTo(expected.position.x);
+    expect(original?.worldPosition[2]).toBeCloseTo(expected.position.z);
+
+    const shotWait = (async () => {
+      for (let i = 0; i < 200; i++) {
+        const msg = a.inbox.find((m) => m.t === "ws.capture");
+        if (msg?.t === "ws.capture") {
+          a.send({
+            t: "ws.shot",
+            workspaceId: msg.workspaceId,
+            requestId: msg.requestId,
+            png,
+            pending: false,
+          });
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error("撮影の依頼が来ませんでした");
+    })();
+    const preview = client.callTool({
+      name: "preview",
+      arguments: { position: [0, 1.6, 6], target: [0, 0, 0] },
+    });
+    await shotWait;
+    const shot = (await preview) as {
+      content: { type: string; text?: string; mimeType?: string }[];
+      isError?: boolean;
+    };
+    expect(shot.isError).toBeFalsy();
+    expect(shot.content.some((c) => c.type === "image" && c.mimeType === "image/png")).toBe(true);
+    expect(shot.content.find((c) => c.type === "text")?.text).toMatch(/"mode": "edit"/);
+
+    const sessionsBefore = a.inbox.filter((m) => m.t === "session").length;
+    a.send({ t: "ws.close", workspaceId });
+    await expect
+      .poll(() => a.inbox.filter((m) => m.t === "session").length)
+      .toBeGreaterThan(sessionsBefore);
+    await expect(call("preview", { position: [0, 1.6, 6], target: [0, 0, 0] })).rejects.toThrow(
+      /開いている人/,
+    );
+
+    await client.close();
+    a.close();
+  });
+});
+
+describe("件数を隠さない", () => {
+  it("get_entities と simulate は、切ったときも全体の件数を返す", async () => {
+    const project = new ProjectDoc(new Y.Doc());
+    const output = project.addOutput("森", "world");
+    for (let i = 0; i < 201; i++) project.addEntity({ output, name: `木${i}` });
+    const listed = Tools.getEntities(project, {});
+    expect(listed.truncated).toBe(true);
+    expect(listed.total).toBe(201);
+    expect(listed.entities).toHaveLength(200);
+
+    const simulated = await Tools.simulate(project, "w", [], { seconds: 0 });
+    expect(simulated.truncated).toBe(true);
+    expect(simulated.total).toBe(201);
+    expect(simulated.entities).toHaveLength(200);
+
+    const small = new ProjectDoc(new Y.Doc());
+    small.addOutput("空き地", "world");
+    const quiet = await Tools.simulate(small, "w", [], { seconds: 0 });
+    expect(quiet.truncated).toBe(false);
+    expect(quiet.total).toBe(0);
   });
 });
