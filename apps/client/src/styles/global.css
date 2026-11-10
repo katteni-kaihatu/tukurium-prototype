@@ -1,9 +1,9 @@
 /* デザイン「ツクリウム デザイン」のトークン */
 :root {
   --app-rail-width: 64px;
-  --app-content-left: 196px;
-  --app-panel-top: 92px;
-  --app-bar-bottom: 80px;
+  /* 左のメニュー・欄と左上の札から測り直す（app/layoutEdges.ts） */
+  --app-content-left: 96px;
+  --app-panel-top: 72px;
   --c-ink: #26262e;
   --c-ink-2: #3a3942;
   --c-ink-3: #5e5c64;
@@ -54,17 +54,4 @@ button {
   backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 0 8px 24px rgba(15, 25, 40, 0.22);
-}
-
-@media (max-width: 1000px) {
-  :root {
-    --app-rail-width: 64px;
-    --app-content-left: 96px;
-    --app-panel-top: 132px;
-  }
-}
-@media (max-width: 600px) {
-  :root {
-    --app-panel-top: 196px;
-  }
 }
