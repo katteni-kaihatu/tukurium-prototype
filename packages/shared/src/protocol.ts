@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 /** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
+
+/** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
+export const PREVIEW_SHOT_WIDTH = 960;
+export const PREVIEW_SHOT_HEIGHT = 540;
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const id = z.string().min(1).max(64);
@@ -319,6 +323,15 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("ws.openRepo"), repoId: id }),
   /** コミット（意図的な保存）。メッセージ付き */
   z.object({ t: z.literal("ws.commit"), workspaceId: id, message: z.string().max(500) }),
+  /** 開いている画面からの撮影の結果（ADR 0059）。png は base64 */
+  z.object({
+    t: z.literal("ws.shot"),
+    workspaceId: id,
+    requestId: id,
+    png: b64.optional(),
+    error: z.string().max(500).optional(),
+    pending: z.boolean().optional(),
+  }),
   /** 作品のリリースをセッションに置く（作品の「利用」権限） */
   z
     .object({
@@ -452,5 +465,14 @@ export const ServerMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("session.frame"), frame: SessionFrame }),
   z.object({ t: z.literal("session.log"), message: z.string(), level: z.enum(["log", "error"]) }),
   z.object({ t: z.literal("error"), message: z.string() }),
+  /** 開いている画面へ、制作データの座標系で撮影を頼む（ADR 0059） */
+  z.object({
+    t: z.literal("ws.capture"),
+    workspaceId: id,
+    requestId: id,
+    position: vec3,
+    target: vec3,
+    fov: z.number().min(10).max(120).optional(),
+  }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessage>;

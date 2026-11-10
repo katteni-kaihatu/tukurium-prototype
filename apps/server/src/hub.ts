@@ -7,6 +7,8 @@ import {
   type Participant,
   type PlayFrame,
   type PlayMode,
+  PREVIEW_SHOT_HEIGHT,
+  PREVIEW_SHOT_WIDTH,
   PROTOCOL_VERSION,
   type ServerMessage,
   type SessionFrame,
@@ -141,6 +143,16 @@ export class Hub {
   private readonly packages = new WeakMap<object, PackageResolution[]>();
   /** 適用の通し番号（依存の取り出しを待つ間に、次の適用が来たら古い方を捨てる） */
   private readonly applySeq = new Map<string, number>();
+  /** 開いている画面への撮影（ADR 0059）。requestId → 待っている約束 */
+  private readonly shots = new Map<
+    string,
+    {
+      conn: Conn;
+      timer: ReturnType<typeof setTimeout>;
+      resolve: (shot: { png: string; pending: boolean }) => void;
+      reject: (error: Error) => void;
+    }
+  >();
 
   constructor(
     private readonly store: Store,
@@ -467,6 +479,83 @@ export class Hub {
         }
         return;
       }
+      case "ws.shot":
+        return this.receiveShot(conn, msg);
+    }
+  }
+
+  /**
+   * ワークスペースを開いている一人の画面に、制作データの座標で撮影を頼む。
+   * 再生中はそのホスト、編集中は開いている人の先頭。エージェントには頼まない。
+   */
+  requestCapture(
+    workspaceId: string,
+    pose: {
+      position: [number, number, number];
+      target: [number, number, number];
+      fov?: number;
+    },
+  ): Promise<{
+    png: string;
+    pending: boolean;
+    mode: PlayMode;
+    width: number;
+    height: number;
+  }> {
+    const w = this.workspaces.get(workspaceId);
+    if (!w) return Promise.reject(new Error("ワークスペースが見つかりません"));
+    const conn = this.captureConn(w);
+    if (!conn)
+      return Promise.reject(
+        new Error(
+          "ワークスペースを開いている人がいません。ブラウザでワークスペースを開いてから、もう一度 preview してください",
+        ),
+      );
+    const requestId = shortId("cap");
+    const shot = new Promise<{ png: string; pending: boolean }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.shots.delete(requestId);
+        reject(new Error("ワークスペースを開いている人から、画面が返りませんでした"));
+      }, 8_000);
+      this.shots.set(requestId, { conn, timer, resolve, reject });
+    });
+    this.send(conn, {
+      t: "ws.capture",
+      workspaceId,
+      requestId,
+      position: pose.position,
+      target: pose.target,
+      ...(pose.fov !== undefined ? { fov: pose.fov } : {}),
+    });
+    return shot.then((got) => ({
+      ...got,
+      mode: w.mode,
+      width: PREVIEW_SHOT_WIDTH,
+      height: PREVIEW_SHOT_HEIGHT,
+    }));
+  }
+
+  private captureConn(w: Workspace): Conn | null {
+    const human = (c: Conn) => !c.agent && !!c.user && c.open.has(w.meta.id);
+    if (w.mode !== "edit" && w.host && human(w.host)) return w.host;
+    return [...w.conns].find(human) ?? null;
+  }
+
+  private receiveShot(conn: Conn, msg: Extract<ClientMessage, { t: "ws.shot" }>) {
+    const pending = this.shots.get(msg.requestId);
+    if (!pending || pending.conn !== conn) return;
+    clearTimeout(pending.timer);
+    this.shots.delete(msg.requestId);
+    if (msg.error || !msg.png) pending.reject(new Error(msg.error ?? "画面を撮れませんでした"));
+    else pending.resolve({ png: msg.png, pending: msg.pending === true });
+  }
+
+  private failShots(conn: Conn) {
+    for (const [id, shot] of this.shots) {
+      if (shot.conn !== conn) continue;
+      clearTimeout(shot.timer);
+      this.shots.delete(id);
+      shot.reject(new Error("画面を撮る人の接続が切れました"));
     }
   }
 
@@ -1338,6 +1427,7 @@ export class Hub {
   // ---------------------------------------------------------------------------
 
   private async disconnect(conn: Conn): Promise<void> {
+    this.failShots(conn);
     this.leaveSession(conn);
     this.conns.delete(conn.id);
     if (conn.user) this.notifySocial(conn.user.id);

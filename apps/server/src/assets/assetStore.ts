@@ -35,6 +35,39 @@ export interface AssetStore {
   get(id: string): Promise<StoredAsset | null>;
 }
 
+const starts = (data: Uint8Array, ...bytes: number[]) =>
+  data.length >= bytes.length && bytes.every((b, i) => data[i] === b);
+const ascii = (data: Uint8Array, at: number, text: string) =>
+  data.length >= at + text.length && [...text].every((ch, i) => data[at + i] === ch.charCodeAt(0));
+
+/** 宣言した種類と、ファイルの先頭が一致するか（壊れた取り込みを拒む） */
+export function assetBytesMatch(contentType: string, data: Uint8Array): boolean {
+  switch (contentType) {
+    case "image/png":
+      return starts(data, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+    case "image/jpeg":
+      return starts(data, 0xff, 0xd8, 0xff);
+    case "image/webp":
+      return ascii(data, 0, "RIFF") && ascii(data, 8, "WEBP");
+    case "model/gltf-binary":
+      return ascii(data, 0, "glTF");
+    case "audio/wav":
+    case "audio/x-wav":
+      return ascii(data, 0, "RIFF") && ascii(data, 8, "WAVE");
+    case "audio/ogg":
+      return ascii(data, 0, "OggS");
+    case "audio/mpeg": {
+      const second = data[1];
+      return (
+        ascii(data, 0, "ID3") ||
+        (second !== undefined && data[0] === 0xff && (second & 0xe0) === 0xe0)
+      );
+    }
+    default:
+      return false;
+  }
+}
+
 export const assetId = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 const validId = (id: string) => /^[0-9a-f]{64}$/.test(id);
 
