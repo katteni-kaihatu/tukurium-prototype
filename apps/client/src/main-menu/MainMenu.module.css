@@ -497,22 +497,224 @@
   min-width: 0;
   width: 100%;
 }
-.onlineFriend {
+/* ホーム：フレンドの今とオンラインのフレンド（トナリウムに寄せる。ADR 0064） */
+.sectionNote {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-ink-3);
+}
+.roomCard {
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--c-line-2);
+  border-radius: 16px;
+  background: var(--c-paper);
+}
+.roomBand {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 76px;
+  padding: 10px 12px;
+  background: #dce6f3;
+}
+.roomCard:nth-child(3n + 2) .roomBand {
+  background: #ddebcf;
+}
+.roomCard:nth-child(3n) .roomBand {
+  background: #e7ddf2;
+}
+.roomBand .primary {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.countChip {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 0;
-  text-align: left;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--c-ink);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+.hereChip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--c-green-soft);
+  color: var(--c-green);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.spacer {
+  flex: 1;
+}
+.roomBody {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px 14px;
   border: 0;
   background: transparent;
+  text-align: left;
 }
-.onlineFriend > span:last-child {
+.roomBody:hover {
+  background: #603d5608;
+}
+.friendCount {
+  font-size: 11.5px;
+  color: var(--c-brand);
+}
+.friendGrid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.friendRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-line-2);
+  border-radius: 14px;
+  background: var(--c-paper);
+}
+.friendCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+.friendRow .avatar,
+.friendCard .avatar {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+.friendRow .avatar::after,
+.friendCard .avatar::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 6px;
+  background: var(--status-color, var(--c-green));
+  box-shadow: 0 0 0 2px var(--c-paper);
+}
+.friendText {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+}
+.friendCard .friendText {
   gap: 4px;
 }
-.onlineFriend small {
-  color: var(--c-ink-3);
+.friendText small {
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--status-color, var(--c-green));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.friendCard [data-status="offline"] {
+  --status-color: var(--c-ink-4);
+}
+.friendRow .button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.iconButton {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--c-line);
+  border-radius: 9px;
+  background: var(--c-paper);
+  color: var(--c-ink-2);
+}
+.iconButton svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+.friendRow [data-status="joinable"],
+.friendCard [data-status="joinable"] {
+  --status-color: var(--c-blue);
+}
+.friendRow [data-status="ask"],
+.friendCard [data-status="ask"] {
+  --status-color: #8a5a20;
+}
+.friendRow [data-status="busy"],
+.friendCard [data-status="busy"] {
+  --status-color: #962f3b;
+}
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.tabs button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--c-line-2);
+  border-radius: 999px;
+  background: var(--c-paper);
+  color: var(--c-ink-2);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.tabs button[aria-pressed="true"] {
+  border-color: var(--c-brand);
+  background: var(--c-brand);
+  color: var(--c-paper);
+}
+.compose {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-line-2);
+}
+.compose input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--c-line);
+  border-radius: 10px;
+  background: #f7f4ee;
+  font: inherit;
+  font-size: 12.5px;
+}
+.compose .iconButton {
+  width: 36px;
+  height: 36px;
+  border-color: var(--c-brand);
+  background: var(--c-brand);
+  color: var(--c-paper);
+}
+@container (max-width: 560px) {
+  .friendGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @container (max-width: 740px) {
   .homeColumns {
