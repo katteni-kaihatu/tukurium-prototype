@@ -43,18 +43,17 @@ export async function buildApp(
     onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
   });
   registerSocialRoutes(app, store, hub);
-  // AI エージェントのためのリモート MCP（ADR 0054）
-  registerMcp(app, hub, repos);
-  // テストから hub に内部でつなぐための入口
-  app.decorate("tukuriumHub", hub);
-
-  app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
-
   // 素材（GLB・画像・音声）。本文をそのまま受け取り、中身の SHA-256 を ID にして保存する
   const assets =
     options.assets ??
     (config.s3 ? new S3AssetStore(config.s3) : new DiskAssetStore(config.assetDir));
   await seedSampleModels(assets);
+  // AI エージェントのためのリモート MCP（ADR 0054・0059）
+  registerMcp(app, hub, repos, assets);
+  // テストから hub に内部でつなぐための入口
+  app.decorate("tukuriumHub", hub);
+
+  app.get("/api/health", async () => ({ ok: true, protocol: PROTOCOL_VERSION, ...hub.stats }));
   app.addContentTypeParser(
     Object.keys(ASSET_TYPES),
     { parseAs: "buffer", bodyLimit: MAX_ASSET_BYTES },

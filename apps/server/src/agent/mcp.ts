@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { AssetStore } from "../assets/assetStore";
 import type { Hub } from "../hub";
 import type { RepoService } from "../repos/service";
 import { AgentClient } from "./AgentClient";
@@ -44,7 +45,7 @@ const fieldSpec = z.object({
   default: z.unknown().optional(),
 });
 
-export function createAgentMcp(hub: Hub, repos: RepoService | null) {
+export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: AssetStore) {
   const agent = new AgentClient(hub);
   const server = new McpServer(
     { name: "tukurium", version: "0.1.0" },
@@ -157,6 +158,23 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
   );
 
   reg(
+    "get_entities",
+    {
+      title: "Entity をまとめて読む",
+      description:
+        "条件をすべて満たす Entity の欄と、親をたどった世界座標を返す。total と truncated は毎回付き、200 件を超えると続きは含まれない",
+      inputSchema: {
+        entities: z.array(z.string()).max(200).optional().describe("ID か名前"),
+        name: z.string().min(1).max(64).optional().describe("名前の部分一致"),
+        kokostate: z.string().optional().describe("付いている KokoState の ID か名前"),
+        material: z.string().optional().describe("Mesh が使っている Material の ID か名前"),
+        parent: z.string().nullable().optional().describe("親の ID か名前。null はいちばん上"),
+      },
+    },
+    (args) => run(() => T.getEntities(T.projectOf(agent).project, args)),
+  );
+
+  reg(
     "get_system",
     {
       title: "System を読む",
@@ -179,7 +197,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         states: states.optional(),
       },
     },
-    (args) => run(() => ({ id: T.createEntity(T.writable(agent), args) })),
+    (args) => run(() => T.createEntity(T.writable(agent), args)),
   );
 
   reg(
@@ -196,21 +214,61 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         removeStates: z.array(z.string()).optional(),
       },
     },
-    (args) =>
-      run(() => {
-        T.updateEntity(T.writable(agent), args);
-        return "変えました";
-      }),
+    (args) => run(() => T.updateEntity(T.writable(agent), args)),
   );
 
   reg(
     "delete_entity",
     { title: "Entity を消す", description: "Entity を消す", inputSchema: { entity: z.string() } },
-    ({ entity }) =>
-      run(() => {
-        T.deleteEntity(T.writable(agent), entity);
-        return "消しました";
-      }),
+    ({ entity }) => run(() => T.deleteEntity(T.writable(agent), entity)),
+  );
+
+  const copyPose = z.object({
+    ref: z.string().min(1).max(64).optional().describe("この呼び出しの中だけの別名"),
+    name: z.string().min(1).max(64).optional().describe("省くと「元の名前 のコピー」"),
+    position: vec3.optional(),
+    rotation: vec3.optional(),
+    scale: vec3.optional(),
+  });
+  reg(
+    "apply_entities",
+    {
+      title: "Entity をまとめて変える",
+      description:
+        "作成・更新・削除・複製を、並べた順に行う。成功したものは一つの変更にまとまり、失敗は操作ごとに分かれる。複製は子孫も含め、根の位置だけを置き換えられる",
+      inputSchema: {
+        ops: z
+          .array(
+            z.discriminatedUnion("op", [
+              z.object({
+                op: z.literal("create"),
+                ref: z.string().min(1).max(64).optional(),
+                name: z.string().min(1).max(64),
+                output: z.string().optional(),
+                parent: z.string().nullable().optional(),
+                states: states.optional(),
+              }),
+              z.object({
+                op: z.literal("update"),
+                entity: z.string(),
+                name: z.string().min(1).max(64).optional(),
+                parent: z.string().nullable().optional(),
+                states: states.optional(),
+                removeStates: z.array(z.string()).optional(),
+              }),
+              z.object({ op: z.literal("delete"), entity: z.string() }),
+              z.object({
+                op: z.literal("duplicate"),
+                entity: z.string(),
+                copies: z.array(copyPose).min(1).max(200),
+              }),
+            ]),
+          )
+          .min(1)
+          .max(200),
+      },
+    },
+    ({ ops }) => run(() => T.applyEntities(T.writable(agent), ops)),
   );
 
   reg(
@@ -224,7 +282,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         role: z.string().optional().describe("役割（guide を参照）"),
       },
     },
-    (args) => run(() => ({ id: T.createKokoState(T.writable(agent), args) })),
+    (args) => run(() => T.createKokoState(T.writable(agent), args)),
   );
 
   reg(
@@ -239,11 +297,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         role: z.string().optional(),
       },
     },
-    (args) =>
-      run(() => {
-        T.updateKokoState(T.writable(agent), args);
-        return "変えました";
-      }),
+    (args) => run(() => T.updateKokoState(T.writable(agent), args)),
   );
 
   reg(
@@ -259,7 +313,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         enable: z.boolean().optional().describe("false ならアウトプットに入れない"),
       },
     },
-    (args) => run(() => ({ id: T.createSystem(T.writable(agent), args) })),
+    (args) => run(() => T.createSystem(T.writable(agent), args)),
   );
 
   reg(
@@ -273,11 +327,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         name: z.string().min(1).max(64).optional(),
       },
     },
-    (args) =>
-      run(() => {
-        T.updateSystem(T.writable(agent), args);
-        return "変えました";
-      }),
+    (args) => run(() => T.updateSystem(T.writable(agent), args)),
   );
 
   reg(
@@ -290,11 +340,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
         systems: z.array(z.object({ system: z.string(), enabled: z.boolean().optional() })),
       },
     },
-    (args) =>
-      run(() => {
-        T.setOutputSystems(T.writable(agent), args);
-        return "変えました";
-      }),
+    (args) => run(() => T.setOutputSystems(T.writable(agent), args)),
   );
 
   reg(
@@ -310,9 +356,58 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
           .optional(),
         roughness: z.number().min(0).max(1).optional(),
         metalness: z.number().min(0).max(1).optional(),
+        map: z.string().optional().describe("色のテクスチャ（画像の素材の ID か、一意な名前）"),
       },
     },
-    (args) => run(() => ({ id: T.createMaterial(T.writable(agent), args) })),
+    (args) => run(() => T.createMaterial(T.writable(agent), args)),
+  );
+
+  reg(
+    "update_material",
+    {
+      title: "Material を変える",
+      description:
+        "名前・色・粗さ・金属度・色のテクスチャを変える。map を null にするとテクスチャを外す",
+      inputSchema: {
+        material: z.string().describe("Material の ID か名前"),
+        name: z.string().min(1).max(64).optional(),
+        color: z
+          .string()
+          .regex(/^#[0-9a-fA-F]{6}$/)
+          .optional(),
+        roughness: z.number().min(0).max(1).optional(),
+        metalness: z.number().min(0).max(1).optional(),
+        map: z.string().nullable().optional().describe("画像の ID か一意な名前。null で外す"),
+      },
+    },
+    (args) => run(() => T.updateMaterial(T.writable(agent), args)),
+  );
+
+  reg(
+    "import_asset",
+    {
+      title: "素材を取り込む",
+      description:
+        "GLB・PNG・JPEG・WebP・MP3・OGG・WAV を登録し、制作データの素材一覧に加える。data は base64。20MB まで",
+      inputSchema: {
+        name: z.string().min(1).max(64),
+        contentType: z.enum([
+          "model/gltf-binary",
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "audio/mpeg",
+          "audio/ogg",
+          "audio/wav",
+        ]),
+        data: z
+          .string()
+          .min(1)
+          .max(28 * 1024 * 1024)
+          .describe("ファイルの base64"),
+      },
+    },
+    (args) => run(() => T.importAsset(T.writable(agent), assets, args)),
   );
 
   reg(
@@ -365,11 +460,56 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null) {
       }),
   );
 
+  reg(
+    "preview",
+    {
+      title: "視点から画面を撮る",
+      description:
+        "ワークスペースを開いている人の画面を、制作データの座標系の位置から、見る点の方を向いて撮る。再生中ならその画面、編集中なら制作データの見た目。人が開いていないと撮れない",
+      inputSchema: {
+        position: vec3.describe("カメラの位置"),
+        target: vec3.describe("カメラが見る点"),
+        fov: z.number().min(10).max(120).optional().describe("視野角（度）。省くと 70"),
+      },
+    },
+    async ({ position, target, fov }) => {
+      try {
+        const { workspaceId } = T.projectOf(agent);
+        const shot = await hub.requestCapture(workspaceId, { position, target, fov });
+        const note = {
+          mode: shot.mode,
+          width: shot.width,
+          height: shot.height,
+          pending: shot.pending,
+        };
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(note, null, 2) },
+            { type: "image" as const, data: shot.png, mimeType: "image/png" },
+          ],
+        };
+      } catch (e) {
+        return {
+          ...text(e instanceof Error ? e.message : String(e)),
+          isError: true,
+        };
+      }
+    },
+  );
+
   return { server, agent };
 }
 
 /** `/mcp` を足す（Streamable HTTP。MCP のセッションごとにエージェントを一人つくる） */
-export function registerMcp(app: FastifyInstance, hub: Hub, repos: RepoService | null) {
+/** base64 にした 20MB の素材が入る大きさ。/mcp の POST だけ上げる */
+const MCP_BODY_LIMIT = 28 * 1024 * 1024;
+
+export function registerMcp(
+  app: FastifyInstance,
+  hub: Hub,
+  repos: RepoService | null,
+  assets: AssetStore,
+) {
   const sessions = new Map<
     string,
     { transport: StreamableHTTPServerTransport; agent: AgentClient }
@@ -393,7 +533,7 @@ export function registerMcp(app: FastifyInstance, hub: Hub, repos: RepoService |
         id: null,
       });
     }
-    const { server, agent } = createAgentMcp(hub, repos);
+    const { server, agent } = createAgentMcp(hub, repos, assets);
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
@@ -409,7 +549,7 @@ export function registerMcp(app: FastifyInstance, hub: Hub, repos: RepoService |
     await transport.handleRequest(req.raw, reply.raw, req.body);
   };
 
-  app.post("/mcp", handle);
+  app.post("/mcp", { bodyLimit: MCP_BODY_LIMIT }, handle);
   app.get("/mcp", handle);
   app.delete("/mcp", handle);
   app.addHook("onClose", async () => {

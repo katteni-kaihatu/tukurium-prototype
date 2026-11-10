@@ -39,6 +39,11 @@ export interface SyncOptions {
  */
 export class EntityView {
   readonly root = new THREE.Group();
+
+  /** 読み込み中のテクスチャと GLB の件数 */
+  get pending(): number {
+    return this.pendingLoads;
+  }
   private readonly nodes = new Map<EntityId, Node>();
   private readonly geometries = new Map<string, THREE.BufferGeometry>();
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
@@ -46,6 +51,8 @@ export class EntityView {
   private readonly gltf = new GLTFLoader();
   private readonly modelCache = new Map<string, Promise<THREE.Group>>();
   private readonly textures = new Map<string, THREE.Texture>();
+  /** 読み込み中のテクスチャと GLB（プレビューはこれが 0 になるか、制限時間まで待つ） */
+  private pendingLoads = 0;
   /** 日本語のフォントを読み終えたか。読み終えたら文字を描き直す */
   private fontReady = false;
   private fontWait = false;
@@ -238,7 +245,17 @@ export class EntityView {
   private texture(id: string): THREE.Texture {
     let t = this.textures.get(id);
     if (!t) {
-      t = new THREE.TextureLoader().load(assetUrl(id));
+      this.pendingLoads += 1;
+      t = new THREE.TextureLoader().load(
+        assetUrl(id),
+        () => {
+          this.pendingLoads -= 1;
+        },
+        undefined,
+        () => {
+          this.pendingLoads -= 1;
+        },
+      );
       t.colorSpace = THREE.SRGBColorSpace;
       this.textures.set(id, t);
     }
@@ -254,7 +271,13 @@ export class EntityView {
     if (!modelId) return;
     let loading = this.modelCache.get(modelId);
     if (!loading) {
-      loading = this.gltf.loadAsync(assetUrl(modelId)).then((g) => g.scene);
+      this.pendingLoads += 1;
+      loading = this.gltf
+        .loadAsync(assetUrl(modelId))
+        .then((g) => g.scene)
+        .finally(() => {
+          this.pendingLoads -= 1;
+        });
       this.modelCache.set(modelId, loading);
     }
     loading

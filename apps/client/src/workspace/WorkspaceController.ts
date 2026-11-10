@@ -9,12 +9,16 @@ import {
   playersWithEquipment,
   type Simulation,
 } from "@tukurium/runtime";
+import { PREVIEW_SHOT_HEIGHT, PREVIEW_SHOT_WIDTH } from "@tukurium/shared";
 import * as THREE from "three";
 import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
+import { CAMERA_FOV } from "../session/FpsController";
+import { readShotPng } from "../session/readShotPng";
 import { openRing, provideRingItems } from "../session/ringMenu";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
+import { waitUntilIdle } from "../session/waitUntilIdle";
 import { type WorkspaceAnchor, workspaceAnchor } from "./anchor";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
@@ -148,7 +152,10 @@ export class WorkspaceController {
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
-    this.disposers.push(() => {
+    const onCapture = useApp.getState().client.on((msg) => {
+      if (msg.t === "ws.capture") void this.capture(msg);
+    });
+    this.disposers.push(onCapture, () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
     });
@@ -269,6 +276,65 @@ export class WorkspaceController {
     this.selectionBox.visible = Boolean(sel) && ws.mode === "edit";
     if (sel && ws.mode === "edit") {
       this.selectionBox.setFromObject(sel);
+    }
+  }
+
+  /**
+   * 制作データの座標にカメラを置き、サムネイルと同じ描き方で PNG にする。
+   * 置き位置（アンカー）の分だけずらす。読み込みが残っていれば、そのことを返す。
+   */
+  private async capture(msg: {
+    workspaceId: string;
+    requestId: string;
+    position: [number, number, number];
+    target: [number, number, number];
+    fov?: number;
+  }): Promise<void> {
+    const send = (body: { png?: string; error?: string; pending?: boolean }) =>
+      useApp.getState().client.send({
+        t: "ws.shot",
+        workspaceId: msg.workspaceId,
+        requestId: msg.requestId,
+        ...body,
+      });
+    const ws = useWorkspace.getState();
+    if (msg.workspaceId !== ws.workspaceId || !ws.ready) {
+      send({ error: "このワークスペースを開いていません" });
+      return;
+    }
+    const idle = await waitUntilIdle(() => this.view.pending, 2_000);
+    const anchor = this.anchorOf();
+    const camera = new THREE.PerspectiveCamera(
+      msg.fov ?? CAMERA_FOV,
+      PREVIEW_SHOT_WIDTH / PREVIEW_SHOT_HEIGHT,
+      0.05,
+      500,
+    );
+    camera.position.set(
+      anchor.position[0] + msg.position[0],
+      anchor.position[1] + msg.position[1],
+      anchor.position[2] + msg.position[2],
+    );
+    camera.lookAt(
+      anchor.position[0] + msg.target[0],
+      anchor.position[1] + msg.target[1],
+      anchor.position[2] + msg.target[2],
+    );
+    camera.updateMatrixWorld();
+    const target = new THREE.WebGLRenderTarget(PREVIEW_SHOT_WIDTH, PREVIEW_SHOT_HEIGHT);
+    target.texture.colorSpace = THREE.SRGBColorSpace;
+    try {
+      this.engine.renderShot(camera, target);
+      const png = readShotPng(this.engine.renderer, target);
+      if (png.length > 8 * 1024 * 1024) {
+        send({ error: "撮った画像が大きすぎます" });
+        return;
+      }
+      send({ png, pending: !idle });
+    } catch (e) {
+      send({ error: e instanceof Error ? e.message : "画面を撮れませんでした" });
+    } finally {
+      target.dispose();
     }
   }
 
