@@ -64,3 +64,4 @@ ADR は、採用した設計、その理由、制約を残す。実装が完了�
 | [0058](0058-typescript-scripts.md) | 採用・実装済み | スクリプトはすべて TypeScript で書く。型を消すのは sucrase、型を確かめるのは TypeScript 6.0 の Language Service。名前で書いた Query はやめ、`e.get()` は Query に書いた KokoState だけ | 型の誤りでは再生を止めない。ADR 0010 の名前の Query の扱いを置き換える |
 | [0059](0059-agent-batch-assets-preview.md) | 採用・実装済み | エージェントは Entity をまとめて読み書きし、素材を人と同じ置き場へ入れ、開いている一人の画面を指定した視点から撮る | 通信の版 7。成功した変更は一つにまとめる。鍵ができるまで大きな POST を許す |
 | [0060](0060-isolated-space-exit.md) | 採用・実装済み | 独立した空間（ワールドの編集・非公開の作業）に、セッションへ戻る出口を置く | 0008 の入り口に足す。通信の形は変えない |
+| [0061](0061-typed-fields.md) | 採用（実装中） | KokoState のフィールドの型を TypeScript の型の文で書く。値はタグ付きの JSON で `undefined`・`Date`・`Map` などを保存する。型はスキーマに変えて値を確かめる | 「なし」は `undefined`。ADR 0051 を置き換える。通信の版を上げる |
