@@ -8,11 +8,10 @@ import {
 } from "@tukurium/repo-model";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
 import { beginEditing } from "../main-menu/editing";
 import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
-import { AppSidebar } from "./AppSidebar";
+import { GlobalNav } from "./GlobalNav";
 import styles from "./Header.module.css";
 import { useApp } from "./store";
 
@@ -43,7 +42,7 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
   }, []);
   return createPortal(
     <>
-      <AppSidebar />
+      <GlobalNav inSession={inSession} />
       <header ref={bar} className={`glass ${styles.header}`} data-session-bar>
         <button
           type="button"
@@ -96,7 +95,6 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
                 </li>
               ))}
             </ul>
-            <SessionExit />
           </>
         )}
         <span
@@ -118,42 +116,6 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
       </header>
     </>,
     document.body,
-  );
-}
-
-/** セッションの終わり方。持ち主はセッションごと閉じ、ほかの人は自分だけ出る */
-function SessionExit() {
-  const { client, session, me } = useApp();
-  const navigate = useNavigate();
-  const owner = session?.owner === me?.id;
-  if (owner) {
-    return (
-      <button
-        type="button"
-        className={styles.leave}
-        onClick={() => {
-          if (
-            confirm(
-              "セッションを閉じますか？中にいる人の画面も終わり、このセッションはなくなります。作ったプロジェクトは残ります。",
-            )
-          ) {
-            client.send({ t: "session.close" });
-          }
-        }}
-      >
-        セッションを閉じる
-      </button>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={styles.leave}
-      title="セッションは続きます。自分だけ出ます"
-      onClick={() => navigate("/")}
-    >
-      セッションを出る
-    </button>
   );
 }
 
