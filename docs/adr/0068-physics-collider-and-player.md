@@ -1,4 +1,4 @@
-# ADR 0067：Collider を、プレイヤーと剛体がぶつかる形にする
+# ADR 0068：Collider を、プレイヤーと剛体がぶつかる形にする
 
 - 状態: 採用・実装済み（2026-11-11）
 - 関連: [ADR 0009](0009-spatial-input-grab-folders.md)（持つには Collider が要る）、[ADR 0033](0033-default-grid-ground.md)（見た目のグリッド）、[ADR 0050](0050-transform-is-offset.md)

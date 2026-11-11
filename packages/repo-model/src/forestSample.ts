@@ -69,7 +69,7 @@ function entity(
     states: {
       [BUILTIN.Transform]: { position, rotation, scale },
       [BUILTIN.Mesh]: { shape, size, material: null, color, model },
-      // 見た目と同じ形で、プレイヤーと落ちる物がぶつかる（ADR 0067）
+      // 見た目と同じ形で、プレイヤーと落ちる物がぶつかる（ADR 0068）
       [BUILTIN.Collider]: { sensor: false },
     },
   };

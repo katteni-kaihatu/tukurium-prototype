@@ -743,7 +743,7 @@ describe("Simulation：親のある動く剛体", () => {
   });
 });
 
-describe("Simulation：物理の地面と Collider（ADR 0067）", () => {
+describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
   const ball = (
     rigid: Record<string, unknown> = {},
     collider: Record<string, unknown> = {},

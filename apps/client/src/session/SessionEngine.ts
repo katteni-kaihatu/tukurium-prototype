@@ -34,7 +34,7 @@ export class SessionEngine {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 500);
   readonly controller: FpsController;
-  /** プレイヤーが壁や床にぶつかるための当たり判定（ADR 0067） */
+  /** プレイヤーが壁や床にぶつかるための当たり判定（ADR 0068） */
   readonly solids = new PlayerSolids();
   readonly avatars: Avatars;
   readonly panels: PanelSpace;

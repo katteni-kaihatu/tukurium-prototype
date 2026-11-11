@@ -144,6 +144,10 @@ export class AgentClient {
       if (m.role) this.workspace.role = m.role;
       else this.workspace = null;
     }
+    if (m.t === "ws.ended" && this.workspace?.id === m.workspaceId) {
+      this.workspace.project.doc.destroy();
+      this.workspace = null;
+    }
     for (const w of [...this.waits]) {
       const v = w.match(m);
       if (v !== null && v !== undefined) {

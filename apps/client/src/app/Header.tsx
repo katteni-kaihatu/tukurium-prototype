@@ -12,6 +12,7 @@ import { createPortal } from "react-dom";
 import { beginEditing } from "../main-menu/editing";
 import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
+import { WorkspaceCloseButton, WorkspaceLeaveClose } from "../workspace/workspaceExit";
 import { GlobalNav } from "./GlobalNav";
 import styles from "./Header.module.css";
 import { useLayoutEdge } from "./layoutEdges";
@@ -150,6 +151,7 @@ function SessionSidebar({ session }: { session: SessionInfo }) {
             <span className={styles.sectionCount}>{session.workspaces.length}つ</span>
           </div>
           <div className={styles.sectionBody}>
+            <WorkspaceNotice />
             <WorkspaceSwitcher />
           </div>
           <SessionItems session={session} />
@@ -231,6 +233,17 @@ function SessionItems({ session }: { session: SessionInfo }) {
         </button>
       </div>
     </>
+  );
+}
+
+/** 閉じられた・開けなかった理由。制作を始めると消える。 */
+function WorkspaceNotice() {
+  const notice = useWorkspace((s) => s.error);
+  if (!notice) return null;
+  return (
+    <p className={styles.notice} role="status">
+      {notice}
+    </p>
   );
 }
 
@@ -322,7 +335,7 @@ function WorkspaceSwitcher() {
           <section aria-label="制作を始める">
             <ul className={styles.wsList} aria-label="このセッションのワークスペース">
               {session.workspaces.map((workspace) => (
-                <li key={workspace.id}>
+                <li key={workspace.id} className={styles.wsRow}>
                   <button
                     type="button"
                     className={styles.wsItem}
@@ -340,6 +353,11 @@ function WorkspaceSwitcher() {
                     </span>
                     {workspace.id === workspaceId && <span className={styles.here}>いまここ</span>}
                   </button>
+                  <WorkspaceCloseButton
+                    workspaceId={workspace.id}
+                    name={workspace.name}
+                    className={styles.wsClose}
+                  />
                 </li>
               ))}
             </ul>
@@ -379,16 +397,7 @@ function WorkspaceSwitcher() {
               >
                 プロジェクト・ほかのサンプルから開く
               </button>
-              {workspaceId && (
-                <button
-                  type="button"
-                  className={styles.popBtn}
-                  disabled={editingPending}
-                  onClick={() => useWorkspace.getState().leave()}
-                >
-                  ワークスペースを閉じる
-                </button>
-              )}
+              <WorkspaceLeaveClose className={styles.popBtn} closeClassName={styles.popBtnClose} />
             </div>
           </section>
         </div>

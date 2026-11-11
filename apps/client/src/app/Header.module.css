@@ -131,6 +131,13 @@
 .sectionBody {
   padding: 4px 12px 8px;
 }
+
+.notice {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-ink-2);
+}
 .people {
   flex: 0 1 auto;
   min-height: 48px;
@@ -355,8 +362,16 @@
   gap: 2px;
 }
 
+.wsRow {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .wsItem {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  width: auto;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 2px 8px;
@@ -414,4 +429,33 @@
 .popBtn:hover {
   background: var(--c-brand-soft);
   color: var(--c-brand);
+}
+
+.popBtn:disabled {
+  opacity: 0.5;
+}
+
+.popBtnClose {
+  color: #8a2a2a;
+}
+
+.popBtnClose:hover {
+  background: #f6e3e3;
+  color: #8a2a2a;
+}
+
+.wsClose {
+  flex: none;
+  align-self: center;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8a2a2a;
+  font-size: 12px;
+}
+
+.wsClose:hover {
+  background: #f6e3e3;
 }

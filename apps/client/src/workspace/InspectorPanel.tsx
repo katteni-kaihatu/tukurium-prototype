@@ -26,7 +26,7 @@ import ui from "./ui.module.css";
 import { packageAliasOf, useProblemSummary, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
 
-/** Built-in の物理を、付ける人に短く伝える（ADR 0067） */
+/** Built-in の物理を、付ける人に短く伝える（ADR 0068） */
 const KOKO_HINT: Record<string, string> = {
   [BUILTIN.Collider]:
     "プレイヤーと、RigidBody の付いた物がぶつかる形です。形が「見た目に合わせる」のときと、大きさが 0 のときは、Mesh の形と大きさを使います。sensor にすると押し返しません。",
