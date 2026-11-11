@@ -40,6 +40,8 @@ export class SessionEngine {
   readonly effects: EffectPlayer;
   private readonly cssRenderer = new CSS3DRenderer();
 
+  /** ルートワールドが開いていないときの仮の床（ADR 0033） */
+  private readonly defaultGround = createGridGround();
   private readonly clock = new THREE.Clock();
   private readonly frameListeners = new Set<(dt: number) => void>();
   private readonly pointerListeners = new Set<(button: number, phase: "down" | "up") => void>();
@@ -158,6 +160,11 @@ export class SessionEngine {
   pose(): Pose {
     const p = this.controller.position;
     return { position: [p.x, p.y, p.z], yaw: this.controller.yaw, pitch: this.controller.pitch };
+  }
+
+  /** ルートワールドが開いているあいだは、仮の床を出さない（ADR 0033） */
+  setDefaultGroundVisible(visible: boolean): void {
+    this.defaultGround.visible = visible;
   }
 
   /** 自分を別の場所へ移す（独立した空間やポータル） */
@@ -606,6 +613,6 @@ export class SessionEngine {
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 60 });
     this.scene.add(sun);
 
-    this.scene.add(createGridGround());
+    this.scene.add(this.defaultGround);
   }
 }

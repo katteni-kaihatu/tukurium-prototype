@@ -7,6 +7,7 @@ import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceController } from "../workspace/WorkspaceController";
 import { WorkspacePanels } from "../workspace/WorkspacePanels";
+import { showDefaultGround } from "./openWorld";
 import { RingMenu } from "./RingMenu";
 import { SessionEngine } from "./SessionEngine";
 import styles from "./SessionView.module.css";
@@ -139,6 +140,11 @@ export function SessionView() {
       setEngine(null);
     };
   }, [client]);
+
+  // ルートワールドが開いているあいだは、何もないとき用の床を出さない
+  useEffect(() => {
+    engine?.setDefaultGroundVisible(showDefaultGround(session?.placements ?? []));
+  }, [engine, session?.placements]);
 
   // 参加前に選んだ編集は、空間の初期化が済んでから始める。
   // StrictMode の初回 cleanup が、新しく開いたワークスペースを閉じないようにする。
