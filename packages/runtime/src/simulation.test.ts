@@ -742,3 +742,139 @@ describe("Simulation：親のある動く剛体", () => {
     expect(w.z).toBeCloseTo(-6, 2);
   });
 });
+
+describe("Simulation：物理の地面と Collider（ADR 0067）", () => {
+  const ball = (
+    rigid: Record<string, unknown> = {},
+    collider: Record<string, unknown> = {},
+    mesh: { shape?: string; size?: Vec3 } = {},
+    y = 4,
+  ) => {
+    const p = emptyProject("phys");
+    p.entities = [
+      {
+        id: "ball",
+        name: "球",
+        parent: null,
+        output: "out_main",
+        order: 0,
+        states: {
+          [BUILTIN.Transform]: { position: [0, y, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: {
+            shape: mesh.shape ?? "sphere",
+            size: mesh.size ?? [0.5, 0.5, 0.5],
+            material: null,
+            color: "#ffffff",
+          },
+          [BUILTIN.Collider]: { sensor: false, ...collider },
+          [BUILTIN.RigidBody]: { type: "dynamic", linvel: [0, 0, 0], ...rigid },
+        },
+      },
+    ];
+    return p;
+  };
+
+  async function yAfter(p: ProjectSnapshot, frames = 240): Promise<number> {
+    sim = await Simulation.create(p, "out_main", { realm: "r" });
+    for (let i = 0; i < frames; i++) sim.step(1 / 60);
+    return ((sim.world.get("ball", BUILTIN.Transform)?.position as Vec3 | undefined)?.[1] ??
+      Number.NaN) as number;
+  }
+
+  it("床の Entity が無くても、高さ 0 の地面で落ち止まる", async () => {
+    const y = await yAfter(ball());
+    expect(y).toBeGreaterThan(0.15);
+    expect(y).toBeLessThan(0.45);
+    if (!sim) throw new Error("準備ができていません");
+    const height = (): number =>
+      ((sim?.world.get("ball", BUILTIN.Transform)?.position as Vec3 | undefined)?.[1] ??
+        Number.NaN) as number;
+    const again = height();
+    for (let i = 0; i < 60; i++) sim.step(1 / 60);
+    expect(Math.abs(height() - again)).toBeLessThan(0.05);
+  });
+
+  it("高い所から落としても地面を抜けない", async () => {
+    const y = await yAfter(ball({}, {}, {}, 25), 300);
+    expect(y).toBeGreaterThan(0.15);
+    expect(y).toBeLessThan(0.5);
+  });
+
+  it("平面の床の上で止まり、sensor の床は支えにならない", async () => {
+    const deck = ball();
+    deck.entities.push({
+      id: "deck",
+      name: "床",
+      parent: null,
+      output: "out_main",
+      order: 1,
+      states: {
+        [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [BUILTIN.Mesh]: { shape: "plane", size: [6, 1, 6], material: null, color: "#ffffff" },
+        [BUILTIN.Collider]: { sensor: false },
+      },
+    });
+    const onDeck = await yAfter(deck);
+    expect(onDeck).toBeGreaterThan(1.1);
+    expect(onDeck).toBeLessThan(1.45);
+
+    const sensor = ball({}, {}, {}, 3);
+    sensor.entities.push({
+      id: "ghost",
+      name: "感応",
+      parent: null,
+      output: "out_main",
+      order: 1,
+      states: {
+        [BUILTIN.Transform]: { position: [0, 2, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [BUILTIN.Mesh]: { shape: "box", size: [4, 0.2, 4], material: null, color: "#ffffff" },
+        [BUILTIN.Collider]: { sensor: true },
+      },
+    });
+    const through = await yAfter(sensor);
+    expect(through).toBeGreaterThan(0.15);
+    expect(through).toBeLessThan(0.45);
+  });
+
+  it("Collider の形と大きさは Mesh と別にできる。重力 0 では落ちない", async () => {
+    const y = await yAfter(
+      ball({}, { shape: "box", size: [1, 2, 1] }, { shape: "sphere", size: [0.2, 0.2, 0.2] }),
+    );
+    expect(y).toBeGreaterThan(0.85);
+    expect(y).toBeLessThan(1.2);
+
+    const hover = await yAfter(ball({ gravityScale: 0 }, {}, {}, 3), 120);
+    expect(hover).toBeCloseTo(3, 1);
+  });
+
+  it("スクリプトが書いた速度が、次の計算で剛体に効く", async () => {
+    const p = project(
+      `import RigidBody from "@builtin/RigidBody.koko";
+      export default system({
+        query: { with: [RigidBody] },
+        onUpdate(e) {
+          const rb = e.get(RigidBody);
+          if (rb.linvel[0] < 1) rb.linvel = [3, rb.linvel[1], rb.linvel[2]];
+        },
+      });`,
+    );
+    p.entities.push({
+      id: "ball",
+      name: "球",
+      parent: null,
+      output: "out",
+      order: 1,
+      states: {
+        [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        [BUILTIN.Mesh]: { shape: "sphere", size: [0.4, 0.4, 0.4], material: null, color: "#fff" },
+        [BUILTIN.Collider]: {},
+        [BUILTIN.RigidBody]: { type: "dynamic", linvel: [0, 0, 0] },
+      },
+    });
+    sim = await Simulation.create(p, "out", { realm: "r" });
+    for (let i = 0; i < 90; i++) sim.step(1 / 60);
+    const pos = sim.world.get("ball", BUILTIN.Transform)?.position as Vec3;
+    expect(pos[0]).toBeGreaterThan(1);
+    expect(pos[1]).toBeGreaterThan(0);
+  });
+});

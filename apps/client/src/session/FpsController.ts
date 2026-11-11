@@ -1,5 +1,14 @@
 import * as THREE from "three";
 
+/** 足元の位置と移動希望から、ぶつかったあとの足元を返す。準備前は null（高さ 0 に留める） */
+export interface MotionProbe {
+  move(
+    feet: [number, number, number],
+    delta: [number, number, number],
+    snap: boolean,
+  ): { position: [number, number, number]; grounded: boolean } | null;
+}
+
 export interface FpsOptions {
   eyeHeight?: number;
   walkSpeed?: number;
@@ -8,11 +17,13 @@ export interface FpsOptions {
   gravity?: number;
   /** マウス感度（ラジアン / px） */
   sensitivity?: number;
+  /** 壁や床への当たり。無いあいだは、高さ 0 より下へ落ちない */
+  probe?: MotionProbe | null;
 }
 
 /**
  * FPS 視点の移動。WASD で移動、マウスで見回す（ポインターロック中のみ）、Shift で走る、Space でジャンプ。
- * 地面は y = 0 の平面として扱う（衝突は M1 で物理エンジンに置き換える）。
+ * 当たり判定があるときは Collider と高さ 0 の地面に沿って動き、無いあいだは高さ 0 に留める。
  */
 /** 足元から目までの高さ（m） */
 export const EYE_HEIGHT = 1.6;
@@ -26,7 +37,10 @@ export class FpsController {
 
   private readonly keys = new Set<string>();
   private velocityY = 0;
-  private readonly opts: Required<FpsOptions>;
+  /** 足元が何かに付いているか。付いているときだけジャンプできる */
+  private grounded = true;
+  private readonly opts: Required<Omit<FpsOptions, "probe">>;
+  private readonly probe: MotionProbe | null;
   private readonly disposers: (() => void)[] = [];
   /** セットしている間、マウスは見回さず、この関数へ移動量（px）を渡す */
   private lookOverride: ((dx: number, dy: number) => void) | null = null;
@@ -36,14 +50,17 @@ export class FpsController {
     private readonly element: HTMLElement,
     options: FpsOptions = {},
   ) {
+    const { probe = null, ...rest } = options;
+    this.probe = probe;
     this.opts = {
       eyeHeight: EYE_HEIGHT,
       walkSpeed: 3.5,
       runSpeed: 7,
       jumpSpeed: 4.5,
-      gravity: 12,
+      // 剛体と同じ落下（solidShape の GRAVITY）
+      gravity: 9.81,
       sensitivity: 0.0022,
-      ...options,
+      ...rest,
     };
     this.listen(window, "keydown", (e) => this.onKey(e as KeyboardEvent, true));
     this.listen(window, "keyup", (e) => this.onKey(e as KeyboardEvent, false));
@@ -93,6 +110,8 @@ export class FpsController {
         ? this.opts.runSpeed
         : this.opts.walkSpeed;
 
+    let wishX = 0;
+    let wishZ = 0;
     if (forward !== 0 || strafe !== 0) {
       const len = Math.hypot(forward, strafe);
       const sin = Math.sin(this.yaw);
@@ -100,17 +119,34 @@ export class FpsController {
       // yaw = 0 で -Z 方向を向く
       const dx = (strafe * cos - forward * sin) / len;
       const dz = (-strafe * sin - forward * cos) / len;
-      this.position.x += dx * speed * dt;
-      this.position.z += dz * speed * dt;
+      wishX = dx * speed * dt;
+      wishZ = dz * speed * dt;
     }
 
-    const onGround = this.position.y <= 0;
-    if (onGround && this.keys.has("Space")) this.velocityY = this.opts.jumpSpeed;
+    if (this.grounded && this.keys.has("Space")) this.velocityY = this.opts.jumpSpeed;
     this.velocityY -= this.opts.gravity * dt;
-    this.position.y += this.velocityY * dt;
-    if (this.position.y < 0) {
-      this.position.y = 0;
-      this.velocityY = 0;
+    const wishY = this.velocityY * dt;
+    const beforeY = this.position.y;
+    const solved = this.probe?.move(
+      [this.position.x, this.position.y, this.position.z],
+      [wishX, wishY, wishZ],
+      this.velocityY <= 0,
+    );
+    if (solved) {
+      this.position.set(solved.position[0], solved.position[1], solved.position[2]);
+      this.grounded = solved.grounded;
+      if (solved.grounded && this.velocityY < 0) this.velocityY = 0;
+      else if (this.velocityY > 0 && solved.position[1] < beforeY + wishY - 1e-4)
+        this.velocityY = 0;
+    } else {
+      this.position.x += wishX;
+      this.position.y += wishY;
+      this.position.z += wishZ;
+      if (this.position.y < 0) {
+        this.position.y = 0;
+        this.velocityY = 0;
+      }
+      this.grounded = this.position.y <= 0;
     }
     this.apply();
   }

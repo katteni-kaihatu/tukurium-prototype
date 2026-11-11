@@ -26,6 +26,14 @@ import ui from "./ui.module.css";
 import { packageAliasOf, useProblemSummary, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
 
+/** Built-in の物理を、付ける人に短く伝える（ADR 0067） */
+const KOKO_HINT: Record<string, string> = {
+  [BUILTIN.Collider]:
+    "プレイヤーと、RigidBody の付いた物がぶつかる形です。形が「見た目に合わせる」のときと、大きさが 0 のときは、Mesh の形と大きさを使います。sensor にすると押し返しません。",
+  [BUILTIN.RigidBody]:
+    "付けると重力で動きます。ぶつかるには Collider も要ります。高さ 0 の地面でも止まります。gravityScale を 0 にすると落ちません。",
+};
+
 /**
  * 階層の中に置くと、スクロール枠と右の詳細で切れる。
  * 2D では画面の上に出して、はみ出してもよい。3D に置いたパネルでは、そのパネルの上に出す。
@@ -1022,6 +1030,7 @@ function EntityProperties({ id }: { id: EntityId }) {
               </div>
               {closed ? null : (
                 <>
+                  {KOKO_HINT[koko] && <p className={ui.muted}>{KOKO_HINT[koko]}</p>}
                   {def.fields.length === 0 && (
                     <p className={ui.muted}>フィールドなし（タグとして使う KokoState）</p>
                   )}

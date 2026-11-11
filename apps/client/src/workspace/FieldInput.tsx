@@ -1,5 +1,11 @@
 import type { FieldDef, FieldValue, Vec3 } from "@tukurium/eks";
-import { BUILTIN, MESH_SHAPES, RESOURCE_FIELD_KIND, RIGID_BODY_TYPES } from "@tukurium/repo-model";
+import {
+  BUILTIN,
+  COLLIDER_SHAPES,
+  MESH_SHAPES,
+  RESOURCE_FIELD_KIND,
+  RIGID_BODY_TYPES,
+} from "@tukurium/repo-model";
 import { useEffect, useId, useState } from "react";
 import ui from "./ui.module.css";
 
@@ -13,10 +19,12 @@ export interface FieldChoices {
 /** 文字列で選ぶ Built-in のフィールド */
 const ENUMS: Record<string, readonly string[]> = {
   [`${BUILTIN.Mesh}/shape`]: MESH_SHAPES,
+  [`${BUILTIN.Collider}/shape`]: COLLIDER_SHAPES,
   [`${BUILTIN.RigidBody}/type`]: RIGID_BODY_TYPES,
 };
 
 const SHAPE_LABEL: Record<string, string> = {
+  mesh: "見た目に合わせる",
   box: "ボックス",
   sphere: "球",
   cylinder: "円柱",
@@ -25,6 +33,24 @@ const SHAPE_LABEL: Record<string, string> = {
   fixed: "固定",
   dynamic: "物理で動く",
   kinematic: "スクリプトで動かす",
+};
+
+/** 欄の名前に重ねたときの説明 */
+const FIELD_TITLE: Record<string, string> = {
+  [`${BUILTIN.Collider}/shape`]: "見た目に合わせるときは Mesh の形を使います",
+  [`${BUILTIN.Collider}/size`]: "0 のときは見た目の大きさです。単位はメートル",
+  [`${BUILTIN.Collider}/offset`]: "Entity の中心からのずれ（メートル）",
+  [`${BUILTIN.Collider}/sensor`]: "オンにすると押し返さず、当たったことだけが届きます",
+  [`${BUILTIN.Collider}/friction`]: "大きいほど滑りにくい",
+  [`${BUILTIN.Collider}/restitution`]: "大きいほど跳ねる。0 で跳ねない",
+  [`${BUILTIN.RigidBody}/type`]: "物理で動く・スクリプトで動かす・固定",
+  [`${BUILTIN.RigidBody}/mass`]: "重さ（kg）。形では変わりません",
+  [`${BUILTIN.RigidBody}/gravityScale`]: "0 にすると落ちません",
+  [`${BUILTIN.RigidBody}/linearDamping`]: "大きいほどすぐ止まります",
+  [`${BUILTIN.RigidBody}/angularDamping`]: "回転が止まる速さ",
+  [`${BUILTIN.RigidBody}/linvel`]: "速度（メートル/秒）。実行が書き換えることがあります",
+  [`${BUILTIN.RigidBody}/angvel`]: "回転の速度（ラジアン/秒）",
+  [`${BUILTIN.RigidBody}/ccd`]: "速い物が薄い床をすり抜けないようにします",
 };
 
 /**
@@ -160,7 +186,11 @@ export function FieldInput(props: {
 
   return (
     <div className={ui.row}>
-      <label htmlFor={id} className={ui.label} title={field.name}>
+      <label
+        htmlFor={id}
+        className={ui.label}
+        title={FIELD_TITLE[`${props.koko}/${field.id}`] ?? field.name}
+      >
         {field.name}
       </label>
       {control}

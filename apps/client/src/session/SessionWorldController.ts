@@ -36,6 +36,10 @@ export class SessionWorldController {
   constructor(private readonly engine: SessionEngine) {
     engine.scene.add(this.view.root);
     this.disposers.push(
+      engine.solids.bind("session", () => {
+        const world = useSessionWorld.getState().view()?.world;
+        return world ? { world, origin: [0, 0, 0] } : null;
+      }),
       engine.onFrame((dt) => this.update(dt)),
       engine.onHoldWheel((meters) => {
         if (useWorkspace.getState().mode === "edit") this.input("reach", "down", [meters, 0]);
