@@ -233,3 +233,24 @@ describe("Play の非同期開始 (#66)", () => {
     project?.doc.destroy();
   });
 });
+
+describe("ワークスペースを閉じる", () => {
+  it("閉じる頼みはサーバーへ送り、自分は残る", () => {
+    useWorkspace.getState().end();
+    expect(fake.send).toHaveBeenCalledWith({ t: "ws.end", workspaceId: "w_test" });
+    expect(useWorkspace.getState().workspaceId).toBe("w_test");
+  });
+
+  it("閉じられたら自分も出て、理由が残る", () => {
+    const project = useWorkspace.getState().project;
+    receive({
+      t: "ws.ended",
+      workspaceId: "w_test",
+      reason: "れにうむ がワークスペースを閉じました",
+    });
+    expect(useWorkspace.getState().workspaceId).toBeNull();
+    expect(useWorkspace.getState().error).toMatch(/閉じました/);
+    expect(fake.send).toHaveBeenCalledWith({ t: "ws.close", workspaceId: "w_test" });
+    project?.doc.destroy();
+  });
+});

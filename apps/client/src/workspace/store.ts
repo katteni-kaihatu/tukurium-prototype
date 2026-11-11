@@ -153,7 +153,10 @@ interface WorkspaceState {
   saveSeq: number;
   openSave(): void;
   open(workspaceId: string): void;
+  /** 自分だけ出る。ワークスペースは残る */
   leave(): void;
+  /** ワークスペースを閉じる（管理権限）。開いていなければ、一覧にあるものを指定する */
+  end(workspaceId?: string): void;
   select(sel: Selection | null): void;
   openDetail(target: DetailTarget): void;
   closeDetail(): void;
@@ -344,6 +347,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       client().send({ t: "ws.open", workspaceId });
     },
 
+    end: (workspaceId) => {
+      const id = workspaceId ?? get().workspaceId;
+      if (!id) return;
+      client().send({ t: "ws.end", workspaceId: id });
+    },
+
     leave: () => {
       const { workspaceId, sim, awareness } = get();
       if (!workspaceId) return;
@@ -482,6 +491,11 @@ client().on((msg) => {
       if (msg.workspaceId === s.workspaceId) sync?.receiveAwareness(fromB64(msg.update));
       return;
     case "ws.denied":
+      if (msg.workspaceId !== s.workspaceId) return;
+      s.leave();
+      set({ error: msg.reason });
+      return;
+    case "ws.ended":
       if (msg.workspaceId !== s.workspaceId) return;
       s.leave();
       set({ error: msg.reason });

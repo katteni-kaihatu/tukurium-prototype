@@ -691,6 +691,59 @@ describe("ワークスペース", () => {
     const hidden = await b.next("panels", (m) => m.panels[0]?.restricted === true);
     expect(hidden.panels[0]).toMatchObject({ title: "作業中", lines: [], restricted: true });
   });
+
+  it("出てもワークスペースは残り、管理でない人は閉じられない", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    await a.next(
+      "session",
+      (m) => m.session.workspaces.find((w) => w.id === workspaceId)?.present.length === 2,
+    );
+    for (let i = a.inbox.length - 1; i >= 0; i--)
+      if (a.inbox[i]?.t === "session") a.inbox.splice(i, 1);
+    b.send({ t: "ws.close", workspaceId });
+    const stayed = await a.next(
+      "session",
+      (m) => m.session.workspaces.find((w) => w.id === workspaceId)?.present.length === 1,
+    );
+    expect(stayed.session.workspaces.map((w) => w.id)).toContain(workspaceId);
+    b.send({ t: "ws.end", workspaceId });
+    expect((await b.next("error")).message).toMatch(/管理/);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(a.inbox.some((m) => m.t === "ws.ended")).toBe(false);
+  });
+
+  it("管理者が閉じると一覧から消え、開いていた人は出る。プロジェクトは残る", async () => {
+    const { url, store } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    const listed = await a.next("session", (m) =>
+      m.session.workspaces.some((w) => w.id === workspaceId),
+    );
+    const repoId = listed.session.workspaces.find((w) => w.id === workspaceId)?.repoId;
+    expect(repoId).toBeTruthy();
+    a.send({
+      t: "ws.update",
+      workspaceId,
+      update: docUpdate((d) => d.getText("t").insert(0, "keep ")),
+    });
+    a.send({ t: "ws.end", workspaceId });
+    expect((await b.next("ws.ended")).reason).toMatch(/閉じました/);
+    expect(
+      (await b.next("session", (m) => m.session.workspaces.length === 0)).session.workspaces,
+    ).toEqual([]);
+    expect((await a.next("ws.ended")).workspaceId).toBe(workspaceId);
+    const saved = await store.loadDoc(workspaceId);
+    const d = new Y.Doc();
+    Y.applyUpdate(d, saved as Uint8Array);
+    expect(d.getText("t").toString()).toContain("keep");
+    a.send({ t: "ws.openRepo", repoId: repoId as string });
+    expect((await a.next("ws.created")).workspaceId).toBe(workspaceId);
+    await a.next("ws.doc");
+  });
 });
 
 describe("ワークスペースのホストと共有再生", () => {

@@ -130,6 +130,10 @@ interface Workspace {
   mode: PlayMode;
   lastFrame: PlayFrame | null;
   saveTimer: ReturnType<typeof setTimeout> | null;
+  /** 保存の書き込みを順番に行う */
+  saveTail?: Promise<void>;
+  /** 閉じたあと。以降の保存と更新は受け付けない */
+  ended: boolean;
   /** 開いていない参加者に見せる、編集中の見た目（ホストが送る） */
   lastPreview: WorkspacePreview | null;
 }
@@ -423,8 +427,11 @@ export class Hub {
         return this.openWorkspace(conn, msg.workspaceId);
       case "ws.close":
         return this.closeWorkspace(conn, msg.workspaceId);
+      case "ws.end":
+        return this.endWorkspace(conn, msg.workspaceId);
       case "ws.update": {
         const w = this.workspaceFor(conn, msg.workspaceId);
+        if (w?.ended) return;
         if (w && !w.room.receive(conn.id, fromB64(msg.update))) {
           this.send(conn, { t: "error", message: "このワークスペースを編集する権限がありません" });
         }
@@ -1281,6 +1288,7 @@ export class Hub {
       mode: "edit",
       lastFrame: null,
       saveTimer: null,
+      ended: false,
       lastPreview: null,
     };
     if (doc) {
@@ -1337,6 +1345,7 @@ export class Hub {
     this.broadcastSession(s);
   }
 
+  /** この接続だけ出る。ワークスペースはセッションに残る。 */
   private closeWorkspace(conn: Conn, workspaceId: string): void {
     const w = this.workspaces.get(workspaceId);
     conn.open.delete(workspaceId);
@@ -1346,6 +1355,48 @@ export class Hub {
     if (w.host === conn) this.migrateHost(w);
     this.sendPreview(w, conn);
     this.broadcastSession(w.session);
+  }
+
+  /**
+   * ワークスペースを閉じる。セッションの一覧からなくなり、開いていた人も出る。
+   * 制作データは保存したまま残し、プロジェクトから開き直せる。
+   * セッションに出した配置は残る。
+   */
+  private async endWorkspace(conn: Conn, workspaceId: string): Promise<void> {
+    const user = conn.user;
+    const w = this.workspaces.get(workspaceId);
+    if (!user || !conn.session || !w || w.session !== conn.session) {
+      return this.deny(conn, "ワークスペースが見つかりません");
+    }
+    if (this.roleOf(w, user.id) !== "admin") {
+      return this.deny(conn, "閉じられるのは、管理権限を持つ人です");
+    }
+    if (w.saveTimer) {
+      clearTimeout(w.saveTimer);
+      w.saveTimer = null;
+    }
+    // これ以降の自動保存は、閉じる直前の内容を古い状態で上書きしない
+    w.ended = true;
+    try {
+      await (w.saveTail ?? Promise.resolve()).catch(() => undefined);
+      await this.store.saveDoc(w.meta.id, Y.encodeStateAsUpdate(w.room.doc));
+    } catch {
+      w.ended = false;
+      return this.deny(conn, "保存できなかったので、閉じられませんでした");
+    }
+    const session = w.session;
+    const reason = `${user.name} がワークスペースを閉じました。プロジェクトは残ります。`;
+    for (const c of [...w.conns]) {
+      c.open.delete(w.meta.id);
+      w.room.leave(c.id);
+      this.send(c, { t: "ws.ended", workspaceId: w.meta.id, reason });
+    }
+    w.conns.clear();
+    w.host = null;
+    w.room.doc.destroy();
+    session.workspaces.delete(w.meta.id);
+    this.workspaces.delete(w.meta.id);
+    this.broadcastSession(session);
   }
 
   private setHost(w: Workspace, conn: Conn): void {
@@ -1440,7 +1491,7 @@ export class Hub {
   }
 
   private scheduleSave(w: Workspace): void {
-    if (w.saveTimer) return;
+    if (w.ended || w.saveTimer) return;
     w.saveTimer = setTimeout(() => {
       w.saveTimer = null;
       void this.saveNow(w);
@@ -1448,11 +1499,16 @@ export class Hub {
   }
 
   private async saveNow(w: Workspace): Promise<void> {
+    if (w.ended) return;
     if (w.saveTimer) {
       clearTimeout(w.saveTimer);
       w.saveTimer = null;
     }
-    await this.store.saveDoc(w.meta.id, Y.encodeStateAsUpdate(w.room.doc));
+    const state = Y.encodeStateAsUpdate(w.room.doc);
+    const write = () => this.store.saveDoc(w.meta.id, state);
+    const task = (w.saveTail ?? Promise.resolve()).then(write, write);
+    w.saveTail = task;
+    await task;
   }
 
   /** 開いていない人に、編集中の見た目を権限に合わせて送る（閲覧できなければ境界だけ） */

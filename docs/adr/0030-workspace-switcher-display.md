@@ -2,6 +2,7 @@
 
 - 状態: 採用・実装済み（2026-11-05）
 - 関連: [ADR 0029](0029-independent-tool-windows.md)、[ADR 0028](0028-session-and-optional-workspace.md)
+- 補足: [ADR 0067](0067-close-workspace.md) で、ここでの「ワークスペースを閉じる」は「出る」と「閉じる」に分かれた
 
 ## 決定
 
