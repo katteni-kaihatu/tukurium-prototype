@@ -248,7 +248,6 @@ export function ProjectHome({
                   options={[
                     { value: "updated", label: "更新が新しい" },
                     { value: "name", label: "名前" },
-                    { value: "created", label: "作成が新しい" },
                   ]}
                   onChange={setReleaseSort}
                 />
