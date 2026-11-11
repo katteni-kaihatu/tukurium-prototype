@@ -84,6 +84,22 @@ export const PlacementInfo = z.object({
 });
 export type PlacementInfo = z.infer<typeof PlacementInfo>;
 
+/**
+ * ルートワールドを入れ替える前のカウントダウン（ADR 0066）。
+ * セッションの状態に載せるので、途中から参加した人も残り時間を見る。
+ * 無いときは、入れ替えの予定がない。
+ */
+export const WorldChange = z.object({
+  id,
+  releaseId: id,
+  worldName: z.string(),
+  /** 変えようとした人の名前 */
+  byName: z.string(),
+  /** このメッセージを送った時点から、入れ替わるまでのミリ秒 */
+  remainingMs: z.number().int().min(0).max(60_000),
+});
+export type WorldChange = z.infer<typeof WorldChange>;
+
 export const SessionInfo = z.object({
   id,
   name: z.string(),
@@ -93,6 +109,8 @@ export const SessionInfo = z.object({
   placements: z.array(PlacementInfo),
   /** セッションの世界を実行している人（持ち主）。いなければ null */
   host: id.nullable(),
+  /** ルートワールドの入れ替え予定。無い、または古いサーバーでは null */
+  worldChange: WorldChange.nullable().default(null),
 });
 export type SessionInfo = z.infer<typeof SessionInfo>;
 
@@ -268,6 +286,11 @@ export const ClientMessage = z.discriminatedUnion("t", [
     t: z.literal("session.create"),
     name: z.string().min(1).max(64),
     requestId: id.optional(),
+    /**
+     * このリリースを、セッションの最初のルートワールドにする（ADR 0066）。
+     * セッションは新しいので、カウントダウンは出さない。
+     */
+    worldReleaseId: id.optional(),
   }),
   z.object({ t: z.literal("session.join"), sessionId: id, requestId: id.optional() }),
   z.object({ t: z.literal("session.leave") }),
@@ -347,8 +370,9 @@ export const ClientMessage = z.discriminatedUnion("t", [
       "要求IDと対象セッションは一緒に指定してください",
     ),
   /**
-   * 公開されたワールドを、このセッションで開く。
+   * 公開されたワールドを、このセッションのルートワールドにする。
    * それまで開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
+   * 入れ替えの前に、セッションの全員へカウントダウンを出す（ADR 0066）。
    */
   z.object({ t: z.literal("session.openWorld"), releaseId: id }),
   /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */

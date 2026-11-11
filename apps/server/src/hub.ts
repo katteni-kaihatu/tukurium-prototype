@@ -31,6 +31,8 @@ export interface HubOptions {
   ownerGraceMs?: number;
   /** 自動保存の間隔 */
   saveDelayMs?: number;
+  /** ルートワールドを入れ替える前のカウントダウン（ADR 0066）。テストでは短くする */
+  worldChangeMs?: number;
   log?: (msg: string) => void;
   /** リポジトリ（ワークスペースの元）。テストでは省略できる */
   repos?: RepoService;
@@ -81,6 +83,16 @@ interface Session {
   /** セッションの世界を実行する接続（持ち主） */
   host: Conn | null;
   lastFrame: SessionFrame | null;
+  /** ルートワールドの入れ替え予定。数え終わると installWorld する */
+  worldChange: {
+    id: string;
+    releaseId: string;
+    worldName: string;
+    byName: string;
+    /** 入れ替える時刻（Date.now()） */
+    at: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null;
   placementRequests: Map<
     string,
     {
@@ -98,6 +110,13 @@ function looksLikeSnapshot(v: unknown, outputId: string): boolean {
   if (!v || typeof v !== "object") return false;
   const o = (v as { outputs?: unknown }).outputs;
   return Array.isArray(o) && o.some((x) => (x as { id?: unknown })?.id === outputId);
+}
+
+/** セッションに置けるリリース（作品と、その時点の制作データ） */
+interface LoadedRelease {
+  release: { id: string; version: number };
+  work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
+  snapshot: { outputs: { id: string; name?: string; kind?: string }[] };
 }
 
 interface Workspace {
@@ -159,7 +178,13 @@ export class Hub {
     options: HubOptions = {},
   ) {
     const { repos, ...rest } = options;
-    this.opts = { ownerGraceMs: 30_000, saveDelayMs: 1000, log: () => {}, ...rest };
+    this.opts = {
+      ownerGraceMs: 30_000,
+      saveDelayMs: 1000,
+      worldChangeMs: 3_000,
+      log: () => {},
+      ...rest,
+    };
     this.repos = repos ?? null;
   }
 
@@ -263,7 +288,7 @@ export class Hub {
       case "sessions.list":
         return this.send(conn, { t: "sessions", sessions: this.sessionList() });
       case "session.create":
-        return this.createSession(conn, msg.name, msg.requestId);
+        return this.createSession(conn, msg.name, msg.requestId, msg.worldReleaseId);
       case "session.join":
         return this.joinSession(conn, msg.sessionId, msg.requestId);
       case "session.leave":
@@ -590,8 +615,28 @@ export class Hub {
   // ---------------------------------------------------------------------------
   // セッション
 
-  private createSession(conn: Conn, name: string, requestId?: string): void {
+  private async createSession(
+    conn: Conn,
+    name: string,
+    requestId?: string,
+    worldReleaseId?: string,
+  ): Promise<void> {
     if (!conn.user) return;
+    // 開けないワールドではセッションを作らない（空の部屋が残らないように、先に確かめる）
+    let loaded: LoadedRelease | null = null;
+    if (worldReleaseId) {
+      const ready = await this.loadUsableWorld(conn, worldReleaseId);
+      if (!ready.ok) {
+        this.send(conn, {
+          t: "session.rejected",
+          sessionId: worldReleaseId,
+          requestId,
+          message: ready.message,
+        });
+        return;
+      }
+      loaded = ready.loaded;
+    }
     this.leaveSession(conn);
     const s: Session = {
       id: shortId("s"),
@@ -604,9 +649,11 @@ export class Hub {
       builds: new Map(),
       host: null,
       lastFrame: null,
+      worldChange: null,
       placementRequests: new Map(),
     };
     this.sessions.set(s.id, s);
+    if (loaded) this.installWorld(s, conn.user.id, loaded);
     this.opts.log(`session created ${s.id} by ${conn.user.id}`);
     this.joinSession(conn, s.id, requestId);
     this.broadcastSessionList();
@@ -686,6 +733,7 @@ export class Hub {
 
   private async closeSession(s: Session, reason: string): Promise<void> {
     if (!this.sessions.has(s.id)) return;
+    this.clearWorldChange(s);
     this.sessions.delete(s.id);
     if (s.closeTimer) clearTimeout(s.closeTimer);
     for (const wid of s.workspaces) {
@@ -732,6 +780,15 @@ export class Hub {
       name: s.name,
       owner: s.owner,
       host: s.host?.user?.id ?? null,
+      worldChange: s.worldChange
+        ? {
+            id: s.worldChange.id,
+            releaseId: s.worldChange.releaseId,
+            worldName: s.worldChange.worldName,
+            byName: s.worldChange.byName,
+            remainingMs: Math.min(60_000, Math.max(0, s.worldChange.at - Date.now())),
+          }
+        : null,
       placements: [...s.placements.values()].map((p) => {
         const snap = this.placementSnapshot(s, p);
         const output = snap?.outputs?.find((o) => o.id === p.outputId);
@@ -1059,38 +1116,83 @@ export class Hub {
   }
 
   /**
-   * 公開されたワールドを、このセッションで開く（ADR 0014）。
-   * 開いていたワールドは外れ、選んだリリースが原点に置かれる。アイテムは残る。
+   * 公開されたワールドを、このセッションのルートワールドにする（ADR 0014・0066）。
+   * すぐには入れ替えず、全員へカウントダウンを出してから入れ替える。
    */
   private async openWorld(conn: Conn, releaseId: string): Promise<void> {
     const s = conn.session;
     const user = conn.user;
-    if (!s || !user || !this.repos) return;
-    const loaded = await this.loadRelease(releaseId);
-    if (!loaded) return this.deny(conn, "バージョンが見つかりません");
-    if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
-      return this.deny(conn, "このリリースを利用する権限がありません");
-    }
-    const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
-    if (kind !== "world") return this.deny(conn, "ワールドではありません");
+    if (!s || !user) return;
+    const ready = await this.loadUsableWorld(conn, releaseId);
+    if (!ready.ok) return this.deny(conn, ready.message);
+    const loaded = ready.loaded;
     const worlds = [...s.placements.values()].filter((p) => this.placementKind(s, p) === "world");
+    // すでにそのリリースだけが開いているときは、何もしない（実行状態は戻さない。ADR 0014）
     if (worlds.length === 1 && worlds[0]?.releaseId === loaded.release.id) {
       this.broadcastSession(s);
       return;
     }
+    if (s.worldChange?.releaseId === loaded.release.id) return;
+    this.scheduleWorldChange(s, user, loaded);
+  }
+
+  /** 利用できるワールドのリリースか。開けないときは、その理由を返す */
+  private async loadUsableWorld(
+    conn: Conn,
+    releaseId: string,
+  ): Promise<{ ok: true; loaded: LoadedRelease } | { ok: false; message: string }> {
+    if (!conn.user || !this.repos) return { ok: false, message: "バージョンが見つかりません" };
+    const loaded = await this.loadRelease(releaseId);
+    if (!loaded) return { ok: false, message: "バージョンが見つかりません" };
+    if (!loaded.work.perms.use && loaded.work.owner !== conn.user.id) {
+      return { ok: false, message: "このリリースを利用する権限がありません" };
+    }
+    const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
+    if (kind !== "world") return { ok: false, message: "ワールドではありません" };
+    return { ok: true, loaded };
+  }
+
+  /** 開いていたワールドを外し、選んだリリースを原点に置く。アイテムは残る */
+  private installWorld(s: Session, userId: string, loaded: LoadedRelease): void {
+    const worlds = [...s.placements.values()].filter((p) => this.placementKind(s, p) === "world");
     for (const p of worlds) {
       s.placements.delete(p.id);
       if (s.host) this.send(s.host, { t: "host.removePart", id: p.id });
     }
-    this.addReleasePlacement(s, user.id, loaded, [0, 0, 0], 0);
+    this.addReleasePlacement(s, userId, loaded, [0, 0, 0], 0);
+  }
+
+  /** 全員へ残り時間を知らせ、数え終わってからルートワールドを入れ替える */
+  private scheduleWorldChange(s: Session, user: User, loaded: LoadedRelease): void {
+    this.clearWorldChange(s);
+    const id = shortId("wc");
+    const delay = this.opts.worldChangeMs;
+    const at = Date.now() + delay;
+    const timer = setTimeout(() => {
+      if (s.worldChange?.id !== id || !this.sessions.has(s.id)) return;
+      s.worldChange = null;
+      this.installWorld(s, user.id, loaded);
+      this.broadcastSession(s);
+    }, delay);
+    const output = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId);
+    s.worldChange = {
+      id,
+      releaseId: loaded.release.id,
+      worldName: output?.name || loaded.work.name,
+      byName: user.name,
+      at,
+      timer,
+    };
     this.broadcastSession(s);
   }
 
-  private async loadRelease(releaseId: string): Promise<{
-    release: { id: string; version: number };
-    work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
-    snapshot: { outputs: { id: string; name?: string; kind?: string }[] };
-  } | null> {
+  private clearWorldChange(s: Session): void {
+    if (!s.worldChange) return;
+    clearTimeout(s.worldChange.timer);
+    s.worldChange = null;
+  }
+
+  private async loadRelease(releaseId: string): Promise<LoadedRelease | null> {
     if (!this.repos) return null;
     const release = await this.store.release(releaseId);
     const work = release ? await this.store.work(release.workId) : null;

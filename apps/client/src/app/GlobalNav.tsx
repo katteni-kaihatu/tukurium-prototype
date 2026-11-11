@@ -24,7 +24,7 @@ const ENTRIES: Entry[] = [
   { icon: "sessions", label: "セッション", window: "sessions" },
   { icon: "events", label: "イベント" },
   { icon: "groups", label: "グループ" },
-  { icon: "worlds", label: "ワールド" },
+  { icon: "worlds", label: "ワールド", window: "worlds" },
   { icon: "items", label: "アイテム", window: "items" },
   { icon: "market", label: "マーケット", window: "market" },
   { icon: "projects", label: "プロジェクト", window: "projects" },

@@ -28,7 +28,7 @@ class MemoryAssets implements AssetStore {
   }
 }
 
-async function start(opts: { ownerGraceMs?: number } = {}) {
+async function start(opts: { ownerGraceMs?: number; worldChangeMs?: number } = {}) {
   const store = new MemoryStore();
   const assets = new MemoryAssets();
   const app = await buildApp(
@@ -41,7 +41,15 @@ async function start(opts: { ownerGraceMs?: number } = {}) {
       assetDir: "",
       gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
     },
-    { store, assets, hub: { ownerGraceMs: opts.ownerGraceMs ?? 60_000, saveDelayMs: 20 } },
+    {
+      store,
+      assets,
+      hub: {
+        ownerGraceMs: opts.ownerGraceMs ?? 60_000,
+        saveDelayMs: 20,
+        ...(opts.worldChangeMs != null ? { worldChangeMs: opts.worldChangeMs } : {}),
+      },
+    },
   );
   await app.listen({ host: "127.0.0.1", port: 0 });
   close = () => app.close();
@@ -1294,7 +1302,7 @@ describe("リポジトリ・コミット・作品", () => {
   });
 
   it("公開されたワールドを開くと、いまのワールドが入れ替わる", async () => {
-    const { app, url } = await start();
+    const { app, url } = await start({ worldChangeMs: 40 });
     const a = await client(url, "a");
     const A = api(app, a.token);
     const publish = async (name: string, kind: "item" | "world", template: "empty" | "gun") => {
@@ -1349,6 +1357,138 @@ describe("リポジトリ・コミット・作品", () => {
     await b.next("session");
     b.send({ t: "session.openWorld", releaseId: night.releaseId });
     expect((await b.next("error")).message).toMatch(/利用する権限/);
+  });
+
+  it("入れ替えの前に全員へカウントダウンを出し、別のワールドを選ぶと数え直す", async () => {
+    const { app, url } = await start({ worldChangeMs: 400 });
+    const a = await client(url, "a");
+    const A = api(app, a.token);
+    const publish = async (name: string, kind: "item" | "world") => {
+      const repo = (await A.post("/api/repos", { name, kind, template: "empty" })).json() as {
+        id: string;
+      };
+      const detail = (await A.get(`/api/repos/${repo.id}`)).json() as {
+        outputs: { id: string }[];
+      };
+      const outputId = detail.outputs[0]?.id;
+      if (!outputId) throw new Error("output がありません");
+      const work = (await A.post("/api/works", { repoId: repo.id, outputId })).json() as {
+        id: string;
+      };
+      const rel = (await A.post(`/api/works/${work.id}/releases`)).json() as { id: string };
+      return { releaseId: rel.id };
+    };
+    const plaza = await publish("広場", "world");
+    const night = await publish("夜", "world");
+    a.send({ t: "session.create", name: "部屋" });
+    const room = (await a.next("session")).session;
+    const b = await client(url, "b");
+    b.send({ t: "session.join", sessionId: room.id });
+    await b.next("session");
+
+    a.send({ t: "session.openWorld", releaseId: plaza.releaseId });
+    const first = await a.next(
+      "session",
+      (m) => m.session.worldChange?.releaseId === plaza.releaseId,
+    );
+    const firstId = first.session.worldChange?.id;
+    expect(first.session.worldChange).toMatchObject({ worldName: "広場", byName: "a" });
+    expect(first.session.worldChange?.remainingMs).toBeGreaterThan(0);
+    expect(first.session.placements.some((p) => p.outputKind === "world")).toBe(false);
+    const seen = await b.next(
+      "session",
+      (m) => m.session.worldChange?.releaseId === plaza.releaseId,
+    );
+    expect(seen.session.worldChange?.byName).toBe("a");
+
+    a.send({ t: "session.openWorld", releaseId: plaza.releaseId });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(
+      a.inbox.some(
+        (m) => m.t === "session" && m.session.worldChange && m.session.worldChange.id !== firstId,
+      ),
+    ).toBe(false);
+
+    a.send({ t: "session.openWorld", releaseId: night.releaseId });
+    const replaced = await a.next(
+      "session",
+      (m) => m.session.worldChange?.releaseId === night.releaseId,
+    );
+    expect(replaced.session.worldChange?.id).not.toBe(firstId);
+    expect(replaced.session.placements.some((p) => p.releaseId === night.releaseId)).toBe(false);
+    const swapped = await a.next("session", (m) =>
+      m.session.placements.some((p) => p.releaseId === night.releaseId),
+    );
+    expect(swapped.session.worldChange).toBeNull();
+    expect(swapped.session.placements.filter((p) => p.outputKind === "world")).toEqual([
+      expect.objectContaining({ releaseId: night.releaseId, outputName: "夜" }),
+    ]);
+    const bSwapped = await b.next("session", (m) =>
+      m.session.placements.some((p) => p.releaseId === night.releaseId),
+    );
+    expect(bSwapped.session.worldChange).toBeNull();
+  });
+
+  it("選んだワールドでセッションを開くと、そのワールドが最初から開いている", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const A = api(app, a.token);
+    const repo = (
+      await A.post("/api/repos", { name: "森", kind: "world", template: "empty" })
+    ).json() as { id: string };
+    const detail = (await A.get(`/api/repos/${repo.id}`)).json() as { outputs: { id: string }[] };
+    const outputId = detail.outputs[0]?.id;
+    if (!outputId) throw new Error("output がありません");
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId })).json() as {
+      id: string;
+    };
+    const rel = (await A.post(`/api/works/${work.id}/releases`)).json() as { id: string };
+    a.send({ t: "session.create", name: "森の部屋", worldReleaseId: rel.id });
+    const entered = await a.next("session");
+    expect(entered.session.name).toBe("森の部屋");
+    expect(entered.session.worldChange).toBeNull();
+    expect(entered.session.placements.find((p) => p.outputKind === "world")).toMatchObject({
+      releaseId: rel.id,
+      position: [0, 0, 0],
+      outputName: "森",
+    });
+
+    a.send({
+      t: "session.create",
+      name: "だめ",
+      worldReleaseId: "rel_missing",
+      requestId: "req-w",
+    });
+    const missing = await a.next("session.rejected");
+    expect(missing.requestId).toBe("req-w");
+    expect(missing.message).toMatch(/バージョンが見つかりません/);
+
+    const itemRepo = (
+      await A.post("/api/repos", { name: "銃", kind: "item", template: "gun" })
+    ).json() as { id: string };
+    const itemDetail = (await A.get(`/api/repos/${itemRepo.id}`)).json() as {
+      outputs: { id: string }[];
+    };
+    const itemOutput = itemDetail.outputs[0]?.id;
+    if (!itemOutput) throw new Error("output がありません");
+    const itemWork = (
+      await A.post("/api/works", { repoId: itemRepo.id, outputId: itemOutput })
+    ).json() as { id: string };
+    const itemRel = (await A.post(`/api/works/${itemWork.id}/releases`)).json() as { id: string };
+    a.send({
+      t: "session.create",
+      name: "アイテムの部屋",
+      worldReleaseId: itemRel.id,
+      requestId: "req-item",
+    });
+    const rejected = await a.next("session.rejected");
+    expect(rejected.requestId).toBe("req-item");
+    expect(rejected.message).toMatch(/ワールドではありません/);
+    for (let i = a.inbox.length - 1; i >= 0; i--)
+      if (a.inbox[i]?.t === "sessions") a.inbox.splice(i, 1);
+    a.send({ t: "sessions.list" });
+    const list = await a.next("sessions");
+    expect(list.sessions.map((s) => s.name)).toEqual(["森の部屋"]);
   });
 });
 

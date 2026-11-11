@@ -5,6 +5,7 @@ export const MENU_PAGES = [
   ["home", "ホーム"],
   ["friends", "フレンド"],
   ["sessions", "セッション"],
+  ["worlds", "ワールド"],
   ["items", "アイテム"],
   ["market", "マーケット"],
 ] as const;
@@ -70,7 +71,7 @@ export const useMainMenu = create<MenuState>((set, get) => ({
   page: "home",
   recall: 0,
   engine: null,
-  queries: { home: "", friends: "", sessions: "", items: "", market: "" },
+  queries: { home: "", friends: "", sessions: "", worlds: "", items: "", market: "" },
   selected: {},
   scroll: {},
   pendingSession: false,

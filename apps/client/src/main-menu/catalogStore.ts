@@ -90,7 +90,7 @@ export function useCatalogConnection() {
     useCatalog.setState({ ...initial, owner: id });
     if (previous)
       useMainMenu.setState({
-        queries: { home: "", friends: "", sessions: "", items: "", market: "" },
+        queries: { home: "", friends: "", sessions: "", worlds: "", items: "", market: "" },
         selected: {},
         scroll: {},
         returnAfterJoin: null,

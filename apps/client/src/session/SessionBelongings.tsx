@@ -6,7 +6,7 @@ import { currentWorld } from "./openWorld";
 
 /**
  * セッションで開くワールドを選ぶ（利用者向け）。
- * 公開されているワールドから一つ選ぶ。開くと、いまのワールドは入れ替わる。
+ * 公開されているワールドから一つ選ぶ。開くと、3秒後にいまのワールドは入れ替わる。
  */
 export function SessionBelongings() {
   const client = useApp((s) => s.client);
@@ -27,7 +27,7 @@ export function SessionBelongings() {
         <h3 className={ui.sectionTitle}>開いているワールド</h3>
       </div>
       <p className={ui.muted}>
-        公開されているワールドから選びます。開くと、いまのワールドは入れ替わります。
+        公開されているワールドから選びます。開くと、3秒後にいまのワールドは入れ替わります。
       </p>
       {open ? (
         <p className={ui.item} style={{ cursor: "default" }}>
@@ -65,7 +65,11 @@ export function SessionBelongings() {
                     className={ui.btn}
                     style={{ height: 26 }}
                     disabled={!releaseId || !canUse}
-                    title={canUse ? "このワールドを開きます" : "利用の権限がありません"}
+                    title={
+                      canUse
+                        ? "3秒後に、セッションの全員のワールドが変わります"
+                        : "利用の権限がありません"
+                    }
                     onClick={() => {
                       if (releaseId) client.send({ t: "session.openWorld", releaseId });
                     }}
