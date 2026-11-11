@@ -189,7 +189,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "Entity を作る",
       description:
-        "Entity を作り、KokoState を付ける。形を見せるなら Transform と Mesh、当たり判定は Collider を付ける",
+        "Entity を作り、KokoState を付ける。形を見せるなら Transform と Mesh。壁・床・坂などプレイヤーや落ちる物がぶつかるものには Collider、重力で落とすなら RigidBody も付ける",
       inputSchema: {
         name: z.string().min(1).max(64),
         output: z.string().optional().describe("アウトプットの ID か名前（省くと最初のもの）"),

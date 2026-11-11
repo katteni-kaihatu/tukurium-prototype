@@ -1,3 +1,4 @@
+import { PlayerSolids } from "@tukurium/runtime";
 import type { Participant } from "@tukurium/shared";
 import * as THREE from "three";
 import { CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
@@ -33,6 +34,8 @@ export class SessionEngine {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 500);
   readonly controller: FpsController;
+  /** プレイヤーが壁や床にぶつかるための当たり判定（ADR 0068） */
+  readonly solids = new PlayerSolids();
   readonly avatars: Avatars;
   readonly panels: PanelSpace;
   readonly remotePanels: RemotePanels;
@@ -82,7 +85,7 @@ export class SessionEngine {
     this.buildWorld();
     // カメラの子（Play 中に手に持つ物）も描画されるよう、カメラをシーンに入れる
     this.scene.add(this.camera);
-    this.controller = new FpsController(this.camera, canvas);
+    this.controller = new FpsController(this.camera, canvas, { probe: this.solids });
     // 何もない所をクリックしたら空間に入る（パネルの上のクリックはパネルが受け取る）
     container.addEventListener("click", this.onContainerClick);
     document.addEventListener("mousedown", this.onMouseDown);
@@ -211,6 +214,7 @@ export class SessionEngine {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
     this.controller.dispose();
+    this.solids.dispose();
     this.avatars.clear();
     this.remotePanels.dispose();
     this.audio.dispose();
@@ -229,6 +233,7 @@ export class SessionEngine {
     if (this.disposed) return;
     this.frame = requestAnimationFrame(this.loop);
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    this.solids.prepare();
     this.controller.update(dt);
     // 照準が 3D のパネルに乗っていたら、照準の見た目を変える（クリックがパネルに届く合図）
     const aim = this.controller.locked && this.aimedPanelElement() ? "panel" : "";

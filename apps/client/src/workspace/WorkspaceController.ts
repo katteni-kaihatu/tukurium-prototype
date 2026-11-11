@@ -84,6 +84,18 @@ export class WorkspaceController {
 
   constructor(private readonly engine: SessionEngine) {
     engine.scene.add(this.view.root);
+    this.disposers.push(
+      engine.solids.bind("workspace", () => {
+        const ws = useWorkspace.getState();
+        if (!ws.project || !ws.ready) return null;
+        const origin = (ws.anchor ?? this.anchorOf()).position;
+        if (ws.mode !== "edit") {
+          const world = ws.runtime()?.world ?? ws.remote?.world;
+          return world ? { world, origin } : null;
+        }
+        return this.editWorld ? { world: this.editWorld, origin } : null;
+      }),
+    );
     this.bounds = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
       new THREE.LineBasicMaterial({ color: 0xfdd046, transparent: true, opacity: 0.9 }),

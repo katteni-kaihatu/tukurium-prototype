@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import type { EntityId, Vec3, World } from "@tukurium/eks";
 import { BUILTIN } from "@tukurium/repo-model";
 import { isInHand } from "./holding";
+import { addSessionGround, finiteNumber, GRAVITY, resolvedCollider, vec3Of } from "./solidShape";
 import { worldTransform, writeWorldTransform } from "./transform";
 
 let initialized: Promise<void> | null = null;
@@ -15,7 +16,7 @@ export function initPhysics(): Promise<void> {
 interface BodyRecord {
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
-  /** 形状が変わったら作り直すための鍵 */
+  /** 形や質量が変わったら作り直すための鍵 */
   shapeKey: string;
   type: "fixed" | "dynamic" | "kinematic";
 }
@@ -35,8 +36,10 @@ export interface CollisionEvent {
 /**
  * EKS の World と Rapier の物理ワールドを対応させる。
  * - Collider を持つ Entity に剛体と当たり判定を作る（RigidBody がなければ動かない剛体）。
- * - 形は Mesh の形状・大きさ × ワールドでの拡大率から作る。
+ * - 形は Collider の shape / size。未指定なら Mesh に合わせる。
+ * - 高さ 0 に、Entity ではない地面を置く。動く剛体はここで止まる。
  * - 動く剛体（dynamic）の位置・回転・速度は、計算後に Transform / RigidBody へ書き戻す。
+ * - スクリプトが書いた速度は、次の計算の前に剛体へ戻す。
  */
 export class Physics {
   readonly rapier: RAPIER.World;
@@ -45,7 +48,9 @@ export class Physics {
   private readonly events = new RAPIER.EventQueue(true);
 
   constructor() {
-    this.rapier = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    this.rapier = new RAPIER.World({ x: 0, y: -GRAVITY, z: 0 });
+    this.rapier.integrationParameters.maxCcdSubsteps = 4;
+    addSessionGround(this.rapier);
   }
 
   /** Entity の追加・削除・形の変化・動かない剛体の移動を物理ワールドに反映する。 */
@@ -57,21 +62,30 @@ export class Physics {
       const wt = worldTransform(world, id);
       const mesh = world.get(id, BUILTIN.Mesh);
       const rb = world.get(id, BUILTIN.RigidBody);
-      const collider = world.get(id, BUILTIN.Collider);
       // 手に持っている間は、重力で落ちないよう、Transform に合わせて動かす
       const type: BodyRecord["type"] = isInHand(world, id)
         ? "kinematic"
         : ((rb?.type as BodyRecord["type"] | undefined) ?? "fixed");
-      const shape = (mesh?.shape as string | undefined) ?? "box";
-      const size = (mesh?.size as Vec3 | undefined) ?? [1, 1, 1];
-      const s = wt.scale;
-      const shapeKey = JSON.stringify([
-        shape,
-        size,
-        s.toArray().map((v) => v.toFixed(4)),
+      const { desc: cdesc, key: shapePart } = resolvedCollider(
+        world.get(id, BUILTIN.Collider),
+        mesh,
+        [wt.scale.x, wt.scale.y, wt.scale.z],
+        true,
+      );
+      const mass = Math.max(finiteNumber(rb?.mass, 1), 0.001);
+      const gravityScale = finiteNumber(rb?.gravityScale, 1);
+      const linearDamping = Math.max(finiteNumber(rb?.linearDamping, 0.05), 0);
+      const angularDamping = Math.max(finiteNumber(rb?.angularDamping, 0.1), 0);
+      const ccd = rb?.ccd !== false;
+      const shapeKey = [
+        shapePart,
         type,
-        collider?.sensor,
-      ]);
+        mass,
+        gravityScale,
+        linearDamping,
+        angularDamping,
+        ccd,
+      ].join("|");
 
       let rec = this.bodies.get(id);
       if (rec && rec.shapeKey !== shapeKey) {
@@ -87,13 +101,17 @@ export class Physics {
               : RAPIER.RigidBodyDesc.fixed();
         desc.setTranslation(wt.position.x, wt.position.y, wt.position.z).setRotation(wt.quaternion);
         if (type === "dynamic" && rb) {
-          const v = rb.linvel as Vec3;
-          desc.setLinvel(v[0], v[1], v[2]);
+          const v = vec3Of(rb.linvel);
+          const w = vec3Of(rb.angvel);
+          desc.setLinvel(v[0], v[1], v[2]).setAngvel({ x: w[0], y: w[1], z: w[2] });
+          desc
+            .setAdditionalMass(mass)
+            .setGravityScale(gravityScale)
+            .setLinearDamping(linearDamping)
+            .setAngularDamping(angularDamping)
+            .setCcdEnabled(ccd);
         }
         const body = this.rapier.createRigidBody(desc);
-        const cdesc = colliderDesc(shape, [size[0] * s.x, size[1] * s.y, size[2] * s.z])
-          .setSensor(Boolean(collider?.sensor))
-          .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
         const col = this.rapier.createCollider(cdesc, body);
         rec = { body, collider: col, shapeKey, type };
         this.bodies.set(id, rec);
@@ -108,6 +126,16 @@ export class Physics {
   }
 
   step(world: World, dt: number): CollisionEvent[] {
+    // スクリプトが書いた速度を、計算の前に戻す（計算後に書き戻すので、変えていなければ同じ値）
+    for (const [id, rec] of this.bodies) {
+      if (rec.type !== "dynamic" || !world.has(id)) continue;
+      const rb = world.get(id, BUILTIN.RigidBody);
+      if (!rb) continue;
+      const v = vec3Of(rb.linvel);
+      const w = vec3Of(rb.angvel);
+      rec.body.setLinvel({ x: v[0], y: v[1], z: v[2] }, true);
+      rec.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
+    }
     this.rapier.timestep = dt;
     this.rapier.step(this.events);
     // 動く剛体の結果（ワールド座標）を書き戻す。親のある Entity には、親から見た値に直して書く
@@ -117,7 +145,9 @@ export class Physics {
       const rb = world.get(id, BUILTIN.RigidBody);
       if (rb) {
         const v = rec.body.linvel();
+        const w = rec.body.angvel();
         rb.linvel = [v.x, v.y, v.z];
+        rb.angvel = [w.x, w.y, w.z];
       }
     }
     const out: CollisionEvent[] = [];
@@ -178,21 +208,5 @@ export class Physics {
     this.byCollider.delete(rec.collider.handle);
     this.rapier.removeRigidBody(rec.body);
     this.bodies.delete(id);
-  }
-}
-
-function colliderDesc(shape: string, size: Vec3): RAPIER.ColliderDesc {
-  const [x, y, z] = size.map((v) => Math.max(Math.abs(v), 0.001)) as Vec3;
-  switch (shape) {
-    case "sphere":
-      return RAPIER.ColliderDesc.ball(x / 2);
-    case "cylinder":
-      return RAPIER.ColliderDesc.cylinder(y / 2, x / 2);
-    case "capsule":
-      return RAPIER.ColliderDesc.capsule(Math.max(y / 2 - x / 2, 0.001), x / 2);
-    case "plane":
-      return RAPIER.ColliderDesc.cuboid(x / 2, 0.005, z / 2);
-    default:
-      return RAPIER.ColliderDesc.cuboid(x / 2, y / 2, z / 2);
   }
 }

@@ -31,6 +31,10 @@ export type KokoRole = (typeof KOKO_ROLES)[number]["id"];
 export const MESH_SHAPES = ["box", "sphere", "cylinder", "capsule", "plane"] as const;
 export type MeshShape = (typeof MESH_SHAPES)[number];
 
+/** Collider の形。mesh は Mesh の形と大きさに合わせる */
+export const COLLIDER_SHAPES = ["mesh", "box", "sphere", "cylinder", "capsule", "plane"] as const;
+export type ColliderShape = (typeof COLLIDER_SHAPES)[number];
+
 export const RIGID_BODY_TYPES = ["fixed", "dynamic", "kinematic"] as const;
 
 export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
@@ -58,7 +62,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       { id: "material", name: "material", type: "material", default: null },
       /** マテリアル未指定のときの色 */
       { id: "color", name: "color", type: "color", default: "#d8d2c6" },
-      /** GLB の素材 ID。指定すると形状の代わりにモデルを表示する（当たり判定は size のまま） */
+      /** GLB の素材 ID。指定すると形状の代わりにモデルを表示する（当たり判定は Collider。形を mesh にするとこの size） */
       { id: "model", name: "model", type: "model", default: null },
     ],
   },
@@ -68,8 +72,21 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     role: "physics",
     builtin: true,
     fields: [
-      /** true なら当たり判定だけ（押し返さない） */
+      /**
+       * mesh なら Mesh の形。box / sphere / cylinder / capsule / plane はその形だけを使う。
+       * プレイヤーと RigidBody の両方が、sensor でなければここにぶつかる。
+       */
+      { id: "shape", name: "shape", type: "string", default: "mesh" },
+      /** 0,0,0 なら Mesh の大きさ（無ければ 1m）。それ以外は、この当たり判定だけの大きさ（m） */
+      { id: "size", name: "size", type: "vec3", default: [0, 0, 0] },
+      /** Entity の中心からのずれ（m）。拡大率は掛かる */
+      { id: "offset", name: "offset", type: "vec3", default: [0, 0, 0] },
+      /** true なら押し返さず、当たったことだけが届く */
       { id: "sensor", name: "sensor", type: "boolean", default: false },
+      /** 滑りにくさ。0 でツルツル */
+      { id: "friction", name: "friction", type: "number", default: 0.6 },
+      /** 跳ね返り。0 で跳ねない */
+      { id: "restitution", name: "restitution", type: "number", default: 0 },
     ],
   },
   {
@@ -78,8 +95,21 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     role: "physics",
     builtin: true,
     fields: [
+      /** dynamic: 重力で動く / kinematic: Transform に付いて動く / fixed: 動かない */
       { id: "type", name: "type", type: "string", default: "dynamic" },
+      /** 重さ（kg）。形では変わらない */
+      { id: "mass", name: "mass", type: "number", default: 1 },
+      /** 重力の倍率。0 ならその場に浮く */
+      { id: "gravityScale", name: "gravityScale", type: "number", default: 1 },
+      /** 速度の減衰。大きいほどすぐ止まる */
+      { id: "linearDamping", name: "linearDamping", type: "number", default: 0.05 },
+      { id: "angularDamping", name: "angularDamping", type: "number", default: 0.1 },
+      /** 速度（m/s）。実行が書き、スクリプトからも変えられる */
       { id: "linvel", name: "linvel", type: "vec3", default: [0, 0, 0] },
+      /** 回転の速度（ラジアン/s） */
+      { id: "angvel", name: "angvel", type: "vec3", default: [0, 0, 0] },
+      /** 速い物が薄い床をすり抜けないようにする */
+      { id: "ccd", name: "ccd", type: "boolean", default: true },
     ],
   },
   {
