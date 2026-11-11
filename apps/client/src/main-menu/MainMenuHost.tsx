@@ -14,6 +14,7 @@ import { StatusPanel } from "./StatusPanel";
 import { useSessionLifecycle } from "./sessionActions";
 import { useSocialConnection } from "./socialStore";
 import { isMenuPage, TOOL_WINDOWS, type ToolWindow, useMainMenu } from "./store";
+import { WorldsPage } from "./WorldsPage";
 
 /** 独立したウィンドウを同じ層で扱い、前後関係・位置・入力中の内容を保つ。 */
 export function MainMenuHost() {
@@ -112,6 +113,8 @@ function ToolContent({ id }: { id: ToolWindow }) {
           <CatalogPage key={owner} active={visible} />
         ) : id === "sessions" ? (
           <SessionsPage />
+        ) : id === "worlds" ? (
+          <WorldsPage />
         ) : id === "library" ? (
           <>
             <div className={styles.pageHeader}>

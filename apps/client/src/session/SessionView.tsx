@@ -14,6 +14,7 @@ import { SessionWorldController } from "./SessionWorldController";
 import { resetSessionWorld } from "./sessionWorld";
 import { ThumbnailCamera } from "./ThumbnailCamera";
 import { WorkspacePreviews } from "./WorkspacePreviews";
+import { WorldCountdown } from "./WorldCountdown";
 
 const POSE_INTERVAL_MS = 100;
 
@@ -163,6 +164,7 @@ export function SessionView() {
         <span className={styles.chDot} />
       </div>
       {engine && <RingMenu engine={engine} />}
+      <WorldCountdown />
       {closedReason && (
         <div className={`glass ${styles.closed}`} role="alert">
           <p>{closedReason}</p>
