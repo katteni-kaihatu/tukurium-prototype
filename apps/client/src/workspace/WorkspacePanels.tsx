@@ -42,6 +42,7 @@ import {
   useScriptCheck,
   useTypeCheck,
 } from "./useProblems";
+import { WorkspaceCloseButton, WorkspaceLeaveClose } from "./workspaceExit";
 
 const MAIN: PanelSpec = {
   id: "ws-main",
@@ -383,9 +384,9 @@ export function WorkspaceStart() {
       style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
     >
       {workspaceId && (
-        <button type="button" className={ui.btn} onClick={() => ws.leave()}>
-          ワークスペースを閉じる
-        </button>
+        <div className={ui.row}>
+          <WorkspaceLeaveClose className={ui.btn} closeClassName={ui.btnDanger} />
+        </div>
       )}
       {error && <p className={ui.error}>{error}</p>}
       <h3 className={ui.sectionTitle}>このセッションのワークスペース</h3>
@@ -394,7 +395,7 @@ export function WorkspaceStart() {
       ) : (
         <ul className={ui.list} aria-label="このセッションのワークスペース">
           {list.map((w) => (
-            <li key={w.id}>
+            <li key={w.id} className={ui.row}>
               <button
                 type="button"
                 className={ui.item}
@@ -405,6 +406,7 @@ export function WorkspaceStart() {
                   {w.present.length}人{w.defaultRole === null ? " · 非公開" : ""}
                 </span>
               </button>
+              <WorkspaceCloseButton workspaceId={w.id} name={w.name} className={ui.btnDanger} />
             </li>
           ))}
         </ul>

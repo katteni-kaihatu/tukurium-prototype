@@ -5,6 +5,7 @@ import styles from "./MainPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useWorkspaceProblems } from "./useProblems";
+import { WorkspaceLeaveClose } from "./workspaceExit";
 
 const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" } as const;
 
@@ -13,7 +14,8 @@ const ROLE_LABEL = { viewer: "閲覧", editor: "共同編集", admin: "管理" }
  * 再生の操作はホスト（再生を実行する人）に届き、全員に同じ状態が配られる。
  * セッションに出す・適用・リンク先一覧は、再生の横の「セッション同期」から開く。
  * Inspector・Resources・エラー・ログと保存は、下のボタンから開く。
- * 「ワークスペースを閉じる」は、この画面での編集を終える。プロジェクトは残る。
+ * 「出る」は自分だけ編集を終える。「閉じる」は確認して、ワークスペースを一覧からなくす。
+ * どちらでもプロジェクトは残る。
  */
 export function MainPanel() {
   const ws = useWorkspace();
@@ -74,14 +76,7 @@ export function MainPanel() {
         >
           履歴
         </button>
-        <button
-          type="button"
-          className={ui.btn}
-          title="この画面での編集を終える。プロジェクトは残り、あとから開き直せます"
-          onClick={() => useWorkspace.getState().leave()}
-        >
-          ワークスペースを閉じる
-        </button>
+        <WorkspaceLeaveClose className={ui.btn} closeClassName={ui.btnDanger} />
       </div>
 
       <div className={styles.bar}>

@@ -306,7 +306,10 @@ export const ClientMessage = z.discriminatedUnion("t", [
     initial: b64,
   }),
   z.object({ t: z.literal("ws.open"), workspaceId: id }),
+  /** 自分だけ出る。ワークスペースはセッションに残る */
   z.object({ t: z.literal("ws.close"), workspaceId: id }),
+  /** ワークスペースを閉じる（管理権限）。一覧からなくなり、開いていた人も出る */
+  z.object({ t: z.literal("ws.end"), workspaceId: id }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
   z.object({
@@ -443,6 +446,8 @@ export const ServerMessage = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("ws.doc"), workspaceId: id, update: b64, role: WorkspaceRole }),
   z.object({ t: z.literal("ws.denied"), workspaceId: id, reason: z.string() }),
+  /** ワークスペースが閉じられた。開いていた人に届く */
+  z.object({ t: z.literal("ws.ended"), workspaceId: id, reason: z.string() }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
   /** 自分の権限が変わった（null なら閲覧できなくなった） */
