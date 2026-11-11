@@ -20,7 +20,7 @@ export function ProjectBrowser({ path }: { path: string }) {
         else useMainMenu.getState().showProject(to);
       }}
     >
-      {kind !== "workspaces" && (
+      {kind !== "workspaces" && kind !== "u" && (
         <div className={`${styles.toolbar} ${styles.projectToolbar}`}>
           <button
             type="button"

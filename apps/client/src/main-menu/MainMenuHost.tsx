@@ -55,8 +55,8 @@ export function MainMenuHost() {
     initial: {
       x: insets.left + index * 20,
       y: insets.top + index * 10,
-      width: id === "status" ? 600 : id === "friends" ? 720 : 920,
-      height: id === "status" ? undefined : id === "items" ? 740 : 620,
+      width: id === "status" ? 600 : id === "friends" ? 720 : id === "projects" ? 1080 : 920,
+      height: id === "status" ? undefined : id === "items" ? 740 : id === "projects" ? 720 : 620,
     },
     recallKey: windows[id].recall,
     focusKey: windows[id].focus,
@@ -72,6 +72,7 @@ function ToolContent({ id }: { id: ToolWindow }) {
   const session = useApp((s) => s.session);
   const visible = useMainMenu((s) => s.windows[id].open);
   const path = useMainMenu((s) => s.projectPath);
+  const projectHome = id === "projects" && (path === null || path.startsWith("/u/"));
   const content = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (isMenuPage(id) && content.current)
@@ -94,7 +95,7 @@ function ToolContent({ id }: { id: ToolWindow }) {
         </div>
       )}
       <div
-        className={styles.content}
+        className={projectHome ? `${styles.content} ${styles.contentBare}` : styles.content}
         ref={content}
         onScroll={(event) => {
           if (isMenuPage(id))

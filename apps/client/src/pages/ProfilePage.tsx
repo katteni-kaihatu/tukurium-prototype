@@ -2,11 +2,18 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Header } from "../app/Header";
 import { useApp } from "../app/store";
-import { api, type RepoMeta, type Work } from "../net/api";
-import { ProjectLink as Link } from "./ProjectNavigation";
+import { api, type CommitInfo, type RepoMeta, type Work } from "../net/api";
+import { ProjectHome } from "./ProjectHome";
+import home from "./ProjectHome.module.css";
 import styles from "./pages.module.css";
+import {
+  activityFromCommits,
+  type ListedProject,
+  type ListedRelease,
+  type ProjectActivity,
+} from "./projectHome";
 
-/** プロフィール：その人のプロジェクトとリリース（/u/me は自分） */
+/** プロフィール。プロジェクトウィンドウでは、一覧のホームとして開く。 */
 export function ProfilePage({
   embedded = false,
   profileId,
@@ -24,12 +31,17 @@ export function ProfilePage({
     repos: RepoMeta[];
     works: Work[];
   } | null>(null);
+  const [works, setWorks] = useState<Work[] | null>(null);
+  const [activity, setActivity] = useState<Record<string, ProjectActivity>>({});
   const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     let active = true;
     setUser(null);
+    setWorks(null);
+    setActivity({});
     setError(null);
-    if (id && me)
+    if (id && me) {
       void api.user(id).then(
         (value) => {
           if (active) setUser(value);
@@ -38,66 +50,88 @@ export function ProfilePage({
           if (active) setError(e.message);
         },
       );
+      // 版の番号は、ユーザーの作品一覧のほうに付いている
+      void api.works(id).then(
+        (value) => {
+          if (active) setWorks(value);
+        },
+        () => undefined,
+      );
+    }
     return () => {
       active = false;
     };
   }, [id, me]);
 
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const now = Date.now();
+    void Promise.all(
+      user.repos.map(async (repo) => {
+        const commits = await api.commits(repo.id).catch(() => [] as CommitInfo[]);
+        const times = commits.map((commit) => commit.author.timestamp * 1000);
+        return [repo.id, activityFromCommits(times, repo.createdAt, now)] as const;
+      }),
+    ).then((rows) => {
+      if (active) setActivity(Object.fromEntries(rows));
+    });
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
+  const shownWorks = works ?? user?.works ?? [];
+  const repos = (user?.repos ?? []).map((repo) => toProject(repo, activity[repo.id]?.savedAt));
+  const releases = shownWorks.map((work) => toRelease(work, user?.repos ?? []));
+
   return (
-    <div className={embedded ? styles.embedded : styles.page}>
+    <div className={embedded ? home.frame : styles.page}>
       {!embedded && <Header />}
-      <main className={embedded ? styles.embeddedMain : styles.main}>
+      <div className={embedded ? undefined : styles.main}>
         {error && <p className={styles.error}>{error}</p>}
+        {!user && !error && <p className={home.loading}>読み込んでいます…</p>}
         {user && (
-          <div className={`${styles.grid} ${styles.profileGrid}`}>
-            <aside className={styles.card}>
-              <h1 className={styles.title}>{user.name}</h1>
-              <p className={styles.sub}>
-                {user.id === me?.id ? "自分のプロジェクトとリリース" : "プロジェクトとリリース"}
-              </p>
-              {user.id === me?.id && (
-                <Link to="/new" className={styles.primary}>
-                  ＋ 新しいプロジェクト
-                </Link>
-              )}
-            </aside>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-              <section className={styles.card} aria-label="プロジェクト">
-                <h2 className={styles.h2}>Projects · {user.repos.length}</h2>
-                <ul className={styles.list}>
-                  {user.repos.length === 0 && <li className={styles.sub}>まだありません</li>}
-                  {user.repos.map((r) => (
-                    <li key={r.id}>
-                      <Link className={`${styles.link} ${styles.grow}`} to={`/p/${r.id}`}>
-                        {r.name}
-                      </Link>
-                      {r.forkedFrom && (
-                        <span className={styles.sub}>Forked from {r.forkedFrom.repoName}</span>
-                      )}
-                      <span className={styles.badge}>
-                        {r.visibility === "public" ? "Public" : "Private"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-              <section className={styles.card} aria-label="リリース">
-                <h2 className={styles.h2}>リリース · {user.works.length}</h2>
-                <ul className={styles.list}>
-                  {user.works.length === 0 && <li className={styles.sub}>まだありません</li>}
-                  {user.works.map((w) => (
-                    <li key={w.id}>
-                      <Link className={`${styles.link} ${styles.grow}`} to={`/p/${w.repoId}`}>
-                        {w.name}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            </div>
-          </div>
+          <ProjectHome
+            embedded={embedded}
+            name={user.name}
+            self={user.id === me?.id}
+            repos={repos}
+            releases={releases}
+            activity={activity}
+          />
         )}
-      </main>
+      </div>
     </div>
   );
+}
+
+function toProject(repo: RepoMeta, savedAt: number | undefined): ListedProject {
+  const created = Date.parse(repo.createdAt);
+  return {
+    id: repo.id,
+    name: repo.name,
+    description: repo.description,
+    kind: repo.kind,
+    visibility: repo.visibility,
+    createdAt: repo.createdAt,
+    updatedAt: savedAt ?? (Number.isFinite(created) ? created : 0),
+    forkedFrom: repo.forkedFrom
+      ? { repoId: repo.forkedFrom.repoId, repoName: repo.forkedFrom.repoName }
+      : null,
+  };
+}
+
+function toRelease(work: Work, repos: RepoMeta[]): ListedRelease {
+  const repo = repos.find((item) => item.id === work.repoId);
+  const at = Date.parse(work.latest?.createdAt ?? work.createdAt);
+  return {
+    id: work.id,
+    name: work.name,
+    repoId: work.repoId,
+    repoName: work.repoName ?? repo?.name ?? "",
+    kind: work.outputKind ?? repo?.kind ?? "item",
+    version: work.latest?.version ?? null,
+    at: Number.isFinite(at) ? at : 0,
+  };
 }
