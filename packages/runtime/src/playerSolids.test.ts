@@ -92,6 +92,14 @@ describe("プレイヤーの当たり判定", () => {
     expect(through.position[2]).toBeLessThan(-4);
   });
 
+  it("ワールドの床の上を歩き続けられる", async () => {
+    await load(scene([{ id: "floor", position: [0, 0.02, 0], shape: "plane", size: [40, 1, 40] }]));
+    const walked = walk([0, 0, 0], [0, 0, -3], 90);
+    expect(walked.position[2]).toBeLessThan(-2);
+    expect(walked.position[1]).toBeGreaterThan(-0.05);
+    expect(walked.position[1]).toBeLessThan(0.2);
+  });
+
   it("床の上に立ち、低い段は上れる", async () => {
     await load(scene([{ id: "deck", position: [0, 0.5, 0], size: [3, 1, 3] }]));
     const stood = walk([0, 3, 0], [0, 0, 0], 180);
