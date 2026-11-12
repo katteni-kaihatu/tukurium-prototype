@@ -1,4 +1,3 @@
-import type { PlacementInfo } from "@tukurium/shared";
 import { useEffect, useMemo } from "react";
 import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
@@ -8,7 +7,6 @@ import { refreshOwned, useCatalog } from "./catalogStore";
 import { shelfItems, useItemShelf } from "./itemShelf";
 import common from "./MainMenu.module.css";
 import styles from "./OwnedItemsPage.module.css";
-import { sessionItemGroups } from "./sessionItems";
 import { useMainMenu } from "./store";
 import { WorkTagsEditor } from "./WorkTags";
 
@@ -18,8 +16,6 @@ export function OwnedItemsPage() {
   const menu = useMainMenu();
   const status = useApp((s) => s.status);
   const session = useApp((s) => s.session);
-  const me = useApp((s) => s.me);
-  const client = useApp((s) => s.client);
   useEffect(() => shelf.load(catalog.owner), [catalog.owner, shelf.load]);
   const labels = useMemo(
     () => (shelf.owner === catalog.owner ? shelf.labels : {}),
@@ -29,13 +25,6 @@ export function OwnedItemsPage() {
     ...new Set([...shelf.tags, ...catalog.owned.flatMap((item) => item.work?.tags ?? [])]),
   ].sort((a, b) => a.localeCompare(b, "ja"));
   const entries = shelfItems(catalog.owned, labels, { ...shelf, query: menu.queries.items });
-  const sessionItems = sessionItemGroups(
-    catalog.owned,
-    session?.placements ?? [],
-    new Set(entries.map((item) => item.workId)),
-  );
-  const putAway = (placement: PlacementInfo) =>
-    client.send({ t: "unplace", placementId: placement.id });
   // 絞り込み後も、確認中のアイテムは詳細に残す。
   const selected = catalog.owned.find((item) => item.workId === menu.selected.items);
   const filtering =
@@ -230,119 +219,66 @@ export function OwnedItemsPage() {
                 </button>
               </div>
             )}
-          {sessionItems.extra.length > 0 && (
-            <section className={styles.sessionItems} aria-label="セッションに出ているアイテム">
-              <h2>セッションに出ている</h2>
-              <div className={styles.items} data-layout="list">
-                {sessionItems.extra.map(({ placement, item }) => (
-                  <SessionItemCard
-                    key={placement.id}
-                    placement={placement}
-                    item={item}
-                    who={whoPlaced(session?.participants ?? [], placement.placedBy, me?.id)}
-                    canPutAway={canPutAway(placement, me?.id, session?.owner)}
-                    onPutAway={() => putAway(placement)}
-                    onOpen={item ? () => menu.select("items", item.workId) : undefined}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
           <div className={styles.items} data-layout={shelf.layout}>
-            {entries.map((item) => {
-              const outs = sessionItems.onCards.get(item.workId) ?? [];
-              const away = outs.filter((placement) =>
-                canPutAway(placement, me?.id, session?.owner),
-              );
-              const removable = away[0];
-              return (
-                <article
-                  key={item.workId}
-                  className={styles.card}
-                  data-selected={selected?.workId === item.workId}
-                  data-out={outs.length > 0 ? "true" : undefined}
+            {entries.map((item) => (
+              <article
+                key={item.workId}
+                className={styles.card}
+                data-selected={selected?.workId === item.workId}
+              >
+                <button
+                  type="button"
+                  className={styles.cardOpen}
+                  aria-label={`${item.work?.name ?? "利用できないアイテム"} の詳細`}
+                  aria-pressed={selected?.workId === item.workId}
+                  onClick={() => menu.select("items", item.workId)}
                 >
-                  <button
-                    type="button"
-                    className={styles.cardOpen}
-                    aria-label={`${item.work?.name ?? "利用できないアイテム"} の詳細${outs.length > 0 ? "。セッションに出しています" : ""}`}
-                    aria-pressed={selected?.workId === item.workId}
-                    onClick={() => menu.select("items", item.workId)}
-                  >
-                    <ItemThumbnail work={item.work} out={outs.length} />
-                    <span className={styles.cardInfo}>
-                      <strong>{item.work?.name ?? "利用できないアイテム"}</strong>
-                      <span className={common.caption}>{item.work?.ownerName ?? "作者不明"}</span>
-                      <span className={styles.version}>
-                        v{item.release?.version ?? "?"}
-                        {!item.available && <span className={styles.unavailable}>利用不可</span>}
-                        {outs.length > 0 && (
-                          <span className={styles.outMark}>{outLabel(outs.length)}</span>
-                        )}
-                      </span>
+                  <ItemThumbnail work={item.work} />
+                  <span className={styles.cardInfo}>
+                    <strong>{item.work?.name ?? "利用できないアイテム"}</strong>
+                    <span className={common.caption}>{item.work?.ownerName ?? "作者不明"}</span>
+                    <span className={styles.version}>
+                      v{item.release?.version ?? "?"}
+                      {!item.available && <span className={styles.unavailable}>利用不可</span>}
                     </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.favorite}
-                    disabled={!ready}
-                    aria-label={`${item.work?.name ?? "アイテム"}をお気に入り${labels[item.workId]?.favorite ? "から外す" : "に追加"}`}
-                    aria-pressed={!!labels[item.workId]?.favorite}
-                    onClick={() => shelf.toggleFavorite(item.workId)}
-                  >
-                    <Glyph kind="star" />
-                  </button>
-                  {!!item.work?.tags?.length && (
-                    <div className={styles.cardTags}>
-                      {item.work?.tags?.map((tag) => (
-                        <button
-                          type="button"
-                          className={styles.tag}
-                          key={tag}
-                          aria-pressed={shelf.tags.includes(tag)}
-                          onClick={() => shelf.toggleTag(tag)}
-                        >
-                          {tag}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div className={styles.cardAction}>
-                    <ItemAction work={item.work} item={item} />
-                    {removable && (
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.favorite}
+                  disabled={!ready}
+                  aria-label={`${item.work?.name ?? "アイテム"}をお気に入り${labels[item.workId]?.favorite ? "から外す" : "に追加"}`}
+                  aria-pressed={!!labels[item.workId]?.favorite}
+                  onClick={() => shelf.toggleFavorite(item.workId)}
+                >
+                  <Glyph kind="star" />
+                </button>
+                {!!item.work?.tags?.length && (
+                  <div className={styles.cardTags}>
+                    {item.work?.tags?.map((tag) => (
                       <button
                         type="button"
-                        className={styles.putAway}
-                        aria-label={`${item.work?.name ?? "アイテム"}をセッションから外す`}
-                        title={
-                          away.length > 1
-                            ? `${away.length}個出しています。1個をセッションから外します`
-                            : "セッションから外します"
-                        }
-                        onClick={() => putAway(removable)}
+                        className={styles.tag}
+                        key={tag}
+                        aria-pressed={shelf.tags.includes(tag)}
+                        onClick={() => shelf.toggleTag(tag)}
                       >
-                        外す
+                        {tag}
                       </button>
-                    )}
+                    ))}
                   </div>
-                </article>
-              );
-            })}
+                )}
+                <div className={styles.cardAction}>
+                  <ItemAction work={item.work} item={item} />
+                </div>
+              </article>
+            ))}
           </div>
         </div>
         {selected ? (
           <ItemDetails
             key={selected.workId}
             item={selected}
-            outs={(sessionItems.onCards.get(selected.workId) ?? []).concat(
-              sessionItems.extra
-                .filter((entry) => entry.item?.workId === selected.workId)
-                .map((entry) => entry.placement),
-            )}
-            meId={me?.id}
-            ownerId={session?.owner}
-            participants={session?.participants ?? []}
-            onPutAway={putAway}
             onClose={() => menu.select("items", undefined)}
           />
         ) : (
@@ -364,23 +300,7 @@ export function OwnedItemsPage() {
   );
 }
 
-function ItemDetails({
-  item,
-  outs,
-  meId,
-  ownerId,
-  participants,
-  onPutAway,
-  onClose,
-}: {
-  item: OwnedItem;
-  outs: PlacementInfo[];
-  meId: string | undefined;
-  ownerId: string | undefined;
-  participants: { id: string; name: string }[];
-  onPutAway(placement: PlacementInfo): void;
-  onClose(): void;
-}) {
+function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
   const name = item.work?.name ?? "利用できないアイテム";
   return (
     <aside className={styles.detail} aria-label="アイテムの詳細">
@@ -395,7 +315,7 @@ function ItemDetails({
           <Glyph kind="close" />
         </button>
       </div>
-      <ItemThumbnail work={item.work} out={outs.length} />
+      <ItemThumbnail work={item.work} />
       <div className={styles.detailCopy}>
         <span className={styles.typeBadge}>3Dアイテム</span>
         <h2>{name}</h2>
@@ -409,141 +329,30 @@ function ItemDetails({
         <div className={styles.detailAction}>
           <ItemAction work={item.work} item={item} />
         </div>
-        {outs.length > 0 && (
-          <div className={styles.outList}>
-            <h3>このセッションに出しています</h3>
-            <ul>
-              {outs.map((placement) => (
-                <li key={placement.id}>
-                  <span>{whoPlaced(participants, placement.placedBy, meId)}</span>
-                  {canPutAway(placement, meId, ownerId) && (
-                    <button
-                      type="button"
-                      aria-label={`${name}をセッションから外す`}
-                      onClick={() => onPutAway(placement)}
-                    >
-                      外す
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
         {item.work && <WorkTagsEditor work={item.work} />}
       </div>
     </aside>
   );
 }
 
-function ItemThumbnail({
-  work,
-  out = 0,
-  label,
-}: {
-  work: Work | null;
-  out?: number;
-  label?: string;
-}) {
+function ItemThumbnail({ work }: { work: Work | null }) {
   // サムネイルがあればそれを出す（ADR 0046）
   if (work?.thumbnail)
     return (
       <span className={`${styles.visual} ${styles.visualImage}`} aria-hidden="true">
         <Thumbnail id={work.thumbnail} name={work.name} />
-        {out > 0 && <span className={styles.outBadge}>{outLabel(out)}</span>}
       </span>
     );
   return (
     <span className={styles.visual} aria-hidden="true">
       <Glyph kind="box" />
       <span>
-        {Array.from(label ?? work?.name ?? "?")
+        {Array.from(work?.name ?? "?")
           .slice(0, 2)
           .join("")}
       </span>
-      {out > 0 && <span className={styles.outBadge}>{outLabel(out)}</span>}
     </span>
   );
-}
-
-function SessionItemCard({
-  placement,
-  item,
-  who,
-  canPutAway,
-  onPutAway,
-  onOpen,
-}: {
-  placement: PlacementInfo;
-  item: OwnedItem | null;
-  who: string;
-  canPutAway: boolean;
-  onPutAway(): void;
-  onOpen?(): void;
-}) {
-  const name = item?.work?.name ?? placement.outputName;
-  return (
-    <article className={styles.card} data-out="true">
-      {onOpen ? (
-        <button type="button" className={styles.cardOpen} onClick={onOpen}>
-          <ItemThumbnail work={item?.work ?? null} out={1} />
-          <SessionItemCopy name={name} who={who} source={placement.workspaceName} />
-        </button>
-      ) : (
-        <div className={styles.cardOpen}>
-          <ItemThumbnail work={null} out={1} label={name} />
-          <SessionItemCopy name={name} who={who} source={placement.workspaceName} />
-        </div>
-      )}
-      {canPutAway && (
-        <div className={styles.cardAction}>
-          <button
-            type="button"
-            className={styles.putAway}
-            aria-label={`${name}をセッションから外す`}
-            onClick={onPutAway}
-          >
-            外す
-          </button>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function SessionItemCopy({ name, who, source }: { name: string; who: string; source: string }) {
-  return (
-    <span className={styles.cardInfo}>
-      <strong>{name}</strong>
-      <span className={common.caption}>
-        {who}が出しています · {source}
-      </span>
-      <span className={styles.version}>
-        <span className={styles.outMark}>出しています</span>
-      </span>
-    </span>
-  );
-}
-
-function outLabel(count: number): string {
-  return count > 1 ? `${count}個出しています` : "出しています";
-}
-
-function canPutAway(
-  placement: PlacementInfo,
-  meId: string | undefined,
-  ownerId: string | undefined,
-): boolean {
-  return !!meId && (meId === ownerId || meId === placement.placedBy);
-}
-
-function whoPlaced(
-  participants: { id: string; name: string }[],
-  placedBy: string,
-  meId: string | undefined,
-): string {
-  if (placedBy === meId) return "あなた";
-  return participants.find((person) => person.id === placedBy)?.name ?? "参加者";
 }
 
 function Glyph({

@@ -17,6 +17,7 @@ import { GlobalNav } from "./GlobalNav";
 import styles from "./Header.module.css";
 import { useLayoutEdge } from "./layoutEdges";
 import { RightPanel } from "./RightPanel";
+import { canPutAway, listedSessionItems, whoPlaced } from "./sessionItemList";
 import { useApp } from "./store";
 
 /**
@@ -161,15 +162,19 @@ function SessionSidebar({ session }: { session: SessionInfo }) {
   );
 }
 
-/** セッションに出ている作品とバッグの入口。画面共有と表示の切り替えはボタンだけ置く */
+/** セッションに出ているアイテムの一覧と、ワールド・バッグの入口 */
 function SessionItems({ session }: { session: SessionInfo }) {
+  const me = useApp((s) => s.me);
+  const client = useApp((s) => s.client);
   const belongingsOpen = useWorkspace((s) => s.belongingsOpen);
   const bagOpen = useWorkspace((s) => s.bagOpen);
+  const items = listedSessionItems(session.placements);
+  const world = session.placements.find((placement) => placement.outputKind === "world");
   return (
     <>
       <div className={styles.sectionHead}>
         <h2>アイテム</h2>
-        <span className={styles.sectionCount}>{session.placements.length}件</span>
+        <span className={styles.sectionCount}>{items.length}件</span>
         <button type="button" className={styles.iconButton} aria-label="画面共有" title="画面共有">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <rect x="3" y="4" width="18" height="12" rx="2" />
@@ -203,6 +208,38 @@ function SessionItems({ session }: { session: SessionInfo }) {
         </fieldset>
       </div>
       <div className={styles.items}>
+        {items.length === 0 ? (
+          <p className={styles.emptyItems}>まだ出ていません。</p>
+        ) : (
+          <ul className={styles.placed} aria-label="セッションに出ているアイテム">
+            {items.map((placement) => {
+              const who = whoPlaced(session.participants, placement.placedBy, me?.id);
+              return (
+                <li key={placement.id} className={styles.placedItem}>
+                  <span className={styles.itemMark} data-tone="item" aria-hidden="true">
+                    物
+                  </span>
+                  <span className={styles.itemText}>
+                    <b>{placement.outputName}</b>
+                    <span>
+                      {who}が出しています · {placement.workspaceName}
+                    </span>
+                  </span>
+                  {canPutAway(placement, me?.id, session.owner, session.workspaces) && (
+                    <button
+                      type="button"
+                      className={styles.putAway}
+                      aria-label={`${placement.outputName}をセッションから外す`}
+                      onClick={() => client.send({ t: "unplace", placementId: placement.id })}
+                    >
+                      外す
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
         <button
           type="button"
           className={styles.itemRow}
@@ -213,8 +250,8 @@ function SessionItems({ session }: { session: SessionInfo }) {
             置
           </span>
           <span className={styles.itemText}>
-            <b>セッション {session.placements.length}</b>
-            <span>セッションに出ている作品</span>
+            <b>{world?.outputName ?? "ワールド"}</b>
+            <span>{world ? "開いているワールド" : "ワールドを開く"}</span>
           </span>
         </button>
         <button
