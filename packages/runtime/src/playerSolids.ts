@@ -182,8 +182,9 @@ export class PlayerSolids {
       rec = undefined;
     }
     if (!rec) {
+      // 固定にする。キネマティックの床は接触が溢れて、立っているあいだ歩けなくなる。
       const body = rapier.createRigidBody(
-        RAPIER.RigidBodyDesc.kinematicPositionBased()
+        RAPIER.RigidBodyDesc.fixed()
           .setTranslation(wt.position.x, wt.position.y, wt.position.z)
           .setRotation(wt.quaternion),
       );
