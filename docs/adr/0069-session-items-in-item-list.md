@@ -1,6 +1,6 @@
 # ADR 0069：セッションに出ているアイテムは、アイテム一覧に出す
 
-- 状態: 採用・実装済み（2026-11-12）
+- 状態: 置き換え（2026-11-12）。一覧の場所は [ADR 0070](0070-sidebar-session-items.md)
 - 関連: [ADR 0024](0024-owned-items-and-placement.md)、[ADR 0034](0034-owned-item-tags-and-browsing.md)、[ADR 0062](0062-session-tag-and-sidebar.md)
 
 ## 理由

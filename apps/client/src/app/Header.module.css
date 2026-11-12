@@ -227,10 +227,49 @@
   white-space: nowrap;
 }
 .items {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 4px 8px 0;
+  overflow: hidden;
+}
+.placed {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+}
+.placedItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 12px;
+}
+.putAway {
+  flex: none;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: var(--c-paper);
+  color: var(--c-ink);
+  font-size: 11px;
+}
+.putAway:hover {
+  background: #f6f1e8;
+}
+.emptyItems {
+  margin: 4px 8px 8px;
+  font-size: 12px;
+  color: var(--c-ink-3);
 }
 .itemRow {
   display: flex;
@@ -261,6 +300,10 @@
   font-size: 13px;
   font-weight: 700;
 }
+.itemMark[data-tone="item"] {
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+}
 .itemMark[data-tone="bag"] {
   background: var(--c-green-soft);
   color: var(--c-green);
@@ -276,6 +319,15 @@
 .itemText span {
   font-size: 11px;
   color: var(--c-ink-3);
+}
+.placedItem .itemText {
+  flex: 1;
+}
+.placedItem .itemText b,
+.placedItem .itemText span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ワークスペースの切り替え（名前と数が見える旧表示を続ける。ADR 0030） */
