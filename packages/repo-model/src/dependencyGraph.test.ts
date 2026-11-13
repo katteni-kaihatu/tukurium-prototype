@@ -48,7 +48,7 @@ function base(): ProjectSnapshot {
         parent: null,
         output: "out",
         order: 0,
-        states: { [BUILTIN.Mesh]: { material: "m", model: null }, ks_gun: {} },
+        states: { [BUILTIN.Mesh]: { material: "m", model: undefined }, ks_gun: {} },
       },
       { id: "c", name: "弾", parent: "e", output: "out", order: 0, states: {} },
     ],

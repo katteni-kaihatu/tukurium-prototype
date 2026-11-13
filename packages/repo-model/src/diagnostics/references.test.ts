@@ -78,7 +78,7 @@ describe("checkProjectReferences", () => {
         snap({
           materials: [mat("m", "snd")],
           assets: [{ id: "snd", name: "Bang", kind: "audio", contentType: "audio/mpeg" }],
-          entities: [ent("e", { [BUILTIN.Mesh]: { material: "snd", model: null } })],
+          entities: [ent("e", { [BUILTIN.Mesh]: { material: "snd", model: undefined } })],
         }),
       ),
     ).toEqual([
@@ -114,7 +114,7 @@ describe("checkProjectReferences", () => {
           {
             id: "ks_aim",
             name: "Aim",
-            fields: [{ id: "f_t", name: "target", type: "entity", default: null }],
+            fields: [{ id: "f_t", name: "target", type: "entity", default: undefined }],
           },
         ],
         entities: [

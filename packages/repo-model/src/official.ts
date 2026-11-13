@@ -386,7 +386,7 @@ export function referenceDoorAndSwitch(interaction: PackageDependency): ProjectS
           { id: "f_openAngle", name: "openAngle", type: "number", default: 90 },
           { id: "f_speed", name: "speed", type: "number", default: 120 },
           { id: "f_angle", name: "angle", type: "number", default: 0 },
-          { id: "f_switch", name: "switch", type: "entity", default: null },
+          { id: "f_switch", name: "switch", type: "entity", default: undefined },
         ],
       },
     ],
@@ -420,7 +420,7 @@ export function referenceDoorAndSwitch(interaction: PackageDependency): ProjectS
           [BUILTIN.Mesh]: {
             shape: "box",
             size: [0.2, 0.3, 0.12],
-            material: null,
+            material: undefined,
             color: "#c0392b",
           },
           [BUILTIN.Collider]: { sensor: false },
@@ -546,7 +546,12 @@ export function referenceKeyAndDoor(items: PackageDependency): ProjectSnapshot {
         order: 0,
         states: {
           [BUILTIN.Transform]: transform([-1, 0.6, -2.5]),
-          [BUILTIN.Mesh]: { shape: "box", size: [0.3, 0.1, 0.1], material: null, color: "#f1c40f" },
+          [BUILTIN.Mesh]: {
+            shape: "box",
+            size: [0.3, 0.1, 0.1],
+            material: undefined,
+            color: "#f1c40f",
+          },
           [BUILTIN.Collider]: { sensor: false },
           [key]: { f_color: "#f1c40f" },
         },

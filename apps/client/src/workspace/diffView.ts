@@ -1,4 +1,10 @@
-import { type FieldType, isResourceFieldType, type KokoStateDef } from "@tukurium/eks";
+import {
+  equalValues,
+  type FieldType,
+  isResourceFieldType,
+  type KokoStateDef,
+  stringifyValue,
+} from "@tukurium/eks";
 import {
   type AssetDef,
   BUILTIN_KOKOSTATES,
@@ -225,7 +231,7 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
         });
         continue;
       }
-      if (pf.name !== nf.name || pf.type !== nf.type || !same(pf.default, nf.default)) {
+      if (pf.name !== nf.name || pf.type !== nf.type || !equalValues(pf.default, nf.default)) {
         lines.push({
           label: `フィールド ${nf.name}`,
           before: fieldSummary(pf, before),
@@ -524,7 +530,7 @@ function fieldLines(
     const field = def?.fields.find((f) => f.id === id);
     const had = beforeVals !== undefined && Object.hasOwn(beforeVals, id);
     const has = afterVals !== undefined && Object.hasOwn(afterVals, id);
-    if (had && has && same(beforeVals?.[id], afterVals?.[id])) continue;
+    if (had && has && equalValues(beforeVals?.[id], afterVals?.[id])) continue;
     lines.push({
       label: field?.name ?? id,
       before: had ? show(beforeVals?.[id], field?.type, before) : null,
@@ -769,24 +775,8 @@ function show(value: unknown, type: FieldType | undefined, snap: ProjectSnapshot
     return value;
   }
   if (Array.isArray(value) && value.every((v) => typeof v === "number")) return value.join(", ");
-  return JSON.stringify(value);
-}
-
-function same(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => same(v, b[i]));
-  }
-  if (a && b && typeof a === "object") {
-    const ak = Object.keys(a as object);
-    const bk = Object.keys(b as object);
-    if (ak.length !== bk.length) return false;
-    return ak.every((k) =>
-      same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
-    );
-  }
-  return false;
+  // 専用の出し方がない値は、保存する形（タグ付きの JSON）の文字で出す
+  return stringifyValue(value);
 }
 
 /** エディタの左に出す、行ごとの変化（行番号は今のコードの 1 始まり） */

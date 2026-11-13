@@ -1,4 +1,5 @@
-import type { FieldDef, FieldValue, KokoStateDef, KokoStateId, KokoStateValues } from "./types";
+import type { FieldDef, KokoStateDef, KokoStateId, KokoStateValues } from "./types";
+import { cloneValue } from "./value";
 
 const key = (scope: string, name: string) => `${scope}\u0000${name}`;
 
@@ -77,8 +78,10 @@ export class KokoStateRegistry {
     const def = this.require(id);
     const values: KokoStateValues = {};
     for (const field of def.fields) {
-      const given = partial?.[field.id];
-      values[field.id] = given !== undefined ? cloneValue(given) : cloneValue(field.default);
+      // undefined も値なので、渡されたかどうかはキーで見る
+      values[field.id] = cloneValue(
+        partial && Object.hasOwn(partial, field.id) ? partial[field.id] : field.default,
+      );
     }
     return values;
   }
@@ -86,8 +89,4 @@ export class KokoStateRegistry {
   fieldByName(id: KokoStateId, name: string): FieldDef | undefined {
     return this.require(id).fields.find((f) => f.name === name);
   }
-}
-
-export function cloneValue<T extends FieldValue>(value: T): T {
-  return (Array.isArray(value) ? [...value] : value) as T;
 }

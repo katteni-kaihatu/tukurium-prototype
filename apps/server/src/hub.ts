@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseValue, stringifyValue } from "@tukurium/eks";
 import { type PackageResolution, ProjectDoc, type ProjectSnapshot } from "@tukurium/repo-model";
 import {
   ClientMessage,
@@ -270,7 +271,8 @@ export class Hub {
   private async handle(conn: Conn, raw: string): Promise<void> {
     let msg: ClientMessage;
     try {
-      msg = ClientMessage.parse(JSON.parse(raw));
+      // メッセージはタグ付きの JSON（ADR 0065）。形式に合わないものは、ここで弾かれる
+      msg = ClientMessage.parse(parseValue(raw));
     } catch {
       this.send(conn, { t: "error", message: "invalid message" });
       return;
@@ -1592,12 +1594,12 @@ export class Hub {
   }
 
   private toSession(s: Session, msg: ServerMessage, except?: Conn): void {
-    const data = JSON.stringify(msg);
+    const data = stringifyValue(msg);
     for (const c of s.conns) if (c !== except) c.peer.send(data);
   }
 
   private send(conn: Conn, msg: ServerMessage): void {
-    conn.peer.send(JSON.stringify(msg));
+    conn.peer.send(stringifyValue(msg));
   }
 
   private deny(conn: Conn, message: string): void {

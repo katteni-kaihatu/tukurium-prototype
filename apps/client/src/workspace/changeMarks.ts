@@ -1,5 +1,7 @@
-import type { KokoStateDef } from "@tukurium/eks";
+import { equalValues, type KokoStateDef } from "@tukurium/eks";
 import {
+  decodeKokoState,
+  decodeStates,
   type EntityDef,
   entityFilePath,
   type FileMap,
@@ -9,6 +11,8 @@ import {
   materialFilePath,
   type OutputDef,
   outputFilePath,
+  type StoredKokoState,
+  type StoredValues,
   systemCodePath,
   systemMetaPath,
 } from "@tukurium/repo-model";
@@ -26,10 +30,11 @@ export interface EntityChange {
 
 const NO_ENTITY: EntityChange = { kind: null, name: null, parent: null, states: {} };
 
+/** 保存したファイルの Entity。値は保存する形（タグ付きの JSON。ADR 0065） */
 interface SavedEntity {
   name?: string;
   parent?: string | null;
-  states?: Record<string, Record<string, unknown>>;
+  states?: Record<string, StoredValues>;
 }
 
 function readJson<T>(files: FileMap, path: string): T | null {
@@ -42,22 +47,14 @@ function readJson<T>(files: FileMap, path: string): T | null {
   }
 }
 
-/** キーの並びが違っても、中身が同じなら同じとみなす。 */
-function same(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => same(v, b[i]));
+/** 保存した形を値に戻す。形式に合わないファイルは、読めなかったものとして扱う */
+function decoded<S, T>(stored: S | null, decode: (stored: S) => T): T | null {
+  if (stored === null) return null;
+  try {
+    return decode(stored);
+  } catch {
+    return null;
   }
-  if (a && b && typeof a === "object") {
-    const ak = Object.keys(a as object);
-    const bk = Object.keys(b as object);
-    if (ak.length !== bk.length) return false;
-    return ak.every((k) =>
-      same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
-    );
-  }
-  return false;
 }
 
 function keepKey(koko: string, field: string): string {
@@ -104,7 +101,7 @@ export function entityChange(
     };
   }
   const states: EntityChange["states"] = {};
-  const beforeStates = saved.states ?? {};
+  const beforeStates = decoded(saved.states ?? {}, decodeStates) ?? {};
   for (const [koko, values] of Object.entries(entity.states)) {
     const before = beforeStates[koko];
     if (!before) {
@@ -115,7 +112,7 @@ export function entityChange(
     for (const fid of new Set([...Object.keys(before), ...Object.keys(values)])) {
       if (!(fid in values)) continue;
       const fresh = !(fid in before);
-      const valueChanged = !fresh && !same(before[fid], values[fid]);
+      const valueChanged = !fresh && !equalValues(before[fid], values[fid]);
       const keepChanged = savedKeep.has(keepKey(koko, fid)) !== currentKeep.has(keepKey(koko, fid));
       if (fresh) fields[fid] = "added";
       else if (valueChanged || keepChanged) fields[fid] = "modified";
@@ -143,7 +140,7 @@ export interface KokoChange {
 export function kokoChange(head: FileMap | null, def: KokoStateDef): KokoChange {
   const empty: KokoChange = { kind: null, name: null, fields: {} };
   if (!head || def.builtin) return empty;
-  const saved = readJson<KokoStateDef>(head, kokoFilePath(def.id));
+  const saved = decoded(readJson<StoredKokoState>(head, kokoFilePath(def.id)), decodeKokoState);
   if (!saved) {
     const fields: Record<string, ChangeKind> = {};
     for (const f of def.fields) fields[f.id] = "added";
@@ -154,7 +151,7 @@ export function kokoChange(head: FileMap | null, def: KokoStateDef): KokoChange 
   for (const f of def.fields) {
     const old = prev.get(f.id);
     if (!old) fields[f.id] = "added";
-    else if (old.name !== f.name || old.type !== f.type || !same(old.default, f.default)) {
+    else if (old.name !== f.name || old.type !== f.type || !equalValues(old.default, f.default)) {
       fields[f.id] = "modified";
     }
   }
@@ -292,7 +289,7 @@ export function outputChange(head: FileMap | null, output: OutputDef): OutputCha
     if (!old) systemRows[s.id] = "added";
     else if (old.enabled !== s.enabled) systemRows[s.id] = "modified";
   }
-  const systems = !same(saved.systems, output.systems) ? "modified" : null;
+  const systems = !equalValues(saved.systems, output.systems) ? "modified" : null;
   const savedResources = new Set(saved.resources ?? []);
   const nowResources = output.resources ?? [];
   const resourceRows: Record<string, ChangeKind> = {};

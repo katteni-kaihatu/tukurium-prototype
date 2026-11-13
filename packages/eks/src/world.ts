@@ -1,5 +1,6 @@
-import { cloneValue, type KokoStateRegistry } from "./registry";
+import type { KokoStateRegistry } from "./registry";
 import type { EntityId, KokoStateId, KokoStateValues, Query } from "./types";
+import { cloneValue } from "./value";
 
 export interface EntitySnapshot {
   id: EntityId;
@@ -125,7 +126,5 @@ export class World {
 }
 
 function cloneValues(values: KokoStateValues): KokoStateValues {
-  const out: KokoStateValues = {};
-  for (const [k, v] of Object.entries(values)) out[k] = cloneValue(v);
-  return out;
+  return cloneValue(values);
 }

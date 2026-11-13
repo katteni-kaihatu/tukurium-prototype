@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { gunAndTargetSample, ProjectDoc } from "@tukurium/repo-model";
+import { BUILTIN, gunAndTargetSample, ProjectDoc } from "@tukurium/repo-model";
 import { buildWorld, worldTransform } from "@tukurium/runtime";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
 import { afterEach, describe, expect, it } from "vitest";
@@ -183,6 +183,25 @@ export default system({
     });
     // 人の画面に届いている
     await expect.poll(() => a.project.entities().some((e) => e.name === "回る箱")).toBe(true);
+
+    // 参照の「なし」は undefined（ADR 0065）。見るときは {"$t":"undefined"}、外すときは null でもよい
+    const meshOf = () =>
+      a.project.entities().find((e) => e.name === "回る箱")?.states[BUILTIN.Mesh];
+    expect((await call("get_entity", { entity: "回る箱" })).states.Mesh.material).toEqual({
+      $t: "undefined",
+    });
+    await call("create_material", { name: "赤", color: "#ff0000" });
+    await call("update_entity", { entity: "回る箱", states: { Mesh: { material: "赤" } } });
+    await expect.poll(() => typeof meshOf()?.material).toBe("string");
+    await call("update_entity", { entity: "回る箱", states: { Mesh: { material: null } } });
+    await expect.poll(() => meshOf()?.material).toBeUndefined();
+    expect(Object.keys(meshOf() ?? {})).toContain("material");
+    await call("update_entity", { entity: "回る箱", states: { Mesh: { material: "赤" } } });
+    await call("update_entity", {
+      entity: "回る箱",
+      states: { Mesh: { material: { $t: "undefined" } } },
+    });
+    await expect.poll(() => meshOf()?.material).toBeUndefined();
     expect(await call("check")).toBe("問題はありません");
 
     const result = await call("simulate", { seconds: 1, watch: ["回る箱"] });

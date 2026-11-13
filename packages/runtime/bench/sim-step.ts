@@ -2,12 +2,14 @@
 //   pnpm bench:sim
 // 的（Collider・Target）を N 個並べ、半分は落ちる物体（RigidBody）にし、
 // 全部の的を毎ステップ触る System（onUpdate）を足す。
+import { stringifyValue } from "@tukurium/eks";
 import { gunAndTargetSample, ProjectDoc } from "@tukurium/repo-model";
 import { Simulation } from "@tukurium/runtime";
 
-const SPIN = `export default system({
-  query: { with: ["Target"] },
-  onUpdate(e, dt) { e.Target.hp = e.Target.hp; },
+const SPIN = `import Target from "./Target.koko";
+export default system({
+  query: { with: [Target] },
+  onUpdate(e, dt) { const t = e.get(Target); t.hp = t.hp; },
 });
 `;
 
@@ -30,15 +32,17 @@ async function measure(n: number, script: boolean) {
   if (script) {
     const sysId = doc.addSystem("Spin", SPIN);
     const out = doc.outputs()[0];
-    doc.updateOutput({ ...out, systems: [...out.systems, sysId] });
+    doc.updateOutput({ ...out, systems: [...out.systems, { id: sysId, enabled: true }] });
   }
   const sim = await Simulation.create(doc.snapshot(), output, { onLog: () => {} });
+  const stopped = sim.systemStatus().filter((s) => s.error);
+  if (stopped.length > 0) throw new Error(`System が止まっています: ${stopped[0]?.error}`);
   for (let i = 0; i < 30; i++) sim.step(1 / 60); // 準備運動
   const steps = 300;
   const t0 = performance.now();
   for (let i = 0; i < steps; i++) sim.step(1 / 60);
   const ms = (performance.now() - t0) / steps;
-  const snapBytes = JSON.stringify(sim.world.snapshot()).length;
+  const snapBytes = stringifyValue(sim.world.snapshot()).length;
   sim.dispose();
   return { entities: n, script, stepMs: ms.toFixed(2), frameKB: (snapBytes / 1024).toFixed(1) };
 }

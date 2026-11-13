@@ -1,3 +1,4 @@
+import type { Value } from "@tukurium/eks";
 import { z } from "zod";
 import type { CapabilityId, HostApiPolicy } from "./capabilities";
 import type { HostName } from "./simulation";
@@ -8,8 +9,6 @@ import type { HostName } from "./simulation";
  * 利用者向けの型の宣言（hostApiDeclarations）、エディタの入力補完（hostApiCompletions）を作る。
  * Host API を足すときは、ここに一件足す（HOST_API の一覧と一致することをテストで検査する）。
  */
-
-export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()], {
   error: "[x, y, z] の形の数値の配列を渡してください",
@@ -33,7 +32,7 @@ interface SpecEntry<A extends z.ZodType> extends HostApiPolicy {
   /** 引数（QuickJS から届いた unknown を検証する） */
   args: A;
   /** 実効権限で拒んだときに返す値（見つからない・できなかったと同じ形） */
-  denied: Json | undefined;
+  denied: Value;
   /** 利用者向けの型：引数と戻り値 */
   params: string;
   returns: string;

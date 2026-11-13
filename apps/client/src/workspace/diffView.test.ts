@@ -99,6 +99,36 @@ describe("describeDiff", () => {
     expect(lines.find((l) => l.section?.label === "Transform")?.label).toBe("position");
   });
 
+  it("参照を外した変化は「（なし）」で出し、広げた値どうしも比べる（ADR 0065）", () => {
+    const entity = (material: string | undefined, at: Date) => ({
+      id: "e",
+      name: "箱",
+      parent: null,
+      output: "out",
+      order: 0,
+      states: {
+        [BUILTIN.Mesh]: { material },
+        ks: { at, board: new Map([["a1", 1n]]) } as unknown as Record<string, string>,
+      },
+    });
+    const materials = [{ id: "mat_a", name: "赤", color: "#ff0000", roughness: 0.5, metalness: 0 }];
+    const before = snap({ materials, entities: [entity("mat_a", new Date(5))] });
+    const same = snap({ materials, entities: [entity("mat_a", new Date(5))] });
+    expect(describeDiff(before, same)).toEqual([]);
+
+    const after = snap({ materials, entities: [entity(undefined, new Date(6))] });
+    const lines = describeDiff(before, after).find((x) => x.group === "entity")?.lines ?? [];
+    const changed = lines.filter((l) => l.label !== "階層");
+    expect(changed.map((l) => [l.label, l.before, l.after])).toEqual([
+      ["material", "赤", "（なし）"],
+      [
+        "at",
+        '{"$t":"Date","v":"1970-01-01T00:00:00.005Z"}',
+        '{"$t":"Date","v":"1970-01-01T00:00:00.006Z"}',
+      ],
+    ]);
+  });
+
   it("アウトプットの名前だけ変えても、中のエンティティは出さない", () => {
     const before = snap({
       entities: [{ id: "e", name: "箱", parent: null, output: "out", order: 0, states: {} }],

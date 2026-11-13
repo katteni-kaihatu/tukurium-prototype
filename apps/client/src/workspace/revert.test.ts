@@ -34,6 +34,30 @@ describe("planRevert", () => {
     expect(diff()).toEqual([]);
   });
 
+  it("外した参照を戻し、入れた参照を「なし」（undefined）に戻す（ADR 0065）", () => {
+    const { head, project, diff, run } = setup();
+    const MESH = "builtin.Mesh";
+    const withMat = head.entities.find((e) => typeof e.states[MESH]?.material === "string");
+    const noMat = head.entities.find((e) => {
+      const mesh = e.states[MESH];
+      return mesh && "material" in mesh && mesh.material === undefined;
+    });
+    if (!withMat || !noMat) throw new Error("サンプルに、マテリアルのある物とない物が要る");
+    const material = withMat.states[MESH]?.material;
+
+    project.setField(withMat.id, MESH, "material", undefined);
+    project.setField(noMat.id, MESH, "material", material);
+    expect(diff().length).toBeGreaterThan(0);
+
+    run(`entity:${withMat.id}`, `field:${MESH}:material`);
+    expect(project.entity(withMat.id)?.states[MESH]?.material).toBe(material);
+    run(`entity:${noMat.id}`, `field:${MESH}:material`);
+    const mesh = project.entity(noMat.id)?.states[MESH] ?? {};
+    expect("material" in mesh).toBe(true);
+    expect(mesh.material).toBeUndefined();
+    expect(diff()).toEqual([]);
+  });
+
   it("欄の状態維持の印も、保存したときに揃える", () => {
     const { project, diff, run } = setup();
     const output = project.output("out_range");

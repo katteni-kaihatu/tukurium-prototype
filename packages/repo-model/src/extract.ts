@@ -1,4 +1,4 @@
-import type { KokoStateDef } from "@tukurium/eks";
+import { equalValues, type KokoStateDef } from "@tukurium/eks";
 import { isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
 import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
@@ -123,7 +123,7 @@ export function extractInto(
   const remap = new Map<string, string>();
   /** 取り込み先に新しく足したリソース（取り出し元の ID → 取り込み先の ID）。フォルダの置き場所を写す */
   const added = new Map<string, string>();
-  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const same = (a: unknown, b: unknown) => equalValues(a, b);
 
   // KokoState（名前の衝突も解く）
   const renamed = new Map<string, string>();

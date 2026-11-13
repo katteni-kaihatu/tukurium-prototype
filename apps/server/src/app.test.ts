@@ -1,7 +1,14 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { emptyProject, ProjectDoc } from "@tukurium/repo-model";
+import { parseValue, stringifyValue } from "@tukurium/eks";
+import {
+  BUILTIN,
+  emptyProject,
+  gunAndTargetSample,
+  ProjectDoc,
+  type ProjectSnapshot,
+} from "@tukurium/repo-model";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
@@ -65,11 +72,12 @@ async function client(url: string, name: string, token?: string) {
   const inbox: ServerMessage[] = [];
   const waiters: (() => void)[] = [];
   ws.on("message", (d) => {
-    inbox.push(JSON.parse(d.toString()));
+    // 通信はタグ付きの JSON（ADR 0065）。クライアントと同じ読み書きを使う
+    inbox.push(parseValue(d.toString()) as ServerMessage);
     for (const w of waiters.splice(0)) w();
   });
   await new Promise<void>((r) => ws.once("open", () => r()));
-  const send = (m: object) => ws.send(JSON.stringify(m));
+  const send = (m: object) => ws.send(stringifyValue(m));
   const next = async <T extends ServerMessage["t"]>(
     t: T,
     pred: (m: Msg<T>) => boolean = () => true,
@@ -805,6 +813,41 @@ describe("ワークスペースのホストと共有再生", () => {
     expect(a.inbox.some((m) => m.t === "ws.frame")).toBe(false);
   });
 
+  it("状態の中の広げた値（undefined・Date・Map・Set・bigint・NaN）を、欠かさず中継する（ADR 0065）", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("ws.host");
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+
+    const values = {
+      none: undefined,
+      at: new Date(5),
+      board: new Map<unknown, unknown>([[1, new Set([2n])]]),
+      nan: Number.NaN,
+      hand: [{ suit: "spade", joker: undefined }],
+    };
+    const world = { entities: [{ id: "e", parent: null, states: { ks: values } }] };
+    a.send({ t: "ws.frame", workspaceId, frame: { ...frame("play"), world } });
+    const got = (await b.next("ws.frame")).frame.world as typeof world;
+    expect(got).toEqual(world);
+    const ks = got.entities[0]?.states.ks;
+    expect(ks && "none" in ks).toBe(true);
+    expect(ks?.board).toBeInstanceOf(Map);
+    expect(Number.isNaN(ks?.nan)).toBe(true);
+
+    // 途中から開いた人にも、最後の状態が同じ値で届く
+    const c = await client(url, "あとから");
+    c.send({ t: "session.join", sessionId: (await a.next("session")).session.id });
+    await c.next("session");
+    c.send({ t: "ws.open", workspaceId });
+    expect((await c.next("ws.frame")).frame.world).toEqual(world);
+
+    // 形式に合わないタグは、メッセージごと受け付けない
+    a.ws.send(`{"t":"ws.frame","workspaceId":"${workspaceId}","frame":{"$t":"Function"}}`);
+    expect((await a.next("error")).message).toBe("invalid message");
+  });
+
   it("ホストが抜けたら、管理権限を持つ人が最後の状態から引き継ぐ", async () => {
     const { url } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);
@@ -1160,6 +1203,25 @@ describe("リポジトリ・コミット・作品", () => {
     expect(mine((await B.get("/api/repos")).json())).toEqual([]);
     expect(mine((await A.get("/api/repos")).json())).toHaveLength(1);
     expect((await B.patch(`/api/repos/${repo.id}`, { visibility: "public" })).statusCode).toBe(403);
+  });
+
+  it("制作データの返事は、参照の「なし」（undefined）を欠かさない（ADR 0065）", async () => {
+    const { app, url } = await start();
+    const a = await client(url, "a");
+    const A = api(app, a.token);
+    const repo = (await A.post("/api/repos", { name: "銃と的", template: "sample" })).json();
+    const res = await A.get(`/api/repos/${repo.id}/snapshot`);
+    // 返事はタグ付きの JSON。クライアントは parseValue で読む
+    expect(res.body).toContain('"material":{"$t":"undefined"}');
+    const snap = parseValue(res.body) as ProjectSnapshot;
+    const byId = <T extends { id: string }>(list: T[]) =>
+      [...list].sort((x, y) => x.id.localeCompare(y.id));
+    expect(byId(snap.entities)).toEqual(byId(gunAndTargetSample().entities));
+    const unset = snap.entities.filter((e) => {
+      const mesh = e.states[BUILTIN.Mesh];
+      return mesh && "material" in mesh && mesh.material === undefined;
+    });
+    expect(unset.length).toBeGreaterThan(0);
   });
 
   it("ワークスペースを作るとリポジトリができ、持ち主がコミットすると一緒に編集した人が Co-author になる", async () => {

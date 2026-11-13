@@ -58,7 +58,7 @@ function entity(
   shape: string,
   size: [number, number, number],
   color: string,
-  model: string | null = null,
+  model?: string,
 ): EntityDef {
   return {
     id,
@@ -68,7 +68,7 @@ function entity(
     order,
     states: {
       [BUILTIN.Transform]: { position, rotation, scale },
-      [BUILTIN.Mesh]: { shape, size, material: null, color, model },
+      [BUILTIN.Mesh]: { shape, size, material: undefined, color, model },
       // 見た目と同じ形で、プレイヤーと落ちる物がぶつかる（ADR 0068）
       [BUILTIN.Collider]: { sensor: false },
     },

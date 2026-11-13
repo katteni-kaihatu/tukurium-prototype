@@ -1048,7 +1048,7 @@ function EntityProperties({ id }: { id: EntityId }) {
                       <FieldInput
                         koko={koko}
                         field={f}
-                        value={(values[f.id] ?? f.default) as FieldValue}
+                        value={(f.id in values ? values[f.id] : f.default) as FieldValue}
                         choices={choices}
                         disabled={!editing}
                         onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}

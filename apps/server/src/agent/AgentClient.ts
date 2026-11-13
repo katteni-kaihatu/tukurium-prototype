@@ -1,3 +1,4 @@
+import { parseValue, stringifyValue } from "@tukurium/eks";
 import { ProjectDoc } from "@tukurium/repo-model";
 import {
   PROTOCOL_VERSION,
@@ -111,7 +112,7 @@ export class AgentClient {
 
   private send(msg: Record<string, unknown>): void {
     if (this.closed) throw new Error("接続を閉じました。もう一度 join_session してください");
-    this.conn.onMessage(JSON.stringify(msg));
+    this.conn.onMessage(stringifyValue(msg));
   }
 
   private waitFor(match: (m: ServerMessage) => unknown, timeoutMs = 10_000): Promise<unknown> {
@@ -132,7 +133,7 @@ export class AgentClient {
   }
 
   private receive(raw: string): void {
-    const m = JSON.parse(raw) as ServerMessage;
+    const m = parseValue(raw) as ServerMessage;
     if (m.t === "sessions") this.sessions = m.sessions;
     if (m.t === "session") this.session = m.session;
     if (m.t === "session.closed") this.session = null;

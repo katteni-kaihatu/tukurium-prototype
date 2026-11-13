@@ -7,7 +7,15 @@ import type {
   KokoStateValues,
   Vec3,
 } from "@tukurium/eks";
-import { isResourceFieldType, World, type WorldSnapshot } from "@tukurium/eks";
+import {
+  cloneValue,
+  equalValues,
+  isResourceFieldType,
+  stringifyValue,
+  type Value,
+  World,
+  type WorldSnapshot,
+} from "@tukurium/eks";
 import {
   type AssetDef,
   BUILTIN,
@@ -32,10 +40,10 @@ import {
 } from "@tukurium/repo-model";
 import {
   type HostCallContext,
-  type Json,
   type ScriptEntity,
   ScriptError,
   ScriptSandbox,
+  type TaggedFields,
 } from "@tukurium/script";
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
@@ -176,7 +184,7 @@ export interface BagItem {
   type: KokoStateId;
   /** 種類の表示名 */
   name: string;
-  values: Record<string, Json>;
+  values: Record<string, Value>;
 }
 
 /** 鳴らす音（ホストが手元で鳴らし、状態と一緒にほかの人にも配る） */
@@ -222,7 +230,7 @@ const isShared = (id: KokoStateId) => isBuiltin(id) || isPackageResourceId(id);
 
 /** 制作データの版（同じ中身なら、どのホストでも同じ値。FNV-1a） */
 function revisionOf(snapshot: ProjectSnapshot): string {
-  const text = JSON.stringify(snapshot);
+  const text = stringifyValue(snapshot);
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
@@ -254,7 +262,7 @@ interface PendingEvent {
   kind: "event" | "contract";
   target: EntityId;
   name: string;
-  data: Json;
+  data: Value;
 }
 
 /** Raycast の結果の opaque handle（ADR 0012）。token は推測しにくい文字列で、表を引く鍵 */
@@ -274,7 +282,7 @@ interface HitHandle {
 /** 実効権限で拒んだときに Host API が返す値（HOST_API_SPEC から作る） */
 const DENIED_RESULT = Object.fromEntries(
   Object.entries(HOST_API_SPEC).map(([name, spec]) => [name, spec.denied]),
-) as Record<HostName, Json | undefined>;
+) as Record<HostName, Value>;
 
 /** handle の寿命（秒） */
 const HANDLE_TTL = 1;
@@ -363,7 +371,7 @@ export class Simulation {
       hostFunctions: Object.fromEntries(
         HOST_API.map((name) => [
           name,
-          (args: Json[], ctx: HostCallContext) => ref.sim?.callHost(name, args, ctx),
+          (args: Value[], ctx: HostCallContext) => ref.sim?.callHost(name, args, ctx),
         ]),
       ),
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
@@ -555,8 +563,8 @@ export class Simulation {
   private bagValues(
     koko: KokoStateId,
     given: Record<string, unknown> | undefined,
-  ): Record<string, Json> {
-    const out: Record<string, Json> = {};
+  ): Record<string, Value> {
+    const out: Record<string, Value> = {};
     for (const f of this.registry.require(koko).fields) {
       const v = given?.[f.name];
       const ok =
@@ -569,8 +577,8 @@ export class Simulation {
           v.every((n) => typeof n === "number" && Number.isFinite(n)));
       // Entity・リソースの参照は、配置をまたぐと意味がないので持たない
       out[f.name] = (
-        ok ? v : f.type === "entity" || isResourceFieldType(f.type) ? null : f.default
-      ) as Json;
+        ok ? v : f.type === "entity" || isResourceFieldType(f.type) ? undefined : f.default
+      ) as Value;
     }
     return out;
   }
@@ -642,13 +650,20 @@ export class Simulation {
         const oldField = this.registry.get(oldKoko)?.fields.find((f) => f.id === m.field);
         const newDef = isBuiltin(m.koko) ? this.registry.get(m.koko) : newDefs.get(m.koko);
         const newField = newDef?.fields.find((f) => f.id === m.field);
-        const current = this.world.get(entity, oldKoko)?.[m.field];
-        if (oldField && newField && oldField.type === newField.type && current !== undefined) {
+        const values = this.world.get(entity, oldKoko);
+        // undefined も値なので、いまの値があるかはキーで見る
+        if (
+          oldField &&
+          newField &&
+          oldField.type === newField.type &&
+          values &&
+          m.field in values
+        ) {
           list.push({
             entity,
             koko: this.kid(realm, m.koko),
             field: m.field,
-            value: structuredClone(current),
+            value: cloneValue(values[m.field]),
           });
           report.kept++;
         } else {
@@ -825,7 +840,7 @@ export class Simulation {
       // 装備する道具（EquipmentTool）は、装備している人の入力だけを受け取る（ADR 0053）
       for (const sys of this.active("onInput")) {
         const targets = this.matches(sys).filter((id) => this.acceptsInput(id, ev.player));
-        this.runSystem(sys, "onInput", targets, [ev as unknown as Json]);
+        this.runSystem(sys, "onInput", targets, [ev as unknown as Value]);
       }
     }
 
@@ -1470,13 +1485,13 @@ export class Simulation {
    * 呼んだ System の配置の中だけに絞る（別の配置は「見つからない」。ADR 0012）。
    * 別の配置へは、Raycast の opaque handle と公開 Contract（contract.send）だけで届く（U2）。
    */
-  private callHost(name: HostName, rawArgs: Json[], ctx: HostCallContext): Json | undefined {
+  private callHost(name: HostName, rawArgs: Value[], ctx: HostCallContext): Value {
     const callers = this.callerParts(ctx);
     // セッションでは、実効権限（宣言 ∩ 置いた物への付与）に無い Capability を拒む（deny-by-default）
     if (this.multi && !this.permits(name, ctx, callers)) return DENIED_RESULT[name];
     const own = (id: string | undefined): id is EntityId =>
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
-    const api: { [N in HostName]: (args: HostArgs<N>) => Json | undefined } = {
+    const api: { [N in HostName]: (args: HostArgs<N>) => Value } = {
       "world.raycast": ([origin, direction, max, opts]) => {
         // 非公開（private）の別の配置には当たらない（見つからない）。土台の World が外から来た Item に
         // 何も許さないときは、自分の配置の外はすべて見つからない
@@ -1503,14 +1518,14 @@ export class Simulation {
       "world.emit": ([target, name, data]) => {
         // イベントは同じ配置の中だけ。別の配置へは公開 Contract（hit.send）で送る
         if (own(target))
-          this.pending.push({ kind: "event", target, name, data: (data ?? null) as Json });
+          this.pending.push({ kind: "event", target, name, data: (data ?? null) as Value });
         return undefined;
       },
       "contract.send": ([token, name, payload]) => {
         if (!isContractName(name)) throw new TypeError(`Contract「${name}」はありません`);
         if (HOST_ONLY_CONTRACTS.includes(name))
           throw new TypeError(`${name} はプレイヤーの操作（E）でだけ送られます`);
-        const data = parseContractPayload(name, payload) as Json;
+        const data = parseContractPayload(name, payload) as Value;
         const handle = this.handles.get(token);
         // 偽の・期限切れの・別の配置で発行された handle は「無いもの」と同じ
         if (!handle) return false;
@@ -1568,7 +1583,7 @@ export class Simulation {
       "world.set": ([id, kokoName, values]) => {
         const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
-        this.writeNamed(id, koko, values as Record<string, Json>, null);
+        this.writeNamed(id, koko, values as Record<string, Value>, null);
         return true;
       },
       "world.find": ([name]) => {
@@ -1591,7 +1606,7 @@ export class Simulation {
           if (!koko) continue;
           this.world.add(id, koko);
           if (values && typeof values === "object" && !Array.isArray(values)) {
-            this.writeNamed(id, koko, values as Record<string, Json>, null);
+            this.writeNamed(id, koko, values as Record<string, Value>, null);
           }
         }
         return id;
@@ -1617,9 +1632,7 @@ export class Simulation {
         const i = bag.items.findIndex(
           (it) =>
             it.type === bag.koko &&
-            Object.entries(match ?? {}).every(
-              ([k, v]) => JSON.stringify(it.values[k]) === JSON.stringify(v),
-            ),
+            Object.entries(match ?? {}).every(([k, v]) => equalValues(it.values[k], v)),
         );
         if (i < 0) return null;
         const [taken] = bag.items.splice(i, 1);
@@ -1641,7 +1654,7 @@ export class Simulation {
         const target = own(entity) ? entity : null;
         const source = target ? this.world.get(target, BUILTIN.AudioSource) : undefined;
         const assets = this.realmAssets.get(ctx.realm) ?? [];
-        const ref = clip ?? (source?.clip as string | null | undefined);
+        const ref = clip ?? (source?.clip as string | undefined);
         const asset =
           assets.find((a) => a.kind === "audio" && (a.name === ref || a.id === ref))?.id ??
           (typeof ref === "string" && /^[0-9a-f]{64}$/.test(ref) ? ref : null);
@@ -1654,7 +1667,7 @@ export class Simulation {
         return true;
       },
     };
-    const call = api[name] as (args: unknown) => Json | undefined;
+    const call = api[name] as (args: unknown) => Value;
     return call(parseHostArgs(name, rawArgs));
   }
 
@@ -1701,11 +1714,11 @@ export class Simulation {
     }
   }
 
-  private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Json[]): void {
+  private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Value[]): void {
     if (ids.length === 0 || !sys.enabled) return;
     const before = ids.map((id) => this.toScriptEntity(id, sys));
     try {
-      const after = this.sandbox.run(sys.id, handler, before, args);
+      const after = this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys));
       after.forEach((e, i) => {
         const prev = before[i];
         if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
@@ -1713,7 +1726,7 @@ export class Simulation {
           // キーは領域の中の ID（ADR 0010）。その Entity が持っている KokoState だけに書く
           const koko = isShared(key) ? key : this.kid(sys.realm, key);
           if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
-          this.writeNamed(e.id, koko, values as Record<string, Json>, prev.states[key] ?? null);
+          this.writeNamed(e.id, koko, values as Record<string, Value>, prev.states[key] ?? null);
         }
       });
     } catch (e) {
@@ -1738,10 +1751,25 @@ export class Simulation {
     return { id, states };
   }
 
-  private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Json> {
-    const out: Record<string, Json> = {};
-    for (const f of this.registry.require(koko).fields)
-      out[f.name] = cloneJson(values[f.id] as Json);
+  /**
+   * JSON で表せない値を持ちうるフィールド（スクリプトとの間を、値の形式で運ぶもの）。
+   * いまの型では、参照（Entity・リソース）の「なし」の undefined だけ。ほかの型のフィールドは、
+   * JSON で表せる値しか受け入れない（accepts）。
+   */
+  private taggedFields(sys: LoadedSystem): TaggedFields {
+    const out: Record<string, string[]> = {};
+    for (const koko of sys.with) {
+      const names = (this.registry.get(koko)?.fields ?? [])
+        .filter((f) => f.type === "entity" || isResourceFieldType(f.type))
+        .map((f) => f.name);
+      if (names.length > 0) out[this.localKey(koko, sys.realm)] = names;
+    }
+    return out;
+  }
+
+  private toNamed(koko: KokoStateId, values: Record<string, FieldValue>): Record<string, Value> {
+    const out: Record<string, Value> = {};
+    for (const f of this.registry.require(koko).fields) out[f.name] = cloneValue(values[f.id]);
     return out;
   }
 
@@ -1749,16 +1777,16 @@ export class Simulation {
   private writeNamed(
     id: EntityId,
     koko: KokoStateId,
-    values: Record<string, Json>,
-    before: Record<string, Json> | null,
+    values: Record<string, Value>,
+    before: Record<string, Value> | null,
   ): void {
     const target = this.world.get(id, koko);
     if (!target) return;
     for (const f of this.registry.require(koko).fields) {
       if (!(f.name in values)) continue;
-      const v = values[f.name] as Json;
-      if (before && JSON.stringify(before[f.name]) === JSON.stringify(v)) continue;
-      if (accepts(f, v)) target[f.id] = cloneJson(v) as FieldValue;
+      const v = values[f.name];
+      if (before && equalValues(before[f.name], v)) continue;
+      if (accepts(f, v)) target[f.id] = cloneValue(v) as FieldValue;
     }
   }
 
@@ -1775,19 +1803,7 @@ export class Simulation {
   }
 }
 
-/**
- * フィールドの値（JSON で表せる値）の複製。毎ステップ全 Entity 分呼ばれるので、
- * structuredClone（数値 1 つでも重い）を避け、数値・文字列などはそのまま返す。
- */
-function cloneJson<T extends Json>(v: T): T {
-  if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map((x) => cloneJson(x)) as T;
-  const out: Record<string, Json> = {};
-  for (const [k, x] of Object.entries(v)) out[k] = cloneJson(x as Json);
-  return out as T;
-}
-
-function accepts(f: FieldDef, v: Json): boolean {
+function accepts(f: FieldDef, v: Value): boolean {
   switch (f.type) {
     case "number":
       return typeof v === "number" && Number.isFinite(v);
@@ -1808,6 +1824,7 @@ function accepts(f: FieldDef, v: Json): boolean {
     case "material":
     case "model":
     case "audio":
-      return v === null || typeof v === "string";
+      // 参照の「なし」は undefined（null は使わない。ADR 0065）
+      return v === undefined || typeof v === "string";
   }
 }

@@ -1,4 +1,3 @@
-import type { KokoStateDef } from "@tukurium/eks";
 import type {
   AssetDef,
   EntityDef,
@@ -10,6 +9,14 @@ import type {
   Provenance,
   SystemDef,
 } from "./schema";
+import {
+  decodeKokoState,
+  decodeStates,
+  encodeKokoState,
+  encodeStates,
+  type StoredKokoState,
+  type StoredValues,
+} from "./storedValues";
 
 /** リポジトリの中のファイル（パス → 中身） */
 export type FileMap = Record<string, string>;
@@ -37,9 +44,15 @@ export function outputFilePath(id: string): string {
   return `outputs/${safe(id)}/output.json`;
 }
 
+/** ファイルに書く Entity（値は保存する形。アウトプットはパスで分かるので書かない） */
+type StoredEntity = Omit<EntityDef, "output" | "states"> & {
+  states: Record<string, StoredValues>;
+};
+
 /**
  * 制作データを、人が差分を読めるファイルの集まりにする（計画 §5）。
  * 1 要素 1 ファイルの JSON と、System のスクリプト（.ts。ADR 0058）。
+ * フィールドの値と初期値は、タグ付きの JSON で書く（JSON で表せない値も保存できる。ADR 0065）。
  */
 export function toFiles(snap: ProjectSnapshot): FileMap {
   const files: FileMap = {};
@@ -48,7 +61,7 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
     name: snap.name,
     dependencies: snap.dependencies ?? [],
   });
-  for (const k of snap.kokostates) files[kokoFilePath(k.id)] = json(k);
+  for (const k of snap.kokostates) files[kokoFilePath(k.id)] = json(encodeKokoState(k));
   for (const s of snap.systems) {
     files[systemMetaPath(s.id)] = json({ id: s.id, name: s.name } satisfies SystemDef);
     files[systemCodePath(s.id)] = s.code;
@@ -57,8 +70,11 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
   for (const a of snap.assets ?? []) files[`assets/${safe(a.id)}.json`] = json(a);
   for (const o of snap.outputs) files[outputFilePath(o.id)] = json(o);
   for (const e of snap.entities) {
-    const { output, ...rest } = e;
-    files[entityFilePath(output, e.id)] = json(rest);
+    const { output, states, ...rest } = e;
+    files[entityFilePath(output, e.id)] = json({
+      ...rest,
+      states: encodeStates(states),
+    } satisfies StoredEntity);
   }
   if (snap.provenance?.length) files["provenance.json"] = json(snap.provenance);
   if (snap.folders?.length)
@@ -83,7 +99,8 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
   if (meta?.dependencies?.length) snap.dependencies = meta.dependencies;
   const paths = Object.keys(files).sort();
   for (const p of paths) {
-    if (p.startsWith("kokostates/")) snap.kokostates.push(parse<KokoStateDef>(p));
+    if (p.startsWith("kokostates/"))
+      snap.kokostates.push(decodeKokoState(parse<StoredKokoState>(p)));
     else if (p.startsWith("materials/")) snap.materials.push(parse<MaterialDef>(p));
     else if (p.startsWith("assets/")) snap.assets?.push(parse<AssetDef>(p));
     else if (p.startsWith("systems/") && p.endsWith(".json")) {
@@ -96,8 +113,9 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
   for (const o of snap.outputs) {
     const prefix = `outputs/${safe(o.id)}/entities/`;
     for (const p of paths) {
-      if (p.startsWith(prefix))
-        snap.entities.push({ ...parse<Omit<EntityDef, "output">>(p), output: o.id });
+      if (!p.startsWith(prefix)) continue;
+      const stored = parse<StoredEntity>(p);
+      snap.entities.push({ ...stored, states: decodeStates(stored.states), output: o.id });
     }
   }
   if (files["provenance.json"]) snap.provenance = parse<Provenance[]>("provenance.json");
