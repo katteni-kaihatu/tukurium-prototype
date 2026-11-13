@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { acceptInvitation } from "../main-menu/Invitations";
 import { useSocial } from "../main-menu/socialStore";
 import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
+import { updateLayoutEdges, useLayoutEdge } from "./layoutEdges";
 import styles from "./RightPanel.module.css";
 import { useApp } from "./store";
 
@@ -22,9 +23,16 @@ export function RightPanel({ inSession }: { inSession: boolean }) {
     setCollapsed(editing || narrow());
   }
   const notices = useNoticeCount();
+  // 画面いっぱいのページが、右の欄の下に隠れないよう幅を測る（たたむと幅が変わる）
+  const ref = useRef<HTMLElement>(null);
+  useLayoutEdge(ref);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: たたむ・開くで要素が入れ替わるので測り直す
+  useLayoutEffect(updateLayoutEdges, [collapsed]);
   if (collapsed)
     return (
       <aside
+        ref={ref}
+        data-app-edge-right
         className={`glass ${styles.rail}`}
         aria-label={inSession ? "通知とチャット（たたんでいる）" : "右の欄（たたんでいる）"}
       >
@@ -61,7 +69,12 @@ export function RightPanel({ inSession }: { inSession: boolean }) {
       </aside>
     );
   return (
-    <aside className={`glass ${styles.panel}`} aria-label={inSession ? "通知とチャット" : "右の欄"}>
+    <aside
+      ref={ref}
+      data-app-edge-right
+      className={`glass ${styles.panel}`}
+      aria-label={inSession ? "通知とチャット" : "右の欄"}
+    >
       <div className={styles.head}>
         {inSession ? <h2>通知</h2> : <FriendsNowTitle />}
         <span className={styles.spacer} />
