@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnedItem } from "../net/api";
-import { shelfItems, useItemShelf } from "./itemShelf";
+import { newerRelease, shelfItems, useItemShelf } from "./itemShelf";
 
 let storage: Map<string, string>;
 beforeEach(() => {
@@ -80,5 +80,27 @@ describe("所持品の絞り込み", () => {
     );
     expect(result.map((entry) => entry.workId)).toEqual(["a", "b"]);
     expect(items.map((entry) => entry.workId)).toEqual(["b", "a"]);
+  });
+});
+
+describe("新しい版", () => {
+  const owned = (version: number, latest: number | null, available = true) =>
+    ({
+      workId: "w",
+      releaseId: `r${version}`,
+      available,
+      release: { id: `r${version}`, version },
+      work: { latest: latest === null ? null : { id: `r${latest}`, version: latest } },
+    }) as OwnedItem;
+
+  it("所持している版より新しい版があるときだけ返す", () => {
+    expect(newerRelease(owned(1, 3))?.id).toBe("r3");
+    expect(newerRelease(owned(3, 3))).toBeNull();
+    expect(newerRelease(owned(3, 2))).toBeNull();
+    expect(newerRelease(owned(1, null))).toBeNull();
+  });
+
+  it("利用できないアイテムには出さない", () => {
+    expect(newerRelease(owned(1, 3, false))).toBeNull();
   });
 });

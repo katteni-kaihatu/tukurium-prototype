@@ -136,3 +136,10 @@ export function shelfItems(
     return compared || a.workId.localeCompare(b.workId);
   });
 }
+
+/** 所持している版より新しい版が出ていれば、その版を返す。利用できないときは返さない。 */
+export function newerRelease(item: OwnedItem) {
+  const latest = item.work?.latest;
+  if (!item.available || !latest || latest.id === item.releaseId) return null;
+  return !item.release || latest.version > item.release.version ? latest : null;
+}

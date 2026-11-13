@@ -119,6 +119,10 @@ const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
     app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
   patch: (url: string, payload: object) =>
     app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
+  put: (url: string, payload: object) =>
+    app.inject({ method: "PUT", url, payload, headers: { "x-tukurium-token": token } }),
+  delete: (url: string) =>
+    app.inject({ method: "DELETE", url, headers: { "x-tukurium-token": token } }),
 });
 
 describe("本人識別とセッション", () => {
@@ -416,12 +420,29 @@ describe("本人識別とセッション", () => {
     expect(
       (await B.post(`/api/me/items/${worldWork.id}`, { releaseId: worldRelease.id })).statusCode,
     ).toBe(400);
+    // 新しい版へのアップデートは、所持している人だけ。入手日は保つ
+    const acquiredAt = item.acquiredAt;
+    expect((await A.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(404);
+    expect(
+      (await B.put(`/api/me/items/${work.id}`, { releaseId: secondRelease.id })).statusCode,
+    ).toBe(404);
+    const updated = (await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).json();
+    expect(updated).toMatchObject({ releaseId: r2.id, acquiredAt, release: { id: r2.id } });
+    await B.put(`/api/me/items/${work.id}`, { releaseId: r1.id });
     await A.patch(`/api/works/${work.id}`, { perms: { use: false } });
     expect((await B.get("/api/me/items")).json()[0]).toMatchObject({
       available: false,
       releaseId: r1.id,
     });
+    expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(403);
     expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+    // 利用できなくなったアイテムも、一覧から消せる
+    expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
+    expect((await B.get("/api/me/items")).json()).toEqual([]);
+    expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "DELETE", url: `/api/me/items/${work.id}` })).statusCode,
+    ).toBe(401);
     await A.patch(`/api/works/${work.id}`, { perms: { use: false, view: false, fork: false } });
     expect((await B.get(`/api/works/${work.id}`)).statusCode).toBe(404);
     expect((await A.get(`/api/works/${work.id}`)).statusCode).toBe(200);

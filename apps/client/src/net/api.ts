@@ -202,6 +202,10 @@ export const api = {
     call<OwnedItem[]>("GET", "/api/me/items", undefined, signal),
   acquireItem: (workId: string, releaseId: string) =>
     call<OwnedItem>("POST", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
+  updateItem: (workId: string, releaseId: string) =>
+    call<OwnedItem>("PUT", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
+  removeItem: (workId: string) =>
+    call<{ ok: true }>("DELETE", `/api/me/items/${encodeURIComponent(workId)}`),
   createRepo: (body: {
     name: string;
     description?: string;

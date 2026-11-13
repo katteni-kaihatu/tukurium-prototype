@@ -3,8 +3,8 @@ import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
 import type { OwnedItem, Work } from "../net/api";
 import { CatalogNotice, ItemAction, ItemDetailsPlaceholder } from "./CatalogPage";
-import { refreshOwned, useCatalog } from "./catalogStore";
-import { shelfItems, useItemShelf } from "./itemShelf";
+import { refreshOwned, removeOwned, updateOwned, useCatalog } from "./catalogStore";
+import { newerRelease, shelfItems, useItemShelf } from "./itemShelf";
 import common from "./MainMenu.module.css";
 import styles from "./OwnedItemsPage.module.css";
 import { useMainMenu } from "./store";
@@ -240,6 +240,11 @@ export function OwnedItemsPage() {
                     <span className={styles.version}>
                       v{item.release?.version ?? "?"}
                       {!item.available && <span className={styles.unavailable}>利用不可</span>}
+                      {newerRelease(item) && (
+                        <span className={styles.updateBadge}>
+                          v{newerRelease(item)?.version} あり
+                        </span>
+                      )}
                     </span>
                   </span>
                 </button>
@@ -302,6 +307,17 @@ export function OwnedItemsPage() {
 
 function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
   const name = item.work?.name ?? "利用できないアイテム";
+  const busy = useCatalog((s) => s.busy);
+  const online = useApp((s) => s.status === "online");
+  const newer = newerRelease(item);
+  const remove = () => {
+    if (
+      window.confirm(
+        `「${name}」を所持アイテムから消しますか？\nセッションに出しているものは残ります。マーケットからまた入手できます。`,
+      )
+    )
+      void removeOwned(item);
+  };
   return (
     <aside className={styles.detail} aria-label="アイテムの詳細">
       <div className={styles.detailHeading}>
@@ -323,13 +339,36 @@ function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
         <dl className={styles.metadata}>
           <dt>所持している版</dt>
           <dd>v{item.release?.version ?? "?"}</dd>
+          <dt>最新の版</dt>
+          <dd>{item.work?.latest ? `v${item.work.latest.version}` : "なし"}</dd>
           <dt>入手日</dt>
           <dd>{new Date(item.acquiredAt).toLocaleDateString("ja-JP")}</dd>
         </dl>
+        {newer && (
+          <div className={styles.update}>
+            <p>新しい版 v{newer.version} が出ています。</p>
+            <button
+              type="button"
+              className={common.button}
+              disabled={!!busy || !online}
+              onClick={() => void updateOwned(item, newer.id)}
+            >
+              v{newer.version} にアップデート
+            </button>
+          </div>
+        )}
         <div className={styles.detailAction}>
           <ItemAction work={item.work} item={item} />
         </div>
         {item.work && <WorkTagsEditor work={item.work} />}
+        <button
+          type="button"
+          className={styles.removeButton}
+          disabled={!!busy || !online}
+          onClick={remove}
+        >
+          所持アイテムから消す
+        </button>
       </div>
     </aside>
   );

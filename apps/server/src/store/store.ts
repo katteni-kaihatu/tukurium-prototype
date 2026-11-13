@@ -118,6 +118,9 @@ export interface Store {
   release(id: string): Promise<Release | null>;
   ownedItems(userId: string): Promise<OwnedItem[]>;
   acquireItem(item: OwnedItem): Promise<OwnedItem>;
+  /** 所持している版を替える。所持していなければ null（入手日は変えない） */
+  updateOwnedItem(userId: string, workId: string, releaseId: string): Promise<OwnedItem | null>;
+  removeOwnedItem(userId: string, workId: string): Promise<void>;
   searchUsers(query: string, limit: number): Promise<User[]>;
   friendships(userId: string): Promise<Friendship[]>;
   requestFriendship(request: Friendship): Promise<Friendship>;
@@ -247,6 +250,17 @@ export class MemoryStore implements Store {
     if (existing) return { ...existing };
     this.owned.set(key, { ...item });
     return { ...item };
+  }
+
+  async updateOwnedItem(userId: string, workId: string, releaseId: string) {
+    const existing = this.owned.get(`${userId}:${workId}`);
+    if (!existing) return null;
+    existing.releaseId = releaseId;
+    return { ...existing };
+  }
+
+  async removeOwnedItem(userId: string, workId: string) {
+    this.owned.delete(`${userId}:${workId}`);
   }
 
   async searchUsers(query: string, limit: number) {

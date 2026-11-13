@@ -172,6 +172,56 @@ export async function acquire(work: Work) {
   }
 }
 
+/** 所持している版を、新しい版に替える。入手日は変わらない。 */
+export async function updateOwned(item: OwnedItem, releaseId: string) {
+  const { owner, busy } = useCatalog.getState();
+  if (!owner || busy) return;
+  const name = item.work?.name ?? "アイテム";
+  useCatalog.setState({ busy: item.workId, message: null, actionError: null });
+  try {
+    const updated = await api.updateItem(item.workId, releaseId);
+    if (owner !== useCatalog.getState().owner) return;
+    ownedRequest++;
+    useCatalog.setState((s) => ({
+      owned: s.owned.map((i) => (i.workId === updated.workId ? updated : i)),
+      ownedLoading: false,
+      message: `「${name}」を v${updated.release?.version ?? "?"} にアップデートしました。`,
+    }));
+  } catch (e) {
+    if (owner === useCatalog.getState().owner)
+      useCatalog.setState({ actionError: errorMessage(e) });
+  } finally {
+    if (owner === useCatalog.getState().owner) useCatalog.setState({ busy: null });
+  }
+}
+
+/** 所持一覧から消す。セッションに出ている配置は残る。マーケットからまた入手できる。 */
+export async function removeOwned(item: OwnedItem) {
+  const { owner, busy } = useCatalog.getState();
+  if (!owner || busy) return;
+  const name = item.work?.name ?? "アイテム";
+  useCatalog.setState({ busy: item.workId, message: null, actionError: null });
+  try {
+    await api.removeItem(item.workId);
+    if (owner !== useCatalog.getState().owner) return;
+    ownedRequest++;
+    useCatalog.setState((s) => ({
+      owned: s.owned.filter((i) => i.workId !== item.workId),
+      ownedLoading: false,
+      retry: s.retry?.workId === item.workId ? null : s.retry,
+      message: `「${name}」を所持アイテムから消しました。`,
+    }));
+    useMainMenu.setState((s) =>
+      s.selected.items === item.workId ? { selected: { ...s.selected, items: undefined } } : s,
+    );
+  } catch (e) {
+    if (owner === useCatalog.getState().owner)
+      useCatalog.setState({ actionError: errorMessage(e) });
+  } finally {
+    if (owner === useCatalog.getState().owner) useCatalog.setState({ busy: null });
+  }
+}
+
 /** タグは公開作品の情報。所持している版には手を加えない。 */
 export async function saveWorkTags(workId: string, tags: string[]) {
   const owner = useCatalog.getState().owner;

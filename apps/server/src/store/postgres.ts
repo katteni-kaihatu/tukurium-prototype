@@ -198,6 +198,18 @@ export class PostgresStore implements Store {
     return saved.data;
   }
 
+  async updateOwnedItem(userId: string, workId: string, releaseId: string) {
+    const rows = await this.sql<{ data: OwnedItem }[]>`update owned_items
+      set data = jsonb_set(data, '{releaseId}', to_jsonb(${releaseId}::text))
+      where user_id = ${userId} and work_id = ${workId}
+      returning data`;
+    return rows[0]?.data ?? null;
+  }
+
+  async removeOwnedItem(userId: string, workId: string) {
+    await this.sql`delete from owned_items where user_id = ${userId} and work_id = ${workId}`;
+  }
+
   async searchUsers(query: string, limit: number) {
     return this.sql<
       User[]
