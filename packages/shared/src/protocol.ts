@@ -9,8 +9,9 @@ import { z } from "zod";
  * 配置・適用・ホストへの配置に、フィールドのスキーマ（schemas）を付けられる。
  * 10：編集中の制作データ（Y.Doc）の KokoState の定義が、フィールドごとの Y.Map になった。
  * 11：制作データに、型の定義（types）と、KokoState が使う型の定義の一覧（typeDefs）が入った。
+ * 12：参照から読み書きする Host API（world.getState など）と、参照の値（KokoState・フィールドの参照）が入った。
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;

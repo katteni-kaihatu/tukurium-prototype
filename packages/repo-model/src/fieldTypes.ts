@@ -148,6 +148,13 @@ function parseSchema(v: unknown, depth: number): ValueSchema | undefined {
         : undefined;
     case "ref":
       return isRefTarget(s.target) ? { kind: "ref", target: s.target } : undefined;
+    case "kokoRef":
+      return typeof s.koko === "string" ? { kind: "kokoRef", koko: s.koko } : { kind: "kokoRef" };
+    case "fieldRef": {
+      if (s.value === undefined) return { kind: "fieldRef" };
+      const value = child(s.value);
+      return value ? { kind: "fieldRef", value } : undefined;
+    }
     case "union":
     case "tuple": {
       const list = Array.isArray(s.kind === "union" ? s.options : s.items)

@@ -36,6 +36,7 @@ import {
   type StoredValues,
 } from "./storedValues";
 import { planImportRefactor } from "./systemCompiler";
+import { renameTypeName } from "./typeText";
 
 const clone = <T>(v: T): T => structuredClone(v);
 
@@ -236,6 +237,18 @@ export class ProjectDoc {
     }
     const names = def.fields.map((f) => f.name);
     if (new Set(names).size !== names.length) throw new Error("フィールド名が重複しています");
+    // 名前を変えたら、型の文でこの KokoState を指している所（`KokoStateRef<Health>`）も書き直す。
+    // 同じ名前の KokoState がほかにあるときは、どれを指しているか決まらないので書き直さない
+    const before = this.kokostate(def.id);
+    const rename =
+      before &&
+      before.name !== def.name &&
+      this.kokostates().filter((k) => k.name === before.name).length === 1
+        ? { from: before.name, to: def.name }
+        : null;
+    const renamed = (type: string) =>
+      rename ? renameTypeName(type, rename.from, rename.to) : type;
+    if (rename) def = { ...def, fields: def.fields.map((f) => ({ ...f, type: renamed(f.type) })) };
     this.transact(() => {
       const stored = this.kokoMap.get(def.id);
       const prev = stored ? readKoko(stored) : undefined;
@@ -270,6 +283,15 @@ export class ProjectDoc {
           if (old.order !== key) m.set("order", key);
         });
       }
+      // ほかの KokoState の型の文も、新しい名前に合わせる（値には触れない）
+      if (rename)
+        for (const [otherId, other] of this.kokoMap) {
+          if (otherId === def.id || !(other instanceof Y.Map)) continue;
+          for (const m of (other.get("fields") as Y.Map<FieldMap>).values()) {
+            const type = String(m.get("type") ?? "");
+            if (renamed(type) !== type) m.set("type", renamed(type));
+          }
+        }
       if (!prev) return;
       // Entity が持っている値を新しい定義に合わせる：消えたフィールドは削除、足したフィールドと
       // 型が変わったフィールドは初期値。ほかのフィールドの値には触れない（同時に値を変えた人の変更を残す）
@@ -280,7 +302,8 @@ export class ProjectDoc {
         for (const field of [...values.keys()]) if (!ids.has(field)) values.delete(field);
         for (const f of def.fields) {
           const old = prev.fields.find((p) => p.id === f.id);
-          if (old && old.type === f.type && values.has(f.id)) continue;
+          // 名前の書き直しだけなら、型は変わっていない
+          if (old && renamed(old.type) === f.type && values.has(f.id)) continue;
           values.set(f.id, encodeValue(f.default));
         }
       }

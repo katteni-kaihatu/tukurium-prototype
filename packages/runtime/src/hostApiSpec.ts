@@ -17,6 +17,12 @@ const entityId = z.string({ error: "Entity の ID（文字列）を渡してく�
 /** 無効なら「無いもの」として扱う（今まで黙って無視していた引数のため） */
 const lenient = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 const record = z.record(z.string(), z.unknown());
+/** KokoState の参照（`{ entity, koko }`）と、フィールドの参照（`{ entity, koko, field }`）。どれも ID */
+const stateRef = z.object({
+  entity: z.string(),
+  koko: z.string(),
+  field: lenient(z.string()),
+});
 
 /**
  * API の安定度（ADR 0019）。experimental：互換性なく変えうる／preview：変えるときは major を上げ、移し方と診断を
@@ -212,6 +218,54 @@ export const HOST_API_SPEC = {
     returns: "boolean",
     doc: "同じ配置の Entity の KokoState の値を書く",
   }),
+  "world.getState": entry({
+    args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
+    capability: "state.read",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "runtime-host",
+    note: "world.get と同じ決まり（自分の配置の Entity だけ）。参照の値は ID で、名前を変えても切れない（ADR 0065）",
+    denied: undefined,
+    params: "<K extends KokoState>(ref: KokoStateRef<K>)",
+    returns: "FieldsOf<K> | undefined",
+    doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を読む（指す先がなければ undefined）",
+  }),
+  "world.setState": entry({
+    args: z.tuple([lenient(stateRef), lenient(record)]).rest(z.unknown()),
+    capability: "state.write",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "server-revalidate",
+    note: "world.set と同じ決まり（自分の配置の Entity だけ。型が合う値だけを書く）",
+    denied: false,
+    params: "<K extends KokoState>(ref: KokoStateRef<K>, values: Partial<FieldsOf<K>>)",
+    returns: "boolean",
+    doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を書く",
+  }),
+  "world.getField": entry({
+    args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
+    capability: "state.read",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "runtime-host",
+    note: "world.get と同じ決まり（自分の配置の Entity だけ）。フィールドは ID で指す",
+    denied: undefined,
+    params: "<T>(ref: FieldRef<T>)",
+    returns: "T | undefined",
+    doc: "フィールドの参照が指す、同じ配置の Entity のフィールドの値を読む（指す先がなければ undefined）",
+  }),
+  "world.setField": entry({
+    args: z.tuple([lenient(stateRef), z.unknown()]).rest(z.unknown()),
+    capability: "state.write",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "server-revalidate",
+    note: "world.set と同じ決まり（自分の配置の Entity だけ。型が合う値だけを書く）",
+    denied: false,
+    params: "<T>(ref: FieldRef<T>, value: T)",
+    returns: "boolean",
+    doc: "フィールドの参照が指す、同じ配置の Entity のフィールドに値を書く（型が合わなければ false）",
+  }),
   "world.spawn": entry({
     args: z
       .tuple([
@@ -392,6 +446,25 @@ export function hostApiDeclarations(): string {
     'type MaterialRef = string & { readonly __tukurium: "MaterialRef" };',
     'type ModelRef = string & { readonly __tukurium: "ModelRef" };',
     'type AudioRef = string & { readonly __tukurium: "AudioRef" };',
+    "/**",
+    " * Entity についた KokoState の参照（例：「的 3 の Health」）。K は、指せる KokoState（import した KokoState）。",
+    " * 値は Entity と KokoState の ID なので、名前を変えても切れない。world.getState()・world.setState() で読み書きする",
+    " */",
+    "interface KokoStateRef<K extends KokoState = KokoState> {",
+    "  readonly entity: EntityRef;",
+    '  readonly koko: K["id"];',
+    "}",
+    "/**",
+    " * Entity についた KokoState のフィールドの参照（例：「的 3 の Health.hp」）。T は、指せるフィールドの型。",
+    " * world.getField()・world.setField() で読み書きする",
+    " */",
+    "interface FieldRef<T = unknown> {",
+    "  readonly entity: EntityRef;",
+    "  readonly koko: string;",
+    "  readonly field: string;",
+    "  /** 型のためだけの印（実行時にはない） */",
+    "  readonly __value?: T;",
+    "}",
     "/** import した KokoState。Id は KokoState の ID、F はフィールドの型（ADR 0058） */",
     "interface KokoState<Id extends string = string, F = Record<string, unknown>> {",
     "  readonly id: Id;",

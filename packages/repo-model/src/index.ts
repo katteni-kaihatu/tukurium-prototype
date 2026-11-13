@@ -18,3 +18,4 @@ export * from "./storedValues";
 export * from "./systemCapabilities";
 export * from "./systemCompiler";
 export * from "./typescriptStrip";
+export * from "./typeText";

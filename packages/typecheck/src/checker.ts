@@ -11,6 +11,9 @@ import {
   type FieldOwner,
   fieldOwners,
   HOST_FILE,
+  kokoImports,
+  kokoNames,
+  kokoStateStub,
   type TypeDefFile,
   typeDefFiles,
   typeImports,
@@ -148,6 +151,10 @@ export class TypeChecker {
       new Map([
         [HOST_FILE, input.hostDeclarations],
         ...typeDefs.map((f) => [f.file, f.code] as const),
+        // 型の文から名前で指す KokoState（`KokoStateRef<Health>`）の、仮の宣言
+        ...kokoNames(input.snapshot, input.packages).map(
+          (k) => [`${k.spec}.d.ts`, kokoStateStub(k.id)] as const,
+        ),
         ...fieldTexts,
       ]),
     );
@@ -163,9 +170,15 @@ export class TypeChecker {
   /** フィールドの型の文を、KokoState ごとのファイルにする（文として読めないものは入れない） */
   private fieldFiles(input: TypeCheckInput, typeDefs: TypeDefFile[]): FieldFile[] {
     const byId = new Map(typeDefs.map((f) => [f.id, f] as const));
+    const names = kokoNames(input.snapshot, input.packages);
     return fieldOwners(input.snapshot, input.packages).map((owner, i) => {
-      // 使う型の定義が公開している型を、型の文からそのままの名前で使えるようにする
-      const imports = typeImports(owner.typeDefs, byId);
+      // 使う型の定義が公開している型と、型の文に出てくる KokoState を、そのままの名前で使えるようにする
+      const imports =
+        typeImports(owner.typeDefs, byId) +
+        kokoImports(
+          owner.fields.map((f) => f.type),
+          names,
+        );
       const file: FieldFile = {
         owner,
         path: `${FIELDS_DIR}/${i}.ts`,
@@ -190,7 +203,11 @@ export class TypeChecker {
     const program = this.service.getProgram();
     const checker = program?.getTypeChecker();
     const ctx = checker
-      ? { checker, isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX) }
+      ? {
+          checker,
+          isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX),
+          isHostFile: (fileName: string) => fileName === HOST_FILE,
+        }
       : null;
     for (const file of files) {
       const { owner } = file;
@@ -304,7 +321,11 @@ export class TypeChecker {
       for (const d of found)
         push(`ts${d.code}`, d.start, ts.flattenDiagnosticMessageText(d.messageText, "\n"));
       const syntaxOk = this.service.getSyntacticDiagnostics(def.file).length === 0;
-      const ctx = { checker, isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX) };
+      const ctx = {
+        checker,
+        isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX),
+        isHostFile: (fileName: string) => fileName === HOST_FILE,
+      };
       for (const s of source.statements) {
         if (ts.isImportDeclaration(s) || ts.isExportDeclaration(s) || ts.isEmptyStatement(s))
           continue;

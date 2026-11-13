@@ -1,6 +1,6 @@
 # ADR 0065：KokoState のフィールドの型を TypeScript の型の文で書き、値の形を広げる
 
-- 状態: 採用（実装中。T4 まで実装済み）
+- 状態: 採用（実装中。T5 まで実装済み）
 - 関連：ADR 0010（リソースの同一性・参照・診断）、ADR 0012（権限と判定の場所）、ADR 0051（リソースを指すフィールドの型。T2 で置き換える）、ADR 0058（スクリプトはすべて TypeScript で書く）
 - ロードマップ：「KokoStateのフィールドをTypeScriptの型で書いてレコード・リスト・マップ・参照を扱えるようにする」。原則 2・4・5 のため
 
@@ -157,6 +157,25 @@ Host API の宣言に足す。値の持ち方も決める。
   - 書き換えないのは、型の定義は文字単位で編集するので、書きかけの型に合わせて値を書き換えてしまわないため。
 - **ライブラリ**：ライブラリのアウトプットに含められる。含めた KokoState が使う型の定義は、含めていなくても一緒に入る。使う側では、ID が Package と版で区切られ（`pkg:…`）、自分の KokoState の「使う型の定義」に入れて使える。スクリプトからは `@別名/…` で import できる。
 - **抽出**：KokoState を取り出すと、使う型の定義も一緒に持っていく。ID を振り直したときは、KokoState の一覧も付け替える。
+
+## T5 で決めたこと（KokoState の参照とフィールドの参照）
+
+- **型**（Host API の宣言に足した）
+  - `KokoStateRef<K>`：Entity についた KokoState の参照。値は `{ entity, koko }`。`K` に import した KokoState を書くと、その KokoState だけを指せる（書かなければ、どれでも指せる）。
+  - `FieldRef<T>`：Entity についた KokoState のフィールドの参照。値は `{ entity, koko, field }`。`T` に、指せるフィールドの型を書く（書かなければ、どのフィールドでも指せる）。
+  - 値はどれも ID（Entity・KokoState・フィールド）なので、名前を変えても切れない。
+- **型の文での KokoState の名前**：KokoState の宣言を、値としても型としても使えるようにした（`type koko = typeof koko`）。フィールドの型の文では、`KokoStateRef<Health>` のように KokoState の名前を書く。型の文に出てくる名前の KokoState を、型を確かめるときに import する（制作データ・Built-in・ライブラリの順で、名前が一つに決まるものだけ）。
+  - KokoState の名前を変えたら、それを指している型の文も書き直す（`renameTypeName()`。同じ名前の KokoState がほかにあるときは、書き直さない）。値は ID で結び付いているので、そのまま残る。
+  - 型の文は「型 1 つ」しか書けないので、フィールドの型を確かめる間は、KokoState の仮の宣言（ID だけ）を使う。
+- **スキーマ**：`kokoRef`（指せる KokoState の ID）と `fieldRef`（指せるフィールドの型のスキーマ）。値の形（ID の文字のレコード）と、指せる KokoState かを、値の確かめで見る。
+- **参照先を読み書きする Host API**：`world.getState(ref)`・`world.setState(ref, values)`・`world.getField(ref)`・`world.setField(ref, value)`。権限は `world.get`・`world.set` と同じ（`state.read`・`state.write`。自分の配置の Entity だけ）。指す先がないときは `undefined`・`false`（新しい API なので、`null` は使わない）。
+- **参照先が消えたとき**：値は残し、問題として出す（参照の診断）。
+  - 指す Entity がない：`missing-entity`（Entity の参照と同じ）
+  - その Entity が KokoState を持っていない：`missing-state-ref`
+  - その KokoState にフィールドがない：`missing-field-ref`
+  - 指したフィールドの型が、参照で指せる型と違う：`field-ref-type-mismatch`（スキーマが同じかで比べる）
+- **たどり方**：KokoState の参照・フィールドの参照は、指す Entity を Entity の参照としてたどる（依存グラフ・抽出・セッションでの ID の付け替え）。抽出で KokoState の ID を振り直したときは、参照の中の KokoState の ID も付け替える。
+- 実行の中の値は、KokoState の ID を制作データの中の ID のまま持つ（セッションで領域ごとに付け替える ID には、Host API が読み替える）。
 
 ## 影響
 
