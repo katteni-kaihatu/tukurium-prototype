@@ -106,6 +106,20 @@ export function registerRepoRoutes(
       return catalog.acquire(user, req.params.workId, releaseId);
     }),
   );
+  app.put(
+    "/api/me/items/:workId",
+    handle<{ workId: string }>(async (req) => {
+      const user = await needUser(req);
+      const { releaseId } = z.object({ releaseId: z.string().min(1).max(64) }).parse(req.body);
+      return catalog.update(user, req.params.workId, releaseId);
+    }),
+  );
+  app.delete(
+    "/api/me/items/:workId",
+    handle<{ workId: string }>(async (req) =>
+      catalog.remove(await needUser(req), req.params.workId),
+    ),
+  );
 
   app.post(
     "/api/repos",

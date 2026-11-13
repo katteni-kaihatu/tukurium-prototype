@@ -84,6 +84,31 @@ export class ItemCatalog {
   }
 
   async acquire(user: User, workId: string, releaseId: string) {
+    await this.usableRelease(user, workId, releaseId);
+    const item = await this.store.acquireItem({
+      userId: user.id,
+      workId,
+      releaseId,
+      acquiredAt: new Date().toISOString(),
+    });
+    return this.ownedEntry(user, item);
+  }
+
+  /** 所持している版を、同じ作品の別の版（ふつうは最新）に替える。入手日は保つ。 */
+  async update(user: User, workId: string, releaseId: string) {
+    await this.usableRelease(user, workId, releaseId);
+    const item = await this.store.updateOwnedItem(user.id, workId, releaseId);
+    if (!item) throw new HttpError(404, "このアイテムを持っていません");
+    return this.ownedEntry(user, item);
+  }
+
+  /** 所持一覧から消す。セッションに出ている配置はそのまま残る。 */
+  async remove(user: User, workId: string) {
+    await this.store.removeOwnedItem(user.id, workId);
+    return { ok: true };
+  }
+
+  private async usableRelease(user: User, workId: string, releaseId: string) {
     const work = await this.store.work(workId);
     const release = await this.store.release(releaseId);
     if (!work || !release || release.workId !== work.id)
@@ -93,13 +118,6 @@ export class ItemCatalog {
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
     if (snapshot.outputs.find((o) => o.id === work.outputId)?.kind !== "item")
       throw new HttpError(400, "所持できるのはアイテムです");
-    const item = await this.store.acquireItem({
-      userId: user.id,
-      workId,
-      releaseId,
-      acquiredAt: new Date().toISOString(),
-    });
-    return this.ownedEntry(user, item);
   }
 
   async owned(user: User) {
