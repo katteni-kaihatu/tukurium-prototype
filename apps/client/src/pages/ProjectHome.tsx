@@ -21,7 +21,7 @@ import {
   savedLabel,
   type VisibilityFilter,
   visibilityLabel,
-} from "./projectHome";
+} from "./projectList";
 
 type Tab = "overview" | "projects" | "releases";
 

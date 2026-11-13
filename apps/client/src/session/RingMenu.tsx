@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import styles from "./RingMenu.module.css";
-import { onOpenRing, type RingItem, ringItems } from "./ringMenu";
+import { onOpenRing, type RingItem, ringItems } from "./ringItems";
 import type { SessionEngine } from "./SessionEngine";
 
 /** マウスをこれだけ動かしたら、その向きの項目を選ぶ（px） */
