@@ -2,17 +2,25 @@ import type {
   EntityId,
   FieldDef,
   FieldValue,
+  KokoStateDef,
   KokoStateId,
   KokoStateRegistry,
   KokoStateValues,
   Vec3,
 } from "@tukurium/eks";
 import {
+  acceptsUndefined,
   cloneValue,
   equalValues,
-  isResourceFieldType,
+  type FieldSchemas,
+  hasRefs,
+  isJsonSafe,
+  mapRefs,
+  schemaOfField,
   stringifyValue,
   type Value,
+  type ValueSchema,
+  validateValue,
   World,
   type WorldSnapshot,
 } from "@tukurium/eks";
@@ -136,6 +144,8 @@ export interface SimulationOptions {
   timeLimitMs?: number;
   /** 依存の中身（ワークスペースの再生。ADR 0015） */
   packages?: PackageResolution[];
+  /** フィールドのスキーマ（ワークスペースの再生。TypeScript で作ったもの。ADR 0065） */
+  schemas?: FieldSchemas;
 }
 
 /** セッションに配置された実体（アウトプットの 1 回分の配置） */
@@ -147,6 +157,12 @@ export interface PartSpec {
   snapshot: ProjectSnapshot;
   /** 依存の中身（制作データの依存ごとの解決。ないものは使えない依存になる。ADR 0015） */
   packages?: PackageResolution[];
+  /**
+   * フィールドのスキーマ（TypeScript で作ったもの。KokoState の ID は制作データの中の ID。ADR 0065）。
+   * なくても、Tukurium が用意する型のフィールドは確かめる。スキーマが分からないフィールドは、
+   * 値の確かめをせずに通す。
+   */
+  schemas?: FieldSchemas;
   /** 配置の位置と向き（動作上の親 Entity の姿勢。中の Entity には足さない） */
   position: Vec3;
   yaw: number;
@@ -175,6 +191,8 @@ const MAX_EFFECTS = 32;
 const INTERACT_RANGE = 3;
 /** 一つのバッグに入る数（ADR 0018） */
 export const BAG_LIMIT = 64;
+/** バッグの値 1 つの大きさの上限（値の形式の文字数） */
+const BAG_VALUE_LIMIT = 1024;
 
 /**
  * バッグの中の 1 個（ADR 0018）。種類はライブラリの KokoState（`pkg:` の ID）、値はフィールドの名前で持つ
@@ -337,6 +355,8 @@ export class Simulation {
   private readonly names = new Map<EntityId, string>();
   private readonly parts = new Map<string, Part>();
   private readonly realmDefs = new Map<string, Set<KokoStateId>>();
+  /** 登録した KokoState（実行時の ID）→ フィールドの ID → スキーマ */
+  private readonly schemas = new Map<KokoStateId, Record<string, ValueSchema>>();
   /** realm が使う、依存から取り込んだ KokoState（どの realm も使わなくなったら外す） */
   private readonly realmPackageDefs = new Map<string, Set<KokoStateId>>();
   private readonly realmMaterials = new Map<string, MaterialDef[]>();
@@ -398,6 +418,7 @@ export class Simulation {
       outputId,
       snapshot,
       ...(options.packages ? { packages: options.packages } : {}),
+      ...(options.schemas ? { schemas: options.schemas } : {}),
       position: [0, 0, 0],
       yaw: 0,
     });
@@ -421,7 +442,7 @@ export class Simulation {
       entities: new Set(),
     };
     this.parts.set(part.id, part);
-    this.registerRealm(part.realm, part.snapshot, part.packages);
+    this.registerRealm(part.realm, part.snapshot, part.packages, part.schemas);
     this.instantiate(part);
     this.loadSystems(part);
   }
@@ -566,19 +587,19 @@ export class Simulation {
   ): Record<string, Value> {
     const out: Record<string, Value> = {};
     for (const f of this.registry.require(koko).fields) {
-      const v = given?.[f.name];
-      const ok =
-        (f.type === "number" && typeof v === "number" && Number.isFinite(v)) ||
-        (f.type === "boolean" && typeof v === "boolean") ||
-        ((f.type === "string" || f.type === "color") && typeof v === "string" && v.length <= 256) ||
-        (f.type === "vec3" &&
-          Array.isArray(v) &&
-          v.length === 3 &&
-          v.every((n) => typeof n === "number" && Number.isFinite(n)));
+      const schema = this.schemaOf(koko, f);
       // Entity・リソースの参照は、配置をまたぐと意味がないので持たない
-      out[f.name] = (
-        ok ? v : f.type === "entity" || isResourceFieldType(f.type) ? undefined : f.default
-      ) as Value;
+      if (schema && hasRefs(schema)) {
+        out[f.name] = acceptsUndefined(schema) ? undefined : cloneValue(f.default);
+        continue;
+      }
+      const v = given && Object.hasOwn(given, f.name) ? (given[f.name] as Value) : undefined;
+      // 型が分からないフィールドは確かめられないので、初期値にする。大きすぎる値も持たない
+      const ok =
+        schema !== undefined &&
+        validateValue(schema, v, { finite: true }) === null &&
+        stringifyValue(v).length <= BAG_VALUE_LIMIT;
+      out[f.name] = cloneValue(ok ? v : f.default);
     }
     return out;
   }
@@ -619,6 +640,7 @@ export class Simulation {
     outputId: string,
     snapshot: ProjectSnapshot,
     packages?: PackageResolution[],
+    schemas?: FieldSchemas,
   ): ApplyReport {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
@@ -689,8 +711,10 @@ export class Simulation {
       part.realm = realm;
       if (packages) part.packages = packages;
       else delete part.packages;
+      if (schemas) part.schemas = schemas;
+      else delete part.schemas;
     }
-    this.registerRealm(realm, snapshot, packages);
+    this.registerRealm(realm, snapshot, packages, schemas);
     for (const part of targets) {
       this.instantiate(part);
       for (const k of kept.get(part.id) ?? []) {
@@ -933,25 +957,61 @@ export class Simulation {
     realm: string,
     snapshot: ProjectSnapshot,
     packages?: PackageResolution[],
+    schemas?: FieldSchemas,
   ): void {
     const scope = this.scopeOfRealm(realm);
     const next = new Set<KokoStateId>();
-    for (const k of this.realmDefs.get(realm) ?? []) this.registry.unregister(k);
+    for (const k of this.realmDefs.get(realm) ?? []) {
+      this.registry.unregister(k);
+      this.schemas.delete(k);
+    }
     for (const def of snapshot.kokostates) {
       const id = this.kid(realm, def.id);
       this.registry.register({ ...def, id }, scope);
+      this.rememberSchemas(id, def, schemas);
       next.add(id);
     }
     this.realmDefs.set(realm, next);
     // 依存（依存の依存も）から取り込んだ KokoState（同じ ID は同じ Package・同じ版なので、中身も同じ）
     const pkgDefs = packageKokoStates(reachablePackages(snapshot.dependencies, packages));
-    for (const def of pkgDefs) this.registry.register(def, PACKAGE_SCOPE);
+    for (const def of pkgDefs) {
+      this.registry.register(def, PACKAGE_SCOPE);
+      this.rememberSchemas(def.id, def, schemas);
+    }
     this.releasePackageDefs(realm, new Set(pkgDefs.map((d) => d.id)));
     this.realmMaterials.set(
       realm,
       snapshot.materials.map((m) => ({ ...m, id: this.mid(realm, m.id) })),
     );
     this.realmAssets.set(realm, snapshot.assets ?? []);
+  }
+
+  /** 登録した KokoState のフィールドのスキーマを覚える（id は実行時の ID、def.id は制作データの中の ID） */
+  private rememberSchemas(id: KokoStateId, def: KokoStateDef, given?: FieldSchemas): void {
+    const out: Record<string, ValueSchema> = {};
+    for (const f of def.fields) {
+      const schema = schemaOfField(given, def.id, f);
+      if (schema) out[f.id] = schema;
+    }
+    this.schemas.set(id, out);
+  }
+
+  /**
+   * フィールドのスキーマ。Built-in は型の文から分かる。分からないとき（型エラーでスキーマを作れない、
+   * まだ TypeScript の準備ができていない）は undefined で、値の確かめをせずに通す（ADR 0065）。
+   */
+  private schemaOf(koko: KokoStateId, f: FieldDef): ValueSchema | undefined {
+    return (
+      this.schemas.get(koko)?.[f.id] ??
+      (isBuiltin(koko) ? schemaOfField(undefined, koko, f) : undefined)
+    );
+  }
+
+  /** スクリプトなどが書こうとした値を、そのフィールドに入れてよいか */
+  private accepts(koko: KokoStateId, f: FieldDef, v: Value): boolean {
+    const schema = this.schemaOf(koko, f);
+    // Built-in の数（位置・速度など）は描画と物理がそのまま使うので、有限の数に限る
+    return !schema || validateValue(schema, v, { finite: isBuiltin(koko) }) === null;
   }
 
   /** realm が使う依存の KokoState を next にし、どの realm も使わなくなったものを外す */
@@ -963,6 +1023,7 @@ export class Simulation {
       if (next.has(id)) continue;
       if ([...this.realmPackageDefs.values()].some((ids) => ids.has(id))) continue;
       this.registry.unregister(id);
+      this.schemas.delete(id);
     }
   }
 
@@ -1231,10 +1292,13 @@ export class Simulation {
         const v = { ...values };
         if (koko === BUILTIN.Mesh && typeof v.material === "string")
           v.material = this.mid(part.realm, v.material);
-        const def = this.registry.require(k);
-        for (const f of def.fields) {
-          if (f.type === "entity" && typeof v[f.id] === "string")
-            v[f.id] = this.eid(part, v[f.id] as string);
+        // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
+        for (const f of this.registry.require(k).fields) {
+          const schema = this.schemaOf(k, f);
+          if (!schema || !hasRefs(schema) || !Object.hasOwn(v, f.id)) continue;
+          v[f.id] = mapRefs(schema, v[f.id], (target, ref) =>
+            target === "entity" ? this.eid(part, ref) : undefined,
+          ) as FieldValue;
         }
         this.world.add(id, k, v);
       }
@@ -1753,14 +1817,17 @@ export class Simulation {
 
   /**
    * JSON で表せない値を持ちうるフィールド（スクリプトとの間を、値の形式で運ぶもの）。
-   * いまの型では、参照（Entity・リソース）の「なし」の undefined だけ。ほかの型のフィールドは、
-   * JSON で表せる値しか受け入れない（accepts）。
+   * スキーマから決める：JSON で表せる値しか持たない型（有限の数・文字・真偽・色・必ず指す参照と、
+   * その並びやレコード）のフィールドは入れない。スキーマが分からないフィールドは入れる。
    */
   private taggedFields(sys: LoadedSystem): TaggedFields {
     const out: Record<string, string[]> = {};
     for (const koko of sys.with) {
       const names = (this.registry.get(koko)?.fields ?? [])
-        .filter((f) => f.type === "entity" || isResourceFieldType(f.type))
+        .filter((f) => {
+          const schema = this.schemaOf(koko, f);
+          return !schema || !isJsonSafe(schema, isBuiltin(koko));
+        })
         .map((f) => f.name);
       if (names.length > 0) out[this.localKey(koko, sys.realm)] = names;
     }
@@ -1786,7 +1853,7 @@ export class Simulation {
       if (!(f.name in values)) continue;
       const v = values[f.name];
       if (before && equalValues(before[f.name], v)) continue;
-      if (accepts(f, v)) target[f.id] = cloneValue(v) as FieldValue;
+      if (this.accepts(koko, f, v)) target[f.id] = cloneValue(v) as FieldValue;
     }
   }
 
@@ -1800,31 +1867,5 @@ export class Simulation {
 
   private log(systemId: string | null, message: string, level: LogEntry["level"]): void {
     this.options.onLog?.({ time: this.time, systemId, message, level });
-  }
-}
-
-function accepts(f: FieldDef, v: Value): boolean {
-  switch (f.type) {
-    case "number":
-      return typeof v === "number" && Number.isFinite(v);
-    case "boolean":
-      return typeof v === "boolean";
-    case "string":
-      return typeof v === "string";
-    case "color":
-      return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
-    case "vec3":
-      return (
-        Array.isArray(v) &&
-        v.length === 3 &&
-        v.every((n) => typeof n === "number" && Number.isFinite(n))
-      );
-    case "entity":
-    case "texture":
-    case "material":
-    case "model":
-    case "audio":
-      // 参照の「なし」は undefined（null は使わない。ADR 0065）
-      return v === undefined || typeof v === "string";
   }
 }

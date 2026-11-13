@@ -1,26 +1,36 @@
 import {
+  acceptsUndefined,
   decodeValue,
   type FieldDef,
-  type FieldType,
   type FieldValue,
   type KokoStateDef,
+  knownSchema,
+  refTargetOf,
   stringifyValue,
+  type ValueSchema,
   type Vec3,
+  validateValue,
   type World,
 } from "@tukurium/eks";
 import {
   type AssetKind,
+  BASIC_FIELD_TYPES,
   BUILTIN,
+  checkFieldValues,
   checkProjectReferences,
   checkProjectStructure,
   compileSystem,
   type Diagnostic,
+  emptyValueOf,
   gunAndTargetSample,
+  isBuiltin,
   KOKO_ROLES,
   newId,
   type PackageDependency,
   type PackageResolution,
   type ProjectDoc,
+  REF_TARGET_LABEL,
+  RESOURCE_FIELD_KIND,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import {
@@ -30,8 +40,6 @@ import {
   Simulation,
   worldTransform,
 } from "@tukurium/runtime";
-import { TypeChecker } from "@tukurium/typecheck";
-import { nodeTypeCheckerOptions } from "@tukurium/typecheck/node";
 import {
   ASSET_TYPES,
   type AssetStore,
@@ -39,6 +47,12 @@ import {
   MAX_ASSET_BYTES,
 } from "../assets/assetStore";
 import type { RepoService } from "../repos/service";
+import {
+  fieldSchemasOf,
+  HOST_DECLARATIONS,
+  packagesByAlias,
+  sharedTypeChecker,
+} from "../typecheck";
 import type { AgentClient } from "./AgentClient";
 
 /**
@@ -47,18 +61,8 @@ import type { AgentClient } from "./AgentClient";
  * KokoState・欄・System・アウトプットは、ID でも名前でも指せる。
  */
 
-export const FIELD_TYPES = [
-  "number",
-  "boolean",
-  "string",
-  "vec3",
-  "color",
-  "entity",
-  "texture",
-  "material",
-  "model",
-  "audio",
-] as const satisfies readonly FieldType[];
+/** 一覧から選べる型の名前（`BASIC_FIELD_TYPES`）。型は、これか TypeScript の型の文で書く */
+export const FIELD_TYPES = BASIC_FIELD_TYPES.map((t) => t.key);
 
 const MAX_SIM_SECONDS = 20;
 const MAX_LISTED_ENTITIES = 200;
@@ -140,14 +144,25 @@ function imageOf(project: ProjectDoc, value: string, what: string): string {
 }
 
 /**
- * 欄の型に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
- * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
- * JSON には undefined がないので、null も「なし」として受け取る。
+ * フィールドのスキーマ。Tukurium が用意する型は、型の文から分かる。ほかの型（リスト・レコードなど）は、
+ * TypeScript で作る（初めて要るときだけ。ADR 0065）。型エラーで作れないフィールドは undefined。
  */
-function coerce(project: ProjectDoc, field: FieldDef, raw: unknown): FieldValue {
-  const bad = () =>
+function schemaFor(project: ProjectDoc, kokoId: string, field: FieldDef): ValueSchema | undefined {
+  return (
+    knownSchema(field.type) ?? fieldSchemasOf(project.snapshot(), new Map())[kokoId]?.[field.id]
+  );
+}
+
+/**
+ * フィールドの型（スキーマ）に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
+ * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
+ * JSON には undefined がないので、参照と「なし」にできる型では、null も「なし」として受け取る。
+ * 参照（Entity・Material・素材）は、ID でも一意な名前でも指せる。
+ */
+function coerce(project: ProjectDoc, kokoId: string, field: FieldDef, raw: unknown): FieldValue {
+  const bad = (why?: string) =>
     new AgentError(
-      `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}`,
+      `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}${why ? `（${why}）` : ""}`,
     );
   let value: unknown;
   try {
@@ -155,47 +170,21 @@ function coerce(project: ProjectDoc, field: FieldDef, raw: unknown): FieldValue 
   } catch {
     throw bad();
   }
-  const none = value === null || value === undefined;
-  switch (field.type) {
-    case "number":
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      throw bad();
-    case "boolean":
-      if (typeof value === "boolean") return value;
-      throw bad();
-    case "string":
-      if (typeof value === "string") return value;
-      throw bad();
-    case "color":
-      if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
-      throw bad();
-    case "vec3":
-      if (
-        Array.isArray(value) &&
-        value.length === 3 &&
-        value.every((n) => typeof n === "number" && Number.isFinite(n))
-      )
-        return value as Vec3;
-      throw bad();
-    case "material":
-      if (none) return undefined;
-      if (typeof value === "string")
-        return resolveNamed(project.materials(), value, `フィールド「${field.name}」の Material`);
-      throw bad();
-    case "model":
-    case "texture":
-    case "audio": {
-      if (none) return undefined;
-      if (typeof value !== "string") throw bad();
-      const kind = field.type === "model" ? "model" : field.type === "texture" ? "image" : "audio";
-      const label = field.type === "model" ? "モデル" : field.type === "texture" ? "画像" : "音声";
-      return resolveNamed(assetsOf(project, kind), value, `フィールド「${field.name}」の${label}`);
-    }
-    default:
-      if (none) return undefined;
-      if (typeof value === "string") return value;
-      throw bad();
+  const schema = schemaFor(project, kokoId, field);
+  // 型エラーで形が分からないフィールドは、値の形式で表せる値ならそのまま入れる（ADR 0065）
+  if (!schema) return value as FieldValue;
+  if (value === null && acceptsUndefined(schema)) value = undefined;
+  const target = refTargetOf(schema);
+  if (target && typeof value === "string") {
+    const what = `フィールド「${field.name}」の${REF_TARGET_LABEL[target]}`;
+    if (target === "entity") return entityOf(project, value).id;
+    if (target === "material") return resolveNamed(project.materials(), value, what);
+    return resolveNamed(assetsOf(project, RESOURCE_FIELD_KIND[target] as AssetKind), value, what);
   }
+  if (schema.kind === "color" && typeof value === "string") value = value.toLowerCase();
+  const why = validateValue(schema, value, { finite: isBuiltin(kokoId) });
+  if (why) throw bad(why);
+  return value as FieldValue;
 }
 
 /** { KokoState: { 欄: 値 } } を ID の形にする */
@@ -209,7 +198,7 @@ function toStates(
     const v: Record<string, FieldValue> = {};
     for (const [fieldRef, raw] of Object.entries(values ?? {})) {
       const f = fieldOf(def, fieldRef);
-      v[f.id] = coerce(project, f, raw);
+      v[f.id] = coerce(project, def.id, f, raw);
     }
     out[def.id] = v;
   }
@@ -421,34 +410,41 @@ export function deleteEntity(project: ProjectDoc, ref: string): NamedRef {
 
 interface FieldSpec {
   name: string;
-  type: FieldType;
+  /** 一覧の名前（`FIELD_TYPES`）か、TypeScript の型の文 */
+  type: string;
   default?: unknown;
 }
 
-const DEFAULTS: Record<FieldType, FieldValue> = {
-  number: 0,
-  boolean: false,
-  string: "",
-  vec3: [0, 0, 0],
-  color: "#ffffff",
-  entity: undefined,
-  texture: undefined,
-  material: undefined,
-  model: undefined,
-  audio: undefined,
-};
-
-/** 欄の定義を作る。同じ名前の欄があれば、その ID を引き継ぐ（値が切れないように） */
-function toFields(project: ProjectDoc, specs: FieldSpec[], prev: FieldDef[] = []): FieldDef[] {
+/**
+ * フィールドの定義を作る。同じ名前のフィールドがあれば、その ID を引き継ぐ（値が切れないように）。
+ * 初期値を省いたときは、一覧の型ならその初期値、TypeScript で書いた型なら空の値（「なし」にできる型は
+ * undefined、リストは空、数は 0 など）にする。
+ */
+function toFields(
+  project: ProjectDoc,
+  kokoId: string,
+  specs: FieldSpec[],
+  prev: FieldDef[] = [],
+): FieldDef[] {
   return specs.map((s) => {
     const id =
       prev.find((p) => norm(p.name) === norm(s.name))?.id ??
       `f_${s.name.replace(/[^A-Za-z0-9_]/g, "") || "field"}_${Math.random().toString(36).slice(2, 6)}`;
-    const base = { id, name: s.name, type: s.type, default: DEFAULTS[s.type] } as FieldDef;
-    return {
-      ...base,
-      default: s.default === undefined ? base.default : coerce(project, base, s.default),
+    const basic = BASIC_FIELD_TYPES.find((t) => t.key === s.type);
+    const base: FieldDef = {
+      id,
+      name: s.name,
+      type: basic?.type ?? s.type,
+      default: structuredClone(basic?.default),
     };
+    if (s.default !== undefined)
+      return { ...base, default: coerce(project, kokoId, base, s.default) };
+    if (basic) return base;
+    // TypeScript で書いた型：この型だけを持つ仮の定義から、スキーマを作る
+    const probe = project.snapshot();
+    probe.kokostates = [{ id: "ks_probe", name: "Probe", fields: [base] }];
+    const schema = knownSchema(base.type) ?? fieldSchemasOf(probe, new Map()).ks_probe?.[base.id];
+    return { ...base, default: schema ? emptyValueOf(schema) : undefined };
   });
 }
 
@@ -461,7 +457,7 @@ export function createKokoState(
   if (!def) throw new AgentError("KokoState を作れませんでした");
   project.updateKokoState({
     ...def,
-    fields: toFields(project, args.fields),
+    fields: toFields(project, id, args.fields),
     ...(args.role ? { role: args.role } : {}),
   });
   return { id, name: args.name };
@@ -477,7 +473,7 @@ export function updateKokoState(
   project.updateKokoState({
     ...def,
     name,
-    fields: args.fields ? toFields(project, args.fields, def.fields) : def.fields,
+    fields: args.fields ? toFields(project, def.id, args.fields, def.fields) : def.fields,
     ...(args.role !== undefined ? { role: args.role } : {}),
   });
   return { id: def.id, name };
@@ -1009,10 +1005,6 @@ const showDiagnostic = (d: Diagnostic) => ({
   ...(d.detail ? { detail: d.detail } : {}),
 });
 
-/** スクリプトの型を確かめる（ADR 0058）。TypeScript の本体は重いので、初めて使うときに作り、使い回す */
-let typeChecker: TypeChecker | null = null;
-const HOST_DECLARATIONS = hostApiDeclarations();
-
 /**
  * 作っている途中の問題：構造・参照・System の書き方と import・型の誤り
  * （スクリプトの実行時の問題は simulate で）。型の誤りがあっても simulate は動く。
@@ -1023,16 +1015,22 @@ export async function check(
 ): Promise<ReturnType<typeof showDiagnostic>[]> {
   const snap = project.snapshot();
   const index = ResourcePathIndex.fromSnapshot(snap);
+  // スクリプトとフィールドの型を確かめ、フィールドのスキーマを作る（ADR 0058・0065）
+  const types = sharedTypeChecker().checkAll({
+    snapshot: snap,
+    packages,
+    hostDeclarations: HOST_DECLARATIONS,
+  });
   const out: Diagnostic[] = [
     ...checkProjectStructure(snap, index),
-    ...checkProjectReferences(snap),
+    ...checkProjectReferences(snap, types.schemas),
+    ...checkFieldValues(snap, types.schemas),
   ];
   for (const s of snap.systems) {
     const compiled = compileSystem(s.id, s.code, index, packages);
     if (!compiled.ok) out.push(...compiled.diagnostics);
   }
-  typeChecker ??= new TypeChecker(nodeTypeCheckerOptions());
-  out.push(...typeChecker.check({ snapshot: snap, packages, hostDeclarations: HOST_DECLARATIONS }));
+  out.push(...types.diagnostics);
   return out.map(showDiagnostic);
 }
 
@@ -1063,10 +1061,12 @@ export async function simulate(
   const output = outputOf(project, args.output);
   const seconds = Math.min(Math.max(args.seconds ?? 2, 0), MAX_SIM_SECONDS);
   const logs: LogEntry[] = [];
-  const sim = await Simulation.create(project.snapshot(), output.id, {
+  const snapshot = project.snapshot();
+  const sim = await Simulation.create(snapshot, output.id, {
     realm: `agent:${workspaceId}`,
     onLog: (l) => logs.push(l),
     packages: pool,
+    schemas: fieldSchemasOf(snapshot, packagesByAlias(pool)),
   });
   try {
     // 道具（EquipmentTool）を、始める前にエージェントが装備する（撃つなどの入力は装備した道具に届く）
@@ -1161,7 +1161,7 @@ export function guide(): string {
     "6. 終わったら、人に「保存してください」と伝える。",
     "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
-    `## フィールドの型: ${FIELD_TYPES.join(", ")}`,
+    `## フィールドの型: ${FIELD_TYPES.join(", ")}。または TypeScript の型の文（例：\`{ suit: string; rank: number }[]\`、\`Record<string, number>\`、\`EntityRef | undefined\`）。「なし」は undefined（null は使えない）`,
     "",
     "## System の書き方（見本：サンプル「銃と的」の Shoot）",
     "```ts",

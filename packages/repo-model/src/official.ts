@@ -1,4 +1,4 @@
-import type { KokoStateValues, Vec3 } from "@tukurium/eks";
+import { FIELD_TYPE, type KokoStateValues, type Vec3 } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
 import { OFFICIAL_THUMBNAILS } from "./officialThumbnails.generated";
 import { packageResourceId } from "./packageDependency";
@@ -79,8 +79,8 @@ function combatLibrary(): ProjectSnapshot {
         id: OFFICIAL_COMBAT.health,
         name: "Health",
         fields: [
-          { id: "f_hp", name: "hp", type: "number", default: 3 },
-          { id: "f_maxHp", name: "maxHp", type: "number", default: 3 },
+          { id: "f_hp", name: "hp", type: FIELD_TYPE.number, default: 3 },
+          { id: "f_maxHp", name: "maxHp", type: FIELD_TYPE.number, default: 3 },
         ],
       },
     ],
@@ -138,7 +138,7 @@ function interactionLibrary(): ProjectSnapshot {
       {
         id: OFFICIAL_INTERACTION.toggle,
         name: "Toggle",
-        fields: [{ id: "f_on", name: "on", type: "boolean", default: false }],
+        fields: [{ id: "f_on", name: "on", type: FIELD_TYPE.boolean, default: false }],
       },
     ],
     systems: [{ id: OFFICIAL_INTERACTION.toggleable, name: "Toggleable", code: TOGGLEABLE }],
@@ -196,7 +196,7 @@ function itemsLibrary(): ProjectSnapshot {
       {
         id: OFFICIAL_ITEMS.key,
         name: "Key",
-        fields: [{ id: "f_color", name: "color", type: "color", default: "#f1c40f" }],
+        fields: [{ id: "f_color", name: "color", type: FIELD_TYPE.color, default: "#f1c40f" }],
       },
     ],
     systems: [{ id: OFFICIAL_ITEMS.keyPickup, name: "KeyPickup", code: KEY_PICKUP }],
@@ -302,8 +302,8 @@ export function referenceGunAndTarget(combat: PackageDependency): ProjectSnapsho
       id: "ks_respawn",
       name: "Respawn",
       fields: [
-        { id: "f_respawn", name: "respawn", type: "number", default: 2 },
-        { id: "f_downTime", name: "downTime", type: "number", default: 0 },
+        { id: "f_respawn", name: "respawn", type: FIELD_TYPE.number, default: 2 },
+        { id: "f_downTime", name: "downTime", type: FIELD_TYPE.number, default: 0 },
       ],
     },
   ];
@@ -383,10 +383,10 @@ export function referenceDoorAndSwitch(interaction: PackageDependency): ProjectS
         id: "ks_door",
         name: "Door",
         fields: [
-          { id: "f_openAngle", name: "openAngle", type: "number", default: 90 },
-          { id: "f_speed", name: "speed", type: "number", default: 120 },
-          { id: "f_angle", name: "angle", type: "number", default: 0 },
-          { id: "f_switch", name: "switch", type: "entity", default: undefined },
+          { id: "f_openAngle", name: "openAngle", type: FIELD_TYPE.number, default: 90 },
+          { id: "f_speed", name: "speed", type: FIELD_TYPE.number, default: 120 },
+          { id: "f_angle", name: "angle", type: FIELD_TYPE.number, default: 0 },
+          { id: "f_switch", name: "switch", type: FIELD_TYPE.entity, default: undefined },
         ],
       },
     ],
@@ -515,11 +515,11 @@ export function referenceKeyAndDoor(items: PackageDependency): ProjectSnapshot {
         id: "ks_lock",
         name: "Lock",
         fields: [
-          { id: "f_color", name: "color", type: "color", default: "#f1c40f" },
-          { id: "f_open", name: "open", type: "boolean", default: false },
-          { id: "f_height", name: "height", type: "number", default: 0 },
-          { id: "f_lift", name: "lift", type: "number", default: 2.2 },
-          { id: "f_speed", name: "speed", type: "number", default: 2 },
+          { id: "f_color", name: "color", type: FIELD_TYPE.color, default: "#f1c40f" },
+          { id: "f_open", name: "open", type: FIELD_TYPE.boolean, default: false },
+          { id: "f_height", name: "height", type: FIELD_TYPE.number, default: 0 },
+          { id: "f_lift", name: "lift", type: FIELD_TYPE.number, default: 2.2 },
+          { id: "f_speed", name: "speed", type: FIELD_TYPE.number, default: 2 },
         ],
       },
     ],

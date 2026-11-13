@@ -1,4 +1,4 @@
-import type { FieldType, KokoStateDef } from "@tukurium/eks";
+import type { FieldDef, KokoStateDef } from "@tukurium/eks";
 import {
   BUILTIN_KOKOSTATES,
   type PackageResolution,
@@ -20,36 +20,22 @@ export const HOST_FILE = "/__host.d.ts";
 export const BUILTIN_DIR = "/__builtin";
 export const PACKAGES_DIR = "/__packages";
 
-/** 欄の型を TypeScript の型にする */
-export function fieldTsType(type: FieldType): string {
-  switch (type) {
-    case "number":
-      return "number";
-    case "boolean":
-      return "boolean";
-    case "string":
-    case "color":
-      return "string";
-    case "vec3":
-      return "[number, number, number]";
-    case "entity":
-    case "texture":
-    case "material":
-    case "model":
-    case "audio":
-      return "string | undefined";
-  }
-}
-
 /** プロパティの名前として書ける形にする（書けない名前は引用符で囲む） */
 const key = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name));
 
-/** KokoState の宣言ファイルの中身。ID は実行時に __koko(ID, 名前) で渡るものと同じにする */
+/**
+ * KokoState の宣言ファイルの中身。ID は実行時に __koko(ID, 名前) で渡るものと同じにする。
+ * フィールドの型は、型の文をそのまま書く（ADR 0065）。型エラーのあるフィールド（badFields）は
+ * unknown にして、ほかのフィールドを使えるままにする。
+ */
 export function kokoStateDeclaration(
   id: string,
   def: Pick<KokoStateDef, "name" | "fields">,
+  badFields?: ReadonlySet<string>,
 ): string {
-  const fields = def.fields.map((f) => `  ${key(f.name)}: ${fieldTsType(f.type)};`).join("\n");
+  const fields = def.fields
+    .map((f) => `  ${key(f.name)}: ${badFields?.has(f.id) ? "unknown" : `(${f.type})`};`)
+    .join("\n");
   return [
     `/** ${def.name} */`,
     `declare const koko: KokoState<${JSON.stringify(id)}, {\n${fields}\n}>;`,
@@ -73,10 +59,52 @@ export interface VirtualProject {
   paths: Record<string, string[]>;
 }
 
+/** フィールドの型を確かめるための仮想のファイルを置く所 */
+export const FIELDS_DIR = "/__fields";
+
+/** 型を確かめる KokoState（制作データのものと、依存から取り込んだもの） */
+export interface FieldOwner {
+  /** スクリプトから見える ID（依存のものは `pkg:` の ID） */
+  id: string;
+  name: string;
+  fields: FieldDef[];
+  /** 制作データの KokoState か（型エラーを問題として出すのは、こちらだけ） */
+  own: boolean;
+}
+
+/** フィールドの型を持つ KokoState を、Built-in・制作データ・依存の順に並べる */
+export function fieldOwners(
+  snap: ProjectSnapshot,
+  packages: ReadonlyMap<string, PackageResolution>,
+): FieldOwner[] {
+  const out: FieldOwner[] = [];
+  for (const k of BUILTIN_KOKOSTATES)
+    out.push({ id: k.id, name: k.name, fields: k.fields, own: false });
+  for (const k of snap.kokostates)
+    out.push({ id: k.id, name: k.name, fields: k.fields, own: true });
+  for (const r of packages.values()) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as Partial<KokoStateDef> | null;
+      if (e.kind !== "kokostate" || typeof def?.name !== "string" || !Array.isArray(def.fields))
+        continue;
+      out.push({
+        id: packageResourceId(r.dependency, e.id),
+        name: def.name,
+        fields: def.fields,
+        own: false,
+      });
+    }
+  }
+  return out;
+}
+
 export function virtualProject(
   snap: ProjectSnapshot,
   packages: ReadonlyMap<string, PackageResolution>,
   hostDeclarations: string,
+  /** 型エラーのあるフィールド（KokoState の ID → フィールドの ID）。宣言では unknown にする */
+  badFields: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): VirtualProject {
   const index = ResourcePathIndex.fromSnapshot(snap);
   const files = new Map<string, string>([[HOST_FILE, hostDeclarations]]);
@@ -84,11 +112,14 @@ export function virtualProject(
   const paths: Record<string, string[]> = { "@builtin/*": [`${BUILTIN_DIR}/*`] };
 
   for (const k of BUILTIN_KOKOSTATES)
-    files.set(`${BUILTIN_DIR}/${k.name}.koko.d.ts`, kokoStateDeclaration(k.id, k));
+    files.set(
+      `${BUILTIN_DIR}/${k.name}.koko.d.ts`,
+      kokoStateDeclaration(k.id, k, badFields.get(k.id)),
+    );
 
   for (const k of snap.kokostates) {
     const path = index.pathOf(k.id);
-    if (path) files.set(`${path}.d.ts`, kokoStateDeclaration(k.id, k));
+    if (path) files.set(`${path}.d.ts`, kokoStateDeclaration(k.id, k, badFields.get(k.id)));
   }
 
   for (const [alias, r] of packages) {
@@ -98,12 +129,10 @@ export function virtualProject(
       const def = e.definition as Partial<KokoStateDef> | null;
       if (e.kind !== "kokostate" || typeof def?.name !== "string" || !Array.isArray(def.fields))
         continue;
+      const id = packageResourceId(r.dependency, e.id);
       files.set(
         packageFile(alias, e.path),
-        kokoStateDeclaration(packageResourceId(r.dependency, e.id), {
-          name: def.name,
-          fields: def.fields,
-        }),
+        kokoStateDeclaration(id, { name: def.name, fields: def.fields }, badFields.get(id)),
       );
     }
   }

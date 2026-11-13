@@ -20,6 +20,7 @@ import {
 import * as Y from "yjs";
 import type { RepoService } from "./repos/service";
 import type { Store, User, WorkspaceMeta } from "./store/store";
+import { fieldSchemasOf, packagesByAlias } from "./typecheck";
 import { canRead, canWrite, DocRoom } from "./workspaces/docRoom";
 
 export interface Peer {
@@ -165,6 +166,10 @@ export class Hub {
    * 制作データを捨てれば一緒に消える
    */
   private readonly packages = new WeakMap<object, PackageResolution[]>();
+  /** 制作データ → フィールドのスキーマ（出した人の画面が作ったものか、リリースのためにサーバーが作ったもの。ADR 0065） */
+  private readonly schemas = new WeakMap<object, unknown>();
+  /** リリース → フィールドのスキーマ（リリースの中身は変わらないので、一度作れば使い回せる） */
+  private readonly releaseSchemas = new Map<string, unknown>();
   /** 適用の通し番号（依存の取り出しを待つ間に、次の適用が来たら古い方を捨てる） */
   private readonly applySeq = new Map<string, number>();
   /** 開いている画面への撮影（ADR 0059）。requestId → 待っている約束 */
@@ -354,6 +359,7 @@ export class Hub {
           await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
         if (this.applySeq.get(key) !== seq) return;
         s.builds.set(key, msg.snapshot);
+        this.rememberSchemas(msg.snapshot, msg.schemas);
         if (s.host) {
           const packages = this.packagesOf(msg.snapshot);
           this.send(s.host, {
@@ -362,6 +368,7 @@ export class Hub {
             outputId: msg.outputId,
             snapshot: msg.snapshot,
             ...(packages ? { packages } : {}),
+            ...(msg.schemas !== undefined ? { schemas: msg.schemas } : {}),
             by: user.name,
           });
         }
@@ -876,6 +883,7 @@ export class Hub {
     if (hasDependencies(msg.snapshot))
       await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
     s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
+    this.rememberSchemas(msg.snapshot, msg.schemas);
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: msg.workspaceId,
@@ -894,6 +902,8 @@ export class Hub {
   private hostPart(s: Session, p: Placement): HostPart {
     const snapshot = p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot;
     const packages = this.packagesOf(snapshot);
+    const schemas =
+      typeof snapshot === "object" && snapshot !== null ? this.schemas.get(snapshot) : undefined;
     return {
       id: p.id,
       // リリースから置いたものは、ワークスペースとは別の領域（KokoState の名前の範囲）にする
@@ -901,6 +911,7 @@ export class Hub {
       outputId: p.outputId,
       snapshot,
       ...(packages ? { packages } : {}),
+      ...(schemas !== undefined ? { schemas } : {}),
       position: p.position,
       yaw: p.yaw,
       grants: p.grants,
@@ -1209,7 +1220,21 @@ export class Hub {
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
     // リリースの依存は、作品の持ち主の許可で取り出す
     if (hasDependencies(snapshot)) await this.attachPackages(snapshot, work.owner);
+    // リリースのフィールドのスキーマは、サーバーが作って付ける。セッションのホストは、
+    // TypeScript を読み込まずに値を確かめられる（ADR 0065）
+    let schemas = this.releaseSchemas.get(release.id);
+    if (schemas === undefined) {
+      schemas = fieldSchemasOf(snapshot, packagesByAlias(this.packagesOf(snapshot)));
+      this.releaseSchemas.set(release.id, schemas);
+    }
+    this.schemas.set(snapshot, schemas);
     return { release, work, snapshot };
+  }
+
+  /** 出した人の画面が作ったスキーマを、制作データに結び付けて覚える（ホストへ一緒に渡す） */
+  private rememberSchemas(snapshot: unknown, schemas: unknown): void {
+    if (schemas !== undefined && typeof snapshot === "object" && snapshot !== null)
+      this.schemas.set(snapshot, schemas);
   }
 
   /** 制作データの依存の中身を、持ち主の許可で取り出して覚える（ADR 0015） */

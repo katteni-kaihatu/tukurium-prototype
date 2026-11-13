@@ -1,3 +1,4 @@
+import type { FieldSchemas } from "@tukurium/eks";
 import {
   collectSelection,
   type ExtractSelection,
@@ -38,6 +39,8 @@ interface Source {
   repoName: string;
   commit: string;
   snapshot: ProjectSnapshot;
+  /** 取り出し元のフィールドのスキーマ（サーバーが作る。ADR 0065） */
+  schemas?: FieldSchemas;
 }
 
 interface Row {
@@ -110,7 +113,7 @@ export function ImportPanel() {
 
   const rows = useMemo(() => (source ? rowsOf(source.snapshot) : null), [source]);
   const together = useMemo(
-    () => (source ? withDependencies(source.snapshot, picked) : null),
+    () => (source ? withDependencies(source.snapshot, picked, source.schemas) : null),
     [source, picked],
   );
   const count = GROUPS.reduce((n, g) => n + picked[g.key].length, 0);
@@ -130,6 +133,8 @@ export function ImportPanel() {
         picked,
         { repoId: source.repoId, repoName: source.repoName, commit: source.commit },
         { ...project.snapshot(), name: project.name },
+        undefined,
+        source.schemas,
       );
       project.mergeAdditions(merged);
       setDone(`${source.repoName} から ${count} 件を取り込みました`);
@@ -271,8 +276,9 @@ function rowsOf(snap: ProjectSnapshot): Record<Group, Row[]> {
 function withDependencies(
   snap: ProjectSnapshot,
   picked: ExtractSelection,
+  schemas: FieldSchemas | undefined,
 ): { rows: { id: string; name: string; kind: string }[]; libraries: string[] } {
-  const all = collectSelection(snap, picked);
+  const all = collectSelection(snap, picked, schemas);
   const chosen = new Set(GROUPS.flatMap((g) => picked[g.key]));
   const rows: { id: string; name: string; kind: string }[] = [];
   const label: Record<Group, string> = {

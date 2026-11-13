@@ -140,7 +140,7 @@ describe("参照の「なし」は undefined（ADR 0065）", () => {
   const refDef = (def: string | undefined): KokoStateDef => ({
     id: "ks_ref",
     name: "Ref",
-    fields: [{ id: "f_target", name: "target", type: "entity", default: def }],
+    fields: [{ id: "f_target", name: "target", type: "EntityRef | undefined", default: def }],
   });
 
   function refProject() {

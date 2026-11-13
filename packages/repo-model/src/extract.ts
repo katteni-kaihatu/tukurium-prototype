@@ -1,5 +1,12 @@
-import { equalValues, type KokoStateDef } from "@tukurium/eks";
-import { isBuiltin } from "./builtins";
+import {
+  equalValues,
+  type FieldSchemas,
+  type FieldValue,
+  type KokoStateDef,
+  mapRefs,
+  schemaOfField,
+} from "@tukurium/eks";
+import { BUILTIN_KOKOSTATES, isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
 import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
 import { ResourcePathIndex } from "./resourcePath";
@@ -29,7 +36,12 @@ export interface ExtractSource {
 /**
  * 選んだアウトプット・リソースを、依存するもの（Entity・System・KokoState・マテリアル・素材）ごと集める。
  */
-export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): ExtractSelection {
+export function collectSelection(
+  src: ProjectSnapshot,
+  sel: ExtractSelection,
+  /** 取り出し元のフィールドのスキーマ（あれば、入れ子の中の参照が指すものも集める） */
+  schemas?: FieldSchemas,
+): ExtractSelection {
   const out = {
     outputs: new Set(sel.outputs),
     kokostates: new Set(sel.kokostates),
@@ -49,7 +61,7 @@ export function collectSelection(src: ProjectSnapshot, sel: ExtractSelection): E
     }
   }
   // Entity と System が使うものは、依存グラフから集める（計画 Phase 3）
-  const graph = ProjectDependencyGraph.fromSnapshot(src);
+  const graph = ProjectDependencyGraph.fromSnapshot(src, schemas);
   const assetIds = new Set((src.assets ?? []).map((a) => a.id));
   for (const e of src.entities) {
     if (!out.outputs.has(e.output)) continue;
@@ -103,8 +115,11 @@ export function extractInto(
   source: ExtractSource,
   target: ProjectSnapshot | null,
   name?: string,
+  /** 取り出し元のフィールドのスキーマ（あれば、入れ子の中の参照も新しい ID に付け替える） */
+  schemas?: FieldSchemas,
 ): ProjectSnapshot {
-  const sel = collectSelection(src, selection);
+  const sel = collectSelection(src, selection, schemas);
+  const srcDefs = new Map([...BUILTIN_KOKOSTATES, ...src.kokostates].map((k) => [k.id, k]));
   const dst: ProjectSnapshot = target
     ? structuredClone(target)
     : {
@@ -213,8 +228,14 @@ export function extractInto(
       const states: typeof e.states = {};
       for (const [koko, values] of Object.entries(e.states)) {
         const v = structuredClone(values);
-        for (const [f, val] of Object.entries(v))
-          if (typeof val === "string" && remap.has(val)) v[f] = r(val);
+        // 参照が指す ID を、取り込み先で振り直した ID に付け替える
+        for (const f of srcDefs.get(koko)?.fields ?? []) {
+          const schema = schemaOfField(schemas, koko, f);
+          if (!schema || !Object.hasOwn(v, f.id)) continue;
+          v[f.id] = mapRefs(schema, v[f.id], (refTarget, id) =>
+            refTarget === "entity" ? entityIds.get(id) : remap.get(id),
+          ) as FieldValue;
+        }
         states[r(koko)] = v;
       }
       dst.entities.push({

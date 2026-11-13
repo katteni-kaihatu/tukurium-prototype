@@ -1,5 +1,5 @@
 import type { KokoStateDef } from "@tukurium/eks";
-import { isResourceFieldType } from "@tukurium/eks";
+import { type FieldSchemas, schemaOfField, visitRefs } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import { ResourcePathIndex } from "../resourcePath";
@@ -18,7 +18,14 @@ const RES_LABEL: Record<ResKind, string> = {
   audio: "音声",
 };
 
-export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
+/**
+ * schemas：TypeScript で作ったフィールドのスキーマ（あれば、入れ子の中の参照まで確かめる）。
+ * なくても、Tukurium が用意する型のフィールドは確かめる。
+ */
+export function checkProjectReferences(
+  snap: ProjectSnapshot,
+  schemas?: FieldSchemas,
+): Diagnostic[] {
   const out: Diagnostic[] = [];
   const push = (d: Omit<DiagnosticInput, "phase" | "provider">) =>
     out.push(makeDiagnostic({ ...d, phase: "authoring", provider: REFERENCES_PROVIDER }));
@@ -100,21 +107,23 @@ export function checkProjectReferences(snap: ProjectSnapshot): Diagnostic[] {
       }
       const related: ResourceRef[] = def.builtin ? [] : [{ kind: "kokostate", id: def.id }];
       for (const f of def.fields) {
-        const v = values[f.id];
-        if (typeof v !== "string" || v === "") continue;
+        const schema = schemaOfField(schemas, kokoId, f);
+        if (!schema) continue;
         const what = `「${e.name}」の ${def.name}.${f.name}`;
-        if (isResourceFieldType(f.type))
-          checkResource(subject, [kokoId, f.id], v, RESOURCE_FIELD_KIND[f.type], what, related);
-        else if (f.type === "entity" && !entities.has(v))
-          push({
-            code: "missing-entity",
-            severity: "error",
-            subject,
-            location: { kind: "property", path: [kokoId, f.id] },
-            related,
-            message: `${what} に指定した Entity がありません`,
-            detail: `ID: ${v}`,
-          });
+        visitRefs(schema, values[f.id], (target, v) => {
+          if (target !== "entity")
+            checkResource(subject, [kokoId, f.id], v, RESOURCE_FIELD_KIND[target], what, related);
+          else if (!entities.has(v))
+            push({
+              code: "missing-entity",
+              severity: "error",
+              subject,
+              location: { kind: "property", path: [kokoId, f.id] },
+              related,
+              message: `${what} に指定した Entity がありません`,
+              detail: `ID: ${v}`,
+            });
+        });
       }
     }
 

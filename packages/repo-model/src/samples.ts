@@ -1,3 +1,4 @@
+import { FIELD_TYPE } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
 import type { EntityDef, ProjectSnapshot } from "./schema";
 
@@ -145,21 +146,21 @@ export function gunAndTargetSample(): ProjectSnapshot {
         id: "ks_gun",
         name: "Gun",
         fields: [
-          { id: "f_ammo", name: "ammo", type: "number", default: 12 },
-          { id: "f_maxAmmo", name: "maxAmmo", type: "number", default: 12 },
-          { id: "f_interval", name: "interval", type: "number", default: 0.2 },
-          { id: "f_cooldown", name: "cooldown", type: "number", default: 0 },
-          { id: "f_damage", name: "damage", type: "number", default: 1 },
+          { id: "f_ammo", name: "ammo", type: FIELD_TYPE.number, default: 12 },
+          { id: "f_maxAmmo", name: "maxAmmo", type: FIELD_TYPE.number, default: 12 },
+          { id: "f_interval", name: "interval", type: FIELD_TYPE.number, default: 0.2 },
+          { id: "f_cooldown", name: "cooldown", type: FIELD_TYPE.number, default: 0 },
+          { id: "f_damage", name: "damage", type: FIELD_TYPE.number, default: 1 },
         ],
       },
       {
         id: "ks_target",
         name: "Target",
         fields: [
-          { id: "f_hp", name: "hp", type: "number", default: 3 },
-          { id: "f_maxHp", name: "maxHp", type: "number", default: 3 },
-          { id: "f_respawn", name: "respawn", type: "number", default: 2 },
-          { id: "f_downTime", name: "downTime", type: "number", default: 0 },
+          { id: "f_hp", name: "hp", type: FIELD_TYPE.number, default: 3 },
+          { id: "f_maxHp", name: "maxHp", type: FIELD_TYPE.number, default: 3 },
+          { id: "f_respawn", name: "respawn", type: FIELD_TYPE.number, default: 2 },
+          { id: "f_downTime", name: "downTime", type: FIELD_TYPE.number, default: 0 },
         ],
       },
     ],

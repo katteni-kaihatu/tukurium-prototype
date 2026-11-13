@@ -43,7 +43,11 @@ const states = z
   );
 const fieldSpec = z.object({
   name: z.string().min(1).max(64),
-  type: z.enum(T.FIELD_TYPES),
+  type: z
+    .string()
+    .min(1)
+    .max(2000)
+    .describe(`一覧の名前（${T.FIELD_TYPES.join(", ")}）か、TypeScript の型の文`),
   default: z.unknown().optional(),
 });
 

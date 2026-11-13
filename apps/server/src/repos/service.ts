@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { FieldSchemas } from "@tukurium/eks";
 import {
   type ExtractSelection,
   extractInto,
@@ -16,6 +17,7 @@ import {
 } from "@tukurium/repo-model";
 import { workTagsSchema } from "@tukurium/shared";
 import type { Release, RepoMeta, Store, User, Work, WorkPerms } from "../store/store";
+import { fieldSchemasOf } from "../typecheck";
 import { type Author, GitStore } from "./gitStore";
 
 /** 公開したものの content hash。並べ方を決めた JSON の sha256（ADR 0013 §2） */
@@ -185,16 +187,25 @@ export class RepoService {
   async importSource(
     user: User,
     repoId: string,
-  ): Promise<{ repoId: string; repoName: string; commit: string; snapshot: ProjectSnapshot }> {
+  ): Promise<{
+    repoId: string;
+    repoName: string;
+    commit: string;
+    snapshot: ProjectSnapshot;
+    /** 取り込み元のフィールドのスキーマ（入れ子の中の参照を、取り込み先の ID に付け替えるのに使う。ADR 0065） */
+    schemas: FieldSchemas;
+  }> {
     const src = await this.require(repoId);
     if (!(await this.canFork(user, src))) throw new HttpError(403, "取り込む権限がありません");
     const commit = await this.git.head(repoId);
     if (!commit) throw new HttpError(409, "まだコミットがありません");
+    const snapshot = await this.snapshot(repoId, commit);
     return {
       repoId: src.id,
       repoName: src.name,
       commit,
-      snapshot: await this.snapshot(repoId, commit),
+      snapshot,
+      schemas: fieldSchemasOf(snapshot, new Map()),
     };
   }
 
@@ -211,6 +222,7 @@ export class RepoService {
     const at = commit ?? (await this.git.head(repoId));
     if (!at) throw new HttpError(409, "まだコミットがありません");
     const snap = await this.snapshot(repoId, at);
+    const schemas = fieldSchemasOf(snap, new Map());
     const source = { repoId: src.id, repoName: src.name, commit: at };
     if ("repoId" in target) {
       return this.withRepoLock(target.repoId, async () => {
@@ -223,12 +235,19 @@ export class RepoService {
             409,
             "このプロジェクトには編集用のデータがあります。新しいプロジェクトへ抽出してください",
           );
-        const merged = extractInto(snap, selection, source, await this.snapshot(dst.id));
+        const merged = extractInto(
+          snap,
+          selection,
+          source,
+          await this.snapshot(dst.id),
+          undefined,
+          schemas,
+        );
         const oid = await this.commit(dst.id, merged, `${src.name} から抽出して取り込み`, user, []);
         return { repo: dst, commit: oid };
       });
     }
-    const extracted = extractInto(snap, selection, source, null, target.name);
+    const extracted = extractInto(snap, selection, source, null, target.name, schemas);
     const repo = await this.create(user, { name: target.name, snapshot: extracted });
     return { repo, commit: (await this.git.head(repo.id)) as string };
   }

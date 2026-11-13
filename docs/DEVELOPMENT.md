@@ -46,6 +46,8 @@
 
 ### 利用者のスクリプトの TypeScript（ADR 0058）
 
+- フィールドの型の文からスキーマを作る方法は二つある（ADR 0065）：TypeScript で読む（`packages/typecheck/src/fieldSchema.ts`）のと、Tukurium が用意する型だけをじかに読む（`packages/eks/src/schema.ts` の `knownSchema()`）。Host API の宣言の型（`Vec3`・`Color`・`EntityRef` など）を変えたら両方を直す。同じ結果になることは `fieldSchema.test.ts` が検査する。
+- スキーマは、TypeScript の準備ができるまで届かない（ワークスペースを開いた直後など）。スキーマを使う所は、`schemaOfField()` で「届いたスキーマ、なければ型の文から分かる分」を取り、どちらもなければ確かめずに通す。型ごとの分岐（`field.type === "..."`）は書かない（型は文字なので、空白の違いなどで外れる）。
 - 利用者のスクリプトの型を確かめる TypeScript は 6.0 系で、リポジトリの開発に使う TypeScript 7（Go の版。ブラウザで動かない）とは別に入れている。同じ名前の `typescript` では二つの版を一つの package.json に書けないので、`typescript6`（`npm:typescript@6.0.3`）という名前で入れ、`import ts from "typescript6"` で読む。
 - 日本語の型エラーの文は、TypeScript の公開の型に無い `setLocalizedDiagnosticMessages` で差し替えている。版を上げるときは、この関数が残っているかを `packages/typecheck` のテスト（文が日本語になるか）で確かめる。
 - 型を消すのは sucrase。型を消しても行の数は変わらないが、行の中の位置はずれる。import のパスの範囲は `rangeInSource()` で元のコードの範囲に戻してから書き換える。

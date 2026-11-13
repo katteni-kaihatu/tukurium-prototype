@@ -1,3 +1,5 @@
+import type { Value } from "./value";
+
 /** Entity の識別子。リポジトリ内で安定した ID（作成時に発行）。 */
 export type EntityId = string;
 /** KokoState 定義の識別子。名前変更しても変わらない。 */
@@ -7,49 +9,35 @@ export type FieldId = string;
 
 export type Vec3 = [number, number, number];
 
-/** フィールドの型と値の対応。 */
-export interface FieldValueMap {
-  number: number;
-  boolean: boolean;
-  string: string;
-  vec3: Vec3;
-  /** "#rrggbb" */
-  color: string;
-  /** 参照先 Entity。「なし」は undefined（null は使わない。ADR 0065）。 */
-  entity: EntityId | undefined;
-  /** テクスチャ（画像の素材）の ID。「なし」は undefined。 */
-  texture: string | undefined;
-  /** マテリアルの ID。「なし」は undefined。 */
-  material: string | undefined;
-  /** モデル（3D の素材）の ID。「なし」は undefined。 */
-  model: string | undefined;
-  /** 音声の素材の ID。「なし」は undefined。 */
-  audio: string | undefined;
-}
+/** フィールドの値（保存できる値。ADR 0065） */
+export type FieldValue = Value;
 
-/** リソースを指す欄の型（テクスチャ・マテリアル・モデル・音声） */
-export type ResourceFieldType = "texture" | "material" | "model" | "audio";
-
-export const RESOURCE_FIELD_TYPES: readonly ResourceFieldType[] = [
-  "texture",
-  "material",
-  "model",
-  "audio",
-];
-
-export function isResourceFieldType(type: string): type is ResourceFieldType {
-  return (RESOURCE_FIELD_TYPES as readonly string[]).includes(type);
-}
-
-export type FieldType = keyof FieldValueMap;
-export type FieldValue = FieldValueMap[FieldType];
-
-export interface FieldDef<T extends FieldType = FieldType> {
+/**
+ * フィールドの定義。
+ * - type：TypeScript の型の文（例：`number`、`Vec3`、`EntityRef | undefined`、`Card[]`。ADR 0065）。
+ *   Tukurium が用意する型の名前は `FIELD_TYPE` にある。
+ * - default：初期値。型とは別に持つ。
+ */
+export interface FieldDef {
   id: FieldId;
   name: string;
-  type: T;
-  default: FieldValueMap[T];
+  type: string;
+  default: FieldValue;
 }
+
+/** Tukurium が用意する、よく使う型の文（Host API の宣言にある型の名前。ADR 0065） */
+export const FIELD_TYPE = {
+  number: "number",
+  boolean: "boolean",
+  string: "string",
+  vec3: "Vec3",
+  color: "Color",
+  entity: "EntityRef | undefined",
+  texture: "TextureRef | undefined",
+  material: "MaterialRef | undefined",
+  model: "ModelRef | undefined",
+  audio: "AudioRef | undefined",
+} as const;
 
 export interface KokoStateDef {
   id: KokoStateId;

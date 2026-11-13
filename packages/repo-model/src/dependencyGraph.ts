@@ -1,4 +1,10 @@
-import { isResourceFieldType, type KokoStateDef, stringifyValue } from "@tukurium/eks";
+import {
+  type FieldSchemas,
+  type KokoStateDef,
+  schemaOfField,
+  stringifyValue,
+  visitRefs,
+} from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { ResourcePathIndex } from "./resourcePath";
@@ -49,11 +55,15 @@ export class ProjectDependencyGraph {
   /** 依存元（A → B の A） */
   private readonly in = new Map<string, Set<string>>();
 
-  static fromSnapshot(snap: ProjectSnapshot): ProjectDependencyGraph {
-    return new ProjectDependencyGraph(snap);
+  /**
+   * schemas：TypeScript で作ったフィールドのスキーマ（あれば、入れ子の中の参照までたどる）。
+   * なくても、Tukurium が用意する型のフィールドはたどれる。
+   */
+  static fromSnapshot(snap: ProjectSnapshot, schemas?: FieldSchemas): ProjectDependencyGraph {
+    return new ProjectDependencyGraph(snap, schemas);
   }
 
-  private constructor(snap: ProjectSnapshot) {
+  private constructor(snap: ProjectSnapshot, schemas?: FieldSchemas) {
     const defs = new Map<string, KokoStateDef>();
     for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
 
@@ -66,11 +76,12 @@ export class ProjectDependencyGraph {
       for (const [kokoId, values] of Object.entries(e.states)) {
         this.edge(from, { kind: "kokostate", id: kokoId });
         for (const f of defs.get(kokoId)?.fields ?? []) {
-          const v = values[f.id];
-          if (typeof v !== "string" || v === "") continue;
-          if (isResourceFieldType(f.type))
-            this.edge(from, { kind: f.type === "material" ? "material" : "asset", id: v });
-          else if (f.type === "entity") this.edge(from, { kind: "entity", id: v });
+          const schema = schemaOfField(schemas, kokoId, f);
+          if (!schema) continue;
+          visitRefs(schema, values[f.id], (target, id) => {
+            const kind = target === "entity" || target === "material" ? target : "asset";
+            this.edge(from, { kind, id });
+          });
         }
       }
       this.edge({ kind: "output", id: e.output }, from);

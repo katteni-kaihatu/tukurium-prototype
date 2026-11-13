@@ -114,7 +114,9 @@ describe("checkProjectReferences", () => {
           {
             id: "ks_aim",
             name: "Aim",
-            fields: [{ id: "f_t", name: "target", type: "entity", default: undefined }],
+            fields: [
+              { id: "f_t", name: "target", type: "EntityRef | undefined", default: undefined },
+            ],
           },
         ],
         entities: [

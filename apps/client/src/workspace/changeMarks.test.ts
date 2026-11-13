@@ -97,7 +97,7 @@ describe("保存との差", () => {
     });
 
     // KokoState の初期値も同じ
-    const field = { id: "mat", name: "mat", type: "material" as const };
+    const field = { id: "mat", name: "mat", type: "MaterialRef | undefined" };
     const def = (value: string | undefined) => ({
       id: "ks",
       name: "K",

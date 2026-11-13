@@ -1,4 +1,4 @@
-import { type EntityId, World } from "@tukurium/eks";
+import { type EntityId, type FieldSchemas, World } from "@tukurium/eks";
 import {
   buildRegistry,
   type Diagnostic,
@@ -83,6 +83,11 @@ interface WorkspaceState {
   checkProblems: ObservedDiagnostics[];
   /** 型の誤り（Worker で確かめた結果と、調べたときの版。ADR 0058） */
   typeProblems: ObservedDiagnostics;
+  /**
+   * フィールドのスキーマ（型を確かめる Worker が、制作データから作る。ADR 0065）。保存も同期もしない。
+   * まだないフィールドは、型の文から分かる分だけを使う（`schemaOfField`）
+   */
+  fieldSchemas: FieldSchemas;
   /** 「確かめ直す」を押した回数（変わったら、すべての System を調べ直す） */
   recheckSeq: number;
   /** スクリプトを確かめている最中 */
@@ -237,6 +242,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     systemStatus: [],
     checkProblems: [],
     typeProblems: NO_DIAGNOSTICS,
+    fieldSchemas: {},
     recheckSeq: 0,
     checking: false,
     runProblems: NO_DIAGNOSTICS,
@@ -331,6 +337,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         detailPlace: null,
         checkProblems: [],
         typeProblems: NO_DIAGNOSTICS,
+        fieldSchemas: {},
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,
@@ -379,6 +386,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         packagePool: [],
         checkProblems: [],
         typeProblems: NO_DIAGNOSTICS,
+        fieldSchemas: {},
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,
@@ -593,6 +601,8 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     // 同じワークスペース（＝同じリポジトリ）の System は同じ領域で動かす
     realm: workspaceId,
     packages,
+    // 型を確かめる Worker が作ったスキーマ（まだなければ、型の文から分かる分だけで確かめる）
+    schemas: ws().fieldSchemas,
     onLog: (entry) => {
       if (!started && !current()) return;
       pushLog(entry);

@@ -1,4 +1,13 @@
-import type { FieldDef, FieldValue, Vec3 } from "@tukurium/eks";
+import {
+  acceptsUndefined,
+  type FieldDef,
+  type FieldValue,
+  isVec3Schema,
+  refTargetOf,
+  schemaOfField,
+  stringifyValue,
+  type Vec3,
+} from "@tukurium/eks";
 import {
   BUILTIN,
   COLLIDER_SHAPES,
@@ -7,6 +16,7 @@ import {
   RIGID_BODY_TYPES,
 } from "@tukurium/repo-model";
 import { useEffect, useId, useState } from "react";
+import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
 export interface FieldChoices {
@@ -54,7 +64,7 @@ const FIELD_TITLE: Record<string, string> = {
 };
 
 /**
- * KokoState のフィールド 1 つ分の入力。型ごとに入力部品を変える。
+ * KokoState のフィールド 1 つ分の入力。型（スキーマ）ごとに入力部品を変える。
  * 数値は入力中の途中の文字（「1.」「-」など）を壊さないよう、確定（Enter・フォーカスを外す）で反映する。
  */
 export function FieldInput(props: {
@@ -69,8 +79,18 @@ export function FieldInput(props: {
   const id = useId();
   const enumValues = ENUMS[`${props.koko}/${field.id}`];
 
+  const schemas = useWorkspace((st) => st.fieldSchemas);
+  // 型の文から決まる入力。TypeScript で作ったスキーマがあればそれ、なければ型の文から分かるもの
+  const schema = schemaOfField(schemas, props.koko, field);
+  const refTarget = schema ? refTargetOf(schema) : undefined;
+  const choicesOfLiterals =
+    schema?.kind === "union" &&
+    schema.options.every((o) => o.kind === "literal" && typeof o.value === "string")
+      ? schema.options.map((o) => String((o as { value: unknown }).value))
+      : undefined;
+
   let control: React.ReactNode;
-  if (enumValues) {
+  if (enumValues || choicesOfLiterals) {
     control = (
       <select
         id={id}
@@ -79,109 +99,107 @@ export function FieldInput(props: {
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
-        {enumValues.map((v) => (
+        {(enumValues ?? choicesOfLiterals ?? []).map((v) => (
           <option key={v} value={v}>
             {SHAPE_LABEL[v] ?? v}
           </option>
         ))}
       </select>
     );
-  } else {
-    switch (field.type) {
-      case "number":
-        control = (
-          <NumberInput id={id} value={Number(value)} disabled={disabled} onCommit={onChange} />
-        );
-        break;
-      case "boolean":
-        control = (
-          <input
-            id={id}
-            type="checkbox"
-            checked={Boolean(value)}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.checked)}
-          />
-        );
-        break;
-      case "string":
-        control = (
-          <TextInput id={id} value={String(value ?? "")} disabled={disabled} onCommit={onChange} />
-        );
-        break;
-      case "color":
-        control = (
-          <span className={ui.color}>
-            <input
-              id={id}
-              type="color"
-              value={String(value)}
+  } else if (schema?.kind === "number") {
+    control = <NumberInput id={id} value={Number(value)} disabled={disabled} onCommit={onChange} />;
+  } else if (schema?.kind === "boolean") {
+    control = (
+      <input
+        id={id}
+        type="checkbox"
+        checked={Boolean(value)}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    );
+  } else if (schema?.kind === "string") {
+    control = (
+      <TextInput id={id} value={String(value ?? "")} disabled={disabled} onCommit={onChange} />
+    );
+  } else if (schema?.kind === "color") {
+    control = (
+      <span className={ui.color}>
+        <input
+          id={id}
+          type="color"
+          value={String(value)}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <code className={ui.num}>{String(value).toUpperCase()}</code>
+      </span>
+    );
+  } else if (schema && isVec3Schema(schema)) {
+    const v = (Array.isArray(value) ? value : [0, 0, 0]) as Vec3;
+    control = (
+      <span className={ui.vec3}>
+        {(["X", "Y", "Z"] as const).map((axis, i) => (
+          // 軸ごとに色を付けた印を、入力欄の頭に出す（X 赤・Y 緑・Z 青）
+          <span key={axis} className={ui.axisBox} data-axis={axis}>
+            <span className={ui.axisTag} aria-hidden="true">
+              {axis}
+            </span>
+            <NumberInput
+              id={i === 0 ? id : undefined}
+              label={`${field.name} ${axis}`}
+              value={v[i] ?? 0}
               disabled={disabled}
-              onChange={(e) => onChange(e.target.value)}
+              onCommit={(n) => {
+                const next = [...v] as Vec3;
+                next[i] = n;
+                onChange(next);
+              }}
             />
-            <code className={ui.num}>{String(value).toUpperCase()}</code>
           </span>
-        );
-        break;
-      case "vec3": {
-        const v = (Array.isArray(value) ? value : [0, 0, 0]) as Vec3;
-        control = (
-          <span className={ui.vec3}>
-            {(["X", "Y", "Z"] as const).map((axis, i) => (
-              // 軸ごとに色を付けた印を、入力欄の頭に出す（X 赤・Y 緑・Z 青）
-              <span key={axis} className={ui.axisBox} data-axis={axis}>
-                <span className={ui.axisTag} aria-hidden="true">
-                  {axis}
-                </span>
-                <NumberInput
-                  id={i === 0 ? id : undefined}
-                  label={`${field.name} ${axis}`}
-                  value={v[i] ?? 0}
-                  disabled={disabled}
-                  onCommit={(n) => {
-                    const next = [...v] as Vec3;
-                    next[i] = n;
-                    onChange(next);
-                  }}
-                />
-              </span>
-            ))}
-          </span>
-        );
-        break;
-      }
-      case "texture":
-      case "material":
-      case "model":
-      case "audio":
-      case "entity": {
-        const assets = props.choices.assets ?? [];
-        const kind = field.type === "entity" ? null : RESOURCE_FIELD_KIND[field.type];
-        const options =
-          field.type === "entity"
-            ? props.choices.entities
-            : kind === "material"
-              ? props.choices.materials
-              : assets.filter((a) => a.kind === kind);
-        control = (
-          <select
-            id={id}
-            className={ui.select}
-            value={typeof value === "string" ? value : ""}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
-          >
-            <option value="">（なし）</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        );
-        break;
-      }
-    }
+        ))}
+      </span>
+    );
+  } else if (schema && refTarget) {
+    const assets = props.choices.assets ?? [];
+    const kind = refTarget === "entity" ? null : RESOURCE_FIELD_KIND[refTarget];
+    const options =
+      refTarget === "entity"
+        ? props.choices.entities
+        : kind === "material"
+          ? props.choices.materials
+          : assets.filter((a) => a.kind === kind);
+    // 「なし」にできるのは、型が undefined を受け入れるときだけ（`EntityRef | undefined`）
+    const optional = acceptsUndefined(schema);
+    control = (
+      <select
+        id={id}
+        className={ui.select}
+        value={typeof value === "string" ? value : ""}
+        disabled={disabled}
+        onChange={(e) => {
+          if (e.target.value !== "") onChange(e.target.value);
+          else if (optional) onChange(undefined);
+        }}
+      >
+        <option value="" disabled={!optional}>
+          {optional ? "（なし）" : "（選んでください）"}
+        </option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+    );
+  } else {
+    // 専用の入力がまだない型（リスト・レコードなど）と、型エラーで形が分からないフィールドは、
+    // 値を保存する形（タグ付きの JSON）の文字で見せる
+    control = (
+      <code id={id} className={ui.num} title={field.type} style={{ overflowWrap: "anywhere" }}>
+        {stringifyValue(value)}
+      </code>
+    );
   }
 
   return (

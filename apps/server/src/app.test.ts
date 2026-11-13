@@ -895,11 +895,16 @@ describe("セッションの世界（配置・適用）", () => {
       workspaceId,
       outputId: "out",
       snapshot: snap("v1"),
+      // 出した人の画面が作ったフィールドのスキーマ（ADR 0065）。ホストへそのまま渡る
+      schemas: { ks_hand: { f_cards: { kind: "list", item: { kind: "string" } } } },
       position: [1, 0, 2],
       yaw: 0,
     });
     const add = await a.next("host.addPart");
     expect(add.part).toMatchObject({ realm: workspaceId, outputId: "out", position: [1, 0, 2] });
+    expect(add.part.schemas).toEqual({
+      ks_hand: { f_cards: { kind: "list", item: { kind: "string" } } },
+    });
     const info = await b.next("session", (m) => m.session.placements.length === 1);
     expect(info.session.placements[0]).toMatchObject({
       workspaceName: "銃",
@@ -912,6 +917,8 @@ describe("セッションの世界（配置・適用）", () => {
     const applied = await a.next("host.apply");
     expect(applied).toMatchObject({ realm: workspaceId, outputId: "out", by: "ここあ" });
     expect((applied.snapshot as { marker: string }).marker).toBe("v2");
+    // スキーマを付けずに適用したら、前のスキーマは使わない（型の文から分かる分だけで確かめる）
+    expect(applied.schemas).toBeUndefined();
 
     b.send({
       t: "session.input",
@@ -1422,6 +1429,10 @@ describe("リポジトリ・コミット・作品", () => {
     const add = await a.next("host.addPart");
     expect(add.part.realm).toBe(`rel_${rel.id}`);
     expect((add.part.snapshot as { name: string }).name).toBe("射撃場");
+    // リリースのフィールドのスキーマは、サーバーが作って付ける（ホストは TypeScript を読み込まない。ADR 0065）
+    const schemas = add.part.schemas as Record<string, Record<string, { kind: string }>>;
+    expect(schemas["builtin.Transform"]?.position?.kind).toBe("tuple");
+    expect(Object.keys(schemas).some((k) => k.startsWith("ks_"))).toBe(true);
     const info = await a.next("session", (m) => m.session.placements.length === 1);
     expect(info.session.placements[0]).toMatchObject({
       workspaceId: null,

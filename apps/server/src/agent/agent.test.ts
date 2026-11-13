@@ -204,6 +204,65 @@ export default system({
     await expect.poll(() => meshOf()?.material).toBeUndefined();
     expect(await call("check")).toBe("問題はありません");
 
+    // TypeScript で書いた型のフィールド（ADR 0065）。値は、保存する形（タグ付きの JSON）で渡す
+    await call("create_kokostate", {
+      name: "Hand",
+      fields: [
+        { name: "cards", type: "{ suit: string; rank: number; owner: EntityRef | undefined }[]" },
+        { name: "drawn", type: "Date | undefined" },
+        { name: "score", type: "Map<string, number>" },
+        { name: "broken", type: "() => void" },
+      ],
+    });
+    const hand = () => a.project.kokostates().find((k) => k.name === "Hand");
+    await expect
+      .poll(() => hand()?.fields.map((f) => f.default))
+      .toEqual([[], undefined, new Map(), undefined]);
+    await call("update_entity", {
+      entity: "回る箱",
+      states: {
+        Hand: {
+          cards: [{ suit: "spade", rank: 1, owner: "回る箱" }],
+          drawn: { $t: "Date", v: "2026-11-10T00:00:00.000Z" },
+          score: { $t: "Map", v: [["a", 3]] },
+        },
+      },
+    });
+    const box = () => a.project.entities().find((e) => e.name === "回る箱");
+    // 値はフィールドの ID で入るので、名前に直して確かめる
+    const handValues = () => {
+      const values = box()?.states[hand()?.id ?? ""] ?? {};
+      return Object.fromEntries((hand()?.fields ?? []).map((f) => [f.name, values[f.id]]));
+    };
+    await expect.poll(handValues).toMatchObject({
+      // 入れ子の中の参照も、名前から ID にはしない（名前で指せるのは、参照そのもののフィールドだけ）
+      cards: [{ suit: "spade", rank: 1, owner: "回る箱" }],
+      drawn: new Date("2026-11-10T00:00:00.000Z"),
+      score: new Map([["a", 3]]),
+    });
+    await expect(
+      call("update_entity", { entity: "回る箱", states: { Hand: { cards: [{ suit: 1 }] } } }),
+    ).rejects.toThrow(/\[0\]\.suit：文字ではありません/);
+    // 保存できない型は、そのフィールドの型エラーとして出る。入れ子の中の参照切れも出る
+    const typeProblems = await call("check");
+    expect(typeProblems.map((p: { code: string }) => p.code).sort()).toEqual([
+      "field-type-unsaveable",
+      "missing-entity",
+    ]);
+    await call("update_kokostate", {
+      kokostate: "Hand",
+      fields: [
+        { name: "cards", type: "{ suit: string; rank: number; owner: EntityRef | undefined }[]" },
+        { name: "drawn", type: "Date | undefined" },
+        { name: "score", type: "Map<string, number>" },
+      ],
+    });
+    await call("update_entity", {
+      entity: "回る箱",
+      states: { Hand: { cards: [{ suit: "spade", rank: 1, owner: box()?.id }] } },
+    });
+    expect(await call("check")).toBe("問題はありません");
+
     const result = await call("simulate", { seconds: 1, watch: ["回る箱"] });
     expect(result.truncated).toBe(false);
     expect(result.total).toBe(1);

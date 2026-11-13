@@ -1,4 +1,4 @@
-import { parseValue } from "@tukurium/eks";
+import { type FieldSchemas, parseValue } from "@tukurium/eks";
 import type {
   FileChange,
   PackageManifest,
@@ -233,10 +233,13 @@ export const api = {
     ),
   /** 開いているワークスペースへ取り込むための、取り出し元の中身（フォークできる人だけ） */
   importSource: (id: string) =>
-    call<{ repoId: string; repoName: string; commit: string; snapshot: ProjectSnapshot }>(
-      "GET",
-      `/api/repos/${id}/import-source`,
-    ),
+    call<{
+      repoId: string;
+      repoName: string;
+      commit: string;
+      snapshot: ProjectSnapshot;
+      schemas?: FieldSchemas;
+    }>("GET", `/api/repos/${id}/import-source`),
   snapshot: (id: string, commit?: string) =>
     call<ProjectSnapshot>("GET", `/api/repos/${id}/snapshot${commit ? `?commit=${commit}` : ""}`),
   diff: (id: string, oid: string) =>
