@@ -3,6 +3,8 @@
   --app-rail-width: 64px;
   /* 左のメニュー・欄と左上の札から測り直す（app/layoutEdges.ts） */
   --app-content-left: 96px;
+  /* 右の欄から測り直す。画面いっぱいのページだけが避ける */
+  --app-content-right: 16px;
   --app-panel-top: 72px;
   --c-ink: #26262e;
   --c-ink-2: #3a3942;
