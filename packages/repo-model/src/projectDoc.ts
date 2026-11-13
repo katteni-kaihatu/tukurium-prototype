@@ -1,6 +1,9 @@
 import {
+  decodeValue,
   type EntityId,
   encodeValue,
+  equalValues,
+  type FieldDef,
   type FieldValue,
   type Json,
   type KokoStateDef,
@@ -9,6 +12,7 @@ import {
 } from "@tukurium/eks";
 import * as Y from "yjs";
 import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
+import { assignOrderKeys } from "./orderKey";
 import { validateAlias } from "./packageDependency";
 import { normalizeName, validateName } from "./resourcePath";
 import {
@@ -26,7 +30,6 @@ import {
 import {
   decodeKokoState,
   decodeStates,
-  encodeKokoState,
   encodeValues,
   type StoredKokoState,
   type StoredValues,
@@ -43,11 +46,69 @@ const valueMap = (values: KokoStateValues): ValueMap =>
 const none = (): Json => encodeValue(undefined);
 
 /**
+ * KokoState の定義を入れる Y.Map（ADR 0065）。フィールドごとに Y.Map を持つので、
+ * 2 人が別のフィールドを同時に変えても、両方の変更が残る（フィールドごとの後勝ち）。
+ * - id / name / role
+ * - fields : Y.Map<フィールドの ID, Y.Map>  name, type, default（保存する形の値）, order（並べ替え用のキー）
+ */
+type KokoMap = Y.Map<unknown>;
+type FieldMap = Y.Map<unknown>;
+
+function fieldMap(f: FieldDef, order: string): FieldMap {
+  const m: FieldMap = new Y.Map<unknown>();
+  m.set("name", f.name);
+  m.set("type", f.type);
+  m.set("default", encodeValue(f.default));
+  m.set("order", order);
+  return m;
+}
+
+function kokoMapOf(def: KokoStateDef): KokoMap {
+  const m: KokoMap = new Y.Map<unknown>();
+  m.set("id", def.id);
+  m.set("name", def.name);
+  if (def.role !== undefined) m.set("role", def.role);
+  const fields = new Y.Map<FieldMap>();
+  const keys = assignOrderKeys(def.fields.map(() => undefined));
+  def.fields.forEach((f, i) => {
+    fields.set(f.id, fieldMap(f, keys[i] as string));
+  });
+  m.set("fields", fields);
+  return m;
+}
+
+/** フィールドを、並べ替え用のキーの順に読む（同じキーは、ID の順） */
+function readFields(fields: Y.Map<FieldMap>): (FieldDef & { order: string })[] {
+  const list = [...fields.entries()].map(([id, f]) => ({
+    id,
+    name: String(f.get("name") ?? id),
+    type: String(f.get("type") ?? ""),
+    default: decodeValue(f.get("default")) as FieldValue,
+    order: String(f.get("order") ?? ""),
+  }));
+  return list.sort((a, b) =>
+    a.order < b.order ? -1 : a.order > b.order ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  );
+}
+
+/** 定義を読む。前の形（定義まるごとが一つの値）で入っているものも読める */
+function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
+  if (!(stored instanceof Y.Map)) return decodeKokoState(stored);
+  const role = stored.get("role");
+  return {
+    id: String(stored.get("id")),
+    name: String(stored.get("name")),
+    ...(typeof role === "string" ? { role } : {}),
+    fields: readFields(stored.get("fields") as Y.Map<FieldMap>).map(({ order: _order, ...f }) => f),
+  };
+}
+
+/**
  * ワークスペースの制作データ（編集中）。Y.Doc の上に載せ、共同編集でそのまま同期できるようにする。
  *
  * 構造：
  * - meta        : Y.Map            name
- * - kokostates  : Y.Map<StoredKokoState>  利用者定義（Built-in は含めない）
+ * - kokostates  : Y.Map<Y.Map>          利用者定義（Built-in は含めない）。フィールドごとの Y.Map を持つ
  * - systems     : Y.Map<SystemDef>
  * - code        : Y.Map<Y.Text>         System のスクリプト（文字単位で共同編集）
  * - materials   : Y.Map<MaterialDef>
@@ -75,7 +136,7 @@ export class ProjectDoc {
     return this.doc.getMap<string>("meta");
   }
   private get kokoMap() {
-    return this.doc.getMap<StoredKokoState>("kokostates");
+    return this.doc.getMap<KokoMap | StoredKokoState>("kokostates");
   }
   private get systemMap() {
     return this.doc.getMap<SystemDef>("systems");
@@ -128,11 +189,11 @@ export class ProjectDoc {
 
   // ---------- KokoState 定義 ----------
   kokostates(): KokoStateDef[] {
-    return [...this.kokoMap.values()].map(decodeKokoState);
+    return [...this.kokoMap.values()].map(readKoko);
   }
   kokostate(id: KokoStateId): KokoStateDef | undefined {
     const d = this.kokoMap.get(id);
-    return d ? decodeKokoState(d) : undefined;
+    return d ? readKoko(d) : undefined;
   }
   registry() {
     return buildRegistry([...this.kokostates(), ...this.packageDefs]);
@@ -147,12 +208,12 @@ export class ProjectDoc {
   addKokoState(name: string): KokoStateId {
     this.assertKokoName(name, null);
     const id = newId("ks");
-    this.kokoMap.set(id, { id, name, fields: [] });
+    this.kokoMap.set(id, kokoMapOf({ id, name, fields: [] }));
     return id;
   }
   /** 定義を書き換える。フィールドを消した・型を変えた場合、Entity の値も合わせる。 */
   updateKokoState(def: KokoStateDef): void {
-    const renamed = this.kokoMap.get(def.id)?.name !== def.name;
+    const renamed = this.kokostate(def.id)?.name !== def.name;
     if (renamed) this.refactoring(() => this.updateKokoStateNow(def));
     else this.updateKokoStateNow(def);
   }
@@ -167,20 +228,47 @@ export class ProjectDoc {
     const names = def.fields.map((f) => f.name);
     if (new Set(names).size !== names.length) throw new Error("フィールド名が重複しています");
     this.transact(() => {
-      const prev = this.kokoMap.get(def.id);
-      this.kokoMap.set(def.id, encodeKokoState(def));
+      const stored = this.kokoMap.get(def.id);
+      const prev = stored ? readKoko(stored) : undefined;
+      if (!(stored instanceof Y.Map)) {
+        this.kokoMap.set(def.id, kokoMapOf(def));
+      } else {
+        // 変わった所だけを書く。同時に別のフィールドを変えた人の変更を、上書きしない
+        if (prev?.name !== def.name) stored.set("name", def.name);
+        if (prev?.role !== def.role) {
+          if (def.role === undefined) stored.delete("role");
+          else stored.set("role", def.role);
+        }
+        const fields = stored.get("fields") as Y.Map<FieldMap>;
+        for (const id of [...fields.keys()]) if (!ids.has(id)) fields.delete(id);
+        const current = new Map(readFields(fields).map((f) => [f.id, f]));
+        const keys = assignOrderKeys(def.fields.map((f) => current.get(f.id)?.order));
+        def.fields.forEach((f, i) => {
+          const key = keys[i] as string;
+          const m = fields.get(f.id);
+          const old = current.get(f.id);
+          if (!m || !old) {
+            fields.set(f.id, fieldMap(f, key));
+            return;
+          }
+          if (old.name !== f.name) m.set("name", f.name);
+          if (old.type !== f.type) m.set("type", f.type);
+          if (!equalValues(old.default, f.default)) m.set("default", encodeValue(f.default));
+          if (old.order !== key) m.set("order", key);
+        });
+      }
       if (!prev) return;
-      // Entity が持っている値を新しい定義に合わせる（消えたフィールドは削除、型が変わったら初期値）
+      // Entity が持っている値を新しい定義に合わせる：消えたフィールドは削除、足したフィールドと
+      // 型が変わったフィールドは初期値。ほかのフィールドの値には触れない（同時に値を変えた人の変更を残す）
       for (const e of this.entityMap.values()) {
         const states = e.get("states") as Y.Map<ValueMap>;
         const values = states.get(def.id);
         if (!values) continue;
-        for (const field of values.keys()) if (!ids.has(field)) values.delete(field);
+        for (const field of [...values.keys()]) if (!ids.has(field)) values.delete(field);
         for (const f of def.fields) {
           const old = prev.fields.find((p) => p.id === f.id);
-          const kept = old && old.type === f.type && values.has(f.id);
-          // 定義の競合と値の競合で勝つ側を揃えるため、同型の値も書き戻す。
-          values.set(f.id, kept ? clone(values.get(f.id) as Json) : encodeValue(f.default));
+          if (old && old.type === f.type && values.has(f.id)) continue;
+          values.set(f.id, encodeValue(f.default));
         }
       }
     });
@@ -199,7 +287,7 @@ export class ProjectDoc {
     if (BUILTIN_KOKOSTATES.some((b) => b.name === name))
       throw new Error(`名前「${name}」は Built-in の KokoState が使っています`);
     // 名前はプロジェクト全体で一つでなくてよい（同一性は ID。ADR 0010）。同じ場所の中だけで一つにする
-    if (self !== null && this.kokoMap.get(self)?.name !== name) this.assertSiblingName(name, self);
+    if (self !== null && this.kokostate(self)?.name !== name) this.assertSiblingName(name, self);
   }
 
   // ---------- System ----------
@@ -561,7 +649,7 @@ export class ProjectDoc {
       for (const f of snap.folders ?? [])
         if (!this.folderMap.has(f.id)) this.folderMap.set(f.id, clone(f));
       for (const k of snap.kokostates)
-        if (!this.kokoMap.has(k.id)) this.kokoMap.set(k.id, encodeKokoState(k));
+        if (!this.kokoMap.has(k.id)) this.kokoMap.set(k.id, kokoMapOf(k));
       for (const x of snap.systems) {
         if (this.systemMap.has(x.id)) continue;
         this.systemMap.set(x.id, { id: x.id, name: x.name });
@@ -606,7 +694,7 @@ export class ProjectDoc {
       for (const d of snap.dependencies ?? []) this.dependencyMap.set(d.alias, clone(d));
       this.meta.set("name", snap.name);
       this.meta.set("provenance", (snap.provenance ?? []) as unknown as string);
-      for (const k of snap.kokostates) this.kokoMap.set(k.id, encodeKokoState(k));
+      for (const k of snap.kokostates) this.kokoMap.set(k.id, kokoMapOf(k));
       for (const s of snap.systems) {
         this.systemMap.set(s.id, { id: s.id, name: s.name });
         const text = new Y.Text();
@@ -681,7 +769,7 @@ export class ProjectDoc {
     const out: { id: string; name: string }[] = [];
     for (const f of this.folderMap.values()) if (this.parentOf(f.id) === parent) out.push(f);
     const resources: { id: string; name: string }[] = [
-      ...this.kokoMap.values(),
+      ...this.kokostates(),
       ...this.systemMap.values(),
       ...this.materialMap.values(),
       ...this.assetMap.values(),
