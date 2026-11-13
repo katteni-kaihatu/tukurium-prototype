@@ -4,6 +4,7 @@ import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
 import { api, type Work } from "../net/api";
 import { currentWorld } from "../session/openWorld";
+import { useCatalog } from "./catalogStore";
 import styles from "./MainMenu.module.css";
 import { enterSession } from "./sessionActions";
 import { useMainMenu } from "./store";
@@ -38,7 +39,10 @@ export function WorldsPage() {
       },
     );
   };
+  // マーケットで入手したら、鍵の状態を読み直す
+  const ownedCount = useCatalog((c) => c.owned.length);
   useEffect(() => {
+    void ownedCount;
     api.works().then(
       (list) => {
         setWorks(list);
@@ -49,7 +53,7 @@ export function WorldsPage() {
         setLoaded(true);
       },
     );
-  }, []);
+  }, [ownedCount]);
   useEffect(
     () =>
       client.on((msg) => {
@@ -155,9 +159,17 @@ export function WorldsPage() {
                     {w.thumbnail && <Thumbnail id={w.thumbnail} name={w.name} size="small" />}
                     <span>
                       <span className={styles.eyebrow}>
-                        {opened ? "開いています" : pending ? "まもなく変わります" : "ワールド"}
+                        {opened
+                          ? "開いています"
+                          : pending
+                            ? "まもなく変わります"
+                            : w.unlocked === false
+                              ? `有料 · ${w.price?.toLocaleString("ja-JP")} P`
+                              : "ワールド"}
                       </span>
-                      <strong>{w.name}</strong>
+                      <strong>
+                        {w.unlocked === false && <LockIcon />} {w.name}
+                      </strong>
                     </span>
                   </span>
                   <span className={styles.muted}>
@@ -175,6 +187,7 @@ export function WorldsPage() {
               opened={chosen.latest?.id !== undefined && open?.releaseId === chosen.latest.id}
               changing={session?.worldChange?.releaseId === chosen.latest?.id}
               canUse={chosen.perms.use || chosen.owner === me?.id}
+              locked={chosen.unlocked === false}
               name={name}
               onName={(value) => {
                 setNameEdited(true);
@@ -208,6 +221,7 @@ function WorldDetail({
   opened,
   changing,
   canUse,
+  locked,
   name,
   onName,
   offline,
@@ -220,6 +234,8 @@ function WorldDetail({
   opened: boolean;
   changing: boolean;
   canUse: boolean;
+  /** マーケットで有料で、まだ入手していない */
+  locked: boolean;
   name: string;
   onName(value: string): void;
   offline: boolean;
@@ -242,7 +258,26 @@ function WorldDetail({
         {work.latest ? ` · v${work.latest.version}` : ""}
       </p>
       {!canUse && <p className={styles.muted}>利用の権限がありません。</p>}
-      {inSession ? (
+      {canUse && locked ? (
+        <>
+          <p className={styles.notice}>
+            <LockIcon /> 有料のワールドです（{work.price?.toLocaleString("ja-JP")}{" "}
+            P）。マーケットで入手すると開けます。
+          </p>
+          <button
+            type="button"
+            className={styles.primary}
+            onClick={() => {
+              const menu = useMainMenu.getState();
+              menu.setQuery("market", "");
+              menu.select("market", work.id);
+              menu.selectPage("market");
+            }}
+          >
+            マーケットで入手する
+          </button>
+        </>
+      ) : inSession ? (
         opened ? (
           <p>このワールドを開いています。</p>
         ) : (
@@ -279,5 +314,25 @@ function WorldDetail({
         </form>
       )}
     </aside>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      role="img"
+      aria-label="鍵"
+      style={{ verticalAlign: "-2px" }}
+    >
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
   );
 }

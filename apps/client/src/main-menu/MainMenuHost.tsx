@@ -55,8 +55,22 @@ export function MainMenuHost() {
     initial: {
       x: insets.left + index * 20,
       y: insets.top + index * 10,
-      width: id === "status" ? 600 : id === "friends" ? 720 : id === "projects" ? 1080 : 920,
-      height: id === "status" ? undefined : id === "items" ? 740 : id === "projects" ? 720 : 620,
+      width:
+        id === "status"
+          ? 600
+          : id === "friends"
+            ? 720
+            : id === "projects" || id === "market"
+              ? 1080
+              : 920,
+      height:
+        id === "status"
+          ? undefined
+          : id === "items"
+            ? 740
+            : id === "projects" || id === "market"
+              ? 720
+              : 620,
     },
     recallKey: windows[id].recall,
     focusKey: windows[id].focus,

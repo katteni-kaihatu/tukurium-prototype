@@ -98,10 +98,47 @@ export function registerRepoRoutes(
               workTagsSchema,
             ])
             .default([]),
+          kind: z.enum(["all", "item", "world"]).default("all"),
+          sort: z.enum(["new", "popular", "cheap"]).default("new"),
         })
         .parse(req.query);
-      return catalog.search(await userOf(req), q.q, q.offset, q.limit, q.tag);
+      return catalog.search(await userOf(req), q.q, q.offset, q.limit, q.tag, q.kind, q.sort);
     }),
+  );
+  const listingSchema = z.object({
+    price: z.number().int().min(0).max(100000),
+    tags: workTagsSchema.optional(),
+    autoPublish: z.boolean(),
+    releaseId: z.string().min(1).max(64).optional(),
+  });
+  app.get(
+    "/api/me/wallet",
+    handle(async (req) => catalog.wallet(await needUser(req))),
+  );
+  app.get(
+    "/api/me/market",
+    handle(async (req) => catalog.mine(await needUser(req))),
+  );
+  app.post(
+    "/api/market/listings",
+    handle(async (req) => {
+      const user = await needUser(req);
+      const body = listingSchema.extend({ workId: z.string().min(1).max(64) }).parse(req.body);
+      return catalog.register(user, body.workId, body);
+    }),
+  );
+  app.patch(
+    "/api/market/listings/:workId",
+    handle<{ workId: string }>(async (req) => {
+      const user = await needUser(req);
+      return catalog.editListing(user, req.params.workId, listingSchema.partial().parse(req.body));
+    }),
+  );
+  app.delete(
+    "/api/market/listings/:workId",
+    handle<{ workId: string }>(async (req) =>
+      catalog.unlist(await needUser(req), req.params.workId),
+    ),
   );
   app.get(
     "/api/me/items",
@@ -111,8 +148,7 @@ export function registerRepoRoutes(
     "/api/me/items/:workId",
     handle<{ workId: string }>(async (req) => {
       const user = await needUser(req);
-      const { releaseId } = z.object({ releaseId: z.string().min(1).max(64) }).parse(req.body);
-      return catalog.acquire(user, req.params.workId, releaseId);
+      return catalog.acquire(user, req.params.workId);
     }),
   );
   app.put(
@@ -357,6 +393,7 @@ export function registerRepoRoutes(
     handle(async (req) => {
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
       const works = await store.works(q);
+      const viewer = await userOf(req);
       return Promise.all(
         works.map(async (w) => {
           const latest = (await store.releases(w.id))[0] ?? null;
@@ -375,6 +412,9 @@ export function registerRepoRoutes(
             thumbnail: output?.thumbnail ?? null,
             // 公式かどうかは発行者で決める（名前は見ない。ADR 0013 §1）
             official: isOfficial(w.owner),
+            // マーケットの価格（登録していなければ null）と、見ている人が使えるか
+            price: (await store.listing(w.id))?.price ?? null,
+            unlocked: viewer ? await catalog.canUse(viewer.id, w) : w.perms.use,
           };
         }),
       );
@@ -415,7 +455,9 @@ export function registerRepoRoutes(
     handle<{ id: string }>(async (req) => {
       const user = await needUser(req);
       const { commit } = z.object({ commit: z.string().optional() }).parse(req.body ?? {});
-      return repos.release(user, req.params.id, commit);
+      const release = await repos.release(user, req.params.id, commit);
+      await catalog.released(release);
+      return release;
     }),
   );
 
