@@ -1,3 +1,4 @@
+import type { FieldDef, KokoStateDef } from "@tukurium/eks";
 import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
@@ -244,59 +245,223 @@ describe("ProjectDoc", () => {
     expect(a.snapshot()).toEqual(b.snapshot());
   });
 
-  it.each([
-    {
-      winner: "フィールド追加側",
-      typeChangeClient: 1,
-      additionClient: 2,
-      type: "number",
-      value: 7,
-    },
-    { winner: "型変更側", typeChangeClient: 2, additionClient: 1, type: "boolean", value: false },
-  ])("定義の同時編集で $winner が勝つと、値の型も定義に合わせる (#61)", (testCase) => {
-    const a = new ProjectDoc();
-    a.load(emptyProject("共同編集"));
-    const ks = a.addKokoState("Stats");
-    a.updateKokoState({
-      id: ks,
-      name: "Stats",
-      fields: [{ id: "hp", name: "hp", type: "number", default: 10 }],
-    });
-    const entity = a.addEntity({ output: "out_main", name: "player", states: { [ks]: { hp: 7 } } });
-    const initial = Y.encodeStateAsUpdate(a.doc);
-    const b = new ProjectDoc();
-    Y.applyUpdate(b.doc, initial);
-    a.doc.clientID = testCase.typeChangeClient;
-    b.doc.clientID = testCase.additionClient;
-    const beforeA = Y.encodeStateVector(a.doc);
-    const beforeB = Y.encodeStateVector(b.doc);
-    a.updateKokoState({
-      id: ks,
-      name: "Stats",
-      fields: [{ id: "hp", name: "hp", type: "boolean", default: false }],
-    });
-    b.updateKokoState({
-      id: ks,
-      name: "Stats",
-      fields: [
-        { id: "hp", name: "hp", type: "number", default: 10 },
-        { id: "score", name: "score", type: "number", default: 0 },
-      ],
-    });
-    const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
-    const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
-    const first = new ProjectDoc();
-    const second = new ProjectDoc();
-    for (const [merged, updates] of [
-      [first, [fromA, fromB]],
-      [second, [fromB, fromA]],
-    ] as const) {
-      Y.applyUpdate(merged.doc, initial);
-      for (const update of updates) Y.applyUpdate(merged.doc, update);
-      expect(merged.kokostate(ks)?.fields.find((f) => f.id === "hp")?.type).toBe(testCase.type);
-      expect(merged.entity(entity)?.states[ks]?.hp).toBe(testCase.value);
+  describe("KokoState の定義は、フィールドごとの後勝ち（ADR 0065）", () => {
+    /** Stats（hp・score）と、それを持つ Entity を作り、同じ中身の 2 つの Doc にする */
+    function pair() {
+      const a = new ProjectDoc();
+      a.load(emptyProject("共同編集"));
+      const ks = a.addKokoState("Stats");
+      a.updateKokoState({
+        id: ks,
+        name: "Stats",
+        fields: [
+          { id: "hp", name: "hp", type: "number", default: 10 },
+          { id: "score", name: "score", type: "number", default: 0 },
+        ],
+      });
+      const entity = a.addEntity({
+        output: "out_main",
+        name: "player",
+        states: { [ks]: { hp: 7, score: 1 } },
+      });
+      const b = new ProjectDoc();
+      Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+      return { a, b, ks, entity };
     }
-    expect(second.snapshot()).toEqual(first.snapshot());
+    /** 2 人が同時に変えたあと、互いの変更を届ける */
+    function concurrently(a: ProjectDoc, b: ProjectDoc, editA: () => void, editB: () => void) {
+      const beforeA = Y.encodeStateVector(a.doc);
+      const beforeB = Y.encodeStateVector(b.doc);
+      editA();
+      editB();
+      const fromA = Y.encodeStateAsUpdate(a.doc, beforeA);
+      const fromB = Y.encodeStateAsUpdate(b.doc, beforeB);
+      Y.applyUpdate(a.doc, fromB);
+      Y.applyUpdate(b.doc, fromA);
+      expect(b.snapshot()).toEqual(a.snapshot());
+    }
+    const edit = (
+      doc: ProjectDoc,
+      ks: string,
+      change: (fields: FieldDef[], def: KokoStateDef) => Partial<KokoStateDef>,
+    ) => {
+      const def = doc.kokostate(ks);
+      if (!def) throw new Error("定義がありません");
+      doc.updateKokoState({ ...def, ...change(def.fields, def) });
+    };
+    const patch = (fields: FieldDef[], id: string, p: Partial<FieldDef>) => ({
+      fields: fields.map((f) => (f.id === id ? { ...f, ...p } : f)),
+    });
+
+    it("別のフィールドを同時に変えると、両方の変更が残る", () => {
+      const { a, b, ks, entity } = pair();
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, (fields) => patch(fields, "hp", { type: "boolean", default: false })),
+        () => edit(b, ks, (fields) => patch(fields, "score", { default: 100, name: "points" })),
+      );
+      expect(a.kokostate(ks)?.fields).toEqual([
+        { id: "hp", name: "hp", type: "boolean", default: false },
+        { id: "score", name: "points", type: "number", default: 100 },
+      ]);
+      // 型を変えたフィールドの値は初期値になり、ほかのフィールドの値は変わらない
+      expect(a.entity(entity)?.states[ks]).toEqual({ hp: false, score: 1 });
+    });
+
+    it("同じフィールドの、名前と初期値を別々に変えても、両方が残る", () => {
+      const { a, b, ks } = pair();
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, (fields) => patch(fields, "hp", { name: "life" })),
+        () => edit(b, ks, (fields) => patch(fields, "hp", { default: 99 })),
+      );
+      expect(a.kokostate(ks)?.fields[0]).toEqual({
+        id: "hp",
+        name: "life",
+        type: "number",
+        default: 99,
+      });
+    });
+
+    it("同じフィールドの同じ所を同時に変えると、どちらかに揃う", () => {
+      const { a, b, ks } = pair();
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, (fields) => patch(fields, "hp", { default: 1 })),
+        () => edit(b, ks, (fields) => patch(fields, "hp", { default: 2 })),
+      );
+      expect([1, 2]).toContain(a.kokostate(ks)?.fields[0]?.default);
+    });
+
+    it("2 人が同時にフィールドを足しても、両方が残り、並びがそろう", () => {
+      const { a, b, ks, entity } = pair();
+      const add = (id: string) => (fields: FieldDef[]) => ({
+        fields: [...fields, { id, name: id, type: "string", default: id }],
+      });
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, add("fromA")),
+        () => edit(b, ks, add("fromB")),
+      );
+      expect(a.kokostate(ks)?.fields.map((f) => f.id)).toEqual(["hp", "score", "fromA", "fromB"]);
+      expect(a.entity(entity)?.states[ks]).toEqual({
+        hp: 7,
+        score: 1,
+        fromA: "fromA",
+        fromB: "fromB",
+      });
+    });
+
+    it("並べ替えと、別のフィールドの変更が、両方残る", () => {
+      const { a, b, ks } = pair();
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, (fields) => ({ fields: [...fields].reverse() })),
+        () => edit(b, ks, (fields) => patch(fields, "hp", { default: 5 })),
+      );
+      expect(a.kokostate(ks)?.fields).toEqual([
+        { id: "score", name: "score", type: "number", default: 0 },
+        { id: "hp", name: "hp", type: "number", default: 5 },
+      ]);
+    });
+
+    it("消したフィールドは、同時に変えられていても消える。名前の変更とフィールドの追加は両方残る", () => {
+      const { a, b, ks, entity } = pair();
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, (fields) => ({ fields: fields.filter((f) => f.id !== "score") })),
+        () => edit(b, ks, (fields) => patch(fields, "score", { default: 3 })),
+      );
+      expect(a.kokostate(ks)?.fields.map((f) => f.id)).toEqual(["hp"]);
+      concurrently(
+        a,
+        b,
+        () => edit(a, ks, () => ({ name: "Status" })),
+        () =>
+          edit(b, ks, (fields) => ({
+            fields: [...fields, { id: "mp", name: "mp", type: "number", default: 4 }],
+          })),
+      );
+      expect(a.kokostate(ks)).toMatchObject({
+        name: "Status",
+        fields: [{ id: "hp" }, { id: "mp" }],
+      });
+      expect(a.entity(entity)?.states[ks]).toEqual({ hp: 7, mp: 4 });
+    });
+
+    it("定義を変えても、同時に変えた Entity のほかのフィールドの値を上書きしない", () => {
+      const { a, b, ks, entity } = pair();
+      concurrently(
+        a,
+        b,
+        () =>
+          edit(a, ks, (fields) => ({
+            fields: [...fields, { id: "mp", name: "mp", type: "number", default: 4 }],
+          })),
+        () => b.setField(entity, ks, "hp", 3),
+      );
+      expect(a.entity(entity)?.states[ks]).toEqual({ hp: 3, score: 1, mp: 4 });
+    });
+
+    it("並びを変えるだけなら、動かしたフィールドのキーだけを書く", () => {
+      const { a, ks } = pair();
+      edit(a, ks, (fields) => ({
+        fields: [
+          ...fields,
+          { id: "c", name: "c", type: "number", default: 0 },
+          { id: "d", name: "d", type: "number", default: 0 },
+        ],
+      }));
+      const orders = () => {
+        const fields = (a.doc.getMap("kokostates").get(ks) as Y.Map<unknown>).get(
+          "fields",
+        ) as Y.Map<Y.Map<unknown>>;
+        return Object.fromEntries([...fields.entries()].map(([id, f]) => [id, f.get("order")]));
+      };
+      const before = orders();
+      // いちばん後ろの d を、先頭へ
+      edit(a, ks, (fields) => ({
+        fields: [fields[3], fields[0], fields[1], fields[2]] as FieldDef[],
+      }));
+      expect(a.kokostate(ks)?.fields.map((f) => f.id)).toEqual(["d", "hp", "score", "c"]);
+      const after = orders();
+      expect({ hp: after.hp, score: after.score, c: after.c }).toEqual({
+        hp: before.hp,
+        score: before.score,
+        c: before.c,
+      });
+      expect(after.d).not.toBe(before.d);
+    });
+
+    it("前の形（定義まるごとが一つの値）で入っている定義も読め、変えると新しい形になる", () => {
+      const p = new ProjectDoc();
+      p.load(emptyProject("前の形"));
+      const old = {
+        id: "ks_old",
+        name: "Old",
+        fields: [
+          { id: "f", name: "f", type: "EntityRef | undefined", default: { $t: "undefined" } },
+        ],
+      };
+      p.doc.getMap("kokostates").set("ks_old", old);
+      expect(p.kokostate("ks_old")).toEqual({
+        id: "ks_old",
+        name: "Old",
+        fields: [{ id: "f", name: "f", type: "EntityRef | undefined", default: undefined }],
+      });
+      edit(p, "ks_old", (fields) => patch(fields, "f", { name: "target" }));
+      expect(p.doc.getMap("kokostates").get("ks_old")).toBeInstanceOf(Y.Map);
+      expect(p.kokostate("ks_old")?.fields[0]?.name).toBe("target");
+      const again = new ProjectDoc();
+      again.load(p.snapshot());
+      expect(again.snapshot()).toEqual(p.snapshot());
+    });
   });
 
   it("フィールド単位の編集を、定義変更と状態・Entityの削除時に片付ける (#61)", () => {
