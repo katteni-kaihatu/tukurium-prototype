@@ -3,15 +3,15 @@ import { isOfficial } from "@tukurium/repo-model";
 import { SocialProfile } from "@tukurium/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { Auth } from "../auth/auth";
 import type { Hub } from "../hub";
 import { HttpError } from "../repos/service";
-import type { SessionInvitation, Store, User } from "../store/store";
+import { type SessionInvitation, type Store, type User, userInfo } from "../store/store";
 
-export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hub) {
+export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hub, auth: Auth) {
   const userOf = async (req: FastifyRequest) => {
-    const token = req.headers["x-tukurium-token"];
-    const user = typeof token === "string" ? await store.userByToken(token) : null;
-    if (!user) throw new HttpError(401, "本人確認ができません（接続し直してください）");
+    const user = await auth.userOf(req.raw);
+    if (!user) throw new HttpError(401, "ログインしてください");
     return user;
   };
   const handle =
@@ -32,6 +32,10 @@ export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hu
     if (!other || isOfficial(other.id)) throw new HttpError(404, "相手が見つかりません");
     return other;
   };
+  const infoOf = async (id: string) => {
+    const u = await store.user(id);
+    return u ? userInfo(u) : null;
+  };
   const areFriends = async (a: string, b: string) =>
     (await store.friendships(a)).some(
       (f) => f.status === "accepted" && (f.from === b || f.to === b),
@@ -45,8 +49,8 @@ export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hu
     }
     return {
       id: invite.id,
-      from: await store.user(invite.from),
-      to: await store.user(invite.to),
+      from: await infoOf(invite.from),
+      to: await infoOf(invite.to),
       session,
       status,
       createdAt: invite.createdAt,
@@ -62,7 +66,7 @@ export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hu
       const incoming = [];
       const outgoing = [];
       for (const link of links) {
-        const other = await store.user(link.from === user.id ? link.to : link.from);
+        const other = await infoOf(link.from === user.id ? link.to : link.from);
         if (!other) continue;
         if (link.status === "accepted")
           friends.push({
@@ -117,7 +121,7 @@ export function registerSocialRoutes(app: FastifyInstance, store: Store, hub: Hu
                   ? "outgoing"
                   : "incoming"
                 : "none";
-          return { user: other, relation };
+          return { user: userInfo(other), relation };
         });
     }),
   );

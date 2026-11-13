@@ -198,16 +198,8 @@ export interface ExtractSelection {
   assets: string[];
 }
 
-function token(): string {
-  try {
-    return localStorage.getItem("tukurium.token") ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/** 素材の URL（素材にも権限があるので、本人確認のトークンを付ける） */
-export const assetUrl = (id: string) => `/api/assets/${id}?t=${encodeURIComponent(token())}`;
+/** 素材の URL（素材にも権限がある。本人はログインの Cookie で決まる。ADR 0074） */
+export const assetUrl = (id: string) => `/api/assets/${id}`;
 
 async function call<T>(
   method: string,
@@ -218,10 +210,7 @@ async function call<T>(
   const res = await fetch(url, {
     method,
     signal,
-    headers: {
-      "x-tukurium-token": token(),
-      ...(body !== undefined ? { "content-type": "application/json" } : {}),
-    },
+    headers: body !== undefined ? { "content-type": "application/json" } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   // 制作データの値を欠かさず受け取るため、タグ付きの JSON として読む（ADR 0065）
@@ -235,9 +224,7 @@ async function call<T>(
 
 /** プロジェクトを Zip にして、ブラウザでダウンロードする（最新の保存と素材が入る） */
 async function downloadProjectZip(id: string, name: string): Promise<void> {
-  const res = await fetch(`/api/repos/${encodeURIComponent(id)}/export`, {
-    headers: { "x-tukurium-token": token() },
-  });
+  const res = await fetch(`/api/repos/${encodeURIComponent(id)}/export`);
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error ?? `エラー（${res.status}）`);
@@ -267,7 +254,7 @@ async function uploadProjectZip(
   if (options.visibility) params.set("visibility", options.visibility);
   const res = await fetch(`/api/repos/import?${params}`, {
     method: "POST",
-    headers: { "x-tukurium-token": token(), "content-type": "application/zip" },
+    headers: { "content-type": "application/zip" },
     body: file,
   });
   const data = (await res
@@ -386,5 +373,5 @@ export const api = {
   packageVersion: (workId: string, version: number) =>
     call<PackageVersion>("GET", `/api/works/${workId}/releases/${version}/package`),
   user: (id: string) =>
-    call<{ id: string; name: string; repos: RepoMeta[]; works: Work[] }>("GET", `/api/users/${id}`),
+    call<UserInfo & { repos: RepoMeta[]; works: Work[] }>("GET", `/api/users/${id}`),
 };

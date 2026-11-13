@@ -73,6 +73,15 @@
 | Windows で開発サーバーが白い画面になり、`DiffTree` が export されていないと出た（型・ビルドも同じ） | `DiffTree.tsx` と `diffTree.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`./DiffTree` が `.ts` の方に当たる | 片方を `diffTreeModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない（Linux の CI では気付けない） |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
+### ログイン（ADR 0074）
+
+| 症状 | 原因 | 対策 |
+| --- | --- | --- |
+| 開発サーバー経由のログインの POST が 403 になる | Vite の中継を文字列（`"/api": server`）で書くと `changeOrigin` になり、サーバーには `Host: localhost:8787` が届く。ブラウザの `Origin`（`localhost:5173`）と合わず、ほかのサイトからの操作として断られる | `vite.config.ts` は `{ target: server }` で書き、`Host` を書き換えない |
+| 3 人目が参加すると「接続しています…」のまま止まることがあった（E2E の m6、通しで流したときだけ） | 接続した時点で本人を決めたため、`welcome` より先にセッション一覧などの一斉の知らせが届いていた | 本人は接続に覚えておき、`hello` を受けたときに入れる。一斉の知らせは `welcome` のあとから届く（`auth.test.ts` で確かめる） |
+| 手元で本物の Misskey にログインできない | Misskey はトップページ（`client_id`）を HTTPS で読みに来る。`localhost` は読めない | 手元とテストは開発用ログイン（`pnpm dev` は `apps/server/dev.env` で開く）。本番の動作確認は `CLIENT_DIR=… AUTH_DEV_LOGIN=1 node apps/server/dist/main.js` |
+| 開発用ログインの同じ名前が、テストをまたいで同じ人になる | 開発用ログインは名前でアカウントを引く（`dev:<名前>`）。以前のトークンのように毎回別人にはならない | 別人にしたいときは名前を変える。サーバーのテストは `app.test.ts` の `client()` か、Store に作った人に `sessionFor()` でセッションを付ける |
+
 ### AI エージェント（リモートの MCP）
 
 - 開発サーバーでは `http://localhost:8787/mcp`。Claude Code なら `claude mcp add --transport http tukurium http://localhost:8787/mcp`。

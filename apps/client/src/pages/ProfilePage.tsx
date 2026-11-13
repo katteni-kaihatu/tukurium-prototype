@@ -1,3 +1,4 @@
+import type { UserInfo } from "@tukurium/shared";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Header } from "../app/Header";
@@ -25,12 +26,13 @@ export function ProfilePage({
   const userId = profileId ?? params.userId ?? "";
   const me = useApp((s) => s.me);
   const id = userId === "me" ? me?.id : userId;
-  const [user, setUser] = useState<{
-    id: string;
-    name: string;
-    repos: RepoMeta[];
-    works: Work[];
-  } | null>(null);
+  const [user, setUser] = useState<
+    | (UserInfo & {
+        repos: RepoMeta[];
+        works: Work[];
+      })
+    | null
+  >(null);
   const [works, setWorks] = useState<Work[] | null>(null);
   const [activity, setActivity] = useState<Record<string, ProjectActivity>>({});
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,8 @@ export function ProfilePage({
           <ProjectHome
             embedded={embedded}
             name={user.name}
+            account={user.account}
+            avatarUrl={user.avatarUrl}
             self={user.id === me?.id}
             repos={repos}
             releases={releases}

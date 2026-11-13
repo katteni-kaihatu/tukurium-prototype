@@ -8,7 +8,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": server,
+      // Host を書き換えない（文字列で書くと changeOrigin になる）。サーバーは Host でオリジンを決め、
+      // ログインの戻り先と、同じオリジンからの操作かの確認に使う（ADR 0074）
+      "/api": { target: server },
       "/ws": { target: server.replace(/^http/, "ws"), ws: true },
     },
   },

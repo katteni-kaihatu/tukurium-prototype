@@ -19,7 +19,7 @@
 | 整形 → lint（Biome と Dockerfile の検査） | `pnpm format && pnpm lint` |
 | 型・単体テスト | `pnpm typecheck` / `pnpm test` |
 | ブラウザでの通しテスト（背骨の 4 本、2 分ほど。開発サーバーを自動で起動） | `pnpm e2e` |
-| 本番ビルドの動作確認 | `pnpm build` のあと `CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787` |
+| 本番ビルドの動作確認 | `pnpm build` のあと `AUTH_DEV_LOGIN=1 CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787`（開発用ログインで入る） |
 | 計測 | `pnpm bench:sim` / `pnpm bench:server <ws URL>` |
 
 ## テストの方針（プロトタイプの間）
@@ -40,5 +40,6 @@
 - **サーバーが実行時に使う npm パッケージ**は `apps/server/package.json` の dependencies に書く。バンドルでは外部扱いになり、本番では node_modules から読む。
 - **E2E の `test`** は `e2e/helpers.ts` から import する（Biome で強制）。2 人目以降の参加者は `newPerson()` で開くと、テストの終わりに自動で閉じられる。
 - React のフックは、早期 return より前で呼ぶ（Biome の `useHookAtTopLevel`）。
+- **本人はログインの Cookie で決まる**（ADR 0074）。HTTP と WebSocket で、画面から名乗った名前や ID を信じない。GET 以外の `/api` は同じオリジンからだけ受ける。手元・E2E・確認用のスクリプトは開発用ログイン（`POST /api/auth/dev`、E2E は `e2e/helpers.ts` の `login()`）で入る。
 - `window.__workspace` などのデバッグ用の入口は開発ビルドだけにある。E2E や確認用のスクリプトはこれに頼ってよいが、本番向けのスモークテスト（`scripts/smoke.mjs`）では使わない。
 - コミットメッセージや PR に、モデルの名前や ID を書かない。

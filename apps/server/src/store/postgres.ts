@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
 import type { SocialProfile } from "@tukurium/shared";
 import postgres from "postgres";
 import {
   DEFAULT_BALANCE,
   type Friendship,
   type Listing,
+  type LoginProfile,
   type MarketEvent,
-  newToken,
   newUserId,
   type OwnedItem,
   type PurchaseResult,
@@ -20,7 +19,29 @@ import {
   type WorkspaceMeta,
 } from "./store";
 
-const hash = (token: string) => createHash("sha256").update(token).digest("hex");
+/**
+ * 保存の形の版。上げると、起動時に今までの表をすべて消して作り直す
+ * （プロトタイプの間は移行しない。ADR 0074 で利用者のアカウントを入れたときに 2 にした）
+ */
+const SCHEMA_VERSION = 2;
+const TABLES = [
+  "users",
+  "auth_sessions",
+  "workspaces",
+  "repos",
+  "works",
+  "releases",
+  "owned_items",
+  "wallets",
+  "listings",
+  "market_events",
+  "sales",
+  "friend_links",
+  "social_profiles",
+  "session_invitations",
+];
+/** 利用者を読むときの列 */
+const USER_COLUMNS = 'id, name, account, avatar_url as "avatarUrl"';
 
 /** PostgreSQL の Store。テーブルは起動時に作る（初版は簡易なマイグレーション）。 */
 export class PostgresStore implements Store {
@@ -31,12 +52,29 @@ export class PostgresStore implements Store {
   }
 
   async init(): Promise<void> {
+    await this.sql`create table if not exists tukurium_schema (version integer not null)`;
+    const [current] = await this.sql<{ version: number }[]>`select version from tukurium_schema`;
+    if (current?.version !== SCHEMA_VERSION) {
+      await this.sql.begin(async (tx) => {
+        for (const table of TABLES) await tx`drop table if exists ${tx(table)}`;
+        await tx`delete from tukurium_schema`;
+        await tx`insert into tukurium_schema (version) values (${SCHEMA_VERSION})`;
+      });
+    }
     await this.sql`
       create table if not exists users (
         id text primary key,
         name text not null,
-        token_hash text not null unique,
+        login_key text unique,
+        account text,
+        avatar_url text,
         created_at timestamptz not null default now()
+      )`;
+    await this.sql`
+      create table if not exists auth_sessions (
+        token_hash text primary key,
+        user_id text not null references users(id) on delete cascade,
+        expires_at timestamptz not null
       )`;
     await this.sql`
       create table if not exists workspaces (
@@ -82,25 +120,53 @@ export class PostgresStore implements Store {
     await this.sql.end({ timeout: 5 });
   }
 
-  async userByToken(token: string): Promise<User | null> {
-    const rows = await this.sql<
-      User[]
-    >`select id, name from users where token_hash = ${hash(token)}`;
-    return rows[0] ?? null;
+  async loginUser(profile: LoginProfile) {
+    const [user] = await this.sql<User[]>`
+      insert into users (id, name, login_key, account, avatar_url)
+      values (${newUserId()}, ${profile.name}, ${profile.key}, ${profile.account}, ${profile.avatarUrl})
+      on conflict (login_key) do update set account = excluded.account, avatar_url = excluded.avatar_url
+      returning ${this.sql.unsafe(USER_COLUMNS)}`;
+    if (!user) throw new Error("利用者を保存できませんでした");
+    return user;
   }
 
   async createUser(name: string) {
     const user = { id: newUserId(), name };
-    const token = newToken();
+    await this.sql`insert into users (id, name) values (${user.id}, ${name})`;
+    return user;
+  }
+
+  async createAuthSession(tokenHash: string, userId: string, expiresAt: number) {
+    await this.sql`insert into auth_sessions (token_hash, user_id, expires_at)
+      values (${tokenHash}, ${userId}, ${new Date(expiresAt)})`;
+  }
+
+  async authSession(tokenHash: string) {
+    const [row] = await this.sql<(User & { expiresAt: Date })[]>`
+      select u.id, u.name, u.account, u.avatar_url as "avatarUrl", s.expires_at as "expiresAt"
+      from auth_sessions s join users u on u.id = s.user_id where s.token_hash = ${tokenHash}`;
+    if (!row) return null;
+    const { expiresAt, ...user } = row;
+    return { user, expiresAt: expiresAt.getTime() };
+  }
+
+  async extendAuthSession(tokenHash: string, expiresAt: number) {
     await this
-      .sql`insert into users (id, name, token_hash) values (${user.id}, ${name}, ${hash(token)})`;
-    return { user, token };
+      .sql`update auth_sessions set expires_at = ${new Date(expiresAt)} where token_hash = ${tokenHash}`;
+  }
+
+  async deleteAuthSession(tokenHash: string) {
+    await this.sql`delete from auth_sessions where token_hash = ${tokenHash}`;
+  }
+
+  async deleteExpiredAuthSessions(now: number) {
+    await this.sql`delete from auth_sessions where expires_at <= ${new Date(now)}`;
   }
 
   async ensureUser(user: User) {
-    // token は使わない（誰も知らない値の hash を入れて、ログインできないようにする）
+    // login_key を持たないので、ログインはできない
     await this
-      .sql`insert into users (id, name, token_hash) values (${user.id}, ${user.name}, ${hash(newToken())}) on conflict (id) do nothing`;
+      .sql`insert into users (id, name) values (${user.id}, ${user.name}) on conflict (id) do nothing`;
   }
 
   async renameUser(id: string, name: string) {
@@ -126,7 +192,9 @@ export class PostgresStore implements Store {
   }
 
   async user(id: string) {
-    const rows = await this.sql<User[]>`select id, name from users where id = ${id}`;
+    const rows = await this.sql<
+      User[]
+    >`select ${this.sql.unsafe(USER_COLUMNS)} from users where id = ${id}`;
     return rows[0] ?? null;
   }
 
@@ -313,9 +381,10 @@ export class PostgresStore implements Store {
   }
 
   async searchUsers(query: string, limit: number) {
-    return this.sql<
-      User[]
-    >`select id,name from users where id=${query} or position(lower(${query}) in lower(name))>0 order by name,id limit ${limit}`;
+    return this.sql<User[]>`select ${this.sql.unsafe(USER_COLUMNS)} from users
+      where id=${query} or position(lower(${query}) in lower(name))>0
+        or position(lower(${query}) in lower(coalesce(account, '')))>0
+      order by name,id limit ${limit}`;
   }
   async friendships(userId: string) {
     const rows = await this.sql<

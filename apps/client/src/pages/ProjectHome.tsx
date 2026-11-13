@@ -1,5 +1,6 @@
 import type { SocialProfile } from "@tukurium/shared";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { AvatarFace } from "../app/AvatarFace";
 import { useApp } from "../app/store";
 import { editProject } from "../main-menu/editing";
 import { AVAILABILITY, useSocial } from "../main-menu/socialStore";
@@ -28,6 +29,8 @@ type Tab = "overview" | "projects" | "releases";
 /** プロジェクトウィンドウのホーム。左が人、右が一覧。 */
 export function ProjectHome({
   name,
+  account,
+  avatarUrl,
   self,
   repos,
   releases,
@@ -35,6 +38,9 @@ export function ProjectHome({
   embedded,
 }: {
   name: string;
+  /** ログインに使ったアカウント（@名前@ホスト）。公式・エージェントは無い */
+  account?: string;
+  avatarUrl?: string;
   self: boolean;
   repos: ListedProject[];
   releases: ListedRelease[];
@@ -120,10 +126,10 @@ export function ProjectHome({
           aria-label={self ? "自分のプロフィール" : `${name} のプロフィール`}
         >
           <span className={styles.avatar} aria-hidden="true">
-            {name.trim().slice(0, 1) || "?"}
+            <AvatarFace user={{ name, avatarUrl }} />
           </span>
           <h1>{name}</h1>
-          <p className={styles.handle}>@{name}</p>
+          {account && <p className={styles.handle}>{account}</p>}
           {self && profile && <StatusLine profile={profile} />}
           {self && (
             <button

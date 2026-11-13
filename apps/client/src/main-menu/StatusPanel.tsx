@@ -1,5 +1,6 @@
 import type { SocialProfile } from "@tukurium/shared";
 import { useEffect, useId, useRef, useState } from "react";
+import { AvatarFace } from "../app/AvatarFace";
 import { useApp } from "../app/store";
 import { api } from "../net/api";
 import styles from "./StatusPanel.module.css";
@@ -111,7 +112,7 @@ function StatusEditor({ profile }: { profile: SocialProfile }) {
         <p>フレンドからはこう見える</p>
         <div className={styles.person}>
           <span className={styles.avatar} data-status={draft.availability} aria-hidden="true">
-            {me?.name.slice(0, 1)}
+            <AvatarFace user={me} />
             <span className={styles.dot} />
           </span>
           <div>

@@ -4,6 +4,7 @@ import { useCatalog } from "../main-menu/catalogStore";
 import { MenuIcon, type MenuIconName } from "../main-menu/MenuIcon";
 import { AVAILABILITY, useSocial } from "../main-menu/socialStore";
 import { type ToolWindow, useMainMenu } from "../main-menu/store";
+import { AvatarFace } from "./AvatarFace";
 import styles from "./GlobalNav.module.css";
 import { useLayoutEdge } from "./layoutEdges";
 import { useApp } from "./store";
@@ -156,7 +157,7 @@ function Me({ compact }: { compact: boolean }) {
         onClick={() => useMainMenu.getState().showWindow("status")}
       >
         <span className={styles.avatar} data-status={profile?.availability ?? "online"}>
-          {name.slice(0, 1)}
+          <AvatarFace user={me} />
         </span>
         {!compact && (
           <span className={styles.meText}>
@@ -169,7 +170,10 @@ function Me({ compact }: { compact: boolean }) {
         <button
           type="button"
           className={styles.settings}
-          aria-label="アイコン・アバター・自己紹介を設定"
+          data-window-button="account"
+          aria-label="アカウント"
+          title="アカウント"
+          onClick={() => useMainMenu.getState().showWindow("account")}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <circle cx="12" cy="12" r="3" />

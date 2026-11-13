@@ -21,15 +21,9 @@ export async function uploadAsset(file: File): Promise<AssetDef> {
   const contentType = BY_EXT[ext] ?? file.type;
   if (!contentType)
     throw new Error("対応していないファイルです（GLB・PNG・JPEG・WebP・MP3・OGG・WAV）");
-  let token = "";
-  try {
-    token = localStorage.getItem("tukurium.token") ?? "";
-  } catch {
-    // トークンがなければサーバーが断る
-  }
   const res = await fetch("/api/assets", {
     method: "POST",
-    headers: { "content-type": contentType, "x-tukurium-token": token },
+    headers: { "content-type": contentType },
     body: file,
   });
   const body = (await res.json()) as { id?: string; kind?: AssetKind; error?: string };

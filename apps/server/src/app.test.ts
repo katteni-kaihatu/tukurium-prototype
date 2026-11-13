@@ -16,6 +16,7 @@ import WebSocket from "ws";
 import * as Y from "yjs";
 import { buildApp } from "./app";
 import { type AssetStore, assetId } from "./assets/assetStore";
+import { hashToken } from "./auth/auth";
 import { MemoryStore } from "./store/store";
 
 let close: (() => Promise<void>) | undefined;
@@ -48,6 +49,8 @@ async function start(opts: { ownerGraceMs?: number; worldChangeMs?: number } = {
       s3: undefined,
       assetDir: "",
       gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
+      misskeyUrl: "https://misskey.example",
+      devLogin: true,
     },
     {
       store,
@@ -68,8 +71,23 @@ async function start(opts: { ownerGraceMs?: number; worldChangeMs?: number } = {
 
 type Msg<T extends ServerMessage["t"]> = Extract<ServerMessage, { t: T }>;
 
+/** 開発用ログインで入り、ログインのセッションのトークン（Cookie の値）を返す */
+async function devLogin(url: string, name: string): Promise<string> {
+  const base = url.replace(/^ws/, "http").replace(/\/ws$/, "");
+  const res = await fetch(`${base}/api/auth/dev`, {
+    method: "POST",
+    headers: { origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const token = /tukurium_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
+  if (!token) throw new Error(`ログインできません: ${res.status}`);
+  return token;
+}
+
+/** ログインした人の接続。token を渡すと、そのログインのセッションでつなぐ（同じ人の別のタブ） */
 async function client(url: string, name: string, token?: string) {
-  const ws = new WebSocket(url);
+  token ??= await devLogin(url, name);
+  const ws = new WebSocket(url, { headers: { cookie: `tukurium_session=${token}` } });
   const inbox: ServerMessage[] = [];
   const waiters: (() => void)[] = [];
   ws.on("message", (d) => {
@@ -94,9 +112,9 @@ async function client(url: string, name: string, token?: string) {
       });
     }
   };
-  send({ t: "hello", protocol: PROTOCOL_VERSION, name, token });
+  send({ t: "hello", protocol: PROTOCOL_VERSION });
   const welcome = await next("welcome");
-  return { ws, inbox, send, next, me: welcome.you, token: welcome.token };
+  return { ws, inbox, send, next, me: welcome.you, token };
 }
 
 const docUpdate = (fn: (d: Y.Doc) => void) => {
@@ -122,17 +140,29 @@ async function sessionWithWorkspace(url: string) {
   return { a, b, sessionId: s.id, workspaceId };
 }
 
-const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
-  get: (url: string) => app.inject({ method: "GET", url, headers: { "x-tukurium-token": token } }),
-  post: (url: string, payload: object = {}) =>
-    app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
-  patch: (url: string, payload: object) =>
-    app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
-  put: (url: string, payload: object) =>
-    app.inject({ method: "PUT", url, payload, headers: { "x-tukurium-token": token } }),
-  delete: (url: string) =>
-    app.inject({ method: "DELETE", url, headers: { "x-tukurium-token": token } }),
+/** ログインの Cookie と、同じオリジンの Origin を付けた HTTP の呼び出し（app.inject の Host は localhost:80） */
+const authHeaders = (token: string) => ({
+  cookie: `tukurium_session=${token}`,
+  origin: "http://localhost:80",
 });
+
+const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
+  get: (url: string) => app.inject({ method: "GET", url, headers: authHeaders(token) }),
+  post: (url: string, payload: object = {}) =>
+    app.inject({ method: "POST", url, payload, headers: authHeaders(token) }),
+  patch: (url: string, payload: object) =>
+    app.inject({ method: "PATCH", url, payload, headers: authHeaders(token) }),
+  put: (url: string, payload: object) =>
+    app.inject({ method: "PUT", url, payload, headers: authHeaders(token) }),
+  delete: (url: string) => app.inject({ method: "DELETE", url, headers: authHeaders(token) }),
+});
+
+/** Store に作った利用者に、ログインのセッションを付ける */
+async function sessionFor(store: MemoryStore, userId: string): Promise<string> {
+  const token = `t_${Math.random().toString(36).slice(2)}`;
+  await store.createAuthSession(hashToken(token), userId, Date.now() + 60_000);
+  return token;
+}
 
 describe("本人識別とセッション", () => {
   it("取り込み元の中身は、フォークできる人にだけ渡す", async () => {
@@ -184,7 +214,7 @@ describe("本人識別とセッション", () => {
         method: "POST",
         url: `/api/repos/import${query}`,
         payload: Buffer.from(body),
-        headers: { "x-tukurium-token": other.token, "content-type": "application/zip" },
+        headers: { ...authHeaders(other.token), "content-type": "application/zip" },
       });
     const imported = await upload(zip, "?visibility=public");
     expect(imported.statusCode).toBe(200);
@@ -215,7 +245,7 @@ describe("本人識別とセッション", () => {
       method: "POST",
       url: "/api/repos/import",
       payload: Buffer.from(zip),
-      headers: { "content-type": "application/zip" },
+      headers: { "content-type": "application/zip", origin: "http://localhost:80" },
     });
     expect(anonymous.statusCode).toBe(401);
   });
@@ -422,7 +452,7 @@ describe("本人識別とセッション", () => {
     await app.inject({
       method: "DELETE",
       url: `/api/me/friends/${b.me.id}`,
-      headers: { "x-tukurium-token": a.token },
+      headers: { ...authHeaders(a.token) },
     });
     expect((await A.get("/api/me/social")).json().friends).toEqual([]);
     expect((await api(app, tab.token).get("/api/me/social")).json().friends).toEqual([]);
@@ -522,7 +552,13 @@ describe("本人識別とセッション", () => {
     expect((await B.get("/api/me/items")).json()).toEqual([]);
     expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
     expect(
-      (await app.inject({ method: "DELETE", url: `/api/me/items/${work.id}` })).statusCode,
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/api/me/items/${work.id}`,
+          headers: { origin: "http://localhost:80" },
+        })
+      ).statusCode,
     ).toBe(401);
     await A.patch(`/api/works/${work.id}`, { perms: { use: false, view: false, fork: false } });
     expect((await B.get(`/api/works/${work.id}`)).statusCode).toBe(404);
@@ -623,13 +659,14 @@ describe("本人識別とセッション", () => {
     expect(res.json()).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION });
   });
 
-  it("トークンで同じ人として再接続できる", async () => {
+  it("ログインのセッションで同じ人として再接続できる。名前は名乗りでは変わらない", async () => {
     const { url } = await start();
     const a = await client(url, "れにうむ");
     a.ws.close();
     const again = await client(url, "れにうむ2", a.token);
     expect(again.me.id).toBe(a.me.id);
-    expect(again.me.name).toBe("れにうむ2");
+    expect(again.me.name).toBe("れにうむ");
+    expect(again.me.account).toBe("@れにうむ@dev");
     const other = await client(url, "ここあ");
     expect(other.me.id).not.toBe(a.me.id);
   });
@@ -1127,14 +1164,15 @@ describe("素材", () => {
     const up = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      headers: { "content-type": "image/png", ...authHeaders(a.token) },
       payload: png,
     });
     expect(up.statusCode).toBe(200);
     expect(up.json()).toMatchObject({ id: assetId(png), kind: "image", size: png.length });
     const get = await app.inject({
       method: "GET",
-      url: `/api/assets/${assetId(png)}?t=${a.token}`,
+      url: `/api/assets/${assetId(png)}`,
+      headers: authHeaders(a.token),
     });
     expect(get.statusCode).toBe(200);
     expect(get.headers["content-type"]).toBe("image/png");
@@ -1147,14 +1185,26 @@ describe("素材", () => {
     const noAuth = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png" },
+      headers: { "content-type": "image/png", origin: "http://localhost:80" },
       payload: Buffer.from([1]),
     });
     expect(noAuth.statusCode).toBe(401);
+    // ほかのサイトからの書き込みは、ログインしていても断る
+    const foreign = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: {
+        "content-type": "image/png",
+        ...authHeaders(a.token),
+        origin: "https://evil.example",
+      },
+      payload: Buffer.from([1]),
+    });
+    expect(foreign.statusCode).toBe(403);
     const bad = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "application/x-sh", "x-tukurium-token": a.token },
+      headers: { "content-type": "application/x-sh", ...authHeaders(a.token) },
       payload: Buffer.from("echo hi"),
     });
     expect(bad.statusCode).toBe(415);
@@ -1224,11 +1274,15 @@ describe("権限・プライベートな作業", () => {
     await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      headers: { "content-type": "image/png", ...authHeaders(a.token) },
       payload: png,
     });
     const get = (token?: string) =>
-      app.inject({ method: "GET", url: `/api/assets/${id}${token ? `?t=${token}` : ""}` });
+      app.inject({
+        method: "GET",
+        url: `/api/assets/${id}`,
+        headers: token ? authHeaders(token) : {},
+      });
     expect((await get()).statusCode).toBe(404);
     expect((await get(a.token)).statusCode).toBe(200);
     expect((await get(b.token)).statusCode).toBe(404);
@@ -1478,7 +1532,11 @@ describe("リポジトリ・コミット・作品", () => {
     for (const id of ["w_official_combat", "w_official_interaction", "w_official_items"]) {
       const thumb = works.find((w) => w.id === id)?.thumbnail;
       expect(thumb).toMatch(/^[0-9a-f]{64}$/);
-      const got = await app.inject({ method: "GET", url: `/api/assets/${thumb}?t=${a.token}` });
+      const got = await app.inject({
+        method: "GET",
+        url: `/api/assets/${thumb}`,
+        headers: authHeaders(a.token),
+      });
       expect(got.statusCode).toBe(200);
       expect(got.headers["content-type"]).toBe("image/png");
     }
@@ -1717,8 +1775,8 @@ describe("公開タグ", () => {
     const { app, store } = await start();
     const author = await store.createUser("作者");
     const reader = await store.createUser("利用者");
-    const A = api(app, author.token),
-      B = api(app, reader.token);
+    const A = api(app, await sessionFor(store, author.id)),
+      B = api(app, await sessionFor(store, reader.id));
     const repo = (
       await A.post("/api/repos", { name: "タグ付きの銃", kind: "item", template: "gun" })
     ).json();

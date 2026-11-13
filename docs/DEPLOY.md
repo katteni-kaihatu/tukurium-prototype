@@ -24,13 +24,18 @@ docker compose の構成（`docker-compose.yml`）を、そのまま Coolify で
    | `S3_BUCKET` | | 既定 `tukurium`。先に作っておく |
    | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | | S3 の認証情報 |
    | `APP_PORT` | | ホスト側に出すポート（既定 8787）。Coolify のプロキシを使うなら不要 |
+   | `MISSKEY_URL` | | ログインに使う Misskey（既定 `https://misskey.resonite.love`。ADR 0074） |
+
+   本番では開発用ログイン（`AUTH_DEV_LOGIN`）は開かない（イメージが `NODE_ENV=production` のため）。
 
 3. ドメインを `app` サービスのポート 8787 に割り当てる。Coolify のプロキシ（Traefik / Caddy）は WebSocket（`/ws`）をそのまま通すので、追加の設定はいらない。
+   - Misskey でのログインには、HTTPS のドメインが要る。Misskey がトップページ（OAuth の `client_id`）を読みに来て、戻り先（`/api/auth/misskey/callback`）を確かめるため。Misskey 側での登録はいらない。
+   - サーバーは、前段のプロキシが付ける `X-Forwarded-Proto`・`X-Forwarded-Host` と `Host` から自分のオリジンを決める（ログインの戻り先と、同じオリジンからの操作かの確認に使う）。Coolify のプロキシは付けるので、設定はいらない。ほかのプロキシでは、`Host` を書き換えないか、これらを付ける。
 4. デプロイする。`app` はヘルスチェック（`/api/health`）が通ると healthy になる。
 
 ## 設置後のスモークテスト
 
-手元から設置した URL に対して実行する。ブラウザでセッションを作り、サンプルのワークスペースを作って再生できるかを確かめる。
+手元から設置した URL に対して実行する。開発用ログインが開いていれば、ブラウザでセッションを作り、サンプルのワークスペースを作って再生できるかを確かめる。本番（開発用ログインが閉じている）では、ログインの画面が出ることと、ログインしていない WebSocket を断ることだけを確かめる。その先は、Misskey でログインして手で確かめる。
 
 ```bash
 pnpm smoke https://tukurium.example.com
@@ -46,6 +51,8 @@ pnpm smoke https://tukurium.example.com
 | 再生できない | ブラウザのエラー（WASM の読み込み）。`pnpm smoke` がエラーの内容を表示する |
 
 ## 更新
+
+保存の形の版（`tukurium_schema`）が上がったときは、起動時に PostgreSQL の表をすべて消して作り直す（プロトタイプの間は移行しない）。2026-11-13 のアカウントの導入（ADR 0074）で版 2 にしたので、それより前の利用者・プロジェクト・作品などは消える。`git-data` に残る古いリポジトリはどこからも指されなくなるので、消してよい。
 
 `main` にマージしたら Coolify で再デプロイする（Webhook の自動デプロイを使ってもよい）。データはボリュームに残る。
 接続中の人は切断され、自動で再接続する。再接続すると、ワークスペースの内容はサーバーに保存された分から戻る。セッション（参加者・配置・実行状態）はメモリにあるため、再起動で消える。
