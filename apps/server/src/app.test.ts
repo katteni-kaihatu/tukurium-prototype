@@ -10,6 +10,7 @@ import {
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import * as Y from "yjs";
@@ -150,6 +151,73 @@ describe("本人識別とセッション", () => {
     expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(403);
     await A.patch(`/api/repos/${source.id}`, { visibility: "public" });
     expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(200);
+  });
+  it("プロジェクトを Zip にエクスポートし、素材ごと新しいプロジェクトへインポートする", async () => {
+    const { app, url, assets } = await start();
+    const owner = await client(url, "作者");
+    const other = await client(url, "ほかの人");
+    const A = api(app, owner.token);
+    const B = api(app, other.token);
+    const source = (
+      await A.post("/api/repos", { name: "森", template: "forest", visibility: "private" })
+    ).json();
+    // 非公開なら、フォークできない人はエクスポートできない
+    expect((await B.get(`/api/repos/${source.id}/export`)).statusCode).toBe(403);
+    const exported = await A.get(`/api/repos/${source.id}/export`);
+    expect(exported.statusCode).toBe(200);
+    expect(exported.headers["content-type"]).toBe("application/zip");
+    expect(String(exported.headers["content-disposition"])).toContain(
+      `filename*=UTF-8''${encodeURIComponent("森.zip")}`,
+    );
+    const zip = new Uint8Array(exported.rawPayload);
+    const entries = unzipSync(zip);
+    const original = (await A.get(`/api/repos/${source.id}/snapshot`)).json() as ProjectSnapshot;
+    expect(entries["project/tukurium.json"]).toBeDefined();
+    const ids = (original.assets ?? []).map((a) => a.id);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(entries[`asset-files/${id}`]).toBeDefined();
+
+    // 別の人が、素材のない置き場へ取り込む
+    assets.items.clear();
+    const upload = (body: Uint8Array, query = "") =>
+      app.inject({
+        method: "POST",
+        url: `/api/repos/import${query}`,
+        payload: Buffer.from(body),
+        headers: { "x-tukurium-token": other.token, "content-type": "application/zip" },
+      });
+    const imported = await upload(zip, "?visibility=public");
+    expect(imported.statusCode).toBe(200);
+    const repo = imported.json();
+    expect(repo).toMatchObject({ name: "森", owner: other.me.id, kind: "world" });
+    expect(repo.id).not.toBe(source.id);
+    expect(repo.visibility).toBe("public");
+    const copy = (await B.get(`/api/repos/${repo.id}/snapshot`)).json() as ProjectSnapshot;
+    expect(copy.entities).toEqual(original.entities);
+    expect(copy.assets).toEqual(original.assets);
+    for (const id of ids) expect(assets.items.has(id)).toBe(true);
+    // 取り込んだ人は、素材を見られる
+    const first = ids[0] as string;
+    expect((await B.get(`/api/assets/${first}`)).statusCode).toBe(200);
+    // 名前を変えて取り込める
+    const renamed = await upload(zip, `?name=${encodeURIComponent("森のコピー")}`);
+    expect(renamed.json()).toMatchObject({ name: "森のコピー", visibility: "private" });
+
+    // 壊れた Zip・Tukurium のものでない Zip・中身の違う素材は拒む
+    expect((await upload(strToU8("zip ではない"))).statusCode).toBe(400);
+    expect((await upload(zipSync({ "readme.txt": strToU8("hi") }))).statusCode).toBe(400);
+    const tampered = { ...entries, [`asset-files/${first}`]: strToU8("glTF だけど違う中身") };
+    expect((await upload(zipSync(tampered))).statusCode).toBe(400);
+    const escaping = { ...entries, "project/../evil.json": strToU8("{}") };
+    expect((await upload(zipSync(escaping))).statusCode).toBe(400);
+    // 本人確認ができなければ受け付けない
+    const anonymous = await app.inject({
+      method: "POST",
+      url: "/api/repos/import",
+      payload: Buffer.from(zip),
+      headers: { "content-type": "application/zip" },
+    });
+    expect(anonymous.statusCode).toBe(401);
   });
   it("未編集の既存先へ同時に抽出しても、両方の取り込みを残す (#62)", async () => {
     const { app, url } = await start();

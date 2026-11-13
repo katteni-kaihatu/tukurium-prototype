@@ -44,15 +44,15 @@ export async function buildApp(
   // Yjs の更新を運ぶので大きめにする（初期内容の送信など）
   await app.register(fastifyWebsocket, { options: { maxPayload: 8 * 1024 * 1024 } });
 
-  registerRepoRoutes(app, store, repos, {
-    onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
-  });
-  registerSocialRoutes(app, store, hub);
   // 素材（GLB・画像・音声）。本文をそのまま受け取り、中身の SHA-256 を ID にして保存する
   const assets =
     options.assets ??
     (config.s3 ? new S3AssetStore(config.s3) : new DiskAssetStore(config.assetDir));
   await seedSampleModels(assets);
+  registerRepoRoutes(app, store, repos, assets, {
+    onRenamed: (repoId, name) => hub.renameRepo(repoId, name),
+  });
+  registerSocialRoutes(app, store, hub);
   // AI エージェントのためのリモート MCP（ADR 0054・0059）
   registerMcp(app, hub, repos, assets);
   // テストから hub に内部でつなぐための入口

@@ -11,8 +11,15 @@ import {
 import { workTagsSchema } from "@tukurium/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { AssetStore } from "../assets/assetStore";
 import type { Store, User } from "../store/store";
 import { ItemCatalog } from "./catalog";
+import {
+  archiveDisposition,
+  exportProject,
+  importProject,
+  MAX_ARCHIVE_BYTES,
+} from "./projectArchive";
 import { HttpError, type RepoService } from "./service";
 
 const TEMPLATES = {
@@ -43,6 +50,7 @@ export function registerRepoRoutes(
   app: FastifyInstance,
   store: Store,
   repos: RepoService,
+  assets: AssetStore,
   hooks: RepoRouteHooks = {},
 ) {
   const userOf = async (req: FastifyRequest): Promise<User | null> => {
@@ -143,6 +151,41 @@ export function registerRepoRoutes(
       const kind =
         body.template === "forest" ? "world" : body.template === "marubatsu" ? "item" : body.kind;
       return withOwner(await repos.create(user, { ...body, kind, snapshot }));
+    }),
+  );
+
+  // プロジェクトの Zip（エクスポート・インポート）。Zip の本文をそのまま受け取る
+  app.addContentTypeParser(
+    ["application/zip", "application/x-zip-compressed"],
+    { parseAs: "buffer", bodyLimit: MAX_ARCHIVE_BYTES },
+    (_req, body, done) => done(null, body),
+  );
+  app.post(
+    "/api/repos/import",
+    handle(async (req) => {
+      const user = await needUser(req);
+      if (!Buffer.isBuffer(req.body))
+        throw new HttpError(415, "Zip ファイル（application/zip）を送ってください");
+      const q = z
+        .object({
+          name: z.string().max(64).optional(),
+          description: z.string().max(300).optional(),
+          visibility: z.enum(["public", "private"]).optional(),
+        })
+        .parse(req.query);
+      return withOwner(await importProject(repos, assets, user, req.body, q));
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id/export",
+    handle<{ id: string }>(async (req, reply) => {
+      const { name, zip } = await exportProject(repos, assets, await needUser(req), req.params.id);
+      return reply
+        .header("content-type", "application/zip")
+        .header("content-disposition", archiveDisposition(name))
+        .header("cache-control", "private, no-store")
+        .send(Buffer.from(zip));
     }),
   );
 
