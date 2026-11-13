@@ -1,18 +1,26 @@
 import RELEASE_SYNC from "@jitl/quickjs-wasmfile-release-sync";
 import {
+  decodeValue,
+  encodeValue,
+  hasTag,
+  type Json,
+  parseValue,
+  stringifyValue,
+  VALUE_CODEC_SOURCE,
+  type Value,
+} from "@tukurium/eks";
+import {
   newQuickJSWASMModuleFromVariant,
   type QuickJSContext,
   type QuickJSHandle,
   type QuickJSRuntime,
 } from "quickjs-emscripten-core";
 
-export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
-
 /** スクリプトから見える Entity。KokoState の ID → フィールド名 → 値。 */
 export interface ScriptEntity {
   id: string;
   /** KokoState の ID（その領域の中の ID）→ フィールド名 → 値 */
-  states: Record<string, Record<string, Json>>;
+  states: Record<string, Record<string, Value>>;
 }
 
 /** スクリプトが宣言した System の情報（Query は import した KokoState の ID。ADR 0058） */
@@ -30,7 +38,7 @@ export interface HostCallContext {
 }
 
 /** スクリプトから呼べるホスト関数。名前は "world.raycast" のように「名前空間.関数名」。 */
-export type HostFunction = (args: Json[], ctx: HostCallContext) => Json | undefined;
+export type HostFunction = (args: Value[], ctx: HostCallContext) => Value;
 
 export interface SandboxOptions {
   /** ハンドラ 1 回の呼び出しで使える時間。超えたら中断する。 */
@@ -42,6 +50,13 @@ export interface SandboxOptions {
   hostFunctions?: Record<string, HostFunction>;
   onLog?: (message: string, ctx: HostCallContext) => void;
 }
+
+/**
+ * JSON で表せない値（undefined・Date・Map など）を持ちうるフィールド。KokoState の ID（ScriptEntity の
+ * states のキー）→ フィールド名。`run()` に渡すと、ここに書いたフィールドだけを値の形式で読み書きし、
+ * ほかのフィールドは QuickJS の JSON.parse / JSON.stringify に任せる（全 Entity の値を毎回たどらずに済む）。
+ */
+export type TaggedFields = Record<string, readonly string[]>;
 
 export class ScriptError extends Error {
   constructor(
@@ -56,6 +71,43 @@ export class ScriptError extends Error {
   }
 }
 
+/** 書き出した形の ScriptEntity */
+interface StoredEntity {
+  id: string;
+  states: Record<string, Record<string, Json>>;
+}
+
+/**
+ * QuickJS の側で値の形式を通すフィールド。
+ * - read：渡す値にタグがあるフィールド（値に戻す）
+ * - write：read と、呼び出す側が指定したフィールド（スクリプトが JSON で表せない値を書きうる）
+ */
+function fieldsToFix(
+  entities: StoredEntity[],
+  tagged: TaggedFields,
+): { read: Record<string, string[]>; write: Record<string, string[]> } {
+  const read = new Map<string, Set<string>>();
+  for (const e of entities) {
+    for (const [koko, values] of Object.entries(e.states)) {
+      for (const [name, value] of Object.entries(values)) {
+        if (value === null || typeof value !== "object" || !hasTag(value)) continue;
+        const names = read.get(koko) ?? new Set<string>();
+        names.add(name);
+        read.set(koko, names);
+      }
+    }
+  }
+  const write = new Map([...read].map(([koko, names]) => [koko, new Set(names)]));
+  for (const [koko, list] of Object.entries(tagged)) {
+    const names = write.get(koko) ?? new Set<string>();
+    for (const name of list) names.add(name);
+    write.set(koko, names);
+  }
+  const plain = (m: Map<string, Set<string>>) =>
+    Object.fromEntries([...m].map(([koko, names]) => [koko, [...names]]));
+  return { read: plain(read), write: plain(write) };
+}
+
 /** QuickJS のスタックから、その System のファイルの行番号を取り出す */
 export function lineInStack(stack: string | undefined, systemId: string | null): number | null {
   if (!stack || !systemId) return null;
@@ -66,6 +118,28 @@ export function lineInStack(stack: string | undefined, systemId: string | null):
 
 const PRELUDE = (hostNames: string[]) => `
 "use strict";
+// 値の書き出しと読み込み（ホストと同じ関数。ADR 0065）。undefined・Date・Map・Set・bigint・NaN も、
+// ホストとの間をそのまま行き来できる
+const __codec = (${VALUE_CODEC_SOURCE})();
+const __write = (v) => JSON.stringify(__codec.encode(v));
+const __read = (text) => __codec.decode(JSON.parse(text));
+// Entity の値のうち、fields（KokoState の ID → フィールド名）に書いたフィールドだけを fn に通す
+const __eachField = (entities, fields, fn) => {
+  const kokos = Object.keys(fields);
+  for (let i = 0; i < entities.length; i++) {
+    const states = entities[i].states;
+    for (let j = 0; j < kokos.length; j++) {
+      const values = states[kokos[j]];
+      if (values === null || typeof values !== "object") continue;
+      const names = fields[kokos[j]];
+      for (let k = 0; k < names.length; k++) {
+        const name = names[k];
+        // 消したフィールド（キーがない）は、そのままにする。undefined を入れたフィールドは運ぶ
+        if (name in values) values[name] = fn(values[name]);
+      }
+    }
+  }
+};
 const __systems = Object.create(null);
 let __current = null;
 // いま処理している Entity（Host API の呼び出しが、どの配置のためのものかを決める。ADR 0012）
@@ -84,14 +158,14 @@ globalThis.__koko = (id, name) => Object.freeze({
 const __isKoko = (k) => k !== null && typeof k === "object" && typeof k.id === "string" && typeof k.name === "string";
 // System ごとの、e.get() で触れてよい KokoState（Query の with に書いたもの。ADR 0058）
 const __allowed = {};
-globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
+globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : a === undefined ? "undefined" : __write(a)).join(" "));
 globalThis.console = { log: globalThis.log, warn: globalThis.log, error: globalThis.log };
 const __ns = {};
 for (const full of ${JSON.stringify(hostNames)}) {
   const [ns, fn] = full.split(".");
   (__ns[ns] ??= {})[fn] = (...args) => {
-    const r = __hostCall(full, JSON.stringify(args), __current, __entity);
-    return r === undefined ? undefined : JSON.parse(r);
+    const r = __hostCall(full, __write(args), __current, __entity);
+    return r === undefined ? undefined : __read(r);
   };
 }
 // Raycast の結果に hit.send(Contract名, payload) を付ける（ADR 0012）。token は閉じ込めた値を使い、
@@ -135,14 +209,18 @@ globalThis.__define = (id, def) => {
   return JSON.stringify({ query: { with: withIds, without: withoutIds }, handlers });
 };
 globalThis.__undefine = (id) => { delete __systems[id]; delete __allowed[id]; };
-globalThis.__run = (id, handler, entitiesJson, argsJson) => {
+// fieldsJson：JSON で表せない値を持ちうるフィールド（{ read: {...}, write: {...} }）。空なら、全体を値の形式で
+// 読み書きする（どんな値でも運べるが、全 Entity の値をたどるので遅い）
+globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
   const def = __systems[id];
   const fn = def && (handler.startsWith("contract:")
     ? (def.contracts && def.contracts[handler.slice("contract:".length)])
     : def[handler]);
   if (typeof fn !== "function") return entitiesJson;
-  const entities = JSON.parse(entitiesJson);
-  const args = JSON.parse(argsJson);
+  const fields = fieldsJson === "" ? null : JSON.parse(fieldsJson);
+  const entities = fields ? JSON.parse(entitiesJson) : __read(entitiesJson);
+  if (fields) __eachField(entities, fields.read, __codec.decode);
+  const args = __read(argsJson);
   __current = id;
   try {
     for (const e of entities) {
@@ -165,7 +243,15 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
     __current = null;
     __entity = null;
   }
-  return JSON.stringify(entities);
+  if (!fields) return __write(entities);
+  __eachField(entities, fields.write, __codec.encode);
+  try {
+    return JSON.stringify(entities);
+  } catch (e) {
+    // ほかのフィールドに bigint を入れると、JSON.stringify が投げる。型が合わない値なので null にして返す
+    // （ホストが受け入れない）。輪になった値などは、もう一度投げてスクリプトのエラーにする
+    return JSON.stringify(entities, function (key, v) { return typeof v === "bigint" ? null : v; });
+  }
 };
 `;
 
@@ -179,7 +265,7 @@ globalThis.__run = (id, handler, entitiesJson, argsJson) => {
  *   QuickJS のメモリ上限は配列要素の確保を数えないため、サンドボックスごとに専用の WASM
  *   インスタンスを持ち、割り込みハンドラでヒープの大きさも監視する。WASM のヒープは縮まないので、
  *   メモリ超過で止まったサンドボックスは `broken` になり、作り直す必要がある。
- * - Entity の値は呼び出しごとに JSON でまとめて受け渡す（境界をまたぐ回数を減らす）。
+ * - Entity の値は呼び出しごとに、タグ付きの JSON（ADR 0065）でまとめて受け渡す（境界をまたぐ回数を減らす）。
  */
 export class ScriptSandbox {
   /** メモリ超過で止まった。以後の呼び出しは失敗するので作り直すこと。 */
@@ -269,11 +355,26 @@ export class ScriptSandbox {
     vm.dispose();
   }
 
-  /** ハンドラ（onUpdate など）を Entity ごとに呼び、変更後の値を返す。 */
-  run(id: string, handler: string, entities: ScriptEntity[], args: Json[] = []): ScriptEntity[] {
+  /**
+   * ハンドラ（onUpdate など）を Entity ごとに呼び、変更後の値を返す。
+   *
+   * taggedFields を渡すと、そこに書いたフィールド（と、渡した値にタグが要ったフィールド）だけを値の形式で
+   * 読み書きする。それ以外のフィールドにスクリプトが JSON で表せない値を書いたときは、JSON.stringify の
+   * とおりになる（undefined は書かなかったのと同じ、NaN・bigint は null、Date は文字）。型が合わない値として、
+   * 呼び出す側が受け入れなければよい。渡さなければ、すべてのフィールドを値の形式で運ぶ。
+   */
+  run(
+    id: string,
+    handler: string,
+    entities: ScriptEntity[],
+    args: Value[] = [],
+    taggedFields?: TaggedFields,
+  ): ScriptEntity[] {
     const realm = this.systemRealm.get(id);
     const vm = realm === undefined ? undefined : this.realms.get(realm);
     if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
+    const json = encodeValue(entities) as unknown as StoredEntity[];
+    const fix = taggedFields ? fieldsToFix(json, taggedFields) : null;
     return this.withDeadline(this.options.timeLimitMs, () => {
       const out = this.callGlobal(
         vm,
@@ -281,13 +382,26 @@ export class ScriptSandbox {
         [
           vm.newString(id),
           vm.newString(handler),
-          vm.newString(JSON.stringify(entities)),
-          vm.newString(JSON.stringify(args)),
+          vm.newString(JSON.stringify(json)),
+          vm.newString(fix ? JSON.stringify(fix) : ""),
+          vm.newString(stringifyValue(args)),
         ],
         id,
         "runtime",
       );
-      return JSON.parse(out) as ScriptEntity[];
+      if (!fix) return parseValue(out) as ScriptEntity[];
+      // 値の形式で返ってくるのは、指定したフィールドだけ。ほかのフィールドは、"$t" を持つオブジェクトを
+      // 書かれても、タグとして読まない（ふつうのオブジェクトのまま返す）
+      const result = JSON.parse(out) as StoredEntity[];
+      for (const e of result) {
+        for (const [koko, names] of Object.entries(fix.write)) {
+          const values = e?.states?.[koko];
+          if (values === null || typeof values !== "object") continue;
+          for (const name of names)
+            if (Object.hasOwn(values, name)) values[name] = decodeValue(values[name]) as Json;
+        }
+      }
+      return result as unknown as ScriptEntity[];
     });
   }
 
@@ -302,15 +416,21 @@ export class ScriptSandbox {
     const existing = this.realms.get(name);
     if (existing) return existing;
     const vm = this.runtime.newContext();
-    this.installHost(vm, name);
-    this.withDeadline(this.options.loadTimeLimitMs, () => {
-      this.unwrap(
-        vm,
-        vm.evalCode(PRELUDE(Object.keys(this.host.hostFunctions ?? {})), "prelude.js"),
-        null,
-        "load",
-      ).dispose();
-    });
+    try {
+      this.installHost(vm, name);
+      this.withDeadline(this.options.loadTimeLimitMs, () => {
+        this.unwrap(
+          vm,
+          vm.evalCode(PRELUDE(Object.keys(this.host.hostFunctions ?? {})), "prelude.js"),
+          null,
+          "load",
+        ).dispose();
+      });
+    } catch (e) {
+      // 準備に失敗した領域を残すと、サンドボックスの破棄で VM ごと落ちる
+      vm.dispose();
+      throw e;
+    }
     this.realms.set(name, vm);
     return vm;
   }
@@ -327,8 +447,8 @@ export class ScriptSandbox {
       const fn = hostFns[name];
       if (!fn) throw new Error(`unknown host function ${name}`);
       const entity = entityH && vm.typeof(entityH) === "string" ? vm.getString(entityH) : null;
-      const result = fn(JSON.parse(vm.getString(argsH)) as Json[], { ...ctxOf(idH), entity });
-      return result === undefined ? vm.undefined : vm.newString(JSON.stringify(result));
+      const result = fn(parseValue(vm.getString(argsH)) as Value[], { ...ctxOf(idH), entity });
+      return result === undefined ? vm.undefined : vm.newString(stringifyValue(result));
     });
     vm.setProp(vm.global, "__hostCall", hostCall);
     hostCall.dispose();

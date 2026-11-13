@@ -162,6 +162,161 @@ describe("ScriptSandbox", () => {
     expect(logs).toEqual([["hello", 'hi e1 {"a":1}']]);
   });
 
+  it("広げた値（undefined・Date・Map・Set・bigint・NaN）が、ホストとの間をそのまま行き来する（ADR 0065）", async () => {
+    const seen: unknown[] = [];
+    const logs: string[] = [];
+    sandbox = await ScriptSandbox.create({
+      onLog: (m) => logs.push(m),
+      hostFunctions: {
+        "world.get": () => ({
+          at: new Date(5),
+          ids: new Set(["a"]),
+          none: undefined,
+          big: 2n ** 70n,
+        }),
+        "world.emit": (args) => {
+          seen.push(args);
+          return undefined;
+        },
+      },
+    });
+    sandbox.loadSystem(
+      "rich",
+      `const Card = __koko("Card", "Card");
+      export default system({
+        query: { with: [Card] },
+        onUpdate(e, arg) {
+          const c = e.get(Card);
+          const got = world.get();
+          world.emit([
+            c.board instanceof Map, c.board.get(7), c.at instanceof Date, c.at.getTime(),
+            typeof c.big, "none" in c, c.none, Number.isNaN(c.nan), c.inf, c.tags.has("x"),
+            arg.when instanceof Date, got.at.getTime(), got.ids.has("a"), "none" in got, got.big,
+          ]);
+          // スクリプトの中で足し、計算して返す
+          c.board.set("b2", { kind: "rook" });
+          c.big = c.big * 2n;
+          c.at = new Date(c.at.getTime() + 1000);
+          c.tags.add(undefined);
+          c.none = new Map([[1n, NaN]]);
+          c.gone = undefined;
+          log(1n, new Set([1]), undefined);
+        },
+      });`,
+    );
+    const before: ScriptEntity = {
+      id: "e",
+      states: {
+        Card: {
+          board: new Map<number, string>([[7, "seven"]]),
+          at: new Date(1000),
+          big: 2n ** 64n,
+          none: undefined,
+          nan: Number.NaN,
+          inf: Number.NEGATIVE_INFINITY,
+          tags: new Set(["x"]),
+          gone: "x",
+        },
+      },
+    };
+    const [after] = sandbox.run("rich", "onUpdate", [before], [{ when: new Date(0) }]);
+    expect(seen).toEqual([
+      [
+        [
+          true,
+          "seven",
+          true,
+          1000,
+          "bigint",
+          true,
+          undefined,
+          true,
+          Number.NEGATIVE_INFINITY,
+          true,
+          true,
+          5,
+          true,
+          true,
+          2n ** 70n,
+        ],
+      ],
+    ]);
+    const card = after?.states.Card ?? {};
+    expect(card.board).toEqual(
+      new Map<unknown, unknown>([
+        [7, "seven"],
+        ["b2", { kind: "rook" }],
+      ]),
+    );
+    expect(card.big).toBe(2n ** 65n);
+    expect(card.at).toEqual(new Date(2000));
+    expect(card.tags).toEqual(new Set(["x", undefined]));
+    expect(card.none).toEqual(new Map([[1n, Number.NaN]]));
+    expect("gone" in card).toBe(true);
+    expect(card.gone).toBeUndefined();
+    expect(Number.isNaN(card.nan)).toBe(true);
+    expect(logs).toEqual(['{"$t":"bigint","v":"1"} {"$t":"Set","v":[1]} undefined']);
+  });
+
+  it("値の形式で運ぶフィールドを絞っても、そのフィールドの値は欠けない（ADR 0065）", async () => {
+    sandbox = await ScriptSandbox.create();
+    sandbox.loadSystem(
+      "s",
+      `const K = __koko("K", "K");
+      export default system({
+        query: { with: [K] },
+        onUpdate(e) {
+          const k = e.get(K);
+          k.seen = [k.ref === undefined && "ref" in k, k.at instanceof Date, k.n].join();
+          if (e.id === "a") {
+            k.ref = undefined;        // 指定したフィールド：undefined をそのまま返す
+            k.other = new Map([[1, 2n]]);
+            k.n = undefined;          // 指定していないフィールド：書かなかったのと同じ
+            k.text = NaN;             // null になる
+          } else {
+            k.ref = "e1";
+            k.n = 5n;                 // bigint は null になる（投げない）
+            k.text = { $t: "Date", v: "2026-11-10T00:00:00.000Z" }; // タグとして読まれない
+            delete k.other;
+          }
+        },
+      });`,
+    );
+    const state = (ref: string | undefined) => ({
+      ref,
+      other: "x",
+      n: 1,
+      text: "t",
+      // 指定していなくても、渡す値にタグが要るフィールドは値の形式で運ぶ
+      at: new Date(3),
+      seen: "",
+    });
+    const out = sandbox.run(
+      "s",
+      "onUpdate",
+      [
+        { id: "a", states: { K: state("e9") } },
+        { id: "b", states: { K: state(undefined) } },
+      ],
+      [],
+      { K: ["ref", "other"] },
+    );
+    const a = out[0]?.states.K ?? {};
+    const b = out[1]?.states.K ?? {};
+    expect(a.seen).toBe("false,true,1");
+    expect(b.seen).toBe("true,true,1");
+    expect("ref" in a).toBe(true);
+    expect(a.ref).toBeUndefined();
+    expect(a.other).toEqual(new Map([[1, 2n]]));
+    expect("n" in a).toBe(false);
+    expect(a.text).toBeNull();
+    expect(a.at).toEqual(new Date(3));
+    expect(b.ref).toBe("e1");
+    expect(b.n).toBeNull();
+    expect(b.text).toEqual({ $t: "Date", v: "2026-11-10T00:00:00.000Z" });
+    expect("other" in b).toBe(false);
+  });
+
   it("別の領域の System は、グローバルやプロトタイプの書き換えが届かない", async () => {
     sandbox = await ScriptSandbox.create();
     sandbox.loadSystem(

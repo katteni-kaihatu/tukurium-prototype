@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { stringifyValue } from "@tukurium/eks";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AssetStore } from "../assets/assetStore";
@@ -19,7 +20,8 @@ const text = (value: unknown) => ({
   content: [
     {
       type: "text" as const,
-      text: typeof value === "string" ? value : JSON.stringify(value, null, 2),
+      // フィールドの値は、保存する形（タグ付きの JSON。ADR 0065）で見せる
+      text: typeof value === "string" ? value : stringifyValue(value, 2),
     },
   ],
 });
@@ -37,7 +39,7 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const states = z
   .record(z.string(), z.record(z.string(), z.unknown()))
   .describe(
-    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }',
+    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。参照（Entity・Material・素材）の「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す',
   );
 const fieldSpec = z.object({
   name: z.string().min(1).max(64),

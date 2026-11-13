@@ -41,6 +41,8 @@
 - 初回の読み込みは VM の準備で遅いので、実行用とは別に読み込み用の時間制限（既定 1 秒）がある。
 - エラーの行番号はスタックの `<領域>/<System ID>.js:<行>` から取る（`lineInStack`）。
 - 1 ステップの重さの大半はEntity の値を JSON にして VM に渡す部分。計測は `pnpm bench:sim`。
+- 値の書き出し・読み込み（`packages/eks/src/value.ts` の `createValueCodec`）は、関数の文（`toString()`）をそのまま QuickJS の prelude に入れている（ADR 0065）。中で `const f = () => {}` や `function f() {}` のように名前の付く関数を作ると、tsx（esbuild の keepNames。開発サーバーとベンチが使う）が外の補助 `__name()` で包み、QuickJS で「`__name` is not defined」と落ちる。Vitest では起きないので、単体テストは通る。中の処理は、オブジェクトのメソッドとして書く（`value.test.ts` が文の形を検査する）。
+- QuickJS の中で、全 Entity の値を 1 つずつたどって値の形式に直すと、1 ステップが 2 倍ほど重くなる（JavaScript で書いたたどり方は、QuickJS では `JSON.parse`・`JSON.stringify` の数倍かかる）。`ScriptSandbox.run()` には、JSON で表せない値を持ちうるフィールドだけを渡し（`taggedFields`）、ほかは `JSON.parse`・`JSON.stringify` に任せる。フィールドの型を増やすときは、`Simulation.taggedFields()` に、その型が JSON で表せない値を持つかを足す。
 
 ### 利用者のスクリプトの TypeScript（ADR 0058）
 

@@ -1,4 +1,4 @@
-import type { Vec3 } from "@tukurium/eks";
+import { parseValue, stringifyValue, type Vec3 } from "@tukurium/eks";
 import {
   BUILTIN,
   emptyProject,
@@ -198,6 +198,68 @@ describe("Simulation：System の扱い", () => {
     expect(sim.world.get("e1", "ks_c")?.n).toBe(0);
   });
 
+  it("参照の「なし」は undefined。スクリプトから外せて、null は書けない（ADR 0065）", async () => {
+    const p = project(`import C from "./Counter.koko";
+      import L from "./Link.koko";
+      export default system({
+        query: { with: [C, L] },
+        onUpdate(e) {
+          const c = e.get(C);
+          const l = e.get(L);
+          if (c.n === 0 && l.to === undefined && "to" in l) l.to = e.id;
+          else if (c.n === 1) l.to = null;
+          else if (c.n === 2) world.set(e.id, "Link", { to: undefined });
+          c.n += 1;
+        },
+      });`);
+    p.kokostates.push({
+      id: "ks_l",
+      name: "Link",
+      fields: [{ id: "to", name: "to", type: "entity", default: "e1" }],
+    });
+    const e1 = p.entities[0];
+    if (e1) e1.states.ks_l = { to: undefined };
+    sim = await Simulation.create(p, "out", { realm: "r" });
+    // 制作データの undefined は、初期値（"e1"）に戻らない
+    expect(sim.world.get("e1", "ks_l")).toEqual({ to: undefined });
+    sim.step(0.1);
+    expect(sim.world.get("e1", "ks_l")?.to).toBe("e1");
+    sim.step(0.1);
+    expect(sim.world.get("e1", "ks_l")?.to).toBe("e1");
+    sim.step(0.1);
+    const link = sim.world.get("e1", "ks_l") ?? {};
+    expect("to" in link).toBe(true);
+    expect(link.to).toBeUndefined();
+    // 状態を配っても、undefined の値は欠けない
+    const restored = parseValue(stringifyValue(sim.world.snapshot())) as ReturnType<
+      typeof sim.world.snapshot
+    >;
+    expect(restored).toEqual(sim.world.snapshot());
+    expect("to" in (restored.entities.find((e) => e.id === "e1")?.states.ks_l ?? {})).toBe(true);
+  });
+
+  it("適用：維持を付けたフィールドが undefined でも、その値を引き継ぐ", async () => {
+    const p = project(
+      `import C from "./Counter.koko"; export default system({ query: { with: [C] }, onUpdate() {} });`,
+    );
+    p.kokostates.push({
+      id: "ks_l",
+      name: "Link",
+      fields: [{ id: "to", name: "to", type: "entity", default: undefined }],
+    });
+    const e1 = p.entities[0];
+    if (e1) e1.states.ks_l = { to: "e1" };
+    const out = p.outputs[0];
+    if (out) out.keep = [{ entity: "e1", koko: "ks_l", field: "to" }];
+    sim = await Simulation.create(p, "out", { realm: "r" });
+    const link = sim.world.get("e1", "ks_l");
+    if (link) link.to = undefined;
+    expect(sim.applyPart("r", "out", structuredClone(p))).toMatchObject({ kept: 1, dropped: 0 });
+    const after = sim.world.get("e1", "ks_l") ?? {};
+    expect("to" in after).toBe(true);
+    expect(after.to).toBeUndefined();
+  });
+
   it("spawn / destroy / find / get / set が使える", async () => {
     sim = await Simulation.create(
       project(`import C from "./Counter.koko";
@@ -241,7 +303,7 @@ describe("Simulation：System の扱い", () => {
           [BUILTIN.Mesh]: {
             shape: "sphere",
             size: [0.5, 0.5, 0.5],
-            material: null,
+            material: undefined,
             color: "#ffffff",
           },
           [BUILTIN.Collider]: { sensor: false },
@@ -256,7 +318,12 @@ describe("Simulation：System の扱い", () => {
         order: 1,
         states: {
           [BUILTIN.Transform]: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-          [BUILTIN.Mesh]: { shape: "box", size: [10, 0.2, 10], material: null, color: "#ffffff" },
+          [BUILTIN.Mesh]: {
+            shape: "box",
+            size: [10, 0.2, 10],
+            material: undefined,
+            color: "#ffffff",
+          },
           [BUILTIN.Collider]: { sensor: false },
         },
       },
@@ -763,7 +830,7 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
           [BUILTIN.Mesh]: {
             shape: mesh.shape ?? "sphere",
             size: mesh.size ?? [0.5, 0.5, 0.5],
-            material: null,
+            material: undefined,
             color: "#ffffff",
           },
           [BUILTIN.Collider]: { sensor: false, ...collider },
@@ -810,7 +877,7 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
       order: 1,
       states: {
         [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        [BUILTIN.Mesh]: { shape: "plane", size: [6, 1, 6], material: null, color: "#ffffff" },
+        [BUILTIN.Mesh]: { shape: "plane", size: [6, 1, 6], material: undefined, color: "#ffffff" },
         [BUILTIN.Collider]: { sensor: false },
       },
     });
@@ -827,7 +894,7 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
       order: 1,
       states: {
         [BUILTIN.Transform]: { position: [0, 2, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        [BUILTIN.Mesh]: { shape: "box", size: [4, 0.2, 4], material: null, color: "#ffffff" },
+        [BUILTIN.Mesh]: { shape: "box", size: [4, 0.2, 4], material: undefined, color: "#ffffff" },
         [BUILTIN.Collider]: { sensor: true },
       },
     });
@@ -866,7 +933,12 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
       order: 1,
       states: {
         [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        [BUILTIN.Mesh]: { shape: "sphere", size: [0.4, 0.4, 0.4], material: null, color: "#fff" },
+        [BUILTIN.Mesh]: {
+          shape: "sphere",
+          size: [0.4, 0.4, 0.4],
+          material: undefined,
+          color: "#fff",
+        },
         [BUILTIN.Collider]: {},
         [BUILTIN.RigidBody]: { type: "dynamic", linvel: [0, 0, 0] },
       },

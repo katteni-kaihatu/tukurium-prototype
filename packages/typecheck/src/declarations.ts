@@ -37,7 +37,7 @@ export function fieldTsType(type: FieldType): string {
     case "material":
     case "model":
     case "audio":
-      return "string | null";
+      return "string | undefined";
   }
 }
 

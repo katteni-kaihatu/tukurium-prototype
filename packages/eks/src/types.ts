@@ -15,16 +15,16 @@ export interface FieldValueMap {
   vec3: Vec3;
   /** "#rrggbb" */
   color: string;
-  /** 参照先 Entity。未設定は null。 */
-  entity: EntityId | null;
-  /** テクスチャ（画像の素材）の ID。未設定は null。 */
-  texture: string | null;
-  /** マテリアルの ID。未設定は null。 */
-  material: string | null;
-  /** モデル（3D の素材）の ID。未設定は null。 */
-  model: string | null;
-  /** 音声の素材の ID。未設定は null。 */
-  audio: string | null;
+  /** 参照先 Entity。「なし」は undefined（null は使わない。ADR 0065）。 */
+  entity: EntityId | undefined;
+  /** テクスチャ（画像の素材）の ID。「なし」は undefined。 */
+  texture: string | undefined;
+  /** マテリアルの ID。「なし」は undefined。 */
+  material: string | undefined;
+  /** モデル（3D の素材）の ID。「なし」は undefined。 */
+  model: string | undefined;
+  /** 音声の素材の ID。「なし」は undefined。 */
+  audio: string | undefined;
 }
 
 /** リソースを指す欄の型（テクスチャ・マテリアル・モデル・音声） */
@@ -61,7 +61,11 @@ export interface KokoStateDef {
   role?: string;
 }
 
-/** KokoState の値。キーはフィールド ID。 */
+/**
+ * KokoState の値。キーはフィールド ID。
+ * 値が undefined のフィールド（参照の「なし」など）と、キーがないフィールドは別のもの。
+ * あるかどうかは `in` で確かめる。
+ */
 export type KokoStateValues = Record<FieldId, FieldValue>;
 
 export interface Query {

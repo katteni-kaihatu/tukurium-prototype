@@ -72,6 +72,42 @@ describe("保存との差", () => {
     });
   });
 
+  it("広げた値と、参照の「なし」（undefined）を、保存と比べられる（ADR 0065）", () => {
+    const values = (patch: Record<string, unknown> = {}) =>
+      ({
+        mat: undefined,
+        at: new Date(5),
+        board: new Map([["a1", { kind: "pawn" }]]),
+        big: 3n,
+        nan: Number.NaN,
+        ...patch,
+      }) as unknown as EntityDef["states"][string];
+    const head = toFiles(snap({ entities: [box({ states: { ks: values() } })] }));
+    // 保存したファイルはタグ付きの JSON。同じ値なら印を出さない
+    expect(entityChange(head, box({ states: { ks: values() } })).kind).toBeNull();
+    const changed = entityChange(
+      head,
+      box({
+        states: { ks: values({ mat: "mat_a", board: new Map([["a1", { kind: "rook" }]]) }) },
+      }),
+    );
+    expect(changed.states.ks).toEqual({
+      kind: "modified",
+      fields: { mat: "modified", board: "modified" },
+    });
+
+    // KokoState の初期値も同じ
+    const field = { id: "mat", name: "mat", type: "material" as const };
+    const def = (value: string | undefined) => ({
+      id: "ks",
+      name: "K",
+      fields: [{ ...field, default: value }],
+    });
+    const saved = toFiles(snap({ kokostates: [def(undefined)] }));
+    expect(kokoChange(saved, def(undefined)).kind).toBeNull();
+    expect(kokoChange(saved, def("mat_a")).fields).toEqual({ mat: "modified" });
+  });
+
   it("後から付けた KokoState は新しく、維持の切り替えはフィールドの変化", () => {
     const before = box();
     const head = toFiles(snap({ entities: [before] }));

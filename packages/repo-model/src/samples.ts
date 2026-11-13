@@ -113,7 +113,7 @@ export function gunAndTargetSample(): ProjectSnapshot {
       [BUILTIN.Mesh]: {
         shape: "cylinder",
         size: [0.7, 0.08, 0.7],
-        material: null,
+        material: undefined,
         color: "#c0392b",
       },
       [BUILTIN.Collider]: { sensor: false },

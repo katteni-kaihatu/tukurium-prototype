@@ -1,5 +1,6 @@
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
+import { stringifyValue } from "@tukurium/eks";
 import { PROTOCOL_VERSION } from "@tukurium/shared";
 import Fastify from "fastify";
 import { registerMcp } from "./agent/mcp";
@@ -35,6 +36,10 @@ export async function buildApp(
   // 同梱の公式ライブラリを用意する（中身が変わっていれば新しい版を出す。ADR 0016）
   await repos.ensureOfficialLibraries();
   const hub = new Hub(store, { log: (m) => app.log.info(m), repos, ...options.hub });
+
+  // 返事は、タグ付きの JSON で書く（制作データの値を欠かさず返すため。ADR 0065）。
+  // クライアントは parseValue で読む。JSON で表せる値は、今までと同じ形になる
+  app.setReplySerializer((payload) => stringifyValue(payload));
 
   // Yjs の更新を運ぶので大きめにする（初期内容の送信など）
   await app.register(fastifyWebsocket, { options: { maxPayload: 8 * 1024 * 1024 } });

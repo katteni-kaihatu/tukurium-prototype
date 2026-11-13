@@ -1,3 +1,4 @@
+import { parseValue } from "@tukurium/eks";
 import type {
   FileChange,
   PackageManifest,
@@ -171,7 +172,11 @@ async function call<T>(
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  // 制作データの値を欠かさず受け取るため、タグ付きの JSON として読む（ADR 0065）
+  const data = (await res
+    .text()
+    .then(parseValue)
+    .catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(data.error ?? `エラー（${res.status}）`);
   return data;
 }

@@ -1,4 +1,13 @@
-import type { FieldDef, FieldType, FieldValue, KokoStateDef, Vec3, World } from "@tukurium/eks";
+import {
+  decodeValue,
+  type FieldDef,
+  type FieldType,
+  type FieldValue,
+  type KokoStateDef,
+  stringifyValue,
+  type Vec3,
+  type World,
+} from "@tukurium/eks";
 import {
   type AssetKind,
   BUILTIN,
@@ -130,12 +139,23 @@ function imageOf(project: ProjectDoc, value: string, what: string): string {
   return resolveNamed(assetsOf(project, "image"), value, what);
 }
 
-/** 欄の型に合わせて値を確かめる（JSON から来るので、形を直せるものは直す） */
-function coerce(project: ProjectDoc, field: FieldDef, value: unknown): FieldValue {
+/**
+ * 欄の型に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
+ * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
+ * JSON には undefined がないので、null も「なし」として受け取る。
+ */
+function coerce(project: ProjectDoc, field: FieldDef, raw: unknown): FieldValue {
   const bad = () =>
     new AgentError(
-      `フィールド「${field.name}」（${field.type}）に使えない値です: ${JSON.stringify(value)}`,
+      `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}`,
     );
+  let value: unknown;
+  try {
+    value = decodeValue(raw);
+  } catch {
+    throw bad();
+  }
+  const none = value === null || value === undefined;
   switch (field.type) {
     case "number":
       if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -158,21 +178,22 @@ function coerce(project: ProjectDoc, field: FieldDef, value: unknown): FieldValu
         return value as Vec3;
       throw bad();
     case "material":
-      if (value === null) return null;
+      if (none) return undefined;
       if (typeof value === "string")
         return resolveNamed(project.materials(), value, `フィールド「${field.name}」の Material`);
       throw bad();
     case "model":
     case "texture":
     case "audio": {
-      if (value === null) return null;
+      if (none) return undefined;
       if (typeof value !== "string") throw bad();
       const kind = field.type === "model" ? "model" : field.type === "texture" ? "image" : "audio";
       const label = field.type === "model" ? "モデル" : field.type === "texture" ? "画像" : "音声";
       return resolveNamed(assetsOf(project, kind), value, `フィールド「${field.name}」の${label}`);
     }
     default:
-      if (value === null || typeof value === "string") return value as FieldValue;
+      if (none) return undefined;
+      if (typeof value === "string") return value;
       throw bad();
   }
 }
@@ -255,7 +276,9 @@ export function entityDetail(project: ProjectDoc, ref: string) {
         const def = registry.get(koko);
         return [
           def?.name ?? koko,
-          Object.fromEntries((def?.fields ?? []).map((f) => [f.name, values[f.id] ?? f.default])),
+          Object.fromEntries(
+            (def?.fields ?? []).map((f) => [f.name, f.id in values ? values[f.id] : f.default]),
+          ),
         ];
       }),
     ),
@@ -408,11 +431,11 @@ const DEFAULTS: Record<FieldType, FieldValue> = {
   string: "",
   vec3: [0, 0, 0],
   color: "#ffffff",
-  entity: null,
-  texture: null,
-  material: null,
-  model: null,
-  audio: null,
+  entity: undefined,
+  texture: undefined,
+  material: undefined,
+  model: undefined,
+  audio: undefined,
 };
 
 /** 欄の定義を作る。同じ名前の欄があれば、その ID を引き継ぐ（値が切れないように） */

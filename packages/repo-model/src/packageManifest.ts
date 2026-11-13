@@ -1,3 +1,4 @@
+import { encodeValue, isPlainObject, type Json } from "@tukurium/eks";
 import { type PathKind, ResourcePathIndex } from "./resourcePath";
 import type { PackageDependency, ProjectSnapshot } from "./schema";
 
@@ -54,12 +55,28 @@ export function packageManifest(snap: ProjectSnapshot, outputId: string): Packag
   return deps.length > 0 ? { format: 1, exports, dependencies: deps } : { format: 1, exports };
 }
 
-/** キーを並べ替えて書く JSON（同じ中身なら、作り方によらず同じ文字列になる） */
+const byKey = ([a]: [string, unknown], [b]: [string, unknown]) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** ふつうの JSON を、キーを並べ替えて書く */
+function stableJson(json: Json): string {
+  if (json === null || typeof json !== "object") return JSON.stringify(json);
+  if (Array.isArray(json)) return `[${json.map(stableJson).join(",")}]`;
+  const entries = Object.entries(json).sort(byKey);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
+}
+
+/**
+ * キーを並べ替えて書く JSON（同じ中身なら、作り方によらず同じ文字列になる）。
+ * オブジェクトの、値が undefined のプロパティは書かない（ないのと同じ）。JSON で表せない値
+ * （配列の中の undefined・Date・Map・Set・bigint・NaN）は、タグ付きの JSON（ADR 0065）で書く。
+ */
 export function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+  if (isPlainObject(value) && !Object.hasOwn(value, "$t")) {
+    const entries = Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(byKey);
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
+  }
+  return stableJson(encodeValue(value));
 }

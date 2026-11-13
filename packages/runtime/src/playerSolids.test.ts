@@ -30,7 +30,7 @@ function scene(
     world.add(p.id, BUILTIN.Mesh, {
       shape: p.shape ?? "box",
       size: p.size ?? [1, 1, 1],
-      material: null,
+      material: undefined,
       color: "#ffffff",
     });
     world.add(p.id, BUILTIN.Collider, p.collider ?? {});

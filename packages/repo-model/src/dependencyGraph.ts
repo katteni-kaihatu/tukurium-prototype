@@ -1,4 +1,4 @@
-import { isResourceFieldType, type KokoStateDef } from "@tukurium/eks";
+import { isResourceFieldType, type KokoStateDef, stringifyValue } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { ResourcePathIndex } from "./resourcePath";
@@ -150,7 +150,7 @@ export function usersOf(graph: ProjectDependencyGraph, ref: GraphRef): GraphRef[
 function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
   const out = new Map<string, string>();
   const put = (kind: ResourceKind, id: string, v: unknown) =>
-    out.set(refKey({ kind, id }), JSON.stringify(v));
+    out.set(refKey({ kind, id }), stringifyValue(v));
   for (const k of snap.kokostates) put("kokostate", k.id, k);
   for (const s of snap.systems) put("system", s.id, s);
   for (const m of snap.materials) put("material", m.id, m);

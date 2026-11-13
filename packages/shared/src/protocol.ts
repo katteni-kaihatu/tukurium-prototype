@@ -1,7 +1,12 @@
 import { z } from "zod";
 
-/** 通信プロトコルの版。互換性のない変更をしたら上げる。 */
-export const PROTOCOL_VERSION = 7;
+/**
+ * 通信プロトコルの版。互換性のない変更をしたら上げる。
+ * 8：メッセージを、タグ付きの JSON（ADR 0065）で運ぶ。フィールドの値に undefined・Date・Map・Set・
+ * bigint・NaN が入り、参照の「なし」は null から undefined に変わった。送るときは stringifyValue、
+ * 受けるときは parseValue（@tukurium/eks）を使う。
+ */
+export const PROTOCOL_VERSION = 8;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;

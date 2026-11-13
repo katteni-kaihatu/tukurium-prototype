@@ -25,7 +25,7 @@ const CLEAR_BOARD = `function clearBoard(board: BoardValues) {
     if (!cell) continue;
     if (cell.piece) world.destroy(cell.piece);
     if (cell.piece2) world.destroy(cell.piece2);
-    world.set(id, Cell, { mark: "", piece: null, piece2: null });
+    world.set(id, Cell, { mark: "", piece: undefined, piece2: undefined });
   }
   board.marks = "         ";
   board.first = "";
@@ -111,8 +111,8 @@ function putMark(board: BoardValues, cellId: string, cell: CellValues, mark: str
             [Mesh.id]: { shape: "box", size: [0.34, 0.06, 0.03], color: color },
           },
         })
-      : null;
-  world.set(cellId, Cell, { mark: mark, piece: piece, piece2: piece2 });
+      : undefined;
+  world.set(cellId, Cell, { mark: mark, piece: piece ?? undefined, piece2: piece2 ?? undefined });
   const judged = judge(board.marks);
   if (judged) {
     board.result = judged.winner;
@@ -279,12 +279,12 @@ export function marubatsuSample(): ProjectSnapshot {
         [BUILTIN.Mesh]: {
           shape: "box",
           size: [0.44, 0.44, 0.05],
-          material: null,
+          material: undefined,
           color: "#f7f3ea",
-          model: null,
+          model: undefined,
         },
         [BUILTIN.Collider]: { sensor: false },
-        ks_cell: { f_index: i, f_mark: "", f_piece: null, f_piece2: null },
+        ks_cell: { f_index: i, f_mark: "", f_piece: undefined, f_piece2: undefined },
       },
     });
   }
@@ -324,8 +324,8 @@ export function marubatsuSample(): ProjectSnapshot {
         fields: [
           { id: "f_index", name: "index", type: "number", default: 0 },
           { id: "f_mark", name: "mark", type: "string", default: "" },
-          { id: "f_piece", name: "piece", type: "entity", default: null },
-          { id: "f_piece2", name: "piece2", type: "entity", default: null },
+          { id: "f_piece", name: "piece", type: "entity", default: undefined },
+          { id: "f_piece2", name: "piece2", type: "entity", default: undefined },
         ],
       },
       { id: "ks_reset", name: "Reset", fields: [] },
@@ -359,9 +359,9 @@ export function marubatsuSample(): ProjectSnapshot {
           [BUILTIN.Mesh]: {
             shape: "box",
             size: [1.8, 1.9, 0.08],
-            material: null,
+            material: undefined,
             color: "#a67c52",
-            model: null,
+            model: undefined,
           },
           [BUILTIN.Collider]: { sensor: false },
           ks_board: {
@@ -387,9 +387,9 @@ export function marubatsuSample(): ProjectSnapshot {
           [BUILTIN.Mesh]: {
             shape: "box",
             size: [0.14, 1.1, 0.14],
-            material: null,
+            material: undefined,
             color: "#6d543c",
-            model: null,
+            model: undefined,
           },
         },
       },
@@ -409,9 +409,9 @@ export function marubatsuSample(): ProjectSnapshot {
           [BUILTIN.Mesh]: {
             shape: "box",
             size: [0.78, 0.24, 0.05],
-            material: null,
+            material: undefined,
             color: "#3f5348",
-            model: null,
+            model: undefined,
           },
           [BUILTIN.Collider]: { sensor: false },
           ks_reset: {},
@@ -445,9 +445,9 @@ export function marubatsuSample(): ProjectSnapshot {
           [BUILTIN.Mesh]: {
             shape: "sphere",
             size: [0.12, 0.12, 0.12],
-            material: null,
+            material: undefined,
             color: "#d5cfc3",
-            model: null,
+            model: undefined,
           },
         },
       },
@@ -466,9 +466,9 @@ export function marubatsuSample(): ProjectSnapshot {
           [BUILTIN.Mesh]: {
             shape: "sphere",
             size: [0.12, 0.12, 0.12],
-            material: null,
+            material: undefined,
             color: "#d5cfc3",
-            model: null,
+            model: undefined,
           },
         },
       },

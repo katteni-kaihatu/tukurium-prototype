@@ -1,3 +1,4 @@
+import { parseValue, stringifyValue } from "@tukurium/eks";
 import {
   type ClientMessage,
   PROTOCOL_VERSION,
@@ -45,7 +46,8 @@ export class ServerClient {
 
   send(msg: ClientMessage): void {
     if (msg.t === "session.leave") this.joinedSessionId = null;
-    if (this.ws?.readyState === WebSocket.OPEN && this.me) this.ws.send(JSON.stringify(msg));
+    // フィールドの値を欠かさず運ぶため、タグ付きの JSON で送る（ADR 0065）
+    if (this.ws?.readyState === WebSocket.OPEN && this.me) this.ws.send(stringifyValue(msg));
   }
 
   rename(name: string): void {
@@ -93,7 +95,7 @@ export class ServerClient {
     ws.onmessage = (ev) => {
       let data: unknown;
       try {
-        data = JSON.parse(String(ev.data));
+        data = parseValue(String(ev.data));
       } catch {
         return;
       }

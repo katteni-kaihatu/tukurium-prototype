@@ -13,6 +13,7 @@ export * from "./resourcePath";
 export * from "./sampleModels";
 export * from "./samples";
 export * from "./schema";
+export * from "./storedValues";
 export * from "./systemCapabilities";
 export * from "./systemCompiler";
 export * from "./typescriptStrip";

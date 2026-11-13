@@ -1,3 +1,4 @@
+import { stringifyValue } from "@tukurium/eks";
 import { parsePackageResourceId } from "@tukurium/repo-model";
 import type { BagItem } from "@tukurium/runtime";
 import { useEffect, useState } from "react";
@@ -35,7 +36,7 @@ function BagList({ items, label }: { items: BagItem[]; label: string }) {
               {" "}
               ·{" "}
               {Object.entries(it.values)
-                .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                .map(([k, v]) => `${k}: ${typeof v === "string" ? v : stringifyValue(v)}`)
                 .join(" / ") || "値なし"}
             </span>
           </span>

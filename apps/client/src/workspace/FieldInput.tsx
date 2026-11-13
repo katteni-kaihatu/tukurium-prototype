@@ -169,7 +169,7 @@ export function FieldInput(props: {
             className={ui.select}
             value={typeof value === "string" ? value : ""}
             disabled={disabled}
-            onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+            onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
           >
             <option value="">（なし）</option>
             {options.map((o) => (
