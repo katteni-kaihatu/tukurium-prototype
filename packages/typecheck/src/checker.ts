@@ -11,6 +11,9 @@ import {
   type FieldOwner,
   fieldOwners,
   HOST_FILE,
+  type TypeDefFile,
+  typeDefFiles,
+  typeImports,
   virtualProject,
 } from "./declarations";
 import { fieldTypeSyntaxError, typeToSchema, UnsaveableType } from "./fieldSchema";
@@ -59,6 +62,8 @@ interface FieldFile {
   text: string;
   /** 文として読めたフィールドと、ファイルの中の範囲 */
   entries: { fieldId: string; start: number; end: number }[];
+  /** 頭の、型の定義の import 文の長さ（ここで起きた型エラーは、使う型の定義の問題） */
+  importsEnd: number;
 }
 
 /**
@@ -136,10 +141,18 @@ export class TypeChecker {
    * unknown にする（そのフィールドだけが使えなくなり、ほかのフィールドとスクリプトは確かめられる）。
    */
   private load(input: TypeCheckInput): FieldCheck {
-    const fieldFiles = this.fieldFiles(input);
+    const typeDefs = typeDefFiles(input.snapshot, input.packages);
+    const fieldFiles = this.fieldFiles(input, typeDefs);
     const fieldTexts = new Map(fieldFiles.map((f) => [f.path, f.text] as const));
-    this.setFiles(new Map([[HOST_FILE, input.hostDeclarations], ...fieldTexts]));
+    this.setFiles(
+      new Map([
+        [HOST_FILE, input.hostDeclarations],
+        ...typeDefs.map((f) => [f.file, f.code] as const),
+        ...fieldTexts,
+      ]),
+    );
     const fields = this.checkFields(fieldFiles);
+    fields.diagnostics.push(...this.checkTypeDefs(typeDefs));
     const v = virtualProject(input.snapshot, input.packages, input.hostDeclarations, fields.bad);
     this.setFiles(new Map([...v.files, ...fieldTexts]));
     this.paths = v.paths;
@@ -148,9 +161,18 @@ export class TypeChecker {
   }
 
   /** フィールドの型の文を、KokoState ごとのファイルにする（文として読めないものは入れない） */
-  private fieldFiles(input: TypeCheckInput): FieldFile[] {
+  private fieldFiles(input: TypeCheckInput, typeDefs: TypeDefFile[]): FieldFile[] {
+    const byId = new Map(typeDefs.map((f) => [f.id, f] as const));
     return fieldOwners(input.snapshot, input.packages).map((owner, i) => {
-      const file: FieldFile = { owner, path: `${FIELDS_DIR}/${i}.ts`, text: "", entries: [] };
+      // 使う型の定義が公開している型を、型の文からそのままの名前で使えるようにする
+      const imports = typeImports(owner.typeDefs, byId);
+      const file: FieldFile = {
+        owner,
+        path: `${FIELDS_DIR}/${i}.ts`,
+        text: imports,
+        entries: [],
+        importsEnd: imports.length,
+      };
       for (const f of owner.fields) {
         if (typeof f.type !== "string" || fieldTypeSyntaxError(f.type) !== null) continue;
         const head = `export type F${file.entries.length} = (\n`;
@@ -158,7 +180,7 @@ export class TypeChecker {
         file.text += `${head}${f.type}\n);\n`;
         file.entries.push({ fieldId: f.id, start, end: start + f.type.length });
       }
-      if (file.text === "") file.text = "export {};\n";
+      if (file.entries.length === 0) file.text += "export {};\n";
       return file;
     });
   }
@@ -203,6 +225,23 @@ export class TypeChecker {
       if (!source) continue;
       // 型の文の中の型エラー（知らない名前など）
       for (const d of this.service.getSemanticDiagnostics(file.path)) {
+        // import 文の型エラー（二つの型の定義が同じ名前の型を公開している、など）
+        if (d.start !== undefined && d.start < file.importsEnd) {
+          if (owner.own)
+            out.diagnostics.push(
+              makeDiagnostic({
+                code: `ts${d.code}`,
+                severity: "error",
+                phase: "authoring",
+                provider: TYPES_PROVIDER,
+                subject: { kind: "kokostate", id: owner.id },
+                location: { kind: "property", path: ["typeDefs"] },
+                related: [],
+                message: `「${owner.name}」が使う型の定義：${ts.flattenDiagnosticMessageText(d.messageText, " ")}`,
+              }),
+            );
+          continue;
+        }
         const entry = file.entries.find(
           (e) => d.start !== undefined && d.start >= e.start && d.start <= e.end,
         );
@@ -222,6 +261,77 @@ export class TypeChecker {
         }
       });
       out.schemas[owner.id] = schemas;
+    }
+    return out;
+  }
+
+  /**
+   * 型の定義（ADR 0065）を確かめる：書けるのは `type` と `interface` だけ。公開している型は、保存できる型に限る。
+   * 依存から取り込んだ型の定義の問題は、ライブラリの側で直すものなので出さない。
+   */
+  private checkTypeDefs(typeDefs: TypeDefFile[]): Diagnostic[] {
+    const out: Diagnostic[] = [];
+    const program = this.service.getProgram();
+    const checker = program?.getTypeChecker();
+    for (const def of typeDefs) {
+      if (!def.own) continue;
+      const source = program?.getSourceFile(def.file);
+      if (!source || !checker) continue;
+      const push = (code: string, start: number | undefined, message: string) => {
+        const pos = start === undefined ? null : source.getLineAndCharacterOfPosition(start);
+        out.push(
+          makeDiagnostic({
+            code,
+            severity: "error",
+            phase: "authoring",
+            provider: TYPES_PROVIDER,
+            subject: { kind: "typedef", id: def.id },
+            location: {
+              kind: "script",
+              line: pos ? pos.line + 1 : null,
+              ...(pos ? { column: pos.character + 1 } : {}),
+              symbol: `${code}:${message.slice(0, 80)}`,
+            },
+            related: [],
+            message,
+          }),
+        );
+      };
+      const found = [
+        ...this.service.getSyntacticDiagnostics(def.file),
+        ...this.service.getSemanticDiagnostics(def.file),
+      ];
+      for (const d of found)
+        push(`ts${d.code}`, d.start, ts.flattenDiagnosticMessageText(d.messageText, "\n"));
+      const syntaxOk = this.service.getSyntacticDiagnostics(def.file).length === 0;
+      const ctx = { checker, isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX) };
+      for (const s of source.statements) {
+        if (ts.isImportDeclaration(s) || ts.isExportDeclaration(s) || ts.isEmptyStatement(s))
+          continue;
+        if (!ts.isTypeAliasDeclaration(s) && !ts.isInterfaceDeclaration(s)) {
+          push(
+            "typedef-unsupported",
+            s.getStart(source),
+            "型の定義には、type と interface だけを書けます（関数・変数・クラスなどは書けません）",
+          );
+          continue;
+        }
+        // 型の引数を持つ型は、使う所で形が決まるので、ここでは確かめない
+        if (!syntaxOk || (s.typeParameters?.length ?? 0) > 0) continue;
+        const exported = (ts.getModifiers(s) ?? []).some(
+          (m) => m.kind === ts.SyntaxKind.ExportKeyword,
+        );
+        if (!exported) continue;
+        // この型の中に、もう型エラー（知らない名前など）が出ているなら、重ねて出さない
+        if (found.some((d) => d.start !== undefined && d.start >= s.pos && d.start < s.end))
+          continue;
+        try {
+          typeToSchema(ctx, checker.getTypeAtLocation(s.name));
+        } catch (e) {
+          if (!(e instanceof UnsaveableType)) throw e;
+          push("typedef-unsaveable", s.name.getStart(source), `${s.name.text}：${e.message}`);
+        }
+      }
     }
     return out;
   }

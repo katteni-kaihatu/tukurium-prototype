@@ -15,6 +15,8 @@ import {
   type StoredValues,
   systemCodePath,
   systemMetaPath,
+  typeCodePath,
+  typeMetaPath,
 } from "@tukurium/repo-model";
 
 /** 最後に保存した内容との差。緑が新しい、黄色が変わった。 */
@@ -156,7 +158,12 @@ export function kokoChange(head: FileMap | null, def: KokoStateDef): KokoChange 
     }
   }
   const name = saved.name !== def.name ? "modified" : null;
-  const kind = name || Object.keys(fields).length > 0 ? "modified" : null;
+  // 使う型の定義（ADR 0065）の出し入れも、定義の変化にする
+  const typeDefs = !equalValues(
+    [...(saved.typeDefs ?? [])].sort(),
+    [...(def.typeDefs ?? [])].sort(),
+  );
+  const kind = name || typeDefs || Object.keys(fields).length > 0 ? "modified" : null;
   return { kind, name, fields };
 }
 
@@ -172,10 +179,30 @@ export function systemChange(
   name: string,
   code: string,
 ): SystemChange {
+  return codeChange(head, systemMetaPath(id), systemCodePath(id), name, code);
+}
+
+/** 型の定義（ADR 0065）。System と同じく、名前とコードを分けて比べる */
+export function typeDefChange(
+  head: FileMap | null,
+  id: string,
+  name: string,
+  code: string,
+): SystemChange {
+  return codeChange(head, typeMetaPath(id), typeCodePath(id), name, code);
+}
+
+function codeChange(
+  head: FileMap | null,
+  metaPath: string,
+  codePath: string,
+  name: string,
+  code: string,
+): SystemChange {
   const empty: SystemChange = { kind: null, name: null, code: null };
   if (!head) return empty;
-  const meta = readJson<{ name?: string }>(head, systemMetaPath(id));
-  const savedCode = head[systemCodePath(id)];
+  const meta = readJson<{ name?: string }>(head, metaPath);
+  const savedCode = head[codePath];
   if (!meta && savedCode === undefined) return { kind: "added", name: "added", code: "added" };
   const nameKind: ChangeKind | null = !meta ? "added" : meta.name !== name ? "modified" : null;
   const codeKind: ChangeKind | null =

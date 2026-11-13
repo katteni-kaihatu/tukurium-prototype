@@ -10,6 +10,7 @@ import {
   outputChange,
   systemChange,
   treeMark,
+  typeDefChange,
 } from "./changeMarks";
 
 function snap(partial: Partial<ProjectSnapshot> = {}): ProjectSnapshot {
@@ -144,6 +145,23 @@ describe("保存との差", () => {
       "modified",
     );
     expect(kokoChange(head, { ...def, builtin: true }).kind).toBeNull();
+  });
+
+  it("型の定義は名前とコードを分け、KokoState は使う型の定義の出し入れも変化にする（ADR 0065）", () => {
+    const def = { id: "ks", name: "Hand", fields: [], typeDefs: ["td"] };
+    const head = toFiles(
+      snap({ kokostates: [def], types: [{ id: "td", name: "Cards", code: "export type A = 1;" }] }),
+    );
+    expect(typeDefChange(head, "td", "Cards", "export type A = 1;").kind).toBeNull();
+    expect(typeDefChange(head, "td", "Deck", "export type A = 1;")).toEqual({
+      kind: "modified",
+      name: "modified",
+      code: null,
+    });
+    expect(typeDefChange(head, "td", "Cards", "export type A = 2;").code).toBe("modified");
+    expect(typeDefChange(head, "td_new", "New", "").kind).toBe("added");
+    expect(kokoChange(head, def).kind).toBeNull();
+    expect(kokoChange(head, { ...def, typeDefs: [] }).kind).toBe("modified");
   });
 
   it("System は名前とコードを分け、マテリアルとアウトプットも箇所を分ける", () => {

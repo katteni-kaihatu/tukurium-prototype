@@ -3,6 +3,15 @@ import { BUILTIN } from "./builtins";
 import type { EntityDef, ProjectSnapshot } from "./schema";
 
 /** 新しいリポジトリの初期内容。空のアイテム 1 つ。 */
+/** 新しい型の定義の中身（ADR 0065）。`export` を付けた型を、KokoState のフィールドの型から使える */
+export const NEW_TYPES_CODE = `// 型の定義：名前を付けた型を、KokoState のフィールドの型から使えます。
+// 書けるのは type と interface。export を付けた型が使えます。
+export interface Card {
+  suit: "spade" | "heart" | "diamond" | "club";
+  rank: number;
+}
+`;
+
 export function emptyProject(name: string): ProjectSnapshot {
   return {
     version: 1,

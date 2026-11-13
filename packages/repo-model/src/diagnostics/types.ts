@@ -10,6 +10,7 @@ export type ResourceKind =
   | "entity"
   | "kokostate"
   | "system"
+  | "typedef"
   | "material"
   | "asset";
 

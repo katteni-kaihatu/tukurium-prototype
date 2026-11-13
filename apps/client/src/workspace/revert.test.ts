@@ -58,6 +58,57 @@ describe("planRevert", () => {
     expect(diff()).toEqual([]);
   });
 
+  it("型の定義と、KokoState が使う型の定義の一覧を戻す（ADR 0065）", () => {
+    const head = gunAndTargetSample();
+    head.types = [{ id: "td_a", name: "Cards", code: "export type A = 1;\n" }];
+    const gun = head.kokostates.find((k) => k.id === "ks_gun");
+    if (gun) gun.typeDefs = ["td_a"];
+    const project = new ProjectDoc();
+    project.load(structuredClone(head));
+    const diff = () => describeDiff(head, project.snapshot());
+    const run = (id: string, part?: string) => {
+      const plan = planRevert(project, head, id, part);
+      if (!plan) throw new Error(`戻せない: ${id} ${part ?? ""}`);
+      plan();
+    };
+    expect(diff()).toEqual([]);
+
+    project.renameTypeDef("td_a", "Deck");
+    project.code("td_a")?.insert(0, "// 追記\n");
+    const added = project.addTypeDef("New", "export type B = 2;\n");
+    const cur = project.kokostate("ks_gun");
+    if (cur) project.updateKokoState({ ...cur, typeDefs: ["td_a", added] });
+    expect(
+      diff()
+        .map((d) => [d.group, d.name, d.kind])
+        .sort(),
+    ).toEqual([
+      ["code", "Deck", "modified"],
+      ["code", "New", "added"],
+      ["koko", "Gun", "modified"],
+    ]);
+    const koko = diff().find((d) => d.group === "koko");
+    expect(koko?.lines).toEqual([
+      { label: "使う型の定義", before: "Cards", after: "Deck、New", part: "typeDefs" },
+    ]);
+
+    run("koko:ks_gun", "typeDefs");
+    expect(project.kokostate("ks_gun")?.typeDefs).toEqual(["td_a"]);
+    run("code:td_a", "name");
+    expect(project.typeDef("td_a")?.name).toBe("Cards");
+    run("code:td_a", "code");
+    expect(project.code("td_a")?.toString()).toBe("export type A = 1;\n");
+    run(`code:${added}`);
+    expect(project.typeDef(added)).toBeUndefined();
+    expect(diff()).toEqual([]);
+
+    // 消した型の定義も戻せる
+    project.removeTypeDef("td_a");
+    run("code:td_a");
+    run("koko:ks_gun");
+    expect(diff()).toEqual([]);
+  });
+
   it("欄の状態維持の印も、保存したときに揃える", () => {
     const { project, diff, run } = setup();
     const output = project.output("out_range");

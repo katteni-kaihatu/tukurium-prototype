@@ -1,4 +1,4 @@
-import type { FieldValue } from "@tukurium/eks";
+import type { FieldValue, KokoStateDef } from "@tukurium/eks";
 import type {
   EntityDef,
   KeepMark,
@@ -169,6 +169,12 @@ function outputRevert(
   };
 }
 
+/** 使う型の定義（ADR 0065）を、保存したときの一覧に戻した定義 */
+function withSavedTypeDefs(cur: KokoStateDef, saved: KokoStateDef): KokoStateDef {
+  const { typeDefs: _now, ...rest } = cur;
+  return saved.typeDefs ? { ...rest, typeDefs: [...saved.typeDefs] } : rest;
+}
+
 function kokoRevert(
   project: ProjectDoc,
   head: ProjectSnapshot,
@@ -184,6 +190,7 @@ function kokoRevert(
   }
   if (!saved || !cur) return null;
   if (part === "name") return () => project.updateKokoState({ ...cur, name: saved.name });
+  if (part === "typeDefs") return () => project.updateKokoState(withSavedTypeDefs(cur, saved));
   if (part.startsWith("field:")) {
     const fid = part.slice("field:".length);
     const was = saved.fields.find((f) => f.id === fid);
@@ -206,6 +213,19 @@ function codeRevert(
   id: string,
   part?: string,
 ): (() => void) | null {
+  // 型の定義（ADR 0065）も、コードとして同じ形で戻す
+  const savedType = head.types?.find((t) => t.id === id);
+  const curType = project.typeDef(id);
+  if (savedType || curType) {
+    if (!part) {
+      if (!savedType) return () => project.removeTypeDef(id);
+      return () => project.restoreTypeDef({ id, name: savedType.name }, savedType.code);
+    }
+    if (!savedType || !curType) return null;
+    if (part === "name") return () => project.renameTypeDef(id, savedType.name);
+    if (part === "code") return () => project.restoreTypeDef(curType, savedType.code);
+    return null;
+  }
   const saved = head.systems.find((s) => s.id === id);
   const cur = project.system(id);
   if (!part) {

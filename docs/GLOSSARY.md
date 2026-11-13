@@ -70,6 +70,7 @@ Tukurium で使う言葉の意味と呼び方。呼び方は画面で使う言�
 | Entity | エンティティ | 的や扉など、作品の中の一つの要素。 |
 | KokoState | ECS の Component | 位置や体力など、要素が持つ状態。UI 部品などを指す Component とは区別する。 |
 | フィールド | 欄、Field | KokoState が持つ値の一つ一つ（例：`Health` の `hp`）。名前とは別の ID で結び付く。 |
+| 型の定義 | Types | 名前を付けた型（`Card` など）を、TypeScript の `type` と `interface` で書くリソース。KokoState のフィールドの型から使う。 |
 | 型の文 | — | フィールドの型を、TypeScript の型の書き方で書いた文字（例：`number`、`Card[]`、`EntityRef \| undefined`）。 |
 | スキーマ | 値の形の決まり | 型の文を読み解いて作る、値の形の決まり（数・文字・選択肢・レコード・リスト・マップ・参照などの入れ子）。値の確かめと、Inspector の入力に使う。保存せず、制作データから作り直す。 |
 | 値の形式 | タグ付きの JSON | フィールドの値を、保存・共同編集・通信・スクリプトとの受け渡しで運ぶときの書き方。ふつうの JSON に、JSON で表せない値（`undefined`・日時・`Map`・`Set`・大きな整数・`NaN`・`Infinity`）だけを `"$t"` のキーを持つオブジェクトで足したもの。 |

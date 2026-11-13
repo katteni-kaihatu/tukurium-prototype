@@ -332,6 +332,25 @@ describe("Simulation：System の扱い", () => {
       expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
     });
 
+    it("型の定義を変えたあとの値は、型に合わせてから使う（足りないフィールドを埋め、ないものを捨てる）", async () => {
+      // カードに joker が足され、owner が消えた型
+      const next: ValueSchema = {
+        kind: "list",
+        item: {
+          kind: "record",
+          fields: [
+            { name: "label", optional: false, schema: { kind: "string" } },
+            { name: "joker", optional: false, schema: { kind: "boolean" } },
+          ],
+        },
+      };
+      sim = await Simulation.create(hand(), "out", {
+        realm: "r",
+        schemas: { ks_h: { cards: next } },
+      });
+      expect(sim.world.get("e1", "ks_h")?.cards).toEqual([{ label: "Z", joker: false }]);
+    });
+
     it("スキーマが分からないフィールドは、値の確かめをせずに通す", async () => {
       sim = await Simulation.create(hand(), "out", { realm: "r" });
       sim.step(0.1);

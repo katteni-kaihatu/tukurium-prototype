@@ -8,8 +8,9 @@ import { z } from "zod";
  * 9：制作データのフィールドの型が、決まった名前（vec3 など）から TypeScript の型の文（Vec3 など）に変わった。
  * 配置・適用・ホストへの配置に、フィールドのスキーマ（schemas）を付けられる。
  * 10：編集中の制作データ（Y.Doc）の KokoState の定義が、フィールドごとの Y.Map になった。
+ * 11：制作データに、型の定義（types）と、KokoState が使う型の定義の一覧（typeDefs）が入った。
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;

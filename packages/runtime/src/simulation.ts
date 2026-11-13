@@ -11,6 +11,7 @@ import type {
 import {
   acceptsUndefined,
   cloneValue,
+  conformValue,
   equalValues,
   type FieldSchemas,
   hasRefs,
@@ -1292,10 +1293,14 @@ export class Simulation {
         const v = { ...values };
         if (koko === BUILTIN.Mesh && typeof v.material === "string")
           v.material = this.mid(part.realm, v.material);
-        // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
         for (const f of this.registry.require(k).fields) {
           const schema = this.schemaOf(k, f);
-          if (!schema || !hasRefs(schema) || !Object.hasOwn(v, f.id)) continue;
+          if (!schema || !Object.hasOwn(v, f.id)) continue;
+          // 型の定義を変えたあとの値は、型に合わせてから使う（足りないフィールドを埋め、型にないものを捨てる）
+          if (validateValue(schema, v[f.id]) !== null)
+            v[f.id] = conformValue(schema, v[f.id]) as FieldValue;
+          // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
+          if (!hasRefs(schema)) continue;
           v[f.id] = mapRefs(schema, v[f.id], (target, ref) =>
             target === "entity" ? this.eid(part, ref) : undefined,
           ) as FieldValue;

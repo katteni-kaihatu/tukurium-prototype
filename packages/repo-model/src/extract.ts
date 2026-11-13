@@ -25,6 +25,8 @@ export interface ExtractSelection {
   systems: string[];
   materials: string[];
   assets: string[];
+  /** 型の定義（ADR 0065）。選んだ KokoState が使うものは、選ばなくても一緒に集まる */
+  types?: string[];
 }
 
 export interface ExtractSource {
@@ -48,6 +50,7 @@ export function collectSelection(
     systems: new Set(sel.systems),
     materials: new Set(sel.materials),
     assets: new Set(sel.assets),
+    types: new Set(sel.types ?? []),
   };
   for (const o of src.outputs) {
     if (!out.outputs.has(o.id)) continue;
@@ -58,6 +61,7 @@ export function collectSelection(
       else if (src.systems.some((x) => x.id === id)) out.systems.add(id);
       else if (src.materials.some((m) => m.id === id)) out.materials.add(id);
       else if ((src.assets ?? []).some((a) => a.id === id)) out.assets.add(id);
+      else if ((src.types ?? []).some((t) => t.id === id)) out.types.add(id);
     }
   }
   // Entity と System が使うものは、依存グラフから集める（計画 Phase 3）
@@ -90,12 +94,17 @@ export function collectSelection(
   for (const id of out.materials)
     for (const dep of graph.dependenciesOf({ kind: "material", id }))
       if (dep.kind === "asset") out.assets.add(dep.id);
+  // KokoState がフィールドの型で使う、型の定義（ライブラリのものは、依存で持ってくる）
+  for (const id of out.kokostates)
+    for (const dep of graph.dependenciesOf({ kind: "kokostate", id }))
+      if (dep.kind === "typedef" && !parsePackageResourceId(dep.id)) out.types.add(dep.id);
   return {
     outputs: [...out.outputs],
     kokostates: [...out.kokostates],
     systems: [...out.systems],
     materials: [...out.materials],
     assets: [...out.assets],
+    types: [...out.types],
   };
 }
 
@@ -140,6 +149,22 @@ export function extractInto(
   const added = new Map<string, string>();
   const same = (a: unknown, b: unknown) => equalValues(a, b);
 
+  // 型の定義（KokoState が ID で指すので、先に入れて、振り直した ID を決める）
+  dst.types ??= [];
+  for (const id of sel.types ?? []) {
+    const item = (src.types ?? []).find((t) => t.id === id);
+    if (!item) continue;
+    const existing = dst.types.find((t) => t.id === id);
+    if (existing && same(existing, item)) continue;
+    const next = structuredClone(item);
+    if (existing) {
+      next.id = newId("td");
+      remap.set(id, next.id);
+    }
+    dst.types.push(next);
+    added.set(id, next.id);
+  }
+
   // KokoState（名前の衝突も解く）
   const renamed = new Map<string, string>();
   for (const id of sel.kokostates) {
@@ -148,6 +173,7 @@ export function extractInto(
     const existing = dst.kokostates.find((k) => k.id === id);
     if (existing && same(existing, def)) continue;
     const next: KokoStateDef = structuredClone(def);
+    if (next.typeDefs) next.typeDefs = next.typeDefs.map((t) => remap.get(t) ?? t);
     if (existing || dst.kokostates.some((k) => k.id === next.id)) {
       next.id = newId("ks");
       remap.set(id, next.id);
@@ -254,6 +280,7 @@ export function extractInto(
     ...selection.systems.map((id) => src.systems.find((s) => s.id === id)?.name ?? id),
     ...selection.materials.map((id) => src.materials.find((m) => m.id === id)?.name ?? id),
     ...selection.assets.map((id) => src.assets?.find((a) => a.id === id)?.name ?? id),
+    ...(selection.types ?? []).map((id) => src.types?.find((t) => t.id === id)?.name ?? id),
   ];
   rebindImports(src, dst, added, aliases.map);
   const index = ResourcePathIndex.fromSnapshot(src);
@@ -262,6 +289,7 @@ export function extractInto(
     ...selection.systems,
     ...selection.materials,
     ...selection.assets,
+    ...(selection.types ?? []),
   ]
     .map((id) => index.pathOf(id))
     .filter((p): p is string => p !== null);

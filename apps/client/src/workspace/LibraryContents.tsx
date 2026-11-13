@@ -36,6 +36,11 @@ export function LibraryContents() {
       rows: snap.kokostates.filter((k) => !isBuiltin(k.id)).map((k) => row(k.id, k.name)),
     },
     { kind: "system", label: "System", rows: snap.systems.map((s) => row(s.id, s.name)) },
+    {
+      kind: "typedef",
+      label: "型の定義",
+      rows: (snap.types ?? []).map((t) => row(t.id, t.name)),
+    },
     { kind: "material", label: "マテリアル", rows: snap.materials.map((m) => row(m.id, m.name)) },
     { kind: "asset", label: "素材", rows: (snap.assets ?? []).map((a) => row(a.id, a.name)) },
   ];
