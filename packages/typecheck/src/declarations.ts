@@ -42,6 +42,8 @@ export function kokoStateDeclaration(
     ...(imports ? [imports.trimEnd()] : []),
     `/** ${def.name} */`,
     `declare const koko: KokoState<${JSON.stringify(id)}, {\n${fields}\n}>;`,
+    // 型としても使える（`KokoStateRef<Health>` のように、参照の型で指せる KokoState を書く。ADR 0065）
+    "type koko = typeof koko;",
     "export default koko;",
     "",
   ].join("\n");
@@ -139,6 +141,76 @@ export function typeImports(
   return out;
 }
 
+/** 型の文から名前で指せる KokoState（`KokoStateRef<Health>` の `Health`）と、その宣言の場所 */
+export interface KokoName {
+  /** スクリプトから見える ID（依存のものは `pkg:` の ID） */
+  id: string;
+  name: string;
+  /** import に書く場所（宣言のファイルから `.d.ts` を除いたもの） */
+  spec: string;
+}
+
+/**
+ * 型の文から名前で指せる KokoState を集める。同じ名前が複数あるときは、制作データのもの・Built-in・
+ * ライブラリのものの順で、その中で一つに決まるものだけを使う（決まらない名前は、型の文で使えない）。
+ */
+export function kokoNames(
+  snap: ProjectSnapshot,
+  packages: ReadonlyMap<string, PackageResolution>,
+  index: ResourcePathIndex = ResourcePathIndex.fromSnapshot(snap),
+): KokoName[] {
+  const tiers: KokoName[][] = [[], [], []];
+  for (const k of snap.kokostates) {
+    const path = index.pathOf(k.id);
+    if (path) tiers[0]?.push({ id: k.id, name: k.name, spec: path });
+  }
+  for (const k of BUILTIN_KOKOSTATES)
+    tiers[1]?.push({ id: k.id, name: k.name, spec: `${BUILTIN_DIR}/${k.name}.koko` });
+  for (const [alias, r] of packages) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as Partial<KokoStateDef> | null;
+      if (e.kind !== "kokostate" || typeof def?.name !== "string") continue;
+      tiers[2]?.push({
+        id: packageResourceId(r.dependency, e.id),
+        name: def.name,
+        spec: packageFile(alias, e.path).replace(/\.d\.ts$/, ""),
+      });
+    }
+  }
+  const out = new Map<string, KokoName>();
+  for (const tier of tiers) {
+    const count = new Map<string, number>();
+    for (const k of tier) count.set(k.name, (count.get(k.name) ?? 0) + 1);
+    for (const k of tier) if (count.get(k.name) === 1 && !out.has(k.name)) out.set(k.name, k);
+  }
+  return [...out.values()];
+}
+
+/**
+ * フィールドの型を確かめる間だけ使う、KokoState の仮の宣言（ID だけ。フィールドは書かない）。
+ * 型の文は `KokoStateRef<Health>` のように KokoState の ID だけを使うので、これで足りる。本当の宣言は、
+ * フィールドの型を確かめたあとに作る（型エラーのあるフィールドを unknown にするため）。
+ */
+export function kokoStateStub(id: string): string {
+  return `declare const koko: KokoState<${JSON.stringify(id)}>;
+type koko = typeof koko;
+export default koko;
+`;
+}
+
+/** 型の文に出てくる KokoState の名前の import 文（出てこない名前は import しない） */
+export function kokoImports(typeTexts: readonly string[], names: readonly KokoName[]): string {
+  let out = "";
+  for (const k of names) {
+    if (!/^[A-Za-z_$][\w$]*$/.test(k.name)) continue;
+    const word = new RegExp(`(?<![\\w$.])${k.name.replace(/\$/g, "\\$")}(?![\\w$])`);
+    if (typeTexts.some((t) => typeof t === "string" && word.test(t)))
+      out += `import type ${k.name} from ${JSON.stringify(k.spec)};\n`;
+  }
+  return out;
+}
+
 /** 型を確かめる KokoState（制作データのものと、依存から取り込んだもの） */
 export interface FieldOwner {
   /** スクリプトから見える ID（依存のものは `pkg:` の ID） */
@@ -202,11 +274,19 @@ export function virtualProject(
   // 型の定義（ADR 0065）。KokoState の宣言は、使う型の定義を import する
   const typeDefs = new Map(typeDefFiles(snap, packages, index).map((f) => [f.id, f] as const));
   for (const f of typeDefs.values()) files.set(f.file, f.code);
+  // 型の文から名前で指せる KokoState（参照の型で使う）
+  const names = kokoNames(snap, packages, index);
+  const importsOf = (def: Pick<KokoStateDef, "fields">, uses: readonly string[] | undefined) =>
+    typeImports(uses, typeDefs) +
+    kokoImports(
+      def.fields.map((f) => f.type),
+      names,
+    );
 
   for (const k of BUILTIN_KOKOSTATES)
     files.set(
       `${BUILTIN_DIR}/${k.name}.koko.d.ts`,
-      kokoStateDeclaration(k.id, k, badFields.get(k.id)),
+      kokoStateDeclaration(k.id, k, badFields.get(k.id), importsOf(k, undefined)),
     );
 
   for (const k of snap.kokostates) {
@@ -214,7 +294,7 @@ export function virtualProject(
     if (path)
       files.set(
         `${path}.d.ts`,
-        kokoStateDeclaration(k.id, k, badFields.get(k.id), typeImports(k.typeDefs, typeDefs)),
+        kokoStateDeclaration(k.id, k, badFields.get(k.id), importsOf(k, k.typeDefs)),
       );
   }
 
@@ -235,7 +315,7 @@ export function virtualProject(
           id,
           { name: def.name, fields: def.fields },
           badFields.get(id),
-          typeImports(uses, typeDefs),
+          importsOf({ fields: def.fields }, uses),
         ),
       );
     }

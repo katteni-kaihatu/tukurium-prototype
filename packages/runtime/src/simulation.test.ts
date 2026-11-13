@@ -388,6 +388,96 @@ describe("Simulation：System の扱い", () => {
     });
   });
 
+  describe("参照から読み書きする（ADR 0065）", () => {
+    const gauge = () => {
+      const p = project(`import G from "./Gauge.koko";
+        export default system({
+          query: { with: [G] },
+          onUpdate(e) {
+            const g = e.get(G);
+            const hp = world.getField(g.hp);
+            const state = world.getState(g.owner);
+            if (hp === 0) {
+              g.seen = [hp, state && state.n, world.getField(g.gone), world.getState(g.none)].join("/");
+              g.ok = [
+                world.setField(g.hp, hp + 1),
+                world.setField(g.hp, "x"),
+                world.setField(g.gone, 1),
+              ].join();
+            } else if (hp === 1) {
+              world.setState(g.owner, { n: 100, nope: 1 });
+            }
+          },
+        });`);
+      p.kokostates.push({
+        id: "ks_g",
+        name: "Gauge",
+        fields: [
+          { id: "hp", name: "hp", type: "FieldRef<number>", default: undefined },
+          { id: "owner", name: "owner", type: "KokoStateRef<Counter>", default: undefined },
+          { id: "gone", name: "gone", type: "FieldRef", default: undefined },
+          { id: "none", name: "none", type: "KokoStateRef", default: undefined },
+          { id: "seen", name: "seen", type: "string", default: "" },
+          { id: "ok", name: "ok", type: "string", default: "" },
+        ],
+      });
+      p.entities.push({
+        id: "e2",
+        name: "ゲージ",
+        parent: null,
+        output: "out",
+        order: 1,
+        states: {
+          ks_g: {
+            hp: { entity: "e1", koko: "ks_c", field: "n" },
+            owner: { entity: "e1", koko: "ks_c" },
+            // フィールドがない・KokoState を持っていない
+            gone: { entity: "e1", koko: "ks_c", field: "missing" },
+            none: { entity: "e2", koko: "ks_c" },
+          },
+        },
+      });
+      return p;
+    };
+    const schemas: FieldSchemas = {
+      ks_g: {
+        hp: { kind: "fieldRef", value: { kind: "number" } },
+        owner: { kind: "kokoRef", koko: "ks_c" },
+        gone: { kind: "fieldRef" },
+        none: { kind: "kokoRef" },
+      },
+    };
+
+    it("フィールドの参照と KokoState の参照の先を読み書きする。指す先がなければ undefined・false", async () => {
+      sim = await Simulation.create(gauge(), "out", { realm: "r", schemas });
+      sim.step(0.1);
+      expect(sim.world.get("e2", "ks_g")).toMatchObject({ seen: "0/0//", ok: "true,false,false" });
+      expect(sim.world.get("e1", "ks_c")?.n).toBe(1);
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_c")).toEqual({ n: 100 });
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
+
+    it("セッションでも、その配置の中の Entity を指す", async () => {
+      sim = await Simulation.createSession();
+      const part = { realm: "r", outputId: "out", snapshot: gauge(), schemas, yaw: 0 };
+      sim.addPart({ ...part, id: "p1", position: [0, 0, 0] });
+      sim.addPart({ ...part, id: "p2", position: [5, 0, 0] });
+      const counter = sim.stateIdOf("p1", "ks_c") ?? "";
+      expect(sim.world.get("p1/e2", sim.stateIdOf("p1", "ks_g") ?? "")?.hp).toEqual({
+        entity: "p1/e1",
+        koko: "ks_c",
+        field: "n",
+      });
+      sim.step(0.1);
+      sim.step(0.1);
+      // それぞれの配置のゲージが、自分の配置のカウンターだけを書く
+      expect(sim.world.get("p1/e1", counter)?.n).toBe(100);
+      expect(sim.world.get("p2/e1", counter)?.n).toBe(100);
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
+  });
+
   it("spawn / destroy / find / get / set が使える", async () => {
     sim = await Simulation.create(
       project(`import C from "./Counter.koko";
