@@ -96,6 +96,18 @@ describe("新しい版", () => {
   it("所持している版より新しい版があるときだけ返す", () => {
     expect(newerRelease(owned(1, 3))?.id).toBe("r3");
     expect(newerRelease(owned(3, 3))).toBeNull();
+    // マーケットに登録されていれば、公開中の版まで
+    const listed = { ...owned(1, 3), userId: "buyer" };
+    if (listed.work?.latest) listed.work.owner = "author";
+    if (listed.work?.latest)
+      listed.work.market = {
+        price: 0,
+        autoPublish: false,
+        release: { ...listed.work.latest, id: "r2", version: 2 },
+        listedAt: "",
+        acquisitions: 0,
+      };
+    expect(newerRelease(listed)?.id).toBe("r2");
     expect(newerRelease(owned(3, 2))).toBeNull();
     expect(newerRelease(owned(1, null))).toBeNull();
   });

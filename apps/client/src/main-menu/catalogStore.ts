@@ -2,7 +2,17 @@ import type { ClientMessage } from "@tukurium/shared";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useApp } from "../app/store";
-import { api, type MarketPage, type OwnedItem, type Work, type WorkDetail } from "../net/api";
+import {
+  api,
+  type ListingInput,
+  type MarketKind,
+  type MarketPage,
+  type MarketSort,
+  type MyMarket,
+  type OwnedItem,
+  type Work,
+  type WorkDetail,
+} from "../net/api";
 import { useWorkspace } from "../workspace/store";
 import { useMainMenu } from "./store";
 
@@ -22,6 +32,8 @@ interface CatalogState {
   market: MarketPage | null;
   marketQuery: string;
   marketTags: string[];
+  marketKind: MarketKind;
+  marketSort: MarketSort;
   marketLoading: boolean;
   marketError: string | null;
   busy: string | null;
@@ -35,9 +47,11 @@ interface CatalogState {
   detailFor: string | null;
   detailLoading: boolean;
   detailError: string | null;
-  mine: Work[];
+  mine: MyMarket | null;
   mineLoading: boolean;
   mineError: string | null;
+  /** 所持金（ポイント）。まだ読んでいなければ null */
+  balance: number | null;
 }
 const initial: CatalogState = {
   owner: null,
@@ -48,6 +62,8 @@ const initial: CatalogState = {
   market: null,
   marketQuery: "",
   marketTags: [],
+  marketKind: "all",
+  marketSort: "new",
   marketLoading: false,
   marketError: null,
   busy: null,
@@ -61,9 +77,10 @@ const initial: CatalogState = {
   detailFor: null,
   detailLoading: false,
   detailError: null,
-  mine: [],
+  mine: null,
   mineLoading: false,
   mineError: null,
+  balance: null,
 };
 export const useCatalog = create<CatalogState>(() => initial);
 let marketRequest = 0;
@@ -117,23 +134,35 @@ export async function refreshOwned() {
   }
 }
 
-export async function searchMarket(query: string, offset = 0, tags: string[] = []) {
+export async function searchMarket(
+  query: string,
+  offset = 0,
+  tags: string[] = [],
+  options: { kind?: MarketKind; sort?: MarketSort } = {},
+) {
   marketAbort?.abort();
   const abort = new AbortController();
   marketAbort = abort;
   const seq = ++marketRequest;
   const cached = useCatalog.getState();
+  const kind = options.kind ?? "all";
+  const sort = options.sort ?? "new";
   const sameSearch =
-    cached.marketQuery === query && JSON.stringify(cached.marketTags) === JSON.stringify(tags);
+    cached.marketQuery === query &&
+    JSON.stringify(cached.marketTags) === JSON.stringify(tags) &&
+    cached.marketKind === kind &&
+    cached.marketSort === sort;
   useCatalog.setState({
     marketLoading: true,
     marketQuery: query,
     marketTags: tags,
+    marketKind: kind,
+    marketSort: sort,
     market: sameSearch ? cached.market : null,
     marketError: null,
   });
   try {
-    const market = await api.market(query, offset, abort.signal, tags);
+    const market = await api.market(query, offset, abort.signal, tags, kind, sort);
     if (seq !== marketRequest) return;
     const previous = useCatalog.getState().market;
     const items =
@@ -149,21 +178,46 @@ export async function searchMarket(query: string, offset = 0, tags: string[] = [
   }
 }
 
+/** 今の検索条件で、マーケットの一覧を読み直す */
+function researchMarket() {
+  const state = useCatalog.getState();
+  if (state.market)
+    void searchMarket(state.marketQuery, 0, state.marketTags, {
+      kind: state.marketKind,
+      sort: state.marketSort,
+    });
+}
+
+export async function loadWallet() {
+  const owner = useCatalog.getState().owner;
+  if (!owner) return;
+  try {
+    const { balance } = await api.wallet();
+    if (owner === useCatalog.getState().owner) useCatalog.setState({ balance });
+  } catch {
+    // 所持金が読めなくても、マーケットは見られる
+  }
+}
+
+/** マーケットで入手する（有料ならポイントを払う）。作者は自分の作品を無料で持てる。 */
 export async function acquire(work: Work) {
   const { owner, busy } = useCatalog.getState();
-  if (!owner || busy || !work.latest) return;
+  if (!owner || busy) return;
   useCatalog.setState({ busy: work.id, message: null, actionError: null });
   try {
-    const item = await api.acquireItem(work.id, work.latest.id);
+    const { balance, ...item } = await api.acquireItem(work.id);
     if (owner !== useCatalog.getState().owner) return;
     ownedRequest++;
+    const where = work.outputKind === "world" ? "ワールドから開けます" : "アイテムから取り出せます";
     useCatalog.setState((s) => ({
       owned: [item, ...s.owned.filter((i) => i.workId !== item.workId)],
       ownedLoaded: true,
       ownedLoading: false,
-      message: `「${work.name}」を入手しました。アイテムから取り出せます。`,
+      balance,
+      message: `「${work.name}」を入手しました。${where}。`,
     }));
     void refreshOwned();
+    if (useCatalog.getState().detail?.id === work.id) void loadWork(work.id);
   } catch (e) {
     if (owner === useCatalog.getState().owner)
       useCatalog.setState({ actionError: errorMessage(e) });
@@ -232,12 +286,11 @@ export async function saveWorkTags(workId: string, tags: string[]) {
     owned: s.owned.map((item) => (item.work ? { ...item, work: merge(item.work) } : item)),
     market: s.market ? { ...s.market, items: s.market.items.map(merge) } : null,
     recent: s.recent.map(merge),
-    mine: s.mine.map(merge),
     detail: s.detail?.id === workId ? { ...s.detail, ...updated } : s.detail,
   }));
   void refreshOwned();
-  const state = useCatalog.getState();
-  if (state.market) void searchMarket(state.marketQuery, 0, state.marketTags);
+  researchMarket();
+  void loadMyWorks();
 }
 
 export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {
@@ -348,19 +401,55 @@ export async function loadWork(id: string) {
   }
 }
 
+/** マイページ：自分の作品・入手の記録・所持金 */
 export async function loadMyWorks() {
   const owner = useCatalog.getState().owner;
   if (!owner) return;
   const seq = ++mineRequest;
   useCatalog.setState({ mineLoading: true, mineError: null });
   try {
-    const mine = await api.works(owner);
-    if (seq === mineRequest && owner === useCatalog.getState().owner) useCatalog.setState({ mine });
+    const mine = await api.myMarket();
+    if (seq === mineRequest && owner === useCatalog.getState().owner)
+      useCatalog.setState({ mine, balance: mine.balance });
   } catch (e) {
     if (seq === mineRequest) useCatalog.setState({ mineError: errorMessage(e) });
   } finally {
     if (seq === mineRequest) useCatalog.setState({ mineLoading: false });
   }
+}
+
+/** マーケットに登録する・登録を変える。成功したら一覧を読み直す */
+export async function saveListing(work: Work, input: Partial<ListingInput>) {
+  if (work.market) await api.editListing(work.id, input);
+  else
+    await api.registerListing(work.id, {
+      price: input.price ?? 0,
+      autoPublish: input.autoPublish ?? true,
+      tags: input.tags,
+      releaseId: input.releaseId,
+    });
+  useCatalog.setState({
+    message: work.market
+      ? `「${work.name}」の登録を変えました。`
+      : `「${work.name}」を登録しました。`,
+    actionError: null,
+  });
+  await afterListingChange(work.id);
+}
+
+export async function unlistWork(work: Work) {
+  await api.unlist(work.id);
+  useCatalog.setState({
+    message: `「${work.name}」の登録を取り消しました。持っている人はそのまま使えます。`,
+    actionError: null,
+  });
+  await afterListingChange(work.id);
+}
+
+async function afterListingChange(workId: string) {
+  await loadMyWorks();
+  researchMarket();
+  if (useCatalog.getState().detail?.id === workId) void loadWork(workId);
 }
 
 function errorMessage(error: unknown) {

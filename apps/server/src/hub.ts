@@ -18,6 +18,7 @@ import {
   type WorkspaceRole,
 } from "@tukurium/shared";
 import * as Y from "yjs";
+import { ItemCatalog } from "./repos/catalog";
 import type { RepoService } from "./repos/service";
 import type { Store, User, WorkspaceMeta } from "./store/store";
 import { fieldSchemasOf, packagesByAlias } from "./typecheck";
@@ -161,6 +162,7 @@ export class Hub {
   private readonly workspaces = new Map<string, Workspace>();
   private readonly opts: Required<Omit<HubOptions, "repos">>;
   private readonly repos: RepoService | null;
+  private readonly catalog: ItemCatalog | null;
   /**
    * 制作データ（オブジェクト）→ その依存の中身。ホストへ配置を渡すときに添える（ADR 0015）。
    * 制作データを捨てれば一緒に消える
@@ -196,6 +198,7 @@ export class Hub {
       ...rest,
     };
     this.repos = repos ?? null;
+    this.catalog = repos ? new ItemCatalog(store, repos) : null;
   }
 
   get stats() {
@@ -1099,7 +1102,7 @@ export class Hub {
           const loaded = await this.loadRelease(msg.releaseId);
           if (!loaded) return failure("バージョンが見つかりません");
           const current = await this.store.work(loaded.work.id);
-          if (!current || (!current.perms.use && current.owner !== user.id))
+          if (!current || !(await this.canUse(user.id, current)))
             return failure("このリリースを利用する権限がありません");
           if (conn.session !== s || !this.sessions.has(s.id))
             return failure("取り出し先のセッションが変わりました");
@@ -1124,7 +1127,7 @@ export class Hub {
     if (!s || !user || !this.repos) return;
     const loaded = await this.loadRelease(msg.releaseId);
     if (!loaded) return this.deny(conn, "バージョンが見つかりません");
-    if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
+    if (!(await this.canUse(user.id, loaded.work))) {
       return this.deny(conn, "このリリースを利用する権限がありません");
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
@@ -1156,6 +1159,15 @@ export class Hub {
     this.scheduleWorldChange(s, user, loaded);
   }
 
+  /** 利用の権限があり、マーケットで有料なら入手しているか */
+  private canUse(
+    userId: string,
+    work: { id: string; owner: string; perms: { use: boolean } },
+  ): Promise<boolean> {
+    if (this.catalog) return this.catalog.canUse(userId, work);
+    return Promise.resolve(work.perms.use || work.owner === userId);
+  }
+
   /** 利用できるワールドのリリースか。開けないときは、その理由を返す */
   private async loadUsableWorld(
     conn: Conn,
@@ -1164,8 +1176,13 @@ export class Hub {
     if (!conn.user || !this.repos) return { ok: false, message: "バージョンが見つかりません" };
     const loaded = await this.loadRelease(releaseId);
     if (!loaded) return { ok: false, message: "バージョンが見つかりません" };
-    if (!loaded.work.perms.use && loaded.work.owner !== conn.user.id) {
-      return { ok: false, message: "このリリースを利用する権限がありません" };
+    if (!(await this.canUse(conn.user.id, loaded.work))) {
+      return {
+        ok: false,
+        message: loaded.work.perms.use
+          ? "このワールドは有料です。マーケットで入手すると開けます"
+          : "このリリースを利用する権限がありません",
+      };
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
     if (kind !== "world") return { ok: false, message: "ワールドではありません" };

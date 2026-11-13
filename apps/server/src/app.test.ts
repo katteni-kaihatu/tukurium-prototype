@@ -386,6 +386,15 @@ describe("本人識別とセッション", () => {
       await A.post("/api/works", { repoId: worldRepo.id, outputId: "out_main" })
     ).json();
     const worldRelease = (await A.post(`/api/works/${worldWork.id}/releases`)).json();
+    // マーケットに登録したものだけが出る。work は v1 を手動で公開する
+    expect((await B.get("/api/market")).json().total).toBe(0);
+    await A.post("/api/market/listings", {
+      workId: work.id,
+      price: 0,
+      autoPublish: false,
+      releaseId: r1.id,
+    });
+    await A.post("/api/market/listings", { workId: secondWork.id, price: 0, autoPublish: true });
     const detail = (await B.get(`/api/works/${work.id}`)).json();
     expect(detail.project).toEqual({ id: repo.id, name: "検索用の銃" });
     expect(detail.releases.map((release: { version: number }) => release.version)).toEqual([2, 1]);
@@ -412,22 +421,18 @@ describe("本人識別とセッション", () => {
     expect((await B.get("/api/market?q=nonexistent")).json().items).toEqual([]);
     expect((await B.get("/api/market?limit=49")).statusCode).toBe(400);
     expect((await app.inject({ method: "GET", url: "/api/me/items" })).statusCode).toBe(401);
-    const item = (await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).json();
+    const item = (await B.post(`/api/me/items/${work.id}`, {})).json();
     expect(item).toMatchObject({ userId: buyer.me.id, releaseId: r1.id, available: true });
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r2.id })).json().releaseId).toBe(
-      r1.id,
-    );
+    expect((await B.post(`/api/me/items/${work.id}`, {})).json().releaseId).toBe(r1.id);
     expect((await B.get("/api/me/items")).json()).toHaveLength(1);
     expect((await A.get("/api/me/items")).json()).toEqual([]);
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: "missing" })).statusCode).toBe(
-      404,
-    );
-    expect(
-      (await B.post(`/api/me/items/${work.id}`, { releaseId: secondRelease.id })).statusCode,
-    ).toBe(404);
-    expect(
-      (await B.post(`/api/me/items/${worldWork.id}`, { releaseId: worldRelease.id })).statusCode,
-    ).toBe(400);
+    expect((await B.post("/api/me/items/missing", {})).statusCode).toBe(404);
+    // 登録していない作品は、ほかの人は入手できない（作者は自分の作品を持てる）
+    expect((await B.post(`/api/me/items/${worldWork.id}`, {})).statusCode).toBe(404);
+    expect(worldRelease.version).toBe(1);
+    // 公開していない版（v2）へはアップデートできない。公開すればできる
+    expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(403);
+    await A.patch(`/api/market/listings/${work.id}`, { releaseId: r2.id });
     // 新しい版へのアップデートは、所持している人だけ。入手日は保つ
     const acquiredAt = item.acquiredAt;
     expect((await A.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(404);
@@ -443,7 +448,7 @@ describe("本人識別とセッション", () => {
       releaseId: r1.id,
     });
     expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(403);
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+    expect((await B.post(`/api/me/items/${work.id}`, {})).statusCode).toBe(403);
     // 利用できなくなったアイテムも、一覧から消せる
     expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
     expect((await B.get("/api/me/items")).json()).toEqual([]);
@@ -1659,7 +1664,8 @@ describe("公開タグ", () => {
     const work = published.json();
     expect(work.tags).toEqual(["ゲーム", "複数人"]);
     const release = (await A.post(`/api/works/${work.id}/releases`)).json();
-    await B.post(`/api/me/items/${work.id}`, { releaseId: release.id });
+    await A.post("/api/market/listings", { workId: work.id, price: 0, autoPublish: true });
+    await B.post(`/api/me/items/${work.id}`, {});
     const search = (await B.get("/api/market?q=複数人&tag=ゲーム&tag=複数人&limit=1")).json();
     expect(search.total).toBe(1);
     expect(search.items[0].tags).toEqual(["ゲーム", "複数人"]);
@@ -1691,5 +1697,145 @@ describe("公開タグ", () => {
     const { tags: _tags, ...legacy } = saved;
     await store.saveWork(legacy);
     expect((await B.get("/api/market")).json().items[0].tags).toEqual([]);
+  });
+});
+
+describe("マーケット", () => {
+  it("登録した作品を買うと所持金が減り、作者に 9 割が入る。誰が買ったかは作者に見せない", async () => {
+    const { app, store } = await start();
+    const author = await store.createUser("売る人");
+    const buyer = await store.createUser("買う人");
+    const poor = await store.createUser("お金のない人");
+    const A = api(app, author.token);
+    const B = api(app, buyer.token);
+    const C = api(app, poor.token);
+    expect((await B.get("/api/me/wallet")).json()).toEqual({ balance: 1000 });
+    const repo = (
+      await A.post("/api/repos", { name: "売る銃", kind: "item", template: "gun" })
+    ).json();
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();
+    // リリースがないと登録できない
+    expect(
+      (await A.post("/api/market/listings", { workId: work.id, price: 300, autoPublish: true }))
+        .statusCode,
+    ).toBe(409);
+    const r1 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    expect(
+      (await B.post("/api/market/listings", { workId: work.id, price: 300, autoPublish: true }))
+        .statusCode,
+    ).toBe(403);
+    const listed = await A.post("/api/market/listings", {
+      workId: work.id,
+      price: 300,
+      autoPublish: true,
+      tags: ["射撃"],
+    });
+    expect(listed.json()).toMatchObject({
+      tags: ["射撃"],
+      market: { price: 300, autoPublish: true, release: { id: r1.id }, acquisitions: 0 },
+    });
+    expect(
+      (await A.post("/api/market/listings", { workId: work.id, price: 1, autoPublish: true }))
+        .statusCode,
+    ).toBe(409);
+
+    const bought = (await B.post(`/api/me/items/${work.id}`, {})).json();
+    expect(bought).toMatchObject({ releaseId: r1.id, balance: 700 });
+    // 二度目は払わない
+    expect((await B.post(`/api/me/items/${work.id}`, {})).json().balance).toBe(700);
+    expect((await A.get("/api/me/wallet")).json()).toEqual({ balance: 1270 });
+
+    // 足りなければ断り、所持金も変えない
+    await A.patch(`/api/market/listings/${work.id}`, { price: 5000 });
+    const refused = await C.post(`/api/me/items/${work.id}`, {});
+    expect(refused.statusCode).toBe(402);
+    expect((await C.get("/api/me/wallet")).json()).toEqual({ balance: 1000 });
+    expect((await C.get("/api/me/items")).json()).toEqual([]);
+
+    // 自動公開：新しい版を出すと、マーケットでも公開される
+    const r2 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    const detail = (await B.get(`/api/works/${work.id}`)).json();
+    expect(detail.market).toMatchObject({ price: 5000, release: { id: r2.id }, acquisitions: 1 });
+    expect(detail.history.map((h: { kind: string }) => h.kind)).toEqual([
+      "published",
+      "price",
+      "listed",
+    ]);
+    // アップデートは無料
+    expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).json()).toMatchObject({
+      releaseId: r2.id,
+    });
+    expect((await B.get("/api/me/wallet")).json()).toEqual({ balance: 700 });
+
+    // 自動公開を切って、公開する版を選ぶ
+    const r3 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    await A.patch(`/api/market/listings/${work.id}`, { autoPublish: false, releaseId: r2.id });
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r2.id);
+    await A.post(`/api/works/${work.id}/releases`);
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r2.id);
+    await A.patch(`/api/market/listings/${work.id}`, { releaseId: r3.id });
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r3.id);
+
+    // マイページ：登録したもの・入手の記録（買った人は出さない）
+    const mine = (await A.get("/api/me/market")).json();
+    expect(mine.balance).toBe(1270);
+    expect(mine.listed.map((w: { id: string }) => w.id)).toEqual([work.id]);
+    expect(mine.sales).toEqual([
+      expect.objectContaining({ workId: work.id, workName: "銃", price: 300, earned: 270 }),
+    ]);
+    expect(JSON.stringify(mine)).not.toContain(buyer.user.id);
+
+    // 取り消すとマーケットから消えるが、持っている人はそのまま
+    expect((await A.delete(`/api/market/listings/${work.id}`)).statusCode).toBe(200);
+    expect((await B.get("/api/market")).json().total).toBe(0);
+    expect((await B.get("/api/me/items")).json()[0]).toMatchObject({ available: true });
+    expect((await C.post(`/api/me/items/${work.id}`, {})).statusCode).toBe(404);
+  });
+
+  it("並べ替えと種類で絞り込む。有料のワールドは入手した人だけが開ける", async () => {
+    const { app, store, url } = await start();
+    const author = await client(url, "ワールド作者");
+    const visitor = await client(url, "見る人");
+    const A = api(app, author.token);
+    const B = api(app, visitor.token);
+    const make = async (name: string, kind: string, template: string, outputId: string) => {
+      const repo = (await A.post("/api/repos", { name, kind, template })).json();
+      const work = (await A.post("/api/works", { repoId: repo.id, outputId })).json();
+      const release = (await A.post(`/api/works/${work.id}/releases`)).json();
+      return { work, release };
+    };
+    const gun = await make("安い銃", "item", "gun", "out_gun");
+    const world = await make("高いワールド", "world", "empty", "out_main");
+    await A.post("/api/market/listings", { workId: gun.work.id, price: 10, autoPublish: true });
+    await A.post("/api/market/listings", {
+      workId: world.work.id,
+      price: 500,
+      autoPublish: true,
+    });
+    const ids = async (query: string) =>
+      (await B.get(`/api/market?${query}`)).json().items.map((w: { id: string }) => w.id);
+    expect(await ids("sort=new")).toEqual([world.work.id, gun.work.id]);
+    expect(await ids("sort=cheap")).toEqual([gun.work.id, world.work.id]);
+    expect(await ids("kind=world")).toEqual([world.work.id]);
+    expect(await ids("kind=item")).toEqual([gun.work.id]);
+    await B.post(`/api/me/items/${gun.work.id}`, {});
+    expect(await ids("sort=popular")).toEqual([gun.work.id, world.work.id]);
+
+    // ワールドの一覧には出るが、鍵がかかっている
+    const listed = (await B.get("/api/works")).json();
+    expect(listed.find((w: { id: string }) => w.id === world.work.id)).toMatchObject({
+      price: 500,
+      unlocked: false,
+    });
+    visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
+    expect((await visitor.next("session.rejected")).message).toContain("有料");
+    expect((await B.post(`/api/me/items/${world.work.id}`, {})).json().balance).toBe(490);
+    expect(
+      (await B.get("/api/works")).json().find((w: { id: string }) => w.id === world.work.id)
+        .unlocked,
+    ).toBe(true);
+    visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
+    expect((await visitor.next("session")).session.placements).toHaveLength(1);
+    expect(await store.balance(author.me.id)).toBe(1000 + 9 + 450);
   });
 });

@@ -68,12 +68,64 @@ export interface Work {
   thumbnail?: string | null;
   /** 公式の発行者の作品か（名前ではなく発行者で決まる。ADR 0016） */
   official?: boolean;
+  /** マーケットへの登録（登録していなければ null） */
+  market?: MarketInfo | null;
+  /** ワールドの一覧だけ：マーケットの価格（登録していなければ null） */
+  price?: number | null;
+  /** ワールドの一覧だけ：見ている人が使えるか（有料で入手していなければ false） */
+  unlocked?: boolean;
   createdAt: string;
+}
+
+export interface MarketInfo {
+  /** 価格（ポイント）。0 は無料 */
+  price: number;
+  autoPublish: boolean;
+  /** マーケットで公開している版 */
+  release: Release | null;
+  listedAt: string;
+  /** 入手した人の数 */
+  acquisitions: number;
+}
+
+export type MarketEvent = { id: string; workId: string; at: string } & (
+  | { kind: "listed"; version: number; price: number }
+  | { kind: "published"; version: number; auto: boolean }
+  | { kind: "price"; from: number; to: number }
+  | { kind: "unlisted" }
+);
+
+export type MarketKind = "all" | "item" | "world";
+export type MarketSort = "new" | "popular" | "cheap";
+
+/** マイページ：自分の作品と、入手の記録（誰が買ったかは含まない） */
+export interface MyMarket {
+  balance: number;
+  listed: Work[];
+  unlisted: Work[];
+  sales: {
+    id: string;
+    workId: string;
+    workName: string;
+    version: number | null;
+    price: number;
+    earned: number;
+    at: string;
+  }[];
+}
+
+export interface ListingInput {
+  price: number;
+  tags?: string[];
+  autoPublish: boolean;
+  releaseId?: string;
 }
 
 /** 作品の詳細。公開プロジェクトだけ project が付く */
 export interface WorkDetail extends Work {
   releases: Release[];
+  /** マーケットの履歴（新しい順） */
+  history: MarketEvent[];
   project: { id: string; name: string } | null;
 }
 
@@ -198,15 +250,34 @@ export const api = {
   acceptFriend: (id: string) =>
     call("POST", `/api/me/friends/${encodeURIComponent(id)}/accept`, {}),
   removeFriend: (id: string) => call("DELETE", `/api/me/friends/${encodeURIComponent(id)}`),
-  market: (query = "", offset = 0, signal?: AbortSignal, tags: string[] = []) => {
-    const params = new URLSearchParams({ q: query, offset: String(offset) });
+  market: (
+    query = "",
+    offset = 0,
+    signal?: AbortSignal,
+    tags: string[] = [],
+    kind: MarketKind = "all",
+    sort: MarketSort = "new",
+  ) => {
+    const params = new URLSearchParams({ q: query, offset: String(offset), kind, sort });
     for (const tag of tags) params.append("tag", tag);
     return call<MarketPage>("GET", `/api/market?${params}`, undefined, signal);
   },
+  wallet: () => call<{ balance: number }>("GET", "/api/me/wallet"),
+  myMarket: () => call<MyMarket>("GET", "/api/me/market"),
+  registerListing: (workId: string, body: ListingInput) =>
+    call<Work>("POST", "/api/market/listings", { workId, ...body }),
+  editListing: (workId: string, body: Partial<ListingInput>) =>
+    call<Work>("PATCH", `/api/market/listings/${encodeURIComponent(workId)}`, body),
+  unlist: (workId: string) =>
+    call<{ ok: true }>("DELETE", `/api/market/listings/${encodeURIComponent(workId)}`),
   ownedItems: (signal?: AbortSignal) =>
     call<OwnedItem[]>("GET", "/api/me/items", undefined, signal),
-  acquireItem: (workId: string, releaseId: string) =>
-    call<OwnedItem>("POST", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
+  acquireItem: (workId: string) =>
+    call<OwnedItem & { balance: number }>(
+      "POST",
+      `/api/me/items/${encodeURIComponent(workId)}`,
+      {},
+    ),
   updateItem: (workId: string, releaseId: string) =>
     call<OwnedItem>("PUT", `/api/me/items/${encodeURIComponent(workId)}`, { releaseId }),
   removeItem: (workId: string) =>
