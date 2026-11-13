@@ -8,6 +8,7 @@ import type {
   ProjectSnapshot,
   Provenance,
   SystemDef,
+  TypeDef,
 } from "./schema";
 import {
   decodeKokoState,
@@ -37,6 +38,12 @@ export function systemMetaPath(id: string): string {
 export function systemCodePath(id: string): string {
   return `systems/${safe(id)}.ts`;
 }
+export function typeMetaPath(id: string): string {
+  return `types/${safe(id)}.json`;
+}
+export function typeCodePath(id: string): string {
+  return `types/${safe(id)}.d.ts`;
+}
 export function materialFilePath(id: string): string {
   return `materials/${safe(id)}.json`;
 }
@@ -65,6 +72,11 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
   for (const s of snap.systems) {
     files[systemMetaPath(s.id)] = json({ id: s.id, name: s.name } satisfies SystemDef);
     files[systemCodePath(s.id)] = s.code;
+  }
+  // 型の定義は、.d.ts のファイルとして保存する（ADR 0065）
+  for (const t of snap.types ?? []) {
+    files[typeMetaPath(t.id)] = json({ id: t.id, name: t.name } satisfies TypeDef);
+    files[typeCodePath(t.id)] = t.code;
   }
   for (const m of snap.materials) files[materialFilePath(m.id)] = json(m);
   for (const a of snap.assets ?? []) files[`assets/${safe(a.id)}.json`] = json(a);
@@ -108,6 +120,10 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
       // スクリプトは .ts。以前の保存の .js も読む
       const base = p.replace(/\.json$/, "");
       snap.systems.push({ ...def, code: files[`${base}.ts`] ?? files[`${base}.js`] ?? "" });
+    } else if (p.startsWith("types/") && p.endsWith(".json")) {
+      const def = parse<TypeDef>(p);
+      snap.types ??= [];
+      snap.types.push({ ...def, code: files[p.replace(/\.json$/, ".d.ts")] ?? "" });
     } else if (/^outputs\/[^/]+\/output\.json$/.test(p)) snap.outputs.push(parse<OutputDef>(p));
   }
   for (const o of snap.outputs) {

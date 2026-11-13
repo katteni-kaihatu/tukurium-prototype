@@ -26,6 +26,7 @@ import {
   type PackageDependency,
   type ProjectSnapshot,
   type SystemDef,
+  type TypeDef,
 } from "./schema";
 import {
   decodeKokoState,
@@ -48,7 +49,7 @@ const none = (): Json => encodeValue(undefined);
 /**
  * KokoState の定義を入れる Y.Map（ADR 0065）。フィールドごとに Y.Map を持つので、
  * 2 人が別のフィールドを同時に変えても、両方の変更が残る（フィールドごとの後勝ち）。
- * - id / name / role
+ * - id / name / role / typeDefs（使う型の定義の ID の一覧。一覧まるごとの後勝ち）
  * - fields : Y.Map<フィールドの ID, Y.Map>  name, type, default（保存する形の値）, order（並べ替え用のキー）
  */
 type KokoMap = Y.Map<unknown>;
@@ -68,6 +69,7 @@ function kokoMapOf(def: KokoStateDef): KokoMap {
   m.set("id", def.id);
   m.set("name", def.name);
   if (def.role !== undefined) m.set("role", def.role);
+  if (def.typeDefs !== undefined) m.set("typeDefs", [...def.typeDefs]);
   const fields = new Y.Map<FieldMap>();
   const keys = assignOrderKeys(def.fields.map(() => undefined));
   def.fields.forEach((f, i) => {
@@ -95,10 +97,12 @@ function readFields(fields: Y.Map<FieldMap>): (FieldDef & { order: string })[] {
 function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
   if (!(stored instanceof Y.Map)) return decodeKokoState(stored);
   const role = stored.get("role");
+  const typeDefs = stored.get("typeDefs");
   return {
     id: String(stored.get("id")),
     name: String(stored.get("name")),
     ...(typeof role === "string" ? { role } : {}),
+    ...(Array.isArray(typeDefs) ? { typeDefs: typeDefs.map(String) } : {}),
     fields: readFields(stored.get("fields") as Y.Map<FieldMap>).map(({ order: _order, ...f }) => f),
   };
 }
@@ -110,7 +114,8 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
  * - meta        : Y.Map            name
  * - kokostates  : Y.Map<Y.Map>          利用者定義（Built-in は含めない）。フィールドごとの Y.Map を持つ
  * - systems     : Y.Map<SystemDef>
- * - code        : Y.Map<Y.Text>         System のスクリプト（文字単位で共同編集）
+ * - code        : Y.Map<Y.Text>         System のスクリプトと、型の定義の中身（文字単位で共同編集）
+ * - types       : Y.Map<TypeDef>        型の定義（ADR 0065）
  * - materials   : Y.Map<MaterialDef>
  * - outputs     : Y.Map<OutputDef>
  * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<Y.Map<Json>>)
@@ -143,6 +148,10 @@ export class ProjectDoc {
   }
   private get codeMap() {
     return this.doc.getMap<Y.Text>("code");
+  }
+  /** 型の定義（ADR 0065）。コードは、System と同じ code に入れる */
+  private get typeMap() {
+    return this.doc.getMap<TypeDef>("types");
   }
   private get materialMap() {
     return this.doc.getMap<MaterialDef>("materials");
@@ -239,6 +248,10 @@ export class ProjectDoc {
           if (def.role === undefined) stored.delete("role");
           else stored.set("role", def.role);
         }
+        if (!equalValues(prev?.typeDefs, def.typeDefs)) {
+          if (def.typeDefs === undefined) stored.delete("typeDefs");
+          else stored.set("typeDefs", [...def.typeDefs]);
+        }
         const fields = stored.get("fields") as Y.Map<FieldMap>;
         for (const id of [...fields.keys()]) if (!ids.has(id)) fields.delete(id);
         const current = new Map(readFields(fields).map((f) => [f.id, f]));
@@ -327,6 +340,66 @@ export class ProjectDoc {
         }
       }
     });
+  }
+
+  // ---------- 型の定義（ADR 0065） ----------
+  typeDefs(): TypeDef[] {
+    return [...this.typeMap.values()].map(clone);
+  }
+  typeDef(id: string): TypeDef | undefined {
+    const t = this.typeMap.get(id);
+    return t ? clone(t) : undefined;
+  }
+  addTypeDef(name: string, code: string): string {
+    const id = newId("td");
+    this.transact(() => {
+      this.typeMap.set(id, { id, name });
+      const text = new Y.Text();
+      text.insert(0, code);
+      this.codeMap.set(id, text);
+    });
+    return id;
+  }
+  /** 名前を変える。KokoState は ID で結び付いているので、使っている所は切れない */
+  renameTypeDef(id: string, name: string): void {
+    const t = this.typeMap.get(id);
+    if (!t || t.name === name) return;
+    this.assertSiblingName(name, id);
+    this.refactoring(() => this.typeMap.set(id, { ...t, name }));
+  }
+  /** 型の定義を消す。使っていた KokoState の一覧からも外す（その型を使うフィールドは、型エラーになる） */
+  removeTypeDef(id: string): void {
+    this.transact(() => {
+      this.typeMap.delete(id);
+      this.codeMap.delete(id);
+      for (const k of this.kokoMap.values()) {
+        if (!(k instanceof Y.Map)) continue;
+        const uses = k.get("typeDefs");
+        if (Array.isArray(uses) && uses.includes(id))
+          k.set(
+            "typeDefs",
+            uses.filter((x) => x !== id),
+          );
+      }
+    });
+  }
+  /** 型の定義の名前とコードを、渡した形にする（なければ作る）。開いているエディタはそのまま使える */
+  restoreTypeDef(def: TypeDef, code: string): void {
+    this.transact(() => {
+      this.typeMap.set(def.id, { id: def.id, name: def.name });
+      this.setCode(def.id, code);
+    });
+  }
+  private setCode(id: string, code: string): void {
+    let text = this.codeMap.get(id);
+    if (!text) {
+      text = new Y.Text();
+      this.codeMap.set(id, text);
+    }
+    if (text.toString() !== code) {
+      text.delete(0, text.length);
+      text.insert(0, code);
+    }
   }
 
   // ---------- マテリアル ----------
@@ -583,15 +656,7 @@ export class ProjectDoc {
   restoreSystem(def: SystemDef, code: string): void {
     this.transact(() => {
       this.systemMap.set(def.id, { id: def.id, name: def.name });
-      let text = this.codeMap.get(def.id);
-      if (!text) {
-        text = new Y.Text();
-        this.codeMap.set(def.id, text);
-      }
-      if (text.toString() !== code) {
-        text.delete(0, text.length);
-        text.insert(0, code);
-      }
+      this.setCode(def.id, code);
     });
   }
   /** アウトプットと、その中の Entity を消す。 */
@@ -609,6 +674,7 @@ export class ProjectDoc {
     const resources = new Set([
       ...this.kokostates().map((k) => k.id),
       ...this.systems().map((x) => x.id),
+      ...this.typeDefs().map((t) => t.id),
       ...this.materials().map((m) => m.id),
       ...this.assets().map((a) => a.id),
     ]);
@@ -623,6 +689,7 @@ export class ProjectDoc {
       name: this.name,
       kokostates: this.kokostates(),
       systems: this.systems().map((s) => ({ ...s, code: this.code(s.id)?.toString() ?? "" })),
+      types: this.typeDefs().map((t) => ({ ...t, code: this.code(t.id)?.toString() ?? "" })),
       materials: this.materials(),
       assets: this.assets(),
       // 消えたリソースは、ライブラリの含めるリソースに残さない
@@ -657,6 +724,11 @@ export class ProjectDoc {
         text.insert(0, x.code);
         this.codeMap.set(x.id, text);
       }
+      for (const t of snap.types ?? []) {
+        if (this.typeMap.has(t.id)) continue;
+        this.typeMap.set(t.id, { id: t.id, name: t.name });
+        this.setCode(t.id, t.code);
+      }
       for (const m of snap.materials)
         if (!this.materialMap.has(m.id)) this.materialMap.set(m.id, clone(m));
       for (const a of snap.assets ?? [])
@@ -678,6 +750,7 @@ export class ProjectDoc {
       for (const m of [
         this.kokoMap,
         this.systemMap,
+        this.typeMap,
         this.codeMap,
         this.materialMap,
         this.assetMap,
@@ -700,6 +773,12 @@ export class ProjectDoc {
         const text = new Y.Text();
         text.insert(0, s.code);
         this.codeMap.set(s.id, text);
+      }
+      for (const t of snap.types ?? []) {
+        this.typeMap.set(t.id, { id: t.id, name: t.name });
+        const text = new Y.Text();
+        text.insert(0, t.code);
+        this.codeMap.set(t.id, text);
       }
       for (const m of snap.materials) this.materialMap.set(m.id, clone(m));
       for (const a of snap.assets ?? []) this.assetMap.set(a.id, clone(a));
@@ -771,6 +850,7 @@ export class ProjectDoc {
     const resources: { id: string; name: string }[] = [
       ...this.kokostates(),
       ...this.systemMap.values(),
+      ...this.typeMap.values(),
       ...this.materialMap.values(),
       ...this.assetMap.values(),
     ];

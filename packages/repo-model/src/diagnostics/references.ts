@@ -71,6 +71,21 @@ export function checkProjectReferences(
       });
   };
 
+  // KokoState が使う型の定義（ADR 0065）。ライブラリの型の定義（`pkg:` の ID）は、依存の中身にある
+  const typeDefs = new Set((snap.types ?? []).map((t) => t.id));
+  for (const k of snap.kokostates)
+    for (const id of k.typeDefs ?? [])
+      if (!typeDefs.has(id) && !isPackageResourceId(id))
+        push({
+          code: "missing-typedef",
+          severity: "error",
+          subject: { kind: "kokostate", id: k.id },
+          location: { kind: "property", path: ["typeDefs"] },
+          related: [],
+          message: `「${k.name}」が使う型の定義がありません`,
+          detail: `ID: ${id}`,
+        });
+
   for (const m of snap.materials)
     if (m.map)
       checkResource({ kind: "material", id: m.id }, ["map"], m.map, "image", `「${m.name}」の map`);

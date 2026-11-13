@@ -9,7 +9,7 @@ import {
   StateField,
 } from "@codemirror/state";
 import { Decoration, EditorView, GutterMarker, gutter } from "@codemirror/view";
-import { systemCodePath } from "@tukurium/repo-model";
+import { type ProjectDoc, systemCodePath, typeCodePath } from "@tukurium/repo-model";
 import { hostApiCompletions } from "@tukurium/runtime";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
@@ -53,7 +53,7 @@ export function EditorPanel() {
                 aria-selected={activeSystem === id}
                 onClick={() => openSystem(id)}
               >
-                {project.system(id)?.name ?? id}.ts
+                {codeFileName(project, id)}
                 {allProblems.some((p) => p.subject.id === id && p.freshness === "current") && (
                   <span className={ui.badgeError} style={{ marginLeft: 6 }}>
                     !
@@ -63,7 +63,7 @@ export function EditorPanel() {
               <button
                 type="button"
                 className={ui.iconBtn}
-                aria-label={`${project.system(id)?.name ?? id} を閉じる`}
+                aria-label={`${codeName(project, id)} を閉じる`}
                 onClick={() => closeSystem(id)}
               >
                 ✕
@@ -100,7 +100,7 @@ export function EditorPanel() {
               onClick={() => showProblem(p)}
             >
               <span className={ui.problemPlace}>
-                {problemPlace(project.system(p.subject.id)?.name ?? "", p)}
+                {problemPlace(codeName(project, p.subject.id), p)}
                 <span className={ui.problemKind}>{problemKind(p)}</span>
               </span>
               <span>{p.message}</span>
@@ -210,6 +210,16 @@ function errorLines(lines: number[]) {
   });
 }
 
+/** エディタで開くコード（System か、型の定義）の名前 */
+function codeName(project: ProjectDoc, id: string): string {
+  return project.system(id)?.name ?? project.typeDef(id)?.name ?? id;
+}
+
+/** タブに出すファイルの名前（System は .ts、型の定義は .d.ts） */
+function codeFileName(project: ProjectDoc, id: string): string {
+  return `${codeName(project, id)}${project.typeDef(id) ? ".d.ts" : ".ts"}`;
+}
+
 function CodeView({ systemId }: { systemId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -223,7 +233,9 @@ function CodeView({ systemId }: { systemId: string }) {
   const awareness = useWorkspace((s) => s.awareness);
   // 最後に保存したこのスクリプトのコード（新しく作ったものは空）。読めていない間は null
   const saved = useSavedFiles();
-  const savedCode = saved ? (saved[systemCodePath(systemId)] ?? "") : null;
+  // 型の定義（ADR 0065）も、同じエディタで開く。保存したファイルの場所だけが違う
+  const savedPath = project.typeDef(systemId) ? typeCodePath(systemId) : systemCodePath(systemId);
+  const savedCode = saved ? (saved[savedPath] ?? "") : null;
   const savedRef = useRef(savedCode);
   savedRef.current = savedCode;
   const refreshChanges = useRef<() => void>(() => {});

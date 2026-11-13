@@ -1,4 +1,4 @@
-import { isPlainObject } from "./value";
+import { isPlainObject, type Value } from "./value";
 
 /**
  * 値の形の決まり（スキーマ。ADR 0065）。フィールドの型（TypeScript の型の文）を読み解いた結果で、
@@ -404,4 +404,102 @@ export function refTargetOf(schema: ValueSchema): RefTarget | undefined {
   if (schema.kind !== "union") return undefined;
   const rest = schema.options.filter((o) => o.kind !== "undefined");
   return rest.length === 1 && rest[0]?.kind === "ref" ? rest[0].target : undefined;
+}
+
+/** 初期値として使える値（型が undefined を受け入れるなら undefined。ほかは、型ごとの空の値） */
+export function emptyValueOf(schema: ValueSchema): Value {
+  if (acceptsUndefined(schema)) return undefined;
+  switch (schema.kind) {
+    case "number":
+      return 0;
+    case "string":
+    case "ref":
+      return "";
+    case "boolean":
+      return false;
+    case "bigint":
+      return 0n;
+    case "literal":
+      return schema.value;
+    case "color":
+      return "#ffffff";
+    case "union":
+      return schema.options[0] ? emptyValueOf(schema.options[0]) : undefined;
+    case "tuple":
+      return schema.items.map(emptyValueOf);
+    case "list":
+      return [];
+    case "record":
+      return Object.fromEntries(
+        schema.fields.filter((f) => !f.optional).map((f) => [f.name, emptyValueOf(f.schema)]),
+      );
+    case "map":
+      return {};
+    case "Map":
+      return new Map();
+    case "Set":
+      return new Set();
+    case "Date":
+      return new Date(0);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 値を、型（スキーマ）に合わせる（ADR 0065）。型の定義を変えたあとの、すでにある値に使う。
+ * - レコードに足りないフィールドは、空の値（`emptyValueOf`）で埋める。省略できるフィールドは埋めない
+ * - 型にないフィールドは捨てる
+ * - 型が変わった所（数だった所が文字になった、など）は、そのまま残す（値の問題として出る）
+ * 元の値は書き換えない。
+ */
+export function conformValue(schema: ValueSchema, value: unknown): unknown {
+  switch (schema.kind) {
+    case "record": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const f of schema.fields) {
+        if (Object.hasOwn(value, f.name)) out[f.name] = conformValue(f.schema, value[f.name]);
+        else if (!f.optional) out[f.name] = emptyValueOf(f.schema);
+      }
+      return out;
+    }
+    case "list":
+      return Array.isArray(value) ? value.map((v) => conformValue(schema.item, v)) : value;
+    case "tuple":
+      return Array.isArray(value) && value.length === schema.items.length
+        ? value.map((v, i) => conformValue(schema.items[i] as ValueSchema, v))
+        : value;
+    case "map": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) out[key] = conformValue(schema.value, value[key]);
+      return out;
+    }
+    case "Map":
+      return value instanceof Map
+        ? new Map(
+            [...value].map(([k, v]) => [
+              conformValue(schema.key, k),
+              conformValue(schema.value, v),
+            ]),
+          )
+        : value;
+    case "Set":
+      return value instanceof Set
+        ? new Set([...value].map((v) => conformValue(schema.item, v)))
+        : value;
+    case "union": {
+      // そのままで合う選択肢があれば、それに合わせる。なければ、合わせれば合う選択肢を探す
+      const direct = schema.options.find((o) => validateValue(o, value) === null);
+      if (direct) return conformValue(direct, value);
+      for (const option of schema.options) {
+        const conformed = conformValue(option, value);
+        if (validateValue(option, conformed) === null) return conformed;
+      }
+      return value;
+    }
+    default:
+      return value;
+  }
 }

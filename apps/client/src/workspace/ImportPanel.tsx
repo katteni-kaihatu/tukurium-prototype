@@ -16,7 +16,9 @@ import styles from "./ImportPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-type Group = keyof ExtractSelection;
+/** 選んだもの（型の定義も、いつも一覧を持つ） */
+type Picked = Required<ExtractSelection>;
+type Group = keyof Picked;
 
 const GROUPS: { key: Group; label: string }[] = [
   { key: "outputs", label: "アウトプット" },
@@ -24,14 +26,16 @@ const GROUPS: { key: Group; label: string }[] = [
   { key: "systems", label: "Script" },
   { key: "materials", label: "Material" },
   { key: "assets", label: "素材" },
+  { key: "types", label: "型の定義" },
 ];
 
-const EMPTY: ExtractSelection = {
+const EMPTY: Picked = {
   outputs: [],
   kokostates: [],
   systems: [],
   materials: [],
   assets: [],
+  types: [],
 };
 
 interface Source {
@@ -69,7 +73,7 @@ export function ImportPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [picked, setPicked] = useState<ExtractSelection>(EMPTY);
+  const [picked, setPicked] = useState<Picked>(EMPTY);
 
   useEffect(() => {
     let alive = true;
@@ -269,16 +273,17 @@ function rowsOf(snap: ProjectSnapshot): Record<Group, Row[]> {
     systems: snap.systems.map((x) => ({ id: x.id, name: x.name, where: where(x.id) })),
     materials: snap.materials.map((m) => ({ id: m.id, name: m.name, where: where(m.id) })),
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, where: where(a.id) })),
+    types: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, where: where(t.id) })),
   };
 }
 
 /** 選んだものが使うもの（選んだもの自身は除く）と、使うライブラリの別名 */
 function withDependencies(
   snap: ProjectSnapshot,
-  picked: ExtractSelection,
+  picked: Picked,
   schemas: FieldSchemas | undefined,
 ): { rows: { id: string; name: string; kind: string }[]; libraries: string[] } {
-  const all = collectSelection(snap, picked, schemas);
+  const all: Picked = { ...EMPTY, ...collectSelection(snap, picked, schemas) };
   const chosen = new Set(GROUPS.flatMap((g) => picked[g.key]));
   const rows: { id: string; name: string; kind: string }[] = [];
   const label: Record<Group, string> = {
@@ -287,6 +292,7 @@ function withDependencies(
     systems: "Script",
     materials: "Material",
     assets: "素材",
+    types: "型の定義",
   };
   const nameOf = (group: Group, id: string): string | null => {
     switch (group) {
@@ -300,6 +306,8 @@ function withDependencies(
         return snap.materials.find((x) => x.id === id)?.name ?? null;
       case "assets":
         return snap.assets?.find((x) => x.id === id)?.name ?? null;
+      case "types":
+        return snap.types?.find((x) => x.id === id)?.name ?? null;
     }
   };
   for (const g of GROUPS) {

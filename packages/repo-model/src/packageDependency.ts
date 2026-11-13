@@ -84,6 +84,46 @@ export function packageKokoStates(resolutions: Iterable<PackageResolution>): Kok
         id: packageResourceId(r.dependency, e.id),
         name: def.name,
         fields: structuredClone(def.fields),
+        ...packageTypeDefIds(r.dependency, def.typeDefs),
+      });
+    }
+  }
+  return out;
+}
+
+/** ライブラリの KokoState が使う型の定義の ID を、Package と版で区切った ID にする */
+function packageTypeDefIds(dep: PackageDependency, typeDefs: unknown): { typeDefs?: string[] } {
+  return Array.isArray(typeDefs) && typeDefs.length > 0
+    ? { typeDefs: typeDefs.map((id) => packageResourceId(dep, String(id))) }
+    : {};
+}
+
+/** 依存から取り込んだ型の定義（ADR 0065）。使う側は、KokoState の「使う型の定義」に足して使う */
+export interface PackageTypeDef {
+  /** Package と版で区切った ID */
+  id: string;
+  name: string;
+  code: string;
+  /** 依存の別名 */
+  alias: string;
+  /** ライブラリの中の論理パス（`/Types/Card.types`） */
+  path: string;
+}
+
+export function packageTypeDefs(resolutions: Iterable<PackageResolution>): PackageTypeDef[] {
+  const out: PackageTypeDef[] = [];
+  for (const r of resolutions) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as { name?: unknown; code?: unknown } | null;
+      if (e.kind !== "typedef" || typeof def?.name !== "string" || typeof def.code !== "string")
+        continue;
+      out.push({
+        id: packageResourceId(r.dependency, e.id),
+        name: def.name,
+        code: def.code,
+        alias: r.dependency.alias,
+        path: e.path,
       });
     }
   }
@@ -236,10 +276,18 @@ export function librarySnapshot(
     const def = e.definition as Record<string, unknown> | null;
     if (typeof def?.name !== "string") continue;
     if (e.kind === "kokostate" && Array.isArray(def.fields))
-      snap.kokostates.push({ id, name: def.name, fields: structuredClone(def.fields) });
+      snap.kokostates.push({
+        id,
+        name: def.name,
+        fields: structuredClone(def.fields),
+        ...packageTypeDefIds(dep, def.typeDefs),
+      });
     else if (e.kind === "system" && typeof def.code === "string")
       snap.systems.push({ id, name: def.name, code: def.code });
-    else continue;
+    else if (e.kind === "typedef" && typeof def.code === "string") {
+      snap.types ??= [];
+      snap.types.push({ id, name: def.name, code: def.code });
+    } else continue;
     if (parent && snap.placement) snap.placement[id] = parent;
   }
   snap.folders = [...folders.values()];

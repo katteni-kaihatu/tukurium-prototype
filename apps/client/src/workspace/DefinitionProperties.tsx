@@ -9,6 +9,7 @@ import {
   type OutputDef,
   type OutputExposure,
   packageSystems,
+  packageTypeDefs,
   ResourcePathIndex,
   usersOf,
 } from "@tukurium/repo-model";
@@ -24,7 +25,13 @@ import {
 } from "./AssetPreview";
 import { ChangeMark, type ChangeTarget, MarkedLine } from "./ChangeMark";
 import type { ChangeKind } from "./changeMarks";
-import { kokoChange, materialChange, outputChange, systemChange } from "./changeMarks";
+import {
+  kokoChange,
+  materialChange,
+  outputChange,
+  systemChange,
+  typeDefChange,
+} from "./changeMarks";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
 import { problemKind, problemPlace } from "./ProblemsPanel";
@@ -73,6 +80,8 @@ export function DefinitionProperties({
       return <KokoDefProperties key={selection.id} id={selection.id} />;
     case "system":
       return <SystemProperties id={selection.id} />;
+    case "typedef":
+      return <TypeDefProperties id={selection.id} />;
     case "material":
       return <MaterialProperties id={selection.id} />;
     case "asset":
@@ -548,6 +557,7 @@ function KokoDefProperties({ id }: { id: string }) {
           </div>
         )}
       </div>
+      <UsedTypeDefs def={def} editing={editing} onChange={save} />
       <div className={ui.section}>
         <h3 className={ui.sectionTitle}>持っている Entity</h3>
         {holders.length === 0 ? (
@@ -606,6 +616,188 @@ function KokoDefProperties({ id }: { id: string }) {
               }}
             >
               KokoState を削除
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * KokoState が使う型の定義（ADR 0065）。チェックを入れた型の定義が公開している型の名前を、
+ * フィールドの型から使える。ID で結び付くので、型の定義の名前を変えても切れない。
+ */
+function UsedTypeDefs(props: {
+  def: KokoStateDef;
+  editing: boolean;
+  onChange: (next: KokoStateDef) => void;
+}) {
+  const { def, editing } = props;
+  const project = useProject();
+  const packages = useWorkspace((s) => s.packages);
+  const { openDetail } = useWorkspace();
+  const own = project.typeDefs().map((t) => ({ id: t.id, label: t.name, own: true }));
+  const fromLibraries = packageTypeDefs(packages.values()).map((t) => ({
+    id: t.id,
+    label: `@${t.alias}${t.path}`,
+    own: false,
+  }));
+  const all = [...own, ...fromLibraries];
+  const used = new Set(def.typeDefs ?? []);
+  // 一覧にない ID（消した型の定義・外した依存）も、外せるように出す
+  const missing = [...used].filter((id) => !all.some((t) => t.id === id));
+  if (all.length === 0 && missing.length === 0) return null;
+  const toggle = (id: string, on: boolean) => {
+    const next = on ? [...used, id] : [...used].filter((x) => x !== id);
+    const { typeDefs: _old, ...rest } = def;
+    props.onChange(next.length > 0 ? { ...rest, typeDefs: next } : rest);
+  };
+  return (
+    <div className={ui.section}>
+      <h3 className={ui.sectionTitle}>使う型の定義</h3>
+      <p className={ui.muted}>チェックを入れた型の定義の型を、フィールドの型で使えます。</p>
+      <ul className={ui.list}>
+        {all.map((t) => (
+          <li key={t.id} className={ui.row}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+              <input
+                type="checkbox"
+                checked={used.has(t.id)}
+                disabled={!editing}
+                onChange={(e) => toggle(t.id, e.target.checked)}
+              />
+              <span>{t.label}</span>
+            </label>
+            {t.own && (
+              <button
+                type="button"
+                className={ui.btn}
+                onClick={() => openDetail({ kind: "typedef", id: t.id })}
+              >
+                開く
+              </button>
+            )}
+          </li>
+        ))}
+        {missing.map((id) => (
+          <li key={id} className={ui.row}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+              <input
+                type="checkbox"
+                checked
+                disabled={!editing}
+                onChange={() => toggle(id, false)}
+              />
+              <span className={ui.badgeError}>見つからない型の定義</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** 型の定義（ADR 0065）：名前・コード・使っている KokoState */
+function TypeDefProperties({ id }: { id: string }) {
+  const { openSystem, openDetail, showProblem } = useWorkspace();
+  const closeDetail = useCloseDetail();
+  const { error, safely } = useSafe();
+  const problems = useProblems().filter((p) => p.subject.id === id);
+  const project = useProject();
+  const canEdit = useCanEdit();
+  const saved = useSavedFiles();
+  const def = project.typeDef(id);
+  if (!def) return <p className={ui.empty}>型の定義が見つかりません</p>;
+  const users = project.kokostates().filter((k) => k.typeDefs?.includes(id));
+  const changed = typeDefChange(saved, id, def.name, project.code(id)?.toString() ?? "");
+
+  return (
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <ChangeMark kind={changed.kind} target={{ entry: `code:${id}` }} />
+          <h3 className={ui.sectionTitle}>型の定義</h3>
+          <span className={ui.badgeBrand}>Types</span>
+        </div>
+        <NameRow
+          id={id}
+          value={def.name}
+          mark={changed.name}
+          target={{ entry: `code:${id}`, part: "name" }}
+          disabled={!canEdit}
+          onCommit={(name) => safely(() => project.renameTypeDef(id, name))}
+        />
+        {error && <p className={ui.error}>{error}</p>}
+        {problems.map((p) => (
+          <button
+            key={`${p.freshness}:${p.id}`}
+            type="button"
+            className={ui.problem}
+            data-fresh={p.freshness}
+            onClick={() => showProblem(p)}
+          >
+            <span className={ui.problemPlace}>
+              {problemPlace(def.name, p)}
+              <span className={ui.problemKind}>{problemKind(p)}</span>
+            </span>
+            <span>{p.message}</span>
+          </button>
+        ))}
+        <MarkedLine kind={changed.code} target={{ entry: `code:${id}`, part: "code" }}>
+          <div className={ui.toolbar}>
+            <button type="button" className={ui.btnPrimary} onClick={() => openSystem(id)}>
+              コードを開く
+            </button>
+          </div>
+        </MarkedLine>
+        <p className={ui.muted}>
+          type と interface を書きます。export を付けた型を、KokoState
+          の「使う型の定義」に入れると、フィールドの型で使えます。
+        </p>
+      </div>
+      <div className={ui.section}>
+        <h3 className={ui.sectionTitle}>使っている KokoState</h3>
+        {users.length === 0 ? (
+          <p className={ui.muted}>
+            まだありません。KokoState の「使う型の定義」でチェックを入れると使えます。
+          </p>
+        ) : (
+          <ul className={ui.list}>
+            {users.map((k) => (
+              <li key={k.id}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() => openDetail({ kind: "koko", id: k.id })}
+                >
+                  <span className={ui.itemName}>{k.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {canEdit && (
+        <div className={ui.section}>
+          <div className={ui.toolbar}>
+            <button
+              type="button"
+              className={ui.btnDanger}
+              onClick={() => {
+                const message =
+                  users.length === 0
+                    ? `${def.name} を削除しますか？`
+                    : `${def.name} を削除すると、${users.length} 個の KokoState で、この型を使うフィールドが型エラーになります。削除しますか？`;
+                if (window.confirm(message)) {
+                  project.removeTypeDef(id);
+                  closeDetail();
+                }
+              }}
+            >
+              型の定義を削除
             </button>
           </div>
         </div>

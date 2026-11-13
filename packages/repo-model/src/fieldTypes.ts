@@ -1,5 +1,5 @@
 import {
-  acceptsUndefined,
+  conformValue,
   FIELD_TYPE,
   type FieldSchemas,
   type FieldValue,
@@ -74,7 +74,9 @@ export function checkFieldValues(snap: ProjectSnapshot, schemas?: FieldSchemas):
   for (const k of snap.kokostates) {
     for (const f of k.fields) {
       const schema = schemaOfField(schemas, k.id, f);
-      const bad = schema ? validateValue(schema, f.default) : null;
+      // 型の定義を変えたあとの値は、足りないフィールドを埋め、型にないフィールドを捨てた形で確かめる
+      // （実行でも同じ形にして使う）。それでも合わない所（型が変わった所）だけを、問題にする
+      const bad = schema ? validateValue(schema, conformValue(schema, f.default)) : null;
       if (bad)
         push({
           code: "default-type-mismatch",
@@ -94,7 +96,9 @@ export function checkFieldValues(snap: ProjectSnapshot, schemas?: FieldSchemas):
         const schema = schemaOfField(schemas, kokoId, f);
         // Built-in の数（位置・大きさなど）は、描画と物理がそのまま使うので、有限の数に限る
         const bad = schema
-          ? validateValue(schema, values[f.id], { finite: isBuiltin(kokoId) })
+          ? validateValue(schema, conformValue(schema, values[f.id]), {
+              finite: isBuiltin(kokoId),
+            })
           : null;
         if (bad)
           push({
@@ -199,44 +203,4 @@ export function parseFieldSchemas(value: unknown): FieldSchemas {
     out[koko] = parsed;
   }
   return out;
-}
-
-/** 初期値として使える値（型が undefined を受け入れるなら undefined。ほかは、型ごとの空の値） */
-export function emptyValueOf(schema: ValueSchema): FieldValue {
-  if (acceptsUndefined(schema)) return undefined;
-  switch (schema.kind) {
-    case "number":
-      return 0;
-    case "string":
-    case "ref":
-      return "";
-    case "boolean":
-      return false;
-    case "bigint":
-      return 0n;
-    case "literal":
-      return schema.value;
-    case "color":
-      return "#ffffff";
-    case "union":
-      return schema.options[0] ? emptyValueOf(schema.options[0]) : undefined;
-    case "tuple":
-      return schema.items.map(emptyValueOf);
-    case "list":
-      return [];
-    case "record":
-      return Object.fromEntries(
-        schema.fields.filter((f) => !f.optional).map((f) => [f.name, emptyValueOf(f.schema)]),
-      );
-    case "map":
-      return {};
-    case "Map":
-      return new Map();
-    case "Set":
-      return new Set();
-    case "Date":
-      return new Date(0);
-    default:
-      return undefined;
-  }
 }

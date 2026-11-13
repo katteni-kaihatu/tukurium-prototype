@@ -26,7 +26,9 @@ import { useWorkspaceProblems } from "./useProblems";
 /** 問題 1 件の場所の表示（「Shoot.ts 4 行目」） */
 export function problemPlace(name: string, p: Diagnostic): string {
   const line = scriptLine(p);
-  return `${name}.ts${line ? ` ${line} 行目` : ""}`;
+  // 型の定義（ADR 0065）のファイルは .d.ts
+  const ext = p.subject.kind === "typedef" ? ".d.ts" : ".ts";
+  return `${name}${ext}${line ? ` ${line} 行目` : ""}`;
 }
 
 const isScript = (d: Diagnostic) =>

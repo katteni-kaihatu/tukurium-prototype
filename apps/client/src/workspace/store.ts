@@ -31,7 +31,7 @@ export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: s
 
 /** KokoState・マテリアル・スクリプト・素材。Inspector とは別の詳細パネルで開く */
 export type DetailTarget = {
-  kind: "koko" | "system" | "material" | "asset" | "folder";
+  kind: "koko" | "system" | "typedef" | "material" | "asset" | "folder";
   id: string;
 };
 
@@ -250,7 +250,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     jumpTo: null,
     focusField: null,
     showProblem: (p) => {
-      if (p.subject.kind !== "system") return;
+      // コードの問題（System と、型の定義）は、エディタでその行へ移る
+      if (p.subject.kind !== "system" && p.subject.kind !== "typedef") return;
       const systemId = p.subject.id;
       get().openSystem(systemId);
       set((s) => ({
