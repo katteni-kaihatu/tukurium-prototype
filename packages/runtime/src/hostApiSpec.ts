@@ -185,7 +185,7 @@ export const HOST_API_SPEC = {
     note: "U1 で、自分の配置の中だけを探すようにした（別の配置は「見つからない」）",
     denied: null,
     params: "(name: string)",
-    returns: "string | null",
+    returns: "EntityRef | null",
     doc: "同じ配置の中から、名前で Entity を探して ID を返す",
   }),
   "world.get": entry({
@@ -232,7 +232,7 @@ export const HOST_API_SPEC = {
     denied: null,
     params:
       "(desc?: { name?: string; parent?: string; states?: Record<string, Record<string, unknown>> })",
-    returns: "string | null",
+    returns: "EntityRef | null",
     doc: "Entity を作って ID を返す。作った Entity は、この System の配置のものになる",
   }),
   "world.destroy": entry({
@@ -337,7 +337,7 @@ const note = (capability: CapabilityId, stability: Stability = DEFAULT_STABILITY
 const SYSTEM_DECLARATIONS = [
   "/** System が処理する Entity。get() に渡せるのは、その System の query.with に書いた KokoState だけ */",
   "interface SystemEntity<Q extends KokoState> {",
-  "  readonly id: string;",
+  "  readonly id: EntityRef;",
   "  /** KokoState の値を取る。書き換えると、その Entity の値が変わる */",
   "  get<K extends KokoState>(",
   "    koko: K & ([K] extends [Q] ? unknown : { queryのwithに書いていないKokoStateです: never }),",
@@ -359,7 +359,7 @@ const SYSTEM_DECLARATIONS = [
   "/** world.emit で届いたイベント（onEvent） */",
   "interface ScriptEvent { name: string; data?: unknown }",
   "/** ぶつかった・離れた（onCollision） */",
-  "interface CollisionEvent { other: string; started: boolean }",
+  "interface CollisionEvent { other: EntityRef; started: boolean }",
   "/** 外に公開する操作（ほかの作者の物からも届く。ADR 0012） */",
   "interface SystemContracts<E> {",
   "  Damage?(e: E, payload: { amount: number; type?: string }): void;",
@@ -382,6 +382,16 @@ export function hostApiDeclarations(): string {
   const lines = [
     "// Host API の宣言（packages/runtime/src/hostApiSpec.ts から作った。手で書き換えない）",
     "type Vec3 = [number, number, number];",
+    '/** 色（"#rrggbb" の文字） */',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: 利用者向けの宣言に書く、TypeScript のテンプレートの型
+    "type Color = `#${string}`;",
+    "/** Entity の参照（Entity の ID）。e.id・world.find()・world.spawn() が返す。「なし」は undefined */",
+    'type EntityRef = string & { readonly __tukurium: "EntityRef" };',
+    "/** リソースの参照（テクスチャ・マテリアル・モデル・音声の ID）。Inspector で選ぶ */",
+    'type TextureRef = string & { readonly __tukurium: "TextureRef" };',
+    'type MaterialRef = string & { readonly __tukurium: "MaterialRef" };',
+    'type ModelRef = string & { readonly __tukurium: "ModelRef" };',
+    'type AudioRef = string & { readonly __tukurium: "AudioRef" };',
     "/** import した KokoState。Id は KokoState の ID、F はフィールドの型（ADR 0058） */",
     "interface KokoState<Id extends string = string, F = Record<string, unknown>> {",
     "  readonly id: Id;",
@@ -395,7 +405,7 @@ export function hostApiDeclarations(): string {
     "/** Raycast の結果（opaque handle）。別の作者の物に当たったときは entity が null */",
     "interface Hit {",
     "  readonly token: string;",
-    "  readonly entity: string | null;",
+    "  readonly entity: EntityRef | null;",
     "  readonly distance: number;",
     "  readonly point: Vec3;",
     ...HIT_METHODS.map(

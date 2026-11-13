@@ -1,6 +1,6 @@
 # ADR 0051：リソースを指す欄の型を、テクスチャ・マテリアル・モデル・音声に分ける
 
-- 状態: 採用・実装済み
+- 状態: 採用・実装済み（型の持ち方は ADR 0065 が置き換えた。`texture`・`material`・`model`・`audio` は、`TextureRef | undefined` などの型の文になった。何を指すかが型で決まることは変わらない）
 - 関連：ADR 0010（論理パス）、ADR 0012（Host API と Capability）
 
 ## 理由

@@ -1,4 +1,4 @@
-import { type KokoStateDef, KokoStateRegistry, type ResourceFieldType } from "@tukurium/eks";
+import { FIELD_TYPE, type KokoStateDef, KokoStateRegistry, type RefTarget } from "@tukurium/eks";
 
 /**
  * Built-in の KokoState。利用者定義と同じ仕組みに載せ、ID は固定する。
@@ -44,10 +44,10 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     role: "transform",
     builtin: true,
     fields: [
-      { id: "position", name: "position", type: "vec3", default: [0, 0, 0] },
+      { id: "position", name: "position", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** オイラー角（度） */
-      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
-      { id: "scale", name: "scale", type: "vec3", default: [1, 1, 1] },
+      { id: "rotation", name: "rotation", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
+      { id: "scale", name: "scale", type: FIELD_TYPE.vec3, default: [1, 1, 1] },
     ],
   },
   {
@@ -56,14 +56,14 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     role: "look",
     builtin: true,
     fields: [
-      { id: "shape", name: "shape", type: "string", default: "box" },
+      { id: "shape", name: "shape", type: FIELD_TYPE.string, default: "box" },
       /** box: 幅・高さ・奥行き／sphere: 直径（x）／cylinder・capsule: 直径（x）と高さ（y）／plane: 幅（x）と奥行き（z） */
-      { id: "size", name: "size", type: "vec3", default: [1, 1, 1] },
-      { id: "material", name: "material", type: "material", default: undefined },
+      { id: "size", name: "size", type: FIELD_TYPE.vec3, default: [1, 1, 1] },
+      { id: "material", name: "material", type: FIELD_TYPE.material, default: undefined },
       /** マテリアル未指定のときの色 */
-      { id: "color", name: "color", type: "color", default: "#d8d2c6" },
+      { id: "color", name: "color", type: FIELD_TYPE.color, default: "#d8d2c6" },
       /** GLB の素材 ID。指定すると形状の代わりにモデルを表示する（当たり判定は Collider。形を mesh にするとこの size） */
-      { id: "model", name: "model", type: "model", default: undefined },
+      { id: "model", name: "model", type: FIELD_TYPE.model, default: undefined },
     ],
   },
   {
@@ -76,17 +76,17 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
        * mesh なら Mesh の形。box / sphere / cylinder / capsule / plane はその形だけを使う。
        * プレイヤーと RigidBody の両方が、sensor でなければここにぶつかる。
        */
-      { id: "shape", name: "shape", type: "string", default: "mesh" },
+      { id: "shape", name: "shape", type: FIELD_TYPE.string, default: "mesh" },
       /** 0,0,0 なら Mesh の大きさ（無ければ 1m）。それ以外は、この当たり判定だけの大きさ（m） */
-      { id: "size", name: "size", type: "vec3", default: [0, 0, 0] },
+      { id: "size", name: "size", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** Entity の中心からのずれ（m）。拡大率は掛かる */
-      { id: "offset", name: "offset", type: "vec3", default: [0, 0, 0] },
+      { id: "offset", name: "offset", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** true なら押し返さず、当たったことだけが届く */
-      { id: "sensor", name: "sensor", type: "boolean", default: false },
+      { id: "sensor", name: "sensor", type: FIELD_TYPE.boolean, default: false },
       /** 滑りにくさ。0 でツルツル */
-      { id: "friction", name: "friction", type: "number", default: 0.6 },
+      { id: "friction", name: "friction", type: FIELD_TYPE.number, default: 0.6 },
       /** 跳ね返り。0 で跳ねない */
-      { id: "restitution", name: "restitution", type: "number", default: 0 },
+      { id: "restitution", name: "restitution", type: FIELD_TYPE.number, default: 0 },
     ],
   },
   {
@@ -96,20 +96,20 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** dynamic: 重力で動く / kinematic: Transform に付いて動く / fixed: 動かない */
-      { id: "type", name: "type", type: "string", default: "dynamic" },
+      { id: "type", name: "type", type: FIELD_TYPE.string, default: "dynamic" },
       /** 重さ（kg）。形では変わらない */
-      { id: "mass", name: "mass", type: "number", default: 1 },
+      { id: "mass", name: "mass", type: FIELD_TYPE.number, default: 1 },
       /** 重力の倍率。0 ならその場に浮く */
-      { id: "gravityScale", name: "gravityScale", type: "number", default: 1 },
+      { id: "gravityScale", name: "gravityScale", type: FIELD_TYPE.number, default: 1 },
       /** 速度の減衰。大きいほどすぐ止まる */
-      { id: "linearDamping", name: "linearDamping", type: "number", default: 0.05 },
-      { id: "angularDamping", name: "angularDamping", type: "number", default: 0.1 },
+      { id: "linearDamping", name: "linearDamping", type: FIELD_TYPE.number, default: 0.05 },
+      { id: "angularDamping", name: "angularDamping", type: FIELD_TYPE.number, default: 0.1 },
       /** 速度（m/s）。実行が書き、スクリプトからも変えられる */
-      { id: "linvel", name: "linvel", type: "vec3", default: [0, 0, 0] },
+      { id: "linvel", name: "linvel", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** 回転の速度（ラジアン/s） */
-      { id: "angvel", name: "angvel", type: "vec3", default: [0, 0, 0] },
+      { id: "angvel", name: "angvel", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** 速い物が薄い床をすり抜けないようにする */
-      { id: "ccd", name: "ccd", type: "boolean", default: true },
+      { id: "ccd", name: "ccd", type: FIELD_TYPE.boolean, default: true },
     ],
   },
   {
@@ -119,12 +119,12 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** 以前、持ったときに目の前へ寄せる距離だった。いまは持った位置を保つので使わない */
-      { id: "distance", name: "distance", type: "number", default: 1.2 },
+      { id: "distance", name: "distance", type: FIELD_TYPE.number, default: 1.2 },
       /** 右クリックで持っている人の ID（Host が入れる）。空なら誰も持っていない */
-      { id: "player", name: "player", type: "string", default: "" },
+      { id: "player", name: "player", type: FIELD_TYPE.string, default: "" },
       /** 持っている間の、視点に対する位置（m）と角度（度）。持った瞬間の位置関係を Host が入れる */
-      { id: "offset", name: "offset", type: "vec3", default: [0, 0, -1.2] },
-      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
+      { id: "offset", name: "offset", type: FIELD_TYPE.vec3, default: [0, 0, -1.2] },
+      { id: "rotation", name: "rotation", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
     ],
   },
   {
@@ -135,11 +135,11 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** 装備している間の、視点に対する位置（m）。右手で前に構えた位置 */
-      { id: "offset", name: "offset", type: "vec3", default: [0.25, -0.22, -0.5] },
+      { id: "offset", name: "offset", type: FIELD_TYPE.vec3, default: [0.25, -0.22, -0.5] },
       /** 装備している間の、視点に対する角度（度） */
-      { id: "rotation", name: "rotation", type: "vec3", default: [0, 0, 0] },
+      { id: "rotation", name: "rotation", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** 装備している人の ID（Host が入れる）。空なら置いてある */
-      { id: "player", name: "player", type: "string", default: "" },
+      { id: "player", name: "player", type: FIELD_TYPE.string, default: "" },
     ],
   },
   {
@@ -149,8 +149,8 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** 音声の素材 ID */
-      { id: "clip", name: "clip", type: "audio", default: undefined },
-      { id: "volume", name: "volume", type: "number", default: 1 },
+      { id: "clip", name: "clip", type: FIELD_TYPE.audio, default: undefined },
+      { id: "volume", name: "volume", type: FIELD_TYPE.number, default: 1 },
     ],
   },
   {
@@ -160,17 +160,17 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
     builtin: true,
     fields: [
       /** 出す文字。空なら表示しない */
-      { id: "text", name: "text", type: "string", default: "" },
-      { id: "color", name: "color", type: "color", default: "#26262e" },
+      { id: "text", name: "text", type: FIELD_TYPE.string, default: "" },
+      { id: "color", name: "color", type: FIELD_TYPE.color, default: "#26262e" },
       /** 文字の高さ（m） */
-      { id: "size", name: "size", type: "number", default: 0.16 },
+      { id: "size", name: "size", type: FIELD_TYPE.number, default: 0.16 },
     ],
   },
 ];
 
-/** リソースを指す欄の型 → 参照するリソースの種類（マテリアルか、素材の種類） */
+/** リソースの参照が指す先 → 参照するリソースの種類（マテリアルか、素材の種類） */
 export const RESOURCE_FIELD_KIND: Record<
-  ResourceFieldType,
+  Exclude<RefTarget, "entity">,
   "material" | "model" | "image" | "audio"
 > = {
   texture: "image",

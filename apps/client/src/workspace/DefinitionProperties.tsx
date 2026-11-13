@@ -1,5 +1,7 @@
-import type { FieldDef, FieldType, KokoStateDef } from "@tukurium/eks";
+import type { FieldDef, KokoStateDef } from "@tukurium/eks";
 import {
+  BASIC_FIELD_TYPES,
+  basicFieldType,
   type GuestPolicy,
   inferCapabilities,
   KOKO_ROLES,
@@ -31,19 +33,6 @@ import { ThumbnailField } from "./ThumbnailField";
 import ui from "./ui.module.css";
 import { useDependencyGraph, useProblems, useSystemQuery } from "./useProblems";
 import { useSavedFiles } from "./useSavedFiles";
-
-const FIELD_TYPES: { type: FieldType; label: string; default: FieldDef["default"] }[] = [
-  { type: "number", label: "Number", default: 0 },
-  { type: "boolean", label: "Bool", default: false },
-  { type: "string", label: "Text", default: "" },
-  { type: "vec3", label: "Vector3", default: [0, 0, 0] },
-  { type: "color", label: "Color", default: "#ffffff" },
-  { type: "entity", label: "Entity", default: undefined },
-  { type: "texture", label: "Texture", default: undefined },
-  { type: "material", label: "Material", default: undefined },
-  { type: "model", label: "Model", default: undefined },
-  { type: "audio", label: "Audio", default: undefined },
-];
 
 /** 開いている KokoState・マテリアル・スクリプト・素材・フォルダの詳細 */
 export function DetailPanel() {
@@ -496,18 +485,21 @@ function KokoDefProperties({ id }: { id: string }) {
               <select
                 className={ui.select}
                 aria-label={`${f.name} の型`}
-                value={f.type}
+                title={f.type}
+                value={basicFieldType(f.type)?.type ?? f.type}
                 disabled={!editing}
                 onChange={(e) => {
-                  const t = FIELD_TYPES.find((x) => x.type === e.target.value);
+                  const t = BASIC_FIELD_TYPES.find((x) => x.type === e.target.value);
                   if (t) setField(f.id, { type: t.type, default: structuredClone(t.default) });
                 }}
               >
-                {FIELD_TYPES.map((t) => (
-                  <option key={t.type} value={t.type}>
+                {BASIC_FIELD_TYPES.map((t) => (
+                  <option key={t.key} value={t.type}>
                     {t.label}
                   </option>
                 ))}
+                {/* 一覧にない型（TypeScript で書いた型）は、型の文をそのまま出す */}
+                {!basicFieldType(f.type) && <option value={f.type}>{f.type}</option>}
               </select>
               <button
                 type="button"
@@ -839,7 +831,7 @@ function MaterialProperties({ id }: { id: string }) {
         <MarkedLine kind={changed.color} target={{ entry: `material:${id}`, part: "color" }}>
           <FieldInput
             koko="material"
-            field={{ id: "color", name: "Color", type: "color", default: "#ffffff" }}
+            field={{ id: "color", name: "Color", type: "Color", default: "#ffffff" }}
             value={m.color}
             choices={{ materials: [], entities: [] }}
             disabled={!editing}

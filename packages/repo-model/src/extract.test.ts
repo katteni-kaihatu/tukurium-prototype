@@ -175,8 +175,8 @@ describe("取り出すものを依存グラフで集める", () => {
         id: "ks_skin",
         name: "Skin",
         fields: [
-          { id: "f_mat", name: "mat", type: "material", default: undefined },
-          { id: "f_tex", name: "tex", type: "texture", default: undefined },
+          { id: "f_mat", name: "mat", type: "MaterialRef | undefined", default: undefined },
+          { id: "f_tex", name: "tex", type: "TextureRef | undefined", default: undefined },
         ],
       },
     ],

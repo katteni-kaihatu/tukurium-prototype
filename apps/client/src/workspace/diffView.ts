@@ -1,8 +1,8 @@
 import {
   equalValues,
-  type FieldType,
-  isResourceFieldType,
   type KokoStateDef,
+  knownSchema,
+  refTargetOf,
   stringifyValue,
 } from "@tukurium/eks";
 import {
@@ -764,14 +764,16 @@ function guestLabel(value: string): string {
   return GUEST[value] ?? value;
 }
 
-function show(value: unknown, type: FieldType | undefined, snap: ProjectSnapshot): string {
+/** type：フィールドの型の文（参照か、ただの文字かを見分ける） */
+function show(value: unknown, type: string | undefined, snap: ProjectSnapshot): string {
+  const schema = type ? knownSchema(type) : undefined;
   if (value === null || value === undefined) return "（なし）";
   if (typeof value === "boolean") return value ? "はい" : "いいえ";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") {
     if (value === "") return "（空）";
-    if (type === "entity" || (type && isResourceFieldType(type))) return resourceName(snap, value);
-    if (type === "string" && SHAPE[value]) return SHAPE[value];
+    if (schema && refTargetOf(schema)) return resourceName(snap, value);
+    if (schema?.kind === "string" && SHAPE[value]) return SHAPE[value];
     return value;
   }
   if (Array.isArray(value) && value.every((v) => typeof v === "number")) return value.join(", ");

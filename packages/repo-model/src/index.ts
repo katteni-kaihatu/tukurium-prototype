@@ -2,6 +2,7 @@ export * from "./builtins";
 export * from "./dependencyGraph";
 export * from "./diagnostics";
 export * from "./extract";
+export * from "./fieldTypes";
 export * from "./files";
 export * from "./forestSample";
 export * from "./marubatsuSample";

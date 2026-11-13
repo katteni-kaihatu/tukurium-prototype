@@ -1,3 +1,4 @@
+import type { FieldSchemas, ValueSchema } from "@tukurium/eks";
 import {
   type Diagnostic,
   makeDiagnostic,
@@ -5,7 +6,14 @@ import {
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
 import ts from "typescript6";
-import { HOST_FILE, virtualProject } from "./declarations";
+import {
+  FIELDS_DIR,
+  type FieldOwner,
+  fieldOwners,
+  HOST_FILE,
+  virtualProject,
+} from "./declarations";
+import { fieldTypeSyntaxError, typeToSchema, UnsaveableType } from "./fieldSchema";
 
 /** 型の誤りの担い手（問題の一覧の「出どころ」） */
 export const TYPES_PROVIDER = "types";
@@ -29,6 +37,30 @@ export interface TypeCheckInput {
 
 const LIB_PREFIX = "/__lib/";
 
+export interface TypeCheckResult {
+  /** スクリプトの型エラーと、フィールドの型の型エラー */
+  diagnostics: Diagnostic[];
+  /** フィールドのスキーマ（型エラーで作れなかったフィールドは入らない。ADR 0065） */
+  schemas: FieldSchemas;
+}
+
+/** フィールドの型を確かめた結果 */
+interface FieldCheck {
+  schemas: FieldSchemas;
+  diagnostics: Diagnostic[];
+  /** 型エラーのあるフィールド（KokoState の ID → フィールドの ID） */
+  bad: Map<string, Set<string>>;
+}
+
+/** フィールドの型を確かめるファイル 1 つ（KokoState 1 つ分） */
+interface FieldFile {
+  owner: FieldOwner;
+  path: string;
+  text: string;
+  /** 文として読めたフィールドと、ファイルの中の範囲 */
+  entries: { fieldId: string; start: number; end: number }[];
+}
+
 /**
  * スクリプトの型を確かめる（ADR 0058）。TypeScript 6.0 の Language Service を、仮想のファイルの上で動かす。
  * 判定は厳しくする（strict）。型の誤りは「作っている途中の問題」で、再生は止めない（ADR 0010）。
@@ -37,6 +69,8 @@ const LIB_PREFIX = "/__lib/";
 export class TypeChecker {
   private files = new Map<string, { text: string; version: number }>();
   private paths: Record<string, string[]> = {};
+  /** System の ID → そのファイルのパス（最後に読み込んだ制作データのもの） */
+  private systemFiles = new Map<string, string>();
   private readonly service: ts.LanguageService;
 
   constructor(private readonly options: TypeCheckerOptions) {
@@ -84,11 +118,10 @@ export class TypeChecker {
     };
   }
 
-  /** 制作データを読み込み直す（中身の変わったファイルだけ版を上げる） */
-  private load(input: TypeCheckInput): Map<string, string> {
-    const v = virtualProject(input.snapshot, input.packages, input.hostDeclarations);
+  /** 仮想のファイルを入れ替える（中身の変わったファイルだけ版を上げる） */
+  private setFiles(files: ReadonlyMap<string, string>): void {
     const next = new Map<string, { text: string; version: number }>();
-    for (const [path, text] of v.files) {
+    for (const [path, text] of files) {
       const prev = this.files.get(path);
       next.set(
         path,
@@ -96,12 +129,124 @@ export class TypeChecker {
       );
     }
     this.files = next;
+  }
+
+  /**
+   * 制作データを読み込み直す。先にフィールドの型を確かめ、型エラーのあるフィールドは、KokoState の宣言で
+   * unknown にする（そのフィールドだけが使えなくなり、ほかのフィールドとスクリプトは確かめられる）。
+   */
+  private load(input: TypeCheckInput): FieldCheck {
+    const fieldFiles = this.fieldFiles(input);
+    const fieldTexts = new Map(fieldFiles.map((f) => [f.path, f.text] as const));
+    this.setFiles(new Map([[HOST_FILE, input.hostDeclarations], ...fieldTexts]));
+    const fields = this.checkFields(fieldFiles);
+    const v = virtualProject(input.snapshot, input.packages, input.hostDeclarations, fields.bad);
+    this.setFiles(new Map([...v.files, ...fieldTexts]));
     this.paths = v.paths;
-    return v.systemFiles;
+    this.systemFiles = v.systemFiles;
+    return fields;
+  }
+
+  /** フィールドの型の文を、KokoState ごとのファイルにする（文として読めないものは入れない） */
+  private fieldFiles(input: TypeCheckInput): FieldFile[] {
+    return fieldOwners(input.snapshot, input.packages).map((owner, i) => {
+      const file: FieldFile = { owner, path: `${FIELDS_DIR}/${i}.ts`, text: "", entries: [] };
+      for (const f of owner.fields) {
+        if (typeof f.type !== "string" || fieldTypeSyntaxError(f.type) !== null) continue;
+        const head = `export type F${file.entries.length} = (\n`;
+        const start = file.text.length + head.length;
+        file.text += `${head}${f.type}\n);\n`;
+        file.entries.push({ fieldId: f.id, start, end: start + f.type.length });
+      }
+      if (file.text === "") file.text = "export {};\n";
+      return file;
+    });
+  }
+
+  private checkFields(files: FieldFile[]): FieldCheck {
+    const out: FieldCheck = { schemas: {}, diagnostics: [], bad: new Map() };
+    const program = this.service.getProgram();
+    const checker = program?.getTypeChecker();
+    const ctx = checker
+      ? { checker, isLibFile: (fileName: string) => fileName.startsWith(LIB_PREFIX) }
+      : null;
+    for (const file of files) {
+      const { owner } = file;
+      const fail = (fieldId: string, code: string, message: string) => {
+        const bad = out.bad.get(owner.id) ?? new Set<string>();
+        bad.add(fieldId);
+        out.bad.set(owner.id, bad);
+        // 依存から取り込んだ KokoState の型エラーは、ライブラリの側で直すものなので出さない
+        if (!owner.own) return;
+        const field = owner.fields.find((f) => f.id === fieldId);
+        out.diagnostics.push(
+          makeDiagnostic({
+            code,
+            severity: "error",
+            phase: "authoring",
+            provider: TYPES_PROVIDER,
+            subject: { kind: "kokostate", id: owner.id },
+            location: { kind: "property", path: [fieldId, "type"] },
+            related: [],
+            message: `「${owner.name}」の ${field?.name ?? fieldId} の型：${message}`,
+          }),
+        );
+      };
+      const parsed = new Set(file.entries.map((e) => e.fieldId));
+      for (const f of owner.fields) {
+        if (parsed.has(f.id)) continue;
+        const reason = typeof f.type === "string" ? fieldTypeSyntaxError(f.type) : "型がありません";
+        fail(f.id, "field-type-syntax", reason ?? "型を読めません");
+      }
+      if (file.entries.length === 0 || !ctx) continue;
+      const source = program?.getSourceFile(file.path);
+      if (!source) continue;
+      // 型の文の中の型エラー（知らない名前など）
+      for (const d of this.service.getSemanticDiagnostics(file.path)) {
+        const entry = file.entries.find(
+          (e) => d.start !== undefined && d.start >= e.start && d.start <= e.end,
+        );
+        if (!entry || out.bad.get(owner.id)?.has(entry.fieldId)) continue;
+        fail(entry.fieldId, `ts${d.code}`, ts.flattenDiagnosticMessageText(d.messageText, " "));
+      }
+      const aliases = source.statements.filter(ts.isTypeAliasDeclaration);
+      const schemas: Record<string, ValueSchema> = {};
+      file.entries.forEach((entry, i) => {
+        const alias = aliases[i];
+        if (!alias || out.bad.get(owner.id)?.has(entry.fieldId)) return;
+        try {
+          schemas[entry.fieldId] = typeToSchema(ctx, ctx.checker.getTypeFromTypeNode(alias.type));
+        } catch (e) {
+          if (!(e instanceof UnsaveableType)) throw e;
+          fail(entry.fieldId, "field-type-unsaveable", e.message);
+        }
+      });
+      out.schemas[owner.id] = schemas;
+    }
+    return out;
+  }
+
+  /** スクリプトの型エラー・フィールドの型の型エラー・フィールドのスキーマを、まとめて作る */
+  checkAll(input: TypeCheckInput): TypeCheckResult {
+    const fields = this.load(input);
+    return {
+      diagnostics: [...fields.diagnostics, ...this.scripts(input)],
+      schemas: fields.schemas,
+    };
   }
 
   check(input: TypeCheckInput): Diagnostic[] {
-    const systemFiles = this.load(input);
+    return this.checkAll(input).diagnostics;
+  }
+
+  /** フィールドのスキーマだけを作る（スクリプトは確かめない） */
+  schemas(input: TypeCheckInput): FieldSchemas {
+    return this.load(input).schemas;
+  }
+
+  /** 読み込んだあとの、スクリプトの型エラー */
+  private scripts(input: TypeCheckInput): Diagnostic[] {
+    const systemFiles = this.systemFiles;
     const only = input.systemIds ? new Set(input.systemIds) : null;
     const out: Diagnostic[] = [];
     for (const [systemId, file] of systemFiles) {

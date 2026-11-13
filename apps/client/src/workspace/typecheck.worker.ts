@@ -4,7 +4,7 @@ import { TypeChecker } from "@tukurium/typecheck";
 import messages from "typescript6/lib/ja/diagnosticMessages.generated.json";
 
 /**
- * スクリプトの型を確かめる Worker（ADR 0058）。TypeScript の本体は大きいので、画面とは別に、
+ * スクリプトとフィールドの型を確かめ、フィールドのスキーマを作る Worker（ADR 0058・0065）。TypeScript の本体は大きいので、画面とは別に、
  * ワークスペースで型を確かめるときにだけ読み込む。同じ TypeChecker を使い回し、変わっていない
  * ファイルの解析を使い回す。
  */
@@ -34,9 +34,14 @@ export interface TypeCheckRequest {
 self.onmessage = (event: MessageEvent<TypeCheckRequest>) => {
   const { id, snapshot, packages, hostDeclarations } = event.data;
   try {
-    const diagnostics = checker.check({ snapshot, packages: new Map(packages), hostDeclarations });
-    self.postMessage({ id, diagnostics });
+    const result = checker.checkAll({ snapshot, packages: new Map(packages), hostDeclarations });
+    self.postMessage({ id, diagnostics: result.diagnostics, schemas: result.schemas });
   } catch (e) {
-    self.postMessage({ id, diagnostics: [], error: e instanceof Error ? e.message : String(e) });
+    self.postMessage({
+      id,
+      diagnostics: [],
+      schemas: null,
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 };

@@ -1,5 +1,7 @@
+import type { FieldSchemas } from "@tukurium/eks";
 import {
   belongsToDependency,
+  checkFieldValues,
   checkPackageVersions,
   checkProjectReferences,
   checkProjectStructure,
@@ -91,12 +93,16 @@ export function useTypeCheck(): void {
       });
       const w = worker.current;
       const id = ++seq.current;
-      w.onmessage = (e: MessageEvent<{ id: number; diagnostics: Diagnostic[] }>) => {
+      w.onmessage = (
+        e: MessageEvent<{ id: number; diagnostics: Diagnostic[]; schemas: FieldSchemas | null }>,
+      ) => {
         // 最後に頼んだものの結果だけを受け取る
         if (e.data.id !== seq.current || useWorkspace.getState().project !== project) return;
-        useWorkspace.setState({
+        useWorkspace.setState((s) => ({
           typeProblems: { diagnostics: e.data.diagnostics, observedVersion: rev },
-        });
+          // フィールドのスキーマ（Inspector の入力・値の確かめ・再生で使う）。作れなかったときは前のまま
+          fieldSchemas: e.data.schemas ?? s.fieldSchemas,
+        }));
       };
       w.postMessage({
         id,
@@ -139,6 +145,7 @@ export function useProjectDiagnostics(): {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
   const pool = useWorkspace((s) => s.packagePool);
+  const schemas = useWorkspace((s) => s.fieldSchemas);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(() => {
     if (!project) return { diagnostics: [], index: null, summary: new Map() };
@@ -146,21 +153,24 @@ export function useProjectDiagnostics(): {
     const index = ResourcePathIndex.fromSnapshot(snap);
     const diagnostics = [
       ...checkProjectStructure(snap, index),
-      ...checkProjectReferences(snap),
+      ...checkProjectReferences(snap, schemas),
+      // 値が型に合っているか（ADR 0065）
+      ...checkFieldValues(snap, schemas),
       ...checkPackageVersions(snap.dependencies, pool),
     ];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
-  }, [project, rev]);
+  }, [project, rev, schemas]);
 }
 
 /** 制作データの依存グラフ（「どこで使っているか」の表示に使う）。制作データが変わるたびに作り直す */
 export function useDependencyGraph(): ProjectDependencyGraph | null {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
+  const schemas = useWorkspace((s) => s.fieldSchemas);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(
-    () => (project ? ProjectDependencyGraph.fromSnapshot(project.snapshot()) : null),
-    [project, rev],
+    () => (project ? ProjectDependencyGraph.fromSnapshot(project.snapshot(), schemas) : null),
+    [project, rev, schemas],
   );
 }
 

@@ -1,4 +1,10 @@
-import { parseValue, stringifyValue, type Vec3 } from "@tukurium/eks";
+import {
+  type FieldSchemas,
+  parseValue,
+  stringifyValue,
+  type ValueSchema,
+  type Vec3,
+} from "@tukurium/eks";
 import {
   BUILTIN,
   emptyProject,
@@ -215,7 +221,7 @@ describe("Simulation：System の扱い", () => {
     p.kokostates.push({
       id: "ks_l",
       name: "Link",
-      fields: [{ id: "to", name: "to", type: "entity", default: "e1" }],
+      fields: [{ id: "to", name: "to", type: "EntityRef | undefined", default: "e1" }],
     });
     const e1 = p.entities[0];
     if (e1) e1.states.ks_l = { to: undefined };
@@ -245,7 +251,7 @@ describe("Simulation：System の扱い", () => {
     p.kokostates.push({
       id: "ks_l",
       name: "Link",
-      fields: [{ id: "to", name: "to", type: "entity", default: undefined }],
+      fields: [{ id: "to", name: "to", type: "EntityRef | undefined", default: undefined }],
     });
     const e1 = p.entities[0];
     if (e1) e1.states.ks_l = { to: "e1" };
@@ -258,6 +264,109 @@ describe("Simulation：System の扱い", () => {
     const after = sim.world.get("e1", "ks_l") ?? {};
     expect("to" in after).toBe(true);
     expect(after.to).toBeUndefined();
+  });
+
+  describe("TypeScript で書いた型のフィールド（ADR 0065）", () => {
+    const owner: ValueSchema = {
+      kind: "union",
+      options: [{ kind: "ref", target: "entity" }, { kind: "undefined" }],
+    };
+    const cardOf = (label: ValueSchema): ValueSchema => ({
+      kind: "record",
+      fields: [
+        { name: "label", optional: false, schema: label },
+        { name: "owner", optional: false, schema: owner },
+      ],
+    });
+    const card = cardOf({ kind: "string" });
+    const schemas: FieldSchemas = { ks_h: { cards: { kind: "list", item: card } } };
+    const hand = () => {
+      const p = project(`import C from "./Counter.koko";
+        import H from "./Hand.koko";
+        export default system({
+          query: { with: [C, H] },
+          onUpdate(e) {
+            const c = e.get(C);
+            const h = e.get(H);
+            if (c.n === 0) h.cards.push({ label: "A", owner: e.id });
+            else if (c.n === 1) h.cards.push({ label: 2, owner: undefined });
+            else if (c.n === 2) h.drawn = new Date(5);
+            else if (c.n === 3) c.n = NaN;
+            if (c.n === c.n) c.n += 1;
+          },
+        });`);
+      p.kokostates.push({
+        id: "ks_h",
+        name: "Hand",
+        fields: [
+          {
+            id: "cards",
+            name: "cards",
+            type: "{ label: string; owner: EntityRef | undefined }[]",
+            default: [],
+          },
+          { id: "drawn", name: "drawn", type: "Date | undefined", default: undefined },
+        ],
+      });
+      const e1 = p.entities[0];
+      if (e1) e1.states.ks_h = { cards: [{ label: "Z", owner: "e1" }], drawn: undefined };
+      return p;
+    };
+
+    it("レコードのリストと日時を System から読み書きでき、型に合わない書き込みは無視する", async () => {
+      sim = await Simulation.create(hand(), "out", { realm: "r", schemas });
+      const values = () => sim?.world.get("e1", "ks_h") ?? {};
+      sim.step(0.1);
+      expect(values().cards).toEqual([
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+      ]);
+      // label が数のカードを足した書き込みは、フィールドごと受け入れない
+      sim.step(0.1);
+      expect(values().cards).toHaveLength(2);
+      sim.step(0.1);
+      expect(values().drawn).toEqual(new Date(5));
+      // 自作の KokoState の数は、NaN も入る（Built-in の数は、有限の数だけ）
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_c")?.n).toBeNaN();
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
+
+    it("スキーマが分からないフィールドは、値の確かめをせずに通す", async () => {
+      sim = await Simulation.create(hand(), "out", { realm: "r" });
+      sim.step(0.1);
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_h")?.cards).toEqual([
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+        { label: 2, owner: undefined },
+      ]);
+    });
+
+    it("セッションでは、入れ子の中の Entity の参照も、その配置の中の ID になる", async () => {
+      sim = await Simulation.createSession();
+      sim.addPart({
+        id: "p1",
+        realm: "r",
+        outputId: "out",
+        snapshot: hand(),
+        schemas,
+        position: [0, 0, 0],
+        yaw: 0,
+      });
+      const koko = sim.stateIdOf("p1", "ks_h") ?? "";
+      expect(sim.world.get("p1/e1", koko)?.cards).toEqual([{ label: "Z", owner: "p1/e1" }]);
+      // 適用でスキーマが変わったら、新しいスキーマで確かめる（label は "Z" だけ）
+      const onlyZ = cardOf({ kind: "literal", value: "Z" });
+      sim.applyPart("r", "out", hand(), undefined, {
+        ks_h: { cards: { kind: "list", item: onlyZ } },
+      });
+      sim.step(0.1);
+      // label が "A" のカードを足す書き込みは、新しい型に合わないので入らない
+      expect(sim.world.get("p1/e1", sim.stateIdOf("p1", "ks_h") ?? "")?.cards).toEqual([
+        { label: "Z", owner: "p1/e1" },
+      ]);
+    });
   });
 
   it("spawn / destroy / find / get / set が使える", async () => {

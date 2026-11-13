@@ -1,3 +1,4 @@
+import { FIELD_TYPE } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
 import type { EntityDef, ProjectSnapshot } from "./schema";
 
@@ -135,7 +136,7 @@ function seatText(role: string, name: string, filled: string): string {
   return role + "　" + (name || "参加中");
 }
 
-function lampColor(mark: string, board: BoardValues): string {
+function lampColor(mark: string, board: BoardValues): Color {
   const filled = mark === "O" ? board.first : board.second;
   if (!filled) return "#d5cfc3";
   if (board.result === "draw") return "#9aa7b5";
@@ -308,24 +309,24 @@ export function marubatsuSample(): ProjectSnapshot {
         id: "ks_board",
         name: "Board",
         fields: [
-          { id: "f_marks", name: "marks", type: "string", default: "         " },
-          { id: "f_first", name: "first", type: "string", default: "" },
-          { id: "f_second", name: "second", type: "string", default: "" },
-          { id: "f_firstName", name: "firstName", type: "string", default: "" },
-          { id: "f_secondName", name: "secondName", type: "string", default: "" },
-          { id: "f_turn", name: "turn", type: "string", default: "" },
-          { id: "f_result", name: "result", type: "string", default: "" },
-          { id: "f_line", name: "line", type: "string", default: "" },
+          { id: "f_marks", name: "marks", type: FIELD_TYPE.string, default: "         " },
+          { id: "f_first", name: "first", type: FIELD_TYPE.string, default: "" },
+          { id: "f_second", name: "second", type: FIELD_TYPE.string, default: "" },
+          { id: "f_firstName", name: "firstName", type: FIELD_TYPE.string, default: "" },
+          { id: "f_secondName", name: "secondName", type: FIELD_TYPE.string, default: "" },
+          { id: "f_turn", name: "turn", type: FIELD_TYPE.string, default: "" },
+          { id: "f_result", name: "result", type: FIELD_TYPE.string, default: "" },
+          { id: "f_line", name: "line", type: FIELD_TYPE.string, default: "" },
         ],
       },
       {
         id: "ks_cell",
         name: "Cell",
         fields: [
-          { id: "f_index", name: "index", type: "number", default: 0 },
-          { id: "f_mark", name: "mark", type: "string", default: "" },
-          { id: "f_piece", name: "piece", type: "entity", default: undefined },
-          { id: "f_piece2", name: "piece2", type: "entity", default: undefined },
+          { id: "f_index", name: "index", type: FIELD_TYPE.number, default: 0 },
+          { id: "f_mark", name: "mark", type: FIELD_TYPE.string, default: "" },
+          { id: "f_piece", name: "piece", type: FIELD_TYPE.entity, default: undefined },
+          { id: "f_piece2", name: "piece2", type: FIELD_TYPE.entity, default: undefined },
         ],
       },
       { id: "ks_reset", name: "Reset", fields: [] },
