@@ -57,6 +57,15 @@ export interface SystemDef {
   name: string;
 }
 
+/**
+ * 型の定義（ADR 0065）。名前を付けた型（`Card` など）を、`.d.ts` の形（`type` と `interface`）で書くリソース。
+ * KokoState のフィールドの型から使う。中身（コード）は、System のスクリプトと同じく別に持つ。
+ */
+export interface TypeDef {
+  id: string;
+  name: string;
+}
+
 export interface MaterialDef {
   id: string;
   name: string;
@@ -101,6 +110,8 @@ export interface ProjectSnapshot {
   name: string;
   kokostates: KokoStateDef[];
   systems: (SystemDef & { code: string })[];
+  /** 型の定義（古いデータにはない） */
+  types?: (TypeDef & { code: string })[];
   materials: MaterialDef[];
   /** 古いデータにはない */
   assets?: AssetDef[];

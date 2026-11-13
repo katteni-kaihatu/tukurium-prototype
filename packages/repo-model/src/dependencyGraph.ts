@@ -70,6 +70,11 @@ export class ProjectDependencyGraph {
     for (const m of snap.materials)
       if (m.map) this.edge({ kind: "material", id: m.id }, { kind: "asset", id: m.map });
 
+    // KokoState → フィールドの型で使う、型の定義（ADR 0065）
+    for (const k of snap.kokostates)
+      for (const id of k.typeDefs ?? [])
+        this.edge({ kind: "kokostate", id: k.id }, { kind: "typedef", id });
+
     for (const e of snap.entities) {
       const from: GraphRef = { kind: "entity", id: e.id };
       if (e.parent) this.edge(from, { kind: "entity", id: e.parent });
@@ -164,6 +169,7 @@ function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
     out.set(refKey({ kind, id }), stringifyValue(v));
   for (const k of snap.kokostates) put("kokostate", k.id, k);
   for (const s of snap.systems) put("system", s.id, s);
+  for (const t of snap.types ?? []) put("typedef", t.id, t);
   for (const m of snap.materials) put("material", m.id, m);
   for (const a of snap.assets ?? []) put("asset", a.id, a);
   for (const o of snap.outputs) put("output", o.id, o);

@@ -37,9 +37,14 @@ export function includedResources(snap: ProjectSnapshot, outputId: string): Set<
 export function packageManifest(snap: ProjectSnapshot, outputId: string): PackageManifest {
   const index = ResourcePathIndex.fromSnapshot(snap);
   const exported = includedResources(snap, outputId);
+  // 含めた KokoState がフィールドの型で使う、型の定義は、含めていなくても一緒に入れる
+  // （ないと、使う側でそのフィールドの型を読めない。ADR 0065）
+  for (const k of snap.kokostates)
+    if (exported.has(k.id)) for (const id of k.typeDefs ?? []) exported.add(id);
   const defs = new Map<string, unknown>();
   for (const k of snap.kokostates) defs.set(k.id, k);
   for (const s of snap.systems) defs.set(s.id, s);
+  for (const t of snap.types ?? []) defs.set(t.id, t);
   for (const m of snap.materials) defs.set(m.id, m);
   for (const a of snap.assets ?? []) defs.set(a.id, a);
   const exports: PackageExport[] = [];

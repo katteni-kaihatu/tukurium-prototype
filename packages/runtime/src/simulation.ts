@@ -11,6 +11,7 @@ import type {
 import {
   acceptsUndefined,
   cloneValue,
+  conformValue,
   equalValues,
   type FieldSchemas,
   hasRefs,
@@ -313,6 +314,10 @@ export const HOST_API = [
   "world.emit",
   "world.get",
   "world.set",
+  "world.getState",
+  "world.setState",
+  "world.getField",
+  "world.setField",
   "world.find",
   "world.spawn",
   "world.destroy",
@@ -1292,10 +1297,14 @@ export class Simulation {
         const v = { ...values };
         if (koko === BUILTIN.Mesh && typeof v.material === "string")
           v.material = this.mid(part.realm, v.material);
-        // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
         for (const f of this.registry.require(k).fields) {
           const schema = this.schemaOf(k, f);
-          if (!schema || !hasRefs(schema) || !Object.hasOwn(v, f.id)) continue;
+          if (!schema || !Object.hasOwn(v, f.id)) continue;
+          // 型の定義を変えたあとの値は、型に合わせてから使う（足りないフィールドを埋め、型にないものを捨てる）
+          if (validateValue(schema, v[f.id]) !== null)
+            v[f.id] = conformValue(schema, v[f.id]) as FieldValue;
+          // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
+          if (!hasRefs(schema)) continue;
           v[f.id] = mapRefs(schema, v[f.id], (target, ref) =>
             target === "entity" ? this.eid(part, ref) : undefined,
           ) as FieldValue;
@@ -1555,6 +1564,19 @@ export class Simulation {
     if (this.multi && !this.permits(name, ctx, callers)) return DENIED_RESULT[name];
     const own = (id: string | undefined): id is EntityId =>
       typeof id === "string" && this.world.has(id) && callers.some((p) => p.entities.has(id));
+    /** 参照が指す KokoState（実行時の ID）。自分の配置の Entity が、その KokoState を持っているときだけ */
+    const stateOf = (ref: { entity: string; koko: string } | undefined) => {
+      if (!ref || !own(ref.entity)) return undefined;
+      const koko = this.resolveKoko(ref.koko, ctx.realm);
+      return koko && this.world.hasState(ref.entity, koko) ? koko : undefined;
+    };
+    /** フィールドの参照が指すフィールドと、その値の入れ物 */
+    const fieldOf = (ref: { entity: string; koko: string; field?: string } | undefined) => {
+      const koko = stateOf(ref);
+      const values = ref && koko ? this.world.get(ref.entity, koko) : undefined;
+      const field = koko && this.registry.get(koko)?.fields.find((f) => f.id === ref?.field);
+      return koko && values && field ? { koko, values, field } : undefined;
+    };
     const api: { [N in HostName]: (args: HostArgs<N>) => Value } = {
       "world.raycast": ([origin, direction, max, opts]) => {
         // 非公開（private）の別の配置には当たらない（見つからない）。土台の World が外から来た Item に
@@ -1648,6 +1670,27 @@ export class Simulation {
         const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
         this.writeNamed(id, koko, values as Record<string, Value>, null);
+        return true;
+      },
+      // 参照から読み書きする（ADR 0065）。world.get・world.set と同じく、自分の配置の Entity だけ
+      "world.getState": ([ref]) => {
+        const koko = stateOf(ref);
+        return ref && koko ? this.toNamed(koko, this.world.get(ref.entity, koko) ?? {}) : undefined;
+      },
+      "world.setState": ([ref, values]) => {
+        const koko = stateOf(ref);
+        if (!ref || !koko || !values) return false;
+        this.writeNamed(ref.entity, koko, values as Record<string, Value>, null);
+        return true;
+      },
+      "world.getField": ([ref]) => {
+        const at = fieldOf(ref);
+        return at ? cloneValue(at.values[at.field.id]) : undefined;
+      },
+      "world.setField": ([ref, value]) => {
+        const at = fieldOf(ref);
+        if (!at || !this.accepts(at.koko, at.field, value as Value)) return false;
+        at.values[at.field.id] = cloneValue(value) as FieldValue;
         return true;
       },
       "world.find": ([name]) => {

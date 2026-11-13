@@ -1,5 +1,11 @@
 import type { KokoStateDef } from "@tukurium/eks";
-import { type FieldSchemas, schemaOfField, visitRefs } from "@tukurium/eks";
+import {
+  equalValues,
+  type FieldSchemas,
+  schemaOfField,
+  visitRefs,
+  visitStateRefs,
+} from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import { ResourcePathIndex } from "../resourcePath";
@@ -71,6 +77,21 @@ export function checkProjectReferences(
       });
   };
 
+  // KokoState が使う型の定義（ADR 0065）。ライブラリの型の定義（`pkg:` の ID）は、依存の中身にある
+  const typeDefs = new Set((snap.types ?? []).map((t) => t.id));
+  for (const k of snap.kokostates)
+    for (const id of k.typeDefs ?? [])
+      if (!typeDefs.has(id) && !isPackageResourceId(id))
+        push({
+          code: "missing-typedef",
+          severity: "error",
+          subject: { kind: "kokostate", id: k.id },
+          location: { kind: "property", path: ["typeDefs"] },
+          related: [],
+          message: `「${k.name}」が使う型の定義がありません`,
+          detail: `ID: ${id}`,
+        });
+
   for (const m of snap.materials)
     if (m.map)
       checkResource({ kind: "material", id: m.id }, ["map"], m.map, "image", `「${m.name}」の map`);
@@ -123,6 +144,49 @@ export function checkProjectReferences(
               message: `${what} に指定した Entity がありません`,
               detail: `ID: ${v}`,
             });
+        });
+        // KokoState の参照・フィールドの参照（ADR 0065）：指す Entity が、その KokoState とフィールドを持っているか
+        visitStateRefs(schema, values[f.id], (ref, refSchema) => {
+          const target = entities.get(ref.entity);
+          // Entity がないことは、上で問題にしている
+          if (!target) return;
+          const targetDef = defs.get(ref.koko);
+          const kokoName = targetDef?.name ?? ref.koko;
+          const refProblem = (code: string, message: string, detail?: string) =>
+            push({
+              code,
+              severity: "error",
+              subject,
+              location: { kind: "property", path: [kokoId, f.id] },
+              related,
+              message,
+              ...(detail ? { detail } : {}),
+            });
+          if (!Object.hasOwn(target.states, ref.koko)) {
+            refProblem(
+              "missing-state-ref",
+              `${what} が指す「${target.name}」は、KokoState「${kokoName}」を持っていません`,
+              `KokoState の ID: ${ref.koko}`,
+            );
+            return;
+          }
+          if (refSchema.kind !== "fieldRef" || !targetDef) return;
+          const field = targetDef.fields.find((x) => x.id === ref.field);
+          if (!field) {
+            refProblem(
+              "missing-field-ref",
+              `${what} が指す「${target.name}」の ${kokoName} に、指定したフィールドがありません`,
+              `フィールドの ID: ${ref.field}`,
+            );
+            return;
+          }
+          // 指せるフィールドの型が決まっているときは、指したフィールドの型が同じかを見る
+          const fieldSchema = schemaOfField(schemas, ref.koko, field);
+          if (refSchema.value && fieldSchema && !equalValues(refSchema.value, fieldSchema))
+            refProblem(
+              "field-ref-type-mismatch",
+              `${what} は、${kokoName}.${field.name}（${field.type}）を指せません（型が合いません）`,
+            );
         });
       }
     }

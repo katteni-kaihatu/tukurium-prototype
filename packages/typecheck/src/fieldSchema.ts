@@ -51,6 +51,8 @@ export interface SchemaContext {
   checker: ts.TypeChecker;
   /** 標準ライブラリの宣言のファイルか（`Date`・`Map`・`Set` を、利用者が作った同じ名前の型と取り違えない） */
   isLibFile(fileName: string): boolean;
+  /** Host API の宣言のファイルか（`KokoStateRef`・`FieldRef` を見分ける） */
+  isHostFile(fileName: string): boolean;
 }
 
 /** undefined を最後に置く（`knownSchema()` の結果と同じ並びにする） */
@@ -156,6 +158,26 @@ function objectSchema(ctx: SchemaContext, type: ts.Type, depth: number): ValueSc
   if (checker.isArrayType(type)) {
     const item = checker.getTypeArguments(type as ts.TypeReference)[0];
     return item ? { kind: "list", item: next(item) } : unsaveable("リストの要素の型が分かりません");
+  }
+
+  // Tukurium が用意する参照の型（Host API の宣言にある interface）
+  const named = type.getSymbol() ?? type.aliasSymbol;
+  if (named && (named.declarations ?? []).some((d) => ctx.isHostFile(d.getSourceFile().fileName))) {
+    const arg = checker.getTypeArguments(type as ts.TypeReference)[0];
+    if (named.getName() === "KokoStateRef") {
+      // K の id（KokoState の ID の文字）で、指せる KokoState を決める。決まらなければ、どれでも指せる
+      const id = arg?.getProperty("id");
+      const idType = id ? checker.getTypeOfSymbol(id) : undefined;
+      return idType?.isStringLiteral()
+        ? { kind: "kokoRef", koko: idType.value }
+        : { kind: "kokoRef" };
+    }
+    if (named.getName() === "FieldRef") {
+      // T が unknown（書いていない）なら、どのフィールドでも指せる
+      return !arg || arg.flags & ts.TypeFlags.Unknown
+        ? { kind: "fieldRef" }
+        : { kind: "fieldRef", value: next(arg) };
+    }
   }
 
   // 標準ライブラリの型は、Date・Map・Set だけを保存できる。`Record<K, V>` も標準ライブラリの型だが、

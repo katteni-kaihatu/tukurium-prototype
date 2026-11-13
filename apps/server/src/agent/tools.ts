@@ -1,6 +1,7 @@
 import {
   acceptsUndefined,
   decodeValue,
+  emptyValueOf,
   type FieldDef,
   type FieldValue,
   type KokoStateDef,
@@ -21,7 +22,6 @@ import {
   checkProjectStructure,
   compileSystem,
   type Diagnostic,
-  emptyValueOf,
   gunAndTargetSample,
   isBuiltin,
   KOKO_ROLES,

@@ -165,7 +165,94 @@ export function NewRepoPage({ embedded = false }: { embedded?: boolean }) {
             </button>
           </div>
         </section>
+        <ImportZip />
       </main>
     </div>
+  );
+}
+
+/** Zip（エクスポートしたもの）から、新しいプロジェクトを作る */
+function ImportZip() {
+  const me = useApp((s) => s.me);
+  const navigate = useProjectNavigate();
+  const ids = { file: useId(), name: useId(), title: useId() };
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const repo = await api.importRepo(file, { name, visibility });
+      navigate(`/p/${repo.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={styles.card} aria-labelledby={ids.title}>
+      <h2 id={ids.title} className={styles.title}>
+        Zip からインポート
+      </h2>
+      <p className={styles.sub}>
+        エクスポートした Zip
+        から、新しいプロジェクトを作ります。最新の保存と素材が入り、履歴はここから始まります。
+      </p>
+      <div className={styles.field}>
+        <label htmlFor={ids.file}>Zip ファイル *</label>
+        <input
+          id={ids.file}
+          type="file"
+          accept=".zip,application/zip"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        />
+      </div>
+      <div className={styles.field}>
+        <label htmlFor={ids.name}>名前（任意。空なら Zip の中の名前）</label>
+        <input
+          id={ids.name}
+          className={styles.input}
+          value={name}
+          maxLength={64}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <fieldset className={styles.field} style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend className={styles.label}>公開範囲 *</legend>
+        <div className={styles.choices}>
+          {(["public", "private"] as const).map((v) => (
+            <label key={v} className={styles.choice}>
+              <input
+                type="radio"
+                name="import-visibility"
+                checked={visibility === v}
+                onChange={() => setVisibility(v)}
+              />
+              <span>
+                {v === "public" ? "Public" : "Private"}
+                <small>{v === "public" ? "誰でも見られる" : "自分だけ"}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {error && <p className={styles.error}>{error}</p>}
+      <div className={styles.row}>
+        <button
+          type="button"
+          className={styles.primary}
+          disabled={!file || busy || !me}
+          onClick={() => void submit()}
+        >
+          {busy ? "取り込んでいます…" : "Zip からプロジェクトを作成"}
+        </button>
+      </div>
+    </section>
   );
 }

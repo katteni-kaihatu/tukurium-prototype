@@ -1,4 +1,4 @@
-import { NEW_SYSTEM_CODE } from "@tukurium/repo-model";
+import { NEW_SYSTEM_CODE, NEW_TYPES_CODE } from "@tukurium/repo-model";
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ASSET_ACCEPT, assetUrl, uploadAsset } from "./assets";
 import { useCanEdit, useProject } from "./hooks";
@@ -14,7 +14,7 @@ import {
   usageOf,
   usersOfItem,
 } from "./resourceItems";
-import { useWorkspace } from "./store";
+import { type DetailTarget, useWorkspace } from "./store";
 import ui from "./ui.module.css";
 import { useDependencyGraph, useProblemSummary } from "./useProblems";
 
@@ -126,12 +126,13 @@ export function ResourcesPanel() {
   };
 
   /** ここで選んだものは、Resources にくっついた「リソースの詳細」に出す（ADR 0044） */
-  const showDetail = (kind: "koko" | "system" | "material" | "asset" | "folder", id: string) =>
+  const showDetail = (kind: DetailTarget["kind"], id: string) =>
     useWorkspace.setState({ resourceDetail: { kind, id }, resourceDetailOpen: true });
   const pick = (it: ResItem) => {
     setSel(it.id);
     if (it.kind === "koko" || it.kind === "builtin") showDetail("koko", it.id);
     else if (it.kind === "system") showDetail("system", it.id);
+    else if (it.kind === "typedef") showDetail("typedef", it.id);
     else if (it.kind === "material") showDetail("material", it.id);
     else if (it.kind === "image" || it.kind === "model" || it.kind === "audio")
       showDetail("asset", it.id);
@@ -146,7 +147,7 @@ export function ResourcesPanel() {
   };
   const open = (it: ResItem) => {
     if (it.kind === "folder") go(it.id);
-    else if (it.kind === "system") openCode(it.id);
+    else if (it.kind === "system" || it.kind === "typedef") openCode(it.id);
     else pick(it);
   };
   // ここで選んだもの。フォルダを移したあとなど、選んでいなければ開いている詳細
@@ -156,7 +157,7 @@ export function ResourcesPanel() {
   const placeHere = (id: string) => {
     if (here && !readOnlyHere) project.moveResource(id, here);
   };
-  const create = (kind: "folder" | "koko" | "script" | "material") => {
+  const create = (kind: "folder" | "koko" | "script" | "types" | "material") => {
     setNewOpen(false);
     setError(null);
     // 作ったものを入れるフォルダ。そこで空いている名前を付ける（同じ場所で名前がぶつからないように）
@@ -179,6 +180,11 @@ export function ResourcesPanel() {
         );
         placeHere(id);
         pick({ id, kind: "system", name: "", parent: here });
+        openCode(id);
+      } else if (kind === "types") {
+        const id = project.addTypeDef(project.freeName("Types", target, numbered), NEW_TYPES_CODE);
+        placeHere(id);
+        pick({ id, kind: "typedef", name: "", parent: here });
         openCode(id);
       } else {
         const id = project.addMaterial(project.freeName("Material", target, numbered));
@@ -402,6 +408,12 @@ export function ResourcesPanel() {
                 label="Script"
                 sub="コードで振る舞いを書く System"
                 onClick={() => create("script")}
+              />
+              <NewItem
+                kind="typedef"
+                label="型の定義"
+                sub="名前を付けた型を書き、KokoState のフィールドの型から使う"
+                onClick={() => create("types")}
               />
               <NewItem
                 kind="material"
@@ -734,6 +746,12 @@ function KindIcon({ item, size, large }: { item: ResItem; size: number; large?: 
       return (
         <svg {...p} aria-hidden="true">
           <path d="M9 7l-5 5 5 5M15 7l5 5-5 5" />
+        </svg>
+      );
+    case "typedef":
+      return (
+        <svg {...p} aria-hidden="true">
+          <path d="M8 4H6a2 2 0 0 0-2 2v4l-1.5 2L4 14v4a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v4l1.5 2-1.5 2v4a2 2 0 0 1-2 2h-2" />
         </svg>
       );
     case "model":

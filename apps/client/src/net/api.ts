@@ -233,6 +233,54 @@ async function call<T>(
   return data;
 }
 
+/** プロジェクトを Zip にして、ブラウザでダウンロードする（最新の保存と素材が入る） */
+async function downloadProjectZip(id: string, name: string): Promise<void> {
+  const res = await fetch(`/api/repos/${encodeURIComponent(id)}/export`, {
+    headers: { "x-tukurium-token": token() },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `エラー（${res.status}）`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name.trim() || "project"}.zip`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  } finally {
+    // クリックの処理が済んでから捨てる
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+}
+
+/** Zip から新しいプロジェクトを作る */
+async function uploadProjectZip(
+  file: Blob,
+  options: { name?: string; description?: string; visibility?: "public" | "private" },
+): Promise<RepoMeta> {
+  const params = new URLSearchParams();
+  if (options.name?.trim()) params.set("name", options.name.trim());
+  if (options.description) params.set("description", options.description);
+  if (options.visibility) params.set("visibility", options.visibility);
+  const res = await fetch(`/api/repos/import?${params}`, {
+    method: "POST",
+    headers: { "x-tukurium-token": token(), "content-type": "application/zip" },
+    body: file,
+  });
+  const data = (await res
+    .text()
+    .then(parseValue)
+    .catch(() => ({}))) as RepoMeta & { error?: string };
+  if (!res.ok)
+    throw new Error(
+      data.error ?? (res.status === 413 ? "Zip ファイルが大きすぎます" : `エラー（${res.status}）`),
+    );
+  return data;
+}
+
 /** リポジトリ・作品の API（サーバーの repos/routes.ts） */
 export const api = {
   invite: (to: string, sessionId: string) =>
@@ -289,6 +337,8 @@ export const api = {
     visibility: "public" | "private";
     template: "empty" | "sample" | "gun" | "range" | "forest" | "marubatsu";
   }) => call<RepoMeta>("POST", "/api/repos", body),
+  exportRepo: downloadProjectZip,
+  importRepo: uploadProjectZip,
   repos: (owner?: string) =>
     call<RepoMeta[]>("GET", owner ? `/api/repos?owner=${encodeURIComponent(owner)}` : "/api/repos"),
   repo: (id: string) => call<RepoDetail>("GET", `/api/repos/${id}`),

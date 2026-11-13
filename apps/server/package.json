@@ -23,6 +23,7 @@
     "@tukurium/shared": "workspace:*",
     "@tukurium/typecheck": "workspace:*",
     "fastify": "5.12.8",
+    "fflate": "0.8.2",
     "isomorphic-git": "1.44.10",
     "postgres": "4.0.0",
     "quickjs-emscripten-core": "0.32.0",

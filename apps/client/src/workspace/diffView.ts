@@ -195,7 +195,9 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
 }
 
 function codeEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
-  return pairById(before.systems, after.systems).flatMap(({ id, prev, next, kind }) => {
+  // System のスクリプトと、型の定義（ADR 0065）。どちらもコードとして、行ごとの差を出す
+  const codes = (snap: ProjectSnapshot) => [...snap.systems, ...(snap.types ?? [])];
+  return pairById(codes(before), codes(after)).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
     pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
     const beforeCode = prev?.code ?? "";
@@ -240,6 +242,16 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
         });
       }
     }
+    // 使う型の定義（ADR 0065）。名前で出す
+    const uses = (def: KokoStateDef | undefined, snap: ProjectSnapshot) =>
+      def?.typeDefs?.length
+        ? def.typeDefs
+            .map((t) => resourceName(snap, t))
+            .sort()
+            .join("、")
+        : null;
+    if (prev && next)
+      pushIfChanged(lines, "使う型の定義", uses(prev, before), uses(next, after), "typeDefs");
     if (lines.length === 0) return [];
     return [entry("koko", id, next?.name ?? prev?.name ?? id, kind, lines)];
   });
@@ -682,6 +694,7 @@ function resourceName(snap: ProjectSnapshot, id: string): string {
     snap.entities.find((e) => e.id === id)?.name ??
     snap.kokostates.find((k) => k.id === id)?.name ??
     snap.systems.find((s) => s.id === id)?.name ??
+    snap.types?.find((t) => t.id === id)?.name ??
     id
   );
 }

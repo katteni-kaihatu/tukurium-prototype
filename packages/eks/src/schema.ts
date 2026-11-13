@@ -1,4 +1,4 @@
-import { isPlainObject } from "./value";
+import { isPlainObject, type Value } from "./value";
 
 /**
  * 値の形の決まり（スキーマ。ADR 0065）。フィールドの型（TypeScript の型の文）を読み解いた結果で、
@@ -30,6 +30,16 @@ export type ValueSchema =
   | { kind: "color" }
   /** Entity・リソースの ID */
   | { kind: "ref"; target: RefTarget }
+  /**
+   * Entity についた KokoState の参照（`KokoStateRef<K>`）。値は `{ entity, koko }`（Entity と KokoState の ID）。
+   * koko：指せる KokoState の ID（ないときは、どの KokoState でも指せる）
+   */
+  | { kind: "kokoRef"; koko?: string }
+  /**
+   * Entity についた KokoState のフィールドの参照（`FieldRef<T>`）。値は `{ entity, koko, field }`
+   * （Entity・KokoState・フィールドの ID）。value：指せるフィールドの型（ないときは、どのフィールドでも指せる）
+   */
+  | { kind: "fieldRef"; value?: ValueSchema }
   | { kind: "union"; options: ValueSchema[] }
   | { kind: "tuple"; items: ValueSchema[] }
   | { kind: "list"; item: ValueSchema }
@@ -45,6 +55,23 @@ export interface RecordFieldSchema {
   schema: ValueSchema;
   /** 省略できる（`name?: T`） */
   optional: boolean;
+}
+
+/** Entity についた KokoState（と、そのフィールド）の参照の値。どれも名前ではなく ID */
+export interface StateRefValue {
+  entity: string;
+  koko: string;
+  /** フィールドの参照のときだけ */
+  field?: string;
+}
+
+/** 値が、KokoState の参照（field が要るなら、フィールドの参照）の形か */
+function isStateRef(value: unknown, withField: boolean): value is StateRefValue {
+  if (!isPlainObject(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== (withField ? 3 : 2)) return false;
+  if (typeof value.entity !== "string" || typeof value.koko !== "string") return false;
+  return !withField || typeof value.field === "string";
 }
 
 /** KokoState の ID → フィールドの ID → スキーマ。スキーマを作れなかったフィールドは入らない */
@@ -141,6 +168,15 @@ export function validateValue(
         : `${at(path)}色（"#rrggbb"）ではありません`;
     case "ref":
       return typeof value === "string" ? null : `${at(path)}参照（ID の文字）ではありません`;
+    case "kokoRef":
+      if (!isStateRef(value, false)) return `${at(path)}KokoState の参照ではありません`;
+      // 指せる KokoState が決まっていれば、その KokoState の参照に限る
+      return schema.koko === undefined || value.koko === schema.koko
+        ? null
+        : `${at(path)}この型で指せる KokoState ではありません`;
+    case "fieldRef":
+      // 指したフィールドの型が合うかは、制作データを見て確かめる（参照の診断）
+      return isStateRef(value, true) ? null : `${at(path)}フィールドの参照ではありません`;
     case "union": {
       for (const option of schema.options)
         if (validateValue(option, value, options, path) === null) return null;
@@ -224,7 +260,10 @@ export function validateValue(
   }
 }
 
-/** 値の中の参照（入れ子の中も）を、スキーマに沿ってたどる */
+/**
+ * 値の中の参照（入れ子の中も）を、スキーマに沿ってたどる。
+ * KokoState の参照・フィールドの参照は、その Entity を Entity の参照としてたどる。
+ */
 export function visitRefs(
   schema: ValueSchema,
   value: unknown,
@@ -233,6 +272,11 @@ export function visitRefs(
   switch (schema.kind) {
     case "ref":
       if (typeof value === "string" && value !== "") visit(schema.target, value);
+      return;
+    case "kokoRef":
+    case "fieldRef":
+      if (isStateRef(value, schema.kind === "fieldRef") && value.entity !== "")
+        visit("entity", value.entity);
       return;
     case "union": {
       // 値に合う選択肢だけをたどる（文字と参照が並ぶ型で、ただの文字を参照と取り違えない）
@@ -273,17 +317,78 @@ export function visitRefs(
 }
 
 /**
+ * 値の中の、KokoState の参照とフィールドの参照（入れ子の中も）を、スキーマに沿ってたどる。
+ * 参照先（Entity がその KokoState を持っているか、フィールドがあるか、型が合うか）を確かめるのに使う。
+ */
+export function visitStateRefs(
+  schema: ValueSchema,
+  value: unknown,
+  visit: (ref: StateRefValue, schema: ValueSchema & { kind: "kokoRef" | "fieldRef" }) => void,
+): void {
+  switch (schema.kind) {
+    case "kokoRef":
+    case "fieldRef":
+      if (isStateRef(value, schema.kind === "fieldRef")) visit(value, schema);
+      return;
+    case "union": {
+      const option = schema.options.find((o) => validateValue(o, value) === null);
+      if (option) visitStateRefs(option, value, visit);
+      return;
+    }
+    case "tuple":
+      if (Array.isArray(value))
+        schema.items.forEach((item, i) => {
+          visitStateRefs(item, value[i], visit);
+        });
+      return;
+    case "list":
+      if (Array.isArray(value)) for (const v of value) visitStateRefs(schema.item, v, visit);
+      return;
+    case "record":
+      if (isPlainObject(value))
+        for (const f of schema.fields) visitStateRefs(f.schema, value[f.name], visit);
+      return;
+    case "map":
+      if (isPlainObject(value))
+        for (const key of Object.keys(value)) visitStateRefs(schema.value, value[key], visit);
+      return;
+    case "Map":
+      if (value instanceof Map)
+        for (const [k, v] of value) {
+          visitStateRefs(schema.key, k, visit);
+          visitStateRefs(schema.value, v, visit);
+        }
+      return;
+    case "Set":
+      if (value instanceof Set) for (const v of value) visitStateRefs(schema.item, v, visit);
+      return;
+    default:
+      return;
+  }
+}
+
+/**
  * 値の中の参照を、スキーマに沿って置き換えた値を返す（抽出で ID を振り直すときに使う）。
  * replace が undefined を返した参照は、そのままにする。元の値は書き換えない。
+ * KokoState の参照・フィールドの参照は、Entity の ID（"entity"）と KokoState の ID（"kokostate"）を置き換える。
  */
 export function mapRefs(
   schema: ValueSchema,
   value: unknown,
-  replace: (target: RefTarget, id: string) => string | undefined,
+  replace: (target: RefTarget | "kokostate", id: string) => string | undefined,
 ): unknown {
   switch (schema.kind) {
     case "ref":
       return typeof value === "string" ? (replace(schema.target, value) ?? value) : value;
+    case "kokoRef":
+    case "fieldRef":
+      return isStateRef(value, schema.kind === "fieldRef")
+        ? {
+            ...value,
+            entity: replace("entity", value.entity) ?? value.entity,
+            koko: replace("kokostate", value.koko) ?? value.koko,
+          }
+        : value;
     case "union": {
       const option = schema.options.find((o) => validateValue(o, value) === null);
       return option ? mapRefs(option, value, replace) : value;
@@ -332,6 +437,8 @@ export function mapRefs(
 export function hasRefs(schema: ValueSchema): boolean {
   switch (schema.kind) {
     case "ref":
+    case "kokoRef":
+    case "fieldRef":
       return true;
     case "union":
       return schema.options.some(hasRefs);
@@ -370,6 +477,9 @@ export function isJsonSafe(schema: ValueSchema, finite: boolean): boolean {
     case "literal":
     case "color":
     case "ref":
+    // 参照の値は、ID の文字だけのレコード
+    case "kokoRef":
+    case "fieldRef":
       return true;
     case "union":
       return schema.options.every((o) => isJsonSafe(o, finite));
@@ -404,4 +514,106 @@ export function refTargetOf(schema: ValueSchema): RefTarget | undefined {
   if (schema.kind !== "union") return undefined;
   const rest = schema.options.filter((o) => o.kind !== "undefined");
   return rest.length === 1 && rest[0]?.kind === "ref" ? rest[0].target : undefined;
+}
+
+/** 初期値として使える値（型が undefined を受け入れるなら undefined。ほかは、型ごとの空の値） */
+export function emptyValueOf(schema: ValueSchema): Value {
+  if (acceptsUndefined(schema)) return undefined;
+  switch (schema.kind) {
+    case "number":
+      return 0;
+    case "string":
+    case "ref":
+      return "";
+    case "boolean":
+      return false;
+    case "bigint":
+      return 0n;
+    case "literal":
+      return schema.value;
+    case "color":
+      return "#ffffff";
+    case "kokoRef":
+      return { entity: "", koko: schema.koko ?? "" };
+    case "fieldRef":
+      return { entity: "", koko: "", field: "" };
+    case "union":
+      return schema.options[0] ? emptyValueOf(schema.options[0]) : undefined;
+    case "tuple":
+      return schema.items.map(emptyValueOf);
+    case "list":
+      return [];
+    case "record":
+      return Object.fromEntries(
+        schema.fields.filter((f) => !f.optional).map((f) => [f.name, emptyValueOf(f.schema)]),
+      );
+    case "map":
+      return {};
+    case "Map":
+      return new Map();
+    case "Set":
+      return new Set();
+    case "Date":
+      return new Date(0);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 値を、型（スキーマ）に合わせる（ADR 0065）。型の定義を変えたあとの、すでにある値に使う。
+ * - レコードに足りないフィールドは、空の値（`emptyValueOf`）で埋める。省略できるフィールドは埋めない
+ * - 型にないフィールドは捨てる
+ * - 型が変わった所（数だった所が文字になった、など）は、そのまま残す（値の問題として出る）
+ * 元の値は書き換えない。
+ */
+export function conformValue(schema: ValueSchema, value: unknown): unknown {
+  switch (schema.kind) {
+    case "record": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const f of schema.fields) {
+        if (Object.hasOwn(value, f.name)) out[f.name] = conformValue(f.schema, value[f.name]);
+        else if (!f.optional) out[f.name] = emptyValueOf(f.schema);
+      }
+      return out;
+    }
+    case "list":
+      return Array.isArray(value) ? value.map((v) => conformValue(schema.item, v)) : value;
+    case "tuple":
+      return Array.isArray(value) && value.length === schema.items.length
+        ? value.map((v, i) => conformValue(schema.items[i] as ValueSchema, v))
+        : value;
+    case "map": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) out[key] = conformValue(schema.value, value[key]);
+      return out;
+    }
+    case "Map":
+      return value instanceof Map
+        ? new Map(
+            [...value].map(([k, v]) => [
+              conformValue(schema.key, k),
+              conformValue(schema.value, v),
+            ]),
+          )
+        : value;
+    case "Set":
+      return value instanceof Set
+        ? new Set([...value].map((v) => conformValue(schema.item, v)))
+        : value;
+    case "union": {
+      // そのままで合う選択肢があれば、それに合わせる。なければ、合わせれば合う選択肢を探す
+      const direct = schema.options.find((o) => validateValue(o, value) === null);
+      if (direct) return conformValue(direct, value);
+      for (const option of schema.options) {
+        const conformed = conformValue(option, value);
+        if (validateValue(option, conformed) === null) return conformed;
+      }
+      return value;
+    }
+    default:
+      return value;
+  }
 }

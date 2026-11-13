@@ -56,6 +56,18 @@ export function ProjectPage({
     if (me) load();
   }, [me, load]);
 
+  const [exporting, setExporting] = useState(false);
+  const exportZip = async (r: RepoDetail) => {
+    setExporting(true);
+    try {
+      await api.exportRepo(r.id, r.name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const fork = async () => {
     try {
       const r = await api.fork(repoId);
@@ -107,6 +119,15 @@ export function ProjectPage({
                   onClick={() => setExtracting(true)}
                 >
                   抽出…
+                </button>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  disabled={!repo.canFork || !repo.head || exporting}
+                  title="最新の保存と素材を Zip にしてダウンロードします"
+                  onClick={() => void exportZip(repo)}
+                >
+                  {exporting ? "書き出しています…" : "Zip でエクスポート"}
                 </button>
               </div>
               <div className={styles.tabs} role="tablist" aria-label="プロジェクト">

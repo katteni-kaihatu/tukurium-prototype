@@ -70,7 +70,27 @@ export async function equip(
       };
       const target = tools.find(mine);
       if (!target) return false;
-      const at = world.get(target, "builtin.Transform")?.position ?? [0, 0, 0];
+      // Transform は親から見た値なので、親をたどって空間の中の位置にする（セッションでは配置の位置も足される）
+      const rotate = (v: number[], deg: number[]) => {
+        const [ax, ay, az] = deg.map((d) => (d * Math.PI) / 180);
+        // 回転の順は XYZ（three.js の Euler と同じ）。ベクトルには Z → Y → X の順でかかる
+        let [x, y, z] = v;
+        [x, y] = [x * Math.cos(az) - y * Math.sin(az), x * Math.sin(az) + y * Math.cos(az)];
+        [x, z] = [x * Math.cos(ay) + z * Math.sin(ay), -x * Math.sin(ay) + z * Math.cos(ay)];
+        [y, z] = [y * Math.cos(ax) - z * Math.sin(ax), y * Math.sin(ax) + z * Math.cos(ax)];
+        return [x, y, z];
+      };
+      let at = [0, 0, 0];
+      for (let e: string | null = target; e; e = world.parentOf(e)) {
+        const t = world.get(e, "builtin.Transform") ?? {};
+        const scale = t.scale ?? [1, 1, 1];
+        const r = rotate(
+          at.map((v, i) => v * scale[i]),
+          t.rotation ?? [0, 0, 0],
+        );
+        const pos = t.position ?? [0, 0, 0];
+        at = r.map((v, i) => v + pos[i]);
+      }
       const origin = [at[0], at[1] + 0.5, at[2] + 1];
       const d = [at[0] - origin[0], at[1] - origin[1], at[2] - origin[2]];
       const len = Math.hypot(d[0], d[1], d[2]);

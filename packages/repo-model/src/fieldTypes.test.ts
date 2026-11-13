@@ -1,4 +1,4 @@
-import type { FieldSchemas, ValueSchema } from "@tukurium/eks";
+import { emptyValueOf, type FieldSchemas, type ValueSchema } from "@tukurium/eks";
 import { describe, expect, it } from "vitest";
 import { BUILTIN } from "./builtins";
 import { ProjectDependencyGraph, usersOf } from "./dependencyGraph";
@@ -8,7 +8,6 @@ import {
   BASIC_FIELD_TYPES,
   basicFieldType,
   checkFieldValues,
-  emptyValueOf,
   parseFieldSchemas,
 } from "./fieldTypes";
 import { emptyProject } from "./samples";
