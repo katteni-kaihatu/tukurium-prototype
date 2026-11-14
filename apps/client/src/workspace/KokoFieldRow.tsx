@@ -72,7 +72,8 @@ export function KokoFieldRow(props: {
           ...def,
           fields: def.fields.map((x) => (x.id === f.id ? { ...x, default: empty } : x)),
         });
-        for (const e of project.entities()) {
+        // アウトプットの Entity と、プレハブの中の Entity
+        for (const e of [...project.entities(), ...project.prefabEntities()]) {
           const values = e.states[koko.id];
           if (values && validateValue(schema, conformValue(schema, values[f.id])) !== null)
             project.setField(e.id, koko.id, f.id, cloneValue(empty));

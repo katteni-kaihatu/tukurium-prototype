@@ -165,6 +165,34 @@
   padding-right: 58px;
 }
 
+/* インスタンスの行は、「プレハブを開く」の分だけ操作が一つ多い */
+.node[data-instance="true"]:hover .nodeName,
+.node[data-instance="true"]:focus-within .nodeName,
+.node[data-instance="true"][data-current="true"] .nodeName {
+  padding-right: 84px;
+}
+
+/* プレハブを開いている間、Hierarchy の上に出す帯（アウトプットに戻る） */
+.prefabBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 4px 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: var(--c-brand-soft);
+}
+
+/* 幅が足りなければ、戻るボタンを次の行へ送る（文字を途中で折らない） */
+.prefabBarText {
+  flex: 1 0 auto;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-brand);
+}
+
 .node:hover .actions,
 .node:focus-within .actions {
   display: inline-flex;

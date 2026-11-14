@@ -44,7 +44,7 @@ const loadView = (): View => {
  * - フォルダは並べ方だけの情報で、実行には関わらない（コミットには入る）
  */
 export function ResourcesPanel() {
-  const { openSystem, placeEditor } = useWorkspace();
+  const { openSystem, placeEditor, openPrefab } = useWorkspace();
   const detailId = useWorkspace((s) => s.resourceDetail?.id ?? null);
   const project = useProject();
   const editing = useCanEdit();
@@ -149,7 +149,11 @@ export function ResourcesPanel() {
   const open = (it: ResItem) => {
     if (it.kind === "folder") go(it.id);
     else if (it.kind === "system" || it.kind === "typedef") openCode(it.id);
-    else pick(it);
+    else if (it.kind === "prefab") {
+      // プレハブを開く：Hierarchy と Inspector が、プレハブの中身に切り替わる（ADR 0076）
+      pick(it);
+      openPrefab(it.id);
+    } else pick(it);
   };
   // ここで選んだもの。フォルダを移したあとなど、選んでいなければ開いている詳細
   const isSelected = (it: ResItem) => (sel !== null ? sel === it.id : detailId === it.id);

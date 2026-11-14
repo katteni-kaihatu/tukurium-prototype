@@ -14,6 +14,7 @@ import * as Y from "yjs";
 import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
 import { assignOrderKeys } from "./orderKey";
 import { validateAlias } from "./packageDependency";
+import { EXPANDED_ID_SEPARATOR } from "./prefab";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -586,55 +587,121 @@ export class ProjectDoc {
     });
     return id;
   }
+  /** アウトプットの Entity か、プレハブの中の Entity（ID は両方を通して一つ） */
+  findEntity(id: EntityId): EntityDef | PrefabEntityDef | undefined {
+    return this.entity(id) ?? this.prefabEntity(id);
+  }
   renameEntity(id: EntityId, name: string): void {
     this.node(id)?.set("name", name);
   }
+  /** 親を変える。プレハブの中では、親なし（null）は「いちばん上の Entity の下」になる */
   setParent(id: EntityId, parent: EntityId | null): void {
-    this.assertCanParent(id, parent);
-    this.entityMap.get(id)?.set("parent", parent);
+    const e = this.node(id);
+    if (!e) return;
+    const to = this.parentIn(e, parent);
+    this.assertCanParent(id, to);
+    e.set("parent", to);
   }
 
   /**
    * 親と、その兄弟の中の位置をまとめて変える。
    * index は、動かした Entity を除いた並びの何番目に入れるか（0 が先頭）。
+   * 兄弟は、同じ持ち主（同じアウトプットか、同じプレハブ）の中で数える。
    */
   placeEntity(id: EntityId, parent: EntityId | null, index: number): void {
-    this.assertCanParent(id, parent);
-    const self = this.entity(id);
+    const e = this.node(id);
+    if (!e) return;
+    const to = this.parentIn(e, parent);
+    this.assertCanParent(id, to);
+    const peers = this.peersOf(e);
+    const self = peers.find((p) => p.id === id);
     if (!self) return;
-    const siblings = this.entities(self.output)
-      .filter((e) => e.parent === parent && e.id !== id)
-      .sort((a, b) => a.order - b.order);
+    const siblings = peers.filter((p) => p.parent === to && p.id !== id);
     const at = Math.max(0, Math.min(index, siblings.length));
     const order = [
-      ...siblings.slice(0, at).map((e) => e.id),
+      ...siblings.slice(0, at).map((p) => p.id),
       id,
-      ...siblings.slice(at).map((e) => e.id),
+      ...siblings.slice(at).map((p) => p.id),
     ];
-    const current = this.entities(self.output)
-      .filter((e) => e.parent === parent)
-      .sort((a, b) => a.order - b.order)
-      .map((e) => e.id);
-    if (self.parent === parent && current.join("\0") === order.join("\0")) return;
+    const current = peers.filter((p) => p.parent === to).map((p) => p.id);
+    if (self.parent === to && current.join("\0") === order.join("\0")) return;
     this.transact(() => {
-      this.entityMap.get(id)?.set("parent", parent);
-      for (const [i, eid] of order.entries()) this.entityMap.get(eid)?.set("order", i);
+      e.set("parent", to);
+      for (const [i, eid] of order.entries()) this.node(eid)?.set("order", i);
     });
   }
-  /** Entity を削除する（子も削除）。状態維持のマークも外す。 */
+  /**
+   * Entity を削除する（子も削除）。状態維持のマークも外す。
+   * プレハブのいちばん上の Entity は消せない（インスタンスの Entity が、これに当たるため）。
+   */
   removeEntity(id: EntityId): void {
+    if (this.isPrefabRoot(id)) throw new Error("プレハブのいちばん上の Entity は消せません");
     this.transact(() => {
-      const ids = this.descendants(id);
-      for (const eid of ids) this.entityMap.delete(eid);
-      // インスタンスを消したら、その中（展開した Entity）を指す印も外す（ADR 0076）
+      const ids = new Set(this.descendants(id));
+      for (const eid of ids) {
+        this.entityMap.delete(eid);
+        this.prefabEntityMap.delete(eid);
+      }
+      // 消した Entity と、その中（展開した Entity。ID は「/」でつないである）を指す印も外す（ADR 0076）。
+      // インスタンスを消したときのアウトプットの印と、プレハブの中の Entity を消したときのプレハブの印
       const gone = (entity: EntityId) =>
-        ids.some((eid) => entity === eid || entity.startsWith(`${eid}/`));
+        entity.split(EXPANDED_ID_SEPARATOR).some((part) => ids.has(part));
       for (const o of this.outputMap.values()) {
         if (o.keep.some((k) => gone(k.entity))) {
           this.outputMap.set(o.id, { ...o, keep: o.keep.filter((k) => !gone(k.entity)) });
         }
       }
+      for (const p of this.prefabMap.values()) {
+        if (p.keep.some((k) => gone(k.entity))) {
+          this.prefabMap.set(p.id, { ...p, keep: p.keep.filter((k) => !gone(k.entity)) });
+        }
+      }
     });
+  }
+  /**
+   * Entity を複製する。同じ親の下に「名前 のコピー」を作り、作った Entity の ID を返す。
+   * withChildren なら、中の Entity も写す。インスタンスを複製すると、同じプレハブのインスタンスが一つ増える。
+   * プレハブのいちばん上の Entity は複製できない（いちばん上は一つだけ）。
+   */
+  duplicateEntity(id: EntityId, withChildren: boolean): EntityId | undefined {
+    const e = this.node(id);
+    if (!e) return undefined;
+    if (this.isPrefabRoot(id)) throw new Error("プレハブのいちばん上の Entity は複製できません");
+    const prefab = e.get("prefab") as string | undefined;
+    const output = e.get("output") as string;
+    // 写す前の並び（作ったコピーを、もう一度写さない）
+    const peers = this.peersOf(e);
+    const created = new Map<EntityId, EntityId>();
+    const copy = (src: EntityBase, parent: EntityId | null, rename: boolean) => {
+      const init = {
+        name: rename ? `${src.name} のコピー` : src.name,
+        states: src.states,
+        ...(src.instanceOf ? { instanceOf: src.instanceOf } : {}),
+      };
+      created.set(
+        src.id,
+        prefab !== undefined
+          ? this.addPrefabEntity({ ...init, prefab, ...(parent !== null ? { parent } : {}) })
+          : this.addEntity({ ...init, output, parent }),
+      );
+    };
+    this.transact(() => {
+      const root = peers.find((p) => p.id === id);
+      if (!root) return;
+      copy(root, root.parent, true);
+      if (!withChildren) return;
+      const pending = [id];
+      for (let i = 0; i < pending.length; i++) {
+        const parent = created.get(pending[i] as EntityId);
+        if (parent === undefined) continue;
+        for (const kid of peers) {
+          if (kid.parent !== pending[i] || created.has(kid.id)) continue;
+          copy(kid, parent, false);
+          pending.push(kid.id);
+        }
+      }
+    });
+    return created.get(id);
   }
   addState(id: EntityId, koko: KokoStateId, values?: KokoStateValues): void {
     const states = this.statesOf(id);
@@ -1178,15 +1245,56 @@ export class ProjectDoc {
   /** 自分の子孫を親にはできない。親子が輪になっていても、ここで止まって落ちない。 */
   private assertCanParent(id: EntityId, parent: EntityId | null): void {
     const seen = new Set<EntityId>();
-    for (let p = parent; p !== null; p = this.entity(p)?.parent ?? null) {
+    const parentOf = (p: EntityId) => (this.node(p)?.get("parent") as EntityId | null) ?? null;
+    for (let p = parent; p !== null; p = parentOf(p)) {
       if (p === id) throw new Error("自分の子孫を親にはできません");
       if (seen.has(p)) return;
       seen.add(p);
     }
   }
 
+  /** プレハブのいちばん上の Entity か */
+  private isPrefabRoot(id: EntityId): boolean {
+    const prefab = this.prefabEntityMap.get(id)?.get("prefab") as string | undefined;
+    return prefab !== undefined && this.prefabMap.get(prefab)?.root === id;
+  }
+
+  /**
+   * 親にする相手を確かめて返す。親は、同じ持ち主（同じアウトプットか、同じプレハブ）の中の Entity。
+   * プレハブの中では、親なし（null）は「いちばん上の Entity の下」。いちばん上の Entity は、ほかの下に付けられない。
+   */
+  private parentIn(e: Y.Map<unknown>, parent: EntityId | null): EntityId | null {
+    const prefab = e.get("prefab") as string | undefined;
+    if (prefab === undefined) {
+      if (parent !== null && this.prefabEntityMap.has(parent))
+        throw new Error("親は、同じアウトプットの中の Entity にしてください");
+      return parent;
+    }
+    const root = this.prefabMap.get(prefab)?.root;
+    if (e.get("id") === root) {
+      if (parent === null) return null;
+      throw new Error("プレハブのいちばん上の Entity は、ほかの Entity の下に付けられません");
+    }
+    const to = parent ?? root;
+    if (to === undefined || this.prefabEntityMap.get(to)?.get("prefab") !== prefab)
+      throw new Error("親は、同じプレハブの中の Entity にしてください");
+    return to;
+  }
+
+  /** 同じ持ち主（同じアウトプットか、同じプレハブ）の Entity。並び順 */
+  private peersOf(e: Y.Map<unknown>): EntityBase[] {
+    const prefab = e.get("prefab") as string | undefined;
+    return prefab !== undefined
+      ? this.prefabEntities(prefab)
+      : this.entities(e.get("output") as string);
+  }
+
+  /** その Entity と、中の Entity の ID（アウトプットの Entity でも、プレハブの中の Entity でも） */
   private descendants(id: EntityId): EntityId[] {
-    const all = this.entities();
+    const all = this.nodes().map((e) => ({
+      id: e.get("id") as EntityId,
+      parent: (e.get("parent") as EntityId | null) ?? null,
+    }));
     const out = [id];
     const visited = new Set<EntityId>(out);
     for (let i = 0; i < out.length; i++) {

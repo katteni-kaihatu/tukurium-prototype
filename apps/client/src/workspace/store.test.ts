@@ -254,3 +254,97 @@ describe("ワークスペースを閉じる", () => {
     project?.doc.destroy();
   });
 });
+
+describe("プレハブを開く（ADR 0076）", () => {
+  function prefabs() {
+    const project = useWorkspace.getState().project;
+    if (!project) throw new Error("ワークスペースが開かれていません");
+    const prefab = project.addPrefab("的");
+    const root = project.prefab(prefab)?.root ?? "";
+    const core = project.addPrefabEntity({ prefab, name: "芯" });
+    const inst = project.addInstance({ output: "out1", prefab });
+    return { project, prefab, root, core, inst };
+  }
+  const state = () => useWorkspace.getState();
+
+  it("開くと、編集の対象がプレハブになる。戻ると、開いた元のインスタンスを選ぶ", () => {
+    const { prefab, inst } = prefabs();
+    state().openPrefab(prefab, inst);
+    expect(state()).toMatchObject({
+      editingPrefab: { id: prefab, from: inst },
+      selection: { kind: "prefab", id: prefab },
+      outputId: "out1",
+    });
+    state().closePrefab();
+    expect(state()).toMatchObject({
+      editingPrefab: null,
+      selection: { kind: "entity", id: inst },
+    });
+    // Resources から開いたときは、アウトプットを選んだ所へ戻る
+    state().openPrefab(prefab);
+    state().closePrefab();
+    expect(state().selection).toEqual({ kind: "output", id: "out1" });
+    // ないプレハブは開かない
+    state().openPrefab("pf_none");
+    expect(state().editingPrefab).toBeNull();
+  });
+
+  it("選んだものに合わせて、プレハブを開く・閉じる", () => {
+    const { prefab, core, inst } = prefabs();
+    // プレハブの中の Entity を選ぶと、そのプレハブが開く
+    state().select({ kind: "entity", id: core });
+    expect(state().editingPrefab).toEqual({ id: prefab, from: null });
+    // 何も選ばなくても、開いたまま
+    state().select(null);
+    expect(state().editingPrefab?.id).toBe(prefab);
+    // アウトプットの Entity（インスタンスの中の Entity も）を選ぶと、アウトプットに戻る
+    state().select({ kind: "entity", id: `${inst}/${core}` });
+    expect(state().editingPrefab).toBeNull();
+    state().openPrefab(prefab);
+    state().select({ kind: "output", id: "out1" });
+    expect(state().editingPrefab).toBeNull();
+  });
+
+  it("アウトプットを切り替えると、プレハブを閉じる", () => {
+    const { prefab } = prefabs();
+    state().openPrefab(prefab);
+    state().setOutput("out2");
+    expect(state()).toMatchObject({
+      editingPrefab: null,
+      outputId: "out2",
+      selection: { kind: "output", id: "out2" },
+    });
+  });
+
+  it("Play を始めると、アウトプットに戻る。再生中は開けない", async () => {
+    const { prefab, core } = prefabs();
+    state().openPrefab(prefab);
+    state().select({ kind: "entity", id: core });
+    command("play");
+    await flush();
+    expect(state()).toMatchObject({ mode: "play", editingPrefab: null, selection: null });
+    state().openPrefab(prefab);
+    state().select({ kind: "entity", id: core });
+    expect(state().editingPrefab).toBeNull();
+    command("stop");
+    expect(state()).toMatchObject({ mode: "edit", editingPrefab: null });
+  });
+
+  it("ワークスペースを開き直す・出ると、閉じた状態に戻る。開いていたプレハブが消えたら、アウトプットに戻る", () => {
+    const { project, prefab } = prefabs();
+    state().openPrefab(prefab);
+    state().leave();
+    expect(state().editingPrefab).toBeNull();
+    project.doc.destroy();
+    // 開いたワークスペースでは、制作データの変更を見ている
+    state().open("w_other");
+    const opened = state().project;
+    if (!opened) throw new Error("ワークスペースが開かれていません");
+    opened.load(emptyProject("v2"));
+    const made = opened.addPrefab("箱");
+    state().openPrefab(made);
+    expect(state().editingPrefab?.id).toBe(made);
+    opened.removePrefab(made);
+    expect(state()).toMatchObject({ editingPrefab: null, selection: null });
+  });
+});
