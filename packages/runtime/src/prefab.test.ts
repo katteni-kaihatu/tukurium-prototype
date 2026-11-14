@@ -3,6 +3,7 @@ import {
   BUILTIN,
   emptyProject,
   expandedEntityId,
+  expandPrefabForEdit,
   fromFiles,
   ProjectDoc,
   toFiles,
@@ -93,6 +94,21 @@ describe("プレハブのインスタンスの再生（ADR 0076）", () => {
       instances.flatMap((id) => [id, expandedEntityId(id, core)]).sort(),
     );
     expect(names.get(expandedEntityId(instances[0] ?? "", core))).toBe("芯");
+  });
+
+  it("プレハブを開いたときの表示：編集用の並びから、プレハブの中身だけの World を組み立てる", () => {
+    const { doc, prefab, root, core, counter } = project();
+    const view = expandPrefabForEdit(doc.snapshot(), prefab);
+    if (!view) throw new Error("プレハブがありません");
+    const { world, names } = buildWorld(view, prefab);
+    // 中の Entity は、そのままの ID。インスタンスは入らない
+    expect(world.entityIds().sort()).toEqual([root, core].sort());
+    expect(world.parentOf(core)).toBe(root);
+    expect(world.parentOf(root)).toBeNull();
+    expect(names.get(core)).toBe("芯");
+    // 参照は、プレハブの中の ID のまま
+    expect(world.get(core, counter)?.to).toBe(root);
+    expect(worldTransform(world, core).position.toArray()).toEqual([0, 1, 0]);
   });
 
   it("セッションの配置でも動き、プレハブの変更は「適用」で届く", async () => {

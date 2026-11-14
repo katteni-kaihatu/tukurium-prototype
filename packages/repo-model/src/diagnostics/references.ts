@@ -8,9 +8,9 @@ import {
 } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
-import { expandPrefabs, prefabProblems } from "../prefab";
+import { expandPrefabForEdit, expandPrefabs, prefabProblems } from "../prefab";
 import { ResourcePathIndex } from "../resourcePath";
-import type { ProjectSnapshot } from "../schema";
+import type { EntityBase, KeepMark, ProjectSnapshot } from "../schema";
 import { compileSystem } from "../systemCompiler";
 import { type Diagnostic, type DiagnosticInput, makeDiagnostic, type ResourceRef } from "./types";
 
@@ -131,8 +131,21 @@ export function checkProjectReferences(
       });
   }
 
-  for (const e of snap.entities) {
-    const subject: ResourceRef = { kind: "entity", id: e.id };
+  /**
+   * Entity の KokoState と、その値が指すものを確かめる。アウトプットの Entity と、
+   * プレハブの中の Entity で、同じ確かめを使う（ADR 0076）。
+   * - subject：問題を出す相手（アウトプットの Entity なら、その Entity。プレハブの中の Entity なら、プレハブ）
+   * - label：メッセージでの呼び方
+   * - at：問題の場所の前に付ける道（プレハブでは、中の Entity の ID）
+   * - targetOf：参照が指せる Entity（展開した ID で引く）
+   */
+  const checkStates = (
+    e: EntityBase,
+    subject: ResourceRef,
+    label: string,
+    at: string[],
+    targetOf: (id: string) => EntityBase | undefined,
+  ) => {
     for (const [kokoId, values] of Object.entries(e.states)) {
       if (isPackageResourceId(kokoId)) {
         // ライブラリの定義は依存の中身にあるので、ここでは今の依存のものかだけを見る（ADR 0015）
@@ -141,9 +154,9 @@ export function checkProjectReferences(
           code: "package-kokostate-not-in-dependencies",
           severity: "warning",
           subject,
-          location: { kind: "property", path: [kokoId] },
+          location: { kind: "property", path: [...at, kokoId] },
           related: [],
-          message: `「${e.name}」が持っているライブラリの KokoState は、今の依存にありません（版を変えたか、外しました）`,
+          message: `${label}が持っているライブラリの KokoState は、今の依存にありません（版を変えたか、外しました）`,
           detail: `ID: ${kokoId}`,
         });
         continue;
@@ -154,9 +167,9 @@ export function checkProjectReferences(
           code: "missing-kokostate",
           severity: "warning",
           subject,
-          location: { kind: "property", path: [kokoId] },
+          location: { kind: "property", path: [...at, kokoId] },
           related: [],
-          message: `「${e.name}」が持っている KokoState の定義がありません`,
+          message: `${label}が持っている KokoState の定義がありません`,
           detail: `ID: ${kokoId}`,
         });
         continue;
@@ -165,16 +178,17 @@ export function checkProjectReferences(
       for (const f of def.fields) {
         const schema = schemaOfField(schemas, kokoId, f);
         if (!schema) continue;
-        const what = `「${e.name}」の ${def.name}.${f.name}`;
+        const what = `${label}の ${def.name}.${f.name}`;
+        const path = [...at, kokoId, f.id];
         visitRefs(schema, values[f.id], (target, v) => {
           if (target !== "entity")
-            checkResource(subject, [kokoId, f.id], v, RESOURCE_FIELD_KIND[target], what, related);
-          else if (!entities.has(v))
+            checkResource(subject, path, v, RESOURCE_FIELD_KIND[target], what, related);
+          else if (!targetOf(v))
             push({
               code: "missing-entity",
               severity: "error",
               subject,
-              location: { kind: "property", path: [kokoId, f.id] },
+              location: { kind: "property", path },
               related,
               message: `${what} に指定した Entity がありません`,
               detail: `ID: ${v}`,
@@ -182,7 +196,7 @@ export function checkProjectReferences(
         });
         // KokoState の参照・フィールドの参照（ADR 0065）：指す Entity が、その KokoState とフィールドを持っているか
         visitStateRefs(schema, values[f.id], (ref, refSchema) => {
-          const target = entities.get(ref.entity);
+          const target = targetOf(ref.entity);
           // Entity がないことは、上で問題にしている
           if (!target) return;
           const targetDef = defs.get(ref.koko);
@@ -192,7 +206,7 @@ export function checkProjectReferences(
               code,
               severity: "error",
               subject,
-              location: { kind: "property", path: [kokoId, f.id] },
+              location: { kind: "property", path },
               related,
               message,
               ...(detail ? { detail } : {}),
@@ -225,6 +239,97 @@ export function checkProjectReferences(
         });
       }
     }
+  };
+
+  /**
+   * 動かす System の並びと、「維持」の印を確かめる（アウトプットと、プレハブで同じ確かめを使う）。
+   * holds：印が指す Entity（その持ち主の中にあるもの。展開した ID で引く）
+   */
+  const checkSystemsAndKeep = (
+    owner: { systems: readonly { id: string }[]; keep: readonly KeepMark[] },
+    subject: ResourceRef,
+    label: string,
+    code: { notInDependencies: string; systemMissing: string; keepInvalid: string },
+    holds: (id: string) => EntityBase | undefined,
+  ) => {
+    for (const s of owner.systems) {
+      if (isPackageResourceId(s.id)) {
+        // ライブラリの System は依存の中身にあるので、今の依存のものかだけを見る（ADR 0015）
+        if ((snap.dependencies ?? []).some((d) => belongsToDependency(s.id, d))) continue;
+        push({
+          code: code.notInDependencies,
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["systems", s.id] },
+          related: [],
+          message: `${label}のライブラリの System は、今の依存にありません（版を変えたか、外しました）`,
+          detail: `ID: ${s.id}`,
+        });
+        continue;
+      }
+      if (!systems.has(s.id))
+        push({
+          code: code.systemMissing,
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["systems", s.id] },
+          related: [],
+          message: `${label}の System の一つがありません`,
+          detail: `ID: ${s.id}`,
+        });
+    }
+    for (const k of owner.keep) {
+      const e = holds(k.entity);
+      const field = defs.get(k.koko)?.fields.find((f) => f.id === k.field);
+      if (!e || !field || !(k.koko in e.states))
+        push({
+          code: code.keepInvalid,
+          severity: "warning",
+          subject,
+          location: { kind: "property", path: ["keep", k.entity, k.koko, k.field] },
+          related: [],
+          message: `${label}の状態維持マークが、ない値を指しています`,
+        });
+    }
+  };
+
+  // プレハブ（ADR 0076）：中の Entity が指すもの・System・「維持」の印。問題は、プレハブを相手にして出す
+  // （中の Entity は、プレハブを開いて直す）。参照は、そのプレハブの中の Entity（入れ子の中は展開した ID）と、
+  // アウトプットの Entity を指せる
+  for (const p of snap.prefabs ?? []) {
+    const subject: ResourceRef = { kind: "prefab", id: p.id };
+    const inside = new Map(
+      (expandPrefabForEdit(snap, p.id, schemas ? { schemas } : {})?.entities ?? []).map((e) => [
+        e.id,
+        e,
+      ]),
+    );
+    for (const e of snap.prefabEntities ?? []) {
+      if (e.prefab !== p.id) continue;
+      checkStates(
+        e,
+        subject,
+        `プレハブ「${p.name}」の中の「${e.name}」`,
+        ["entities", e.id],
+        (id) => inside.get(id) ?? entities.get(id),
+      );
+    }
+    checkSystemsAndKeep(
+      p,
+      subject,
+      `プレハブ「${p.name}」`,
+      {
+        notInDependencies: "prefab-system-not-in-dependencies",
+        systemMissing: "prefab-system-missing",
+        keepInvalid: "prefab-keep-invalid",
+      },
+      (id) => inside.get(id),
+    );
+  }
+
+  for (const e of snap.entities) {
+    const subject: ResourceRef = { kind: "entity", id: e.id };
+    checkStates(e, subject, `「${e.name}」`, [], (id) => entities.get(id));
 
     if (!outputs.has(e.output))
       push({
@@ -288,45 +393,20 @@ export function checkProjectReferences(
     const subject: ResourceRef = { kind: "output", id: o.id };
     if (o.thumbnail)
       checkResource(subject, ["thumbnail"], o.thumbnail, "image", `「${o.name}」のサムネイル`);
-    for (const s of o.systems) {
-      if (isPackageResourceId(s.id)) {
-        // ライブラリの System は依存の中身にあるので、今の依存のものかだけを見る（ADR 0015）
-        if ((snap.dependencies ?? []).some((d) => belongsToDependency(s.id, d))) continue;
-        push({
-          code: "output-system-not-in-dependencies",
-          severity: "warning",
-          subject,
-          location: { kind: "property", path: ["systems", s.id] },
-          related: [],
-          message: `アウトプット「${o.name}」のライブラリの System は、今の依存にありません（版を変えたか、外しました）`,
-          detail: `ID: ${s.id}`,
-        });
-        continue;
-      }
-      if (!systems.has(s.id))
-        push({
-          code: "output-system-missing",
-          severity: "warning",
-          subject,
-          location: { kind: "property", path: ["systems", s.id] },
-          related: [],
-          message: `アウトプット「${o.name}」の System の一つがありません`,
-          detail: `ID: ${s.id}`,
-        });
-    }
-    for (const k of o.keep) {
-      const e = entities.get(k.entity);
-      const field = defs.get(k.koko)?.fields.find((f) => f.id === k.field);
-      if (!e || e.output !== o.id || !field || !(k.koko in e.states))
-        push({
-          code: "keep-invalid",
-          severity: "warning",
-          subject,
-          location: { kind: "property", path: ["keep", k.entity, k.koko, k.field] },
-          related: [],
-          message: `アウトプット「${o.name}」の状態維持マークが、ない値を指しています`,
-        });
-    }
+    checkSystemsAndKeep(
+      o,
+      subject,
+      `アウトプット「${o.name}」`,
+      {
+        notInDependencies: "output-system-not-in-dependencies",
+        systemMissing: "output-system-missing",
+        keepInvalid: "keep-invalid",
+      },
+      (id) => {
+        const e = entities.get(id);
+        return e?.output === o.id ? e : undefined;
+      },
+    );
   }
   // ライブラリに含めた System は、使う側では同じライブラリに含めたもの・Built-in・そのライブラリの依存しか見えない（ADR 0015・0055）
   let index: ResourcePathIndex | null = null;

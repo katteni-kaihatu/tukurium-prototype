@@ -63,6 +63,10 @@
 - プレハブの中の Entity は `snapshot.prefabEntities`（Y.Doc では `prefabEntities`）にあり、`entities` には入らない。Entity を全部たどる処理（KokoState・マテリアル・素材を消したときの片付けなど）は、両方をたどる（`ProjectDoc` の `nodes()`）。
 - 展開した Entity の ID は「インスタンスの ID `/` 中の Entity の ID」。セッションでは、さらに頭に配置の ID が付く（`配置/インスタンス/中の Entity`）。Entity の ID を `/` で切って意味を読まない。
 - 計測は `pnpm bench:prefab`。
+- Hierarchy・Inspector のように「いま編集しているもの」を出す所は、`useEditTarget()`（`workspace/hooks.ts`）を読む。アウトプットか、開いているプレハブの並びが返る。`useExpanded()` は、いつもアウトプットの並び。プレハブを開いているときの Entity は、`project.entity()` では引けない（`project.findEntity()` か `project.prefabEntity()` を使う）。
+- 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
+- `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。
+- Hierarchy の行の操作（複製・削除・プレハブを開く）のボタンは、行を選ぶかマウスを載せるまで `display: none`。確認用のスクリプトで押すときは、先にその行を選ぶ（選んでいない行のボタンは、見つからない）。
 
 ## 物理（Rapier）
 

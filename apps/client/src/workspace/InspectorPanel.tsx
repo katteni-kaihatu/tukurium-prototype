@@ -4,6 +4,7 @@ import {
   type EntityDef,
   isBuiltin,
   isInstanceRoot,
+  type KeepMark,
   type MeshShape,
 } from "@tukurium/repo-model";
 import {
@@ -25,14 +26,16 @@ import {
   dropPlacement,
   entityChange,
   outputChange,
+  prefabChange,
   savedKeep,
+  savedPrefabKeep,
   selfAndDescendants,
   treeMark,
 } from "./changeMarks";
 import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
 import { fitLabelElement } from "./fitLabel";
-import { useCanEdit, useExpanded, useProject } from "./hooks";
+import { useCanEdit, useEditTarget, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
 import {
   clampDetailsWidth,
@@ -239,15 +242,17 @@ function useDetailsColumn() {
 }
 
 /**
- * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
+ * Inspector：左に Hierarchy（アウトプットか、開いているプレハブの Entity の木）、右に選んだものの Properties。
  * Play 中は実行中の World を読み取り専用で表示する（要件 §7「編集と実行を分ける」）。
  * ライブラリは Entity を持たないので、左は含めるリソースを選ぶ画面にする（ADR 0055）。
  */
 export function InspectorPanel() {
   const project = useProject();
   const outputId = useWorkspace((s) => s.outputId);
+  const prefabOpen = useWorkspace((s) => s.mode === "edit" && s.editingPrefab !== null);
   useWorkspace((s) => s.rev);
-  const library = project.output(outputId)?.kind === "library";
+  // プレハブを開いている間は、アウトプットがライブラリでも、プレハブの Hierarchy を出す
+  const library = !prefabOpen && project.output(outputId)?.kind === "library";
   const column = useDetailsColumn();
   return (
     <div
@@ -299,22 +304,25 @@ interface TreeNode {
   id: EntityId;
   name: string;
   parent: EntityId | null;
-  /** プレハブのインスタンス（ADR 0076） */
-  instance?: boolean;
+  /** プレハブのインスタンスなら、そのプレハブの ID（ADR 0076） */
+  instance?: string;
   /** プレハブから来た、インスタンスの中の Entity。いまは、インスタンスでは変えられない */
   fromPrefab?: boolean;
+  /** 開いているプレハブの、いちばん上の Entity。消せず、動かせない */
+  root?: boolean;
 }
 
 /** Resources からプレハブをドラッグしているときの種類（Hierarchy に落とすと、インスタンスを置く） */
 const PREFAB_DRAG = "application/x-tukurium-prefab";
 
 function Hierarchy() {
-  const { outputId, selection, select, mode, runtime, viewPoint } = useWorkspace();
+  const { outputId, selection, select, mode, runtime, viewPoint, openPrefab, closePrefab } =
+    useWorkspace();
   const project = useProject();
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
-  const expanded = useExpanded();
-  const { hierarchy: problems } = useProblemSummary();
+  const target = useEditTarget();
+  const { hierarchy: problems, resources: resourceProblems } = useProblemSummary();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [menu, setMenu] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -327,32 +335,46 @@ function Hierarchy() {
   const output = project.output(outputId);
   const editing = canEdit;
   const rt = mode !== "edit" ? runtime() : null;
+  // 開いているプレハブ（ADR 0076）。開いている間は、アウトプットの代わりに、プレハブの中の Entity を出す
+  const prefab = target.prefabId ? project.prefab(target.prefabId) : undefined;
+  /** いま出している木の持ち主（アウトプットか、開いているプレハブ）の ID */
+  const ownerId = prefab ? prefab.id : outputId;
 
   // Edit：プレハブのインスタンスを、中身に展開した並び（ADR 0076）
   const nodes: TreeNode[] = rt
     ? rt.world.entityIds().map((id) => ({ id, name: rt.nameOf(id), parent: rt.world.parentOf(id) }))
-    : expanded.entities
-        .filter((e) => e.output === outputId)
+    : target.snapshot.entities
+        .filter((e) => e.output === ownerId)
         .sort((a, b) => a.order - b.order)
         .map((e) => ({
           id: e.id,
           name: e.name,
           parent: e.parent,
-          instance: isInstanceRoot(e),
+          ...(isInstanceRoot(e) && e.origin ? { instance: e.origin.prefab } : {}),
           fromPrefab: e.origin !== undefined && !isInstanceRoot(e),
+          root: e.id === prefab?.root,
         }));
   const fromPrefab = (id: string | null) =>
     id !== null && nodes.some((n) => n.id === id && n.fromPrefab);
 
   const selectedEntity = selection?.kind === "entity" ? selection.id : null;
-  const projectEntities = mode === "edit" ? project.entities(outputId) : [];
-  const keepNow = output?.keep ?? [];
-  const keepWas = savedKeep(saved, outputId);
+  const ownerSelected = prefab
+    ? selection?.kind === "prefab" && selection.id === prefab.id
+    : selection?.kind === "output" && selection.id === outputId;
+  const prefabEntities = prefab && mode === "edit" ? project.prefabEntities(prefab.id) : null;
+  const projectEntities = prefabEntities ?? (mode === "edit" ? project.entities(outputId) : []);
+  const keepNow = prefab ? prefab.keep : (output?.keep ?? []);
+  const keepWas = prefab ? savedPrefabKeep(saved, prefab.id) : savedKeep(saved, outputId);
   const kindOf = new Map<string, ChangeKind | null>();
   for (const e of projectEntities) {
     kindOf.set(e.id, entityChange(saved, e, { saved: keepWas, current: keepNow }).kind);
   }
-  const outputKind = output && mode === "edit" ? outputChange(saved, output).kind : null;
+  const ownerKind =
+    prefab && prefabEntities
+      ? prefabChange(saved, prefab, prefabEntities)
+      : output && mode === "edit"
+        ? outputChange(saved, output).kind
+        : null;
 
   const openOf = (id: string) => {
     setClosed((c) => ({ ...c, [id]: false }));
@@ -366,56 +388,38 @@ function Hierarchy() {
       states[BUILTIN.Transform] = { position: viewPoint?.() ?? [0, 1, 0] };
       states[BUILTIN.Mesh] = { shape: spec.shape, size: spec.size };
     }
-    const id = project.addEntity({ output: outputId, name: spec.label, states });
-    openOf(outputId);
+    // プレハブの中では、いちばん上の Entity の下に入る（場所は、いちばん上の Entity から見た位置）
+    const id = prefab
+      ? project.addPrefabEntity({ prefab: prefab.id, name: spec.label, states })
+      : project.addEntity({ output: outputId, name: spec.label, states });
+    openOf(ownerId);
+    if (prefab) openOf(prefab.root);
     select({ kind: "entity", id });
   };
 
   const duplicate = (entityId: string, withChildren: boolean) => {
     setDupFor(null);
-    const root = project.entity(entityId);
-    if (!root) return;
-    const created = new Map<string, string>();
-    const copy = (srcId: string, parent: EntityId | null, rename: boolean) => {
-      const src = project.entity(srcId);
-      if (!src || created.has(srcId)) return;
-      created.set(
-        srcId,
-        project.addEntity({
-          output: src.output,
-          name: rename ? `${src.name} のコピー` : src.name,
-          parent,
-          states: src.states,
-          // インスタンスを複製すると、同じプレハブのインスタンスが一つ増える
-          ...(src.instanceOf ? { instanceOf: src.instanceOf } : {}),
-        }),
-      );
-    };
-    copy(entityId, root.parent, true);
-    if (withChildren) {
-      const pending = [entityId];
-      const seen = new Set<string>(pending);
-      while (pending.length > 0) {
-        const cur = pending.shift();
-        if (!cur) break;
-        for (const kid of project.entities(root.output)) {
-          if (kid.parent !== cur || seen.has(kid.id)) continue;
-          seen.add(kid.id);
-          const parent = created.get(cur);
-          if (parent) copy(kid.id, parent, false);
-          pending.push(kid.id);
-        }
-      }
+    try {
+      setError(null);
+      // インスタンスを複製すると、同じプレハブのインスタンスが一つ増える
+      const made = project.duplicateEntity(entityId, withChildren);
+      if (!made) return;
+      openOf(project.findEntity(made)?.parent ?? ownerId);
+      select({ kind: "entity", id: made });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
-    const made = created.get(entityId);
-    openOf(root.parent ?? outputId);
-    if (made) select({ kind: "entity", id: made });
   };
 
   const remove = (entityId: string) => {
     const gone = new Set(selfAndDescendants(nodes, entityId));
-    project.removeEntity(entityId);
-    if (selectedEntity && gone.has(selectedEntity)) select(null);
+    try {
+      setError(null);
+      project.removeEntity(entityId);
+      if (selectedEntity && gone.has(selectedEntity)) select(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const askRemove = (entityId: string, name: string) => {
@@ -436,13 +440,29 @@ function Hierarchy() {
     return "inside";
   };
 
+  /**
+   * ドラッグした Entity を置く先。プレハブの中では、いちばん上の Entity は動かせず、
+   * いちばん上の行（プレハブそのもの）や、いちばん上の Entity の前後に落としたものは、いちばん上の Entity の下の末尾に入る。
+   */
+  const placeFor = (id: string, targetId: string | null, mode: DropMode) => {
+    if (!prefab) return dropPlacement(nodes, id, targetId, mode);
+    if (id === prefab.root) return null;
+    const place = dropPlacement(nodes, id, targetId, mode);
+    if (!place || place.parent !== null) return place;
+    return {
+      parent: prefab.root,
+      index: nodes.filter((n) => n.parent === prefab.root && n.id !== id).length,
+    };
+  };
+
   const hoverDrop = (event: React.DragEvent, targetId: string | null) => {
     const id = dragId.current;
     // プレハブから来た Entity の所には、いまは置けない
     if (!editing || fromPrefab(targetId)) return;
     if (!id) {
-      // Resources からプレハブをドラッグしてきた：落とした所に、インスタンスを置く
-      if (!event.dataTransfer.types.includes(PREFAB_DRAG)) return;
+      // Resources からプレハブをドラッグしてきた：落とした所に、インスタンスを置く。
+      // プレハブの中にインスタンスを置くのは、まだ（入れ子の画面は、あとの段階）
+      if (prefab || !event.dataTransfer.types.includes(PREFAB_DRAG)) return;
       event.preventDefault();
       event.stopPropagation();
       const key = targetId ?? "root";
@@ -452,7 +472,7 @@ function Hierarchy() {
       return;
     }
     const mode = modeAt(event, targetId);
-    if (!dropPlacement(nodes, id, targetId, mode)) return;
+    if (!placeFor(id, targetId, mode)) return;
     event.preventDefault();
     event.stopPropagation();
     const key = targetId ?? "root";
@@ -466,13 +486,13 @@ function Hierarchy() {
     dragId.current = null;
     setDropOver(null);
     if (!id) {
-      const prefab = event.dataTransfer.getData(PREFAB_DRAG);
-      if (!editing || !prefab || fromPrefab(targetId)) return;
+      const dropped = event.dataTransfer.getData(PREFAB_DRAG);
+      if (!editing || prefab || !dropped || fromPrefab(targetId)) return;
       try {
         setError(null);
         const made = project.addInstance({
           output: outputId,
-          prefab,
+          prefab: dropped,
           parent: targetId,
           // いちばん上に置くときは、見ている先に置く。子にするときは、親の所に置く
           ...(targetId === null ? { position: viewPoint?.() ?? [0, 1, 0] } : {}),
@@ -485,12 +505,12 @@ function Hierarchy() {
       return;
     }
     const mode = modeAt(event, targetId);
-    const place = dropPlacement(nodes, id, targetId, mode);
+    const place = placeFor(id, targetId, mode);
     if (!place) return;
     try {
       setError(null);
       project.placeEntity(id, place.parent, place.index);
-      openOf(place.parent ?? outputId);
+      openOf(place.parent ?? ownerId);
       if (mode === "inside" && targetId) openOf(targetId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -531,6 +551,7 @@ function Hierarchy() {
             className={styles.node}
             style={{ paddingLeft: 4 + depth * 14 }}
             data-from-prefab={n.fromPrefab || undefined}
+            data-instance={n.instance !== undefined || undefined}
             data-current={selectedEntity === n.id || undefined}
             data-drop={dropOver?.id === n.id ? dropOver.mode : undefined}
             onDragOver={(e) => hoverDrop(e, n.id)}
@@ -550,22 +571,25 @@ function Hierarchy() {
             ) : (
               <span className={styles.fold} />
             )}
+            {/* プレハブの中の Entity の変化は、丸だけを出す（戻すのは、プレハブまるごと） */}
             <ChangeMark
               kind={mark.kind}
               nested={mark.nested}
-              target={{ entry: `entity:${n.id}` }}
+              {...(prefab ? {} : { target: { entry: `entity:${n.id}` } })}
             />
             <button
               type="button"
               className={styles.nodeName}
-              draggable={editing && !n.fromPrefab}
+              draggable={editing && !n.fromPrefab && !n.root}
               aria-current={selectedEntity === n.id || undefined}
               title={
                 n.fromPrefab
                   ? `${n.name}（プレハブから来た Entity）`
-                  : editing
-                    ? `${n.name}（上か下で並び替え、真ん中に置くと子にする）`
-                    : n.name
+                  : n.root
+                    ? `${n.name}（プレハブのいちばん上の Entity。インスタンスの Entity が、これに当たります）`
+                    : editing
+                      ? `${n.name}（上か下で並び替え、真ん中に置くと子にする）`
+                      : n.name
               }
               onClick={() => {
                 setDupFor(null);
@@ -588,13 +612,25 @@ function Hierarchy() {
               {n.name}
             </button>
             <BadgeDot badge={badgeFor(problems.get(n.id), "中")} inline />
-            {n.instance && (
+            {n.instance !== undefined && (
               <span className={ui.badge} title="プレハブのインスタンス">
                 プレハブ
               </span>
             )}
-            {editing && !n.fromPrefab && (
+            {n.root && (
+              <span className={ui.badge} title="プレハブのいちばん上の Entity">
+                いちばん上
+              </span>
+            )}
+            {editing && !n.fromPrefab && !n.root && (
               <span className={styles.actions} data-no-drag="">
+                {n.instance !== undefined && (
+                  <OpenPrefabButton
+                    name={n.name}
+                    // アウトプットのインスタンスから開いたら、その横に出す
+                    onOpen={() => openPrefab(n.instance ?? "", prefab ? null : n.id)}
+                  />
+                )}
                 <button
                   type="button"
                   className={ui.iconBtn}
@@ -658,10 +694,10 @@ function Hierarchy() {
       );
     });
 
-  const outputOpen = !closed[outputId];
-  const outputMark = treeMark(
-    outputKind,
-    !outputOpen && nodes.some((n) => n.parent === null),
+  const ownerOpen = !closed[ownerId];
+  const ownerMark = treeMark(
+    ownerKind,
+    !ownerOpen && nodes.some((n) => n.parent === null),
     nodes.filter((n) => kindOf.get(n.id)).map((n) => kindOf.get(n.id) as ChangeKind),
   );
 
@@ -701,12 +737,20 @@ function Hierarchy() {
         </div>
       </div>
       {error && <p className={ui.error}>{error}</p>}
+      {prefab && (
+        <div className={styles.prefabBar}>
+          <span className={styles.prefabBarText}>プレハブを編集中</span>
+          <button type="button" className={ui.btn} onClick={closePrefab}>
+            アウトプットに戻る
+          </button>
+        </div>
+      )}
       <ul className={ui.list}>
         <li>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: ドロップ先。操作は中のボタン */}
           <div
             className={styles.node}
-            data-current={(selection?.kind === "output" && selection.id === outputId) || undefined}
+            data-current={ownerSelected || undefined}
             data-drop={dropOver?.id === "root" ? dropOver.mode : undefined}
             onDragOver={(e) => hoverDrop(e, null)}
             onDrop={(e) => finishDrop(e, null)}
@@ -715,38 +759,80 @@ function Hierarchy() {
               <button
                 type="button"
                 className={styles.fold}
-                aria-expanded={outputOpen}
-                aria-label={outputOpen ? "中の Entity を閉じる" : "中の Entity を開く"}
-                onClick={() => setClosed((c) => ({ ...c, [outputId]: outputOpen }))}
+                aria-expanded={ownerOpen}
+                aria-label={ownerOpen ? "中の Entity を閉じる" : "中の Entity を開く"}
+                onClick={() => setClosed((c) => ({ ...c, [ownerId]: ownerOpen }))}
               >
-                <Chevron open={outputOpen} />
+                <Chevron open={ownerOpen} />
               </button>
             ) : (
               <span className={styles.fold} />
             )}
             <ChangeMark
-              kind={outputMark.kind}
-              nested={outputMark.nested}
-              target={{ entry: `output:${outputId}` }}
+              kind={ownerMark.kind}
+              nested={ownerMark.nested}
+              target={{ entry: prefab ? `prefab:${prefab.id}` : `output:${outputId}` }}
             />
             <button
               type="button"
               className={styles.nodeName}
-              aria-current={
-                (selection?.kind === "output" && selection.id === outputId) || undefined
+              aria-current={ownerSelected || undefined}
+              onClick={() =>
+                select(
+                  prefab ? { kind: "prefab", id: prefab.id } : { kind: "output", id: outputId },
+                )
               }
-              onClick={() => select({ kind: "output", id: outputId })}
             >
-              <b>{output?.name ?? "（アウトプットなし）"}</b>
+              <b>{prefab ? prefab.name : (output?.name ?? "（アウトプットなし）")}</b>
             </button>
-            <BadgeDot badge={badgeFor(problems.get(outputId), "中")} inline />
-            <span className={ui.badge}>{output?.kind === "world" ? "world" : "item"}</span>
+            {prefab ? (
+              <>
+                <BadgeDot badge={badgeFor(resourceProblems.get(prefab.id))} inline />
+                <span className={ui.badge}>プレハブ</span>
+              </>
+            ) : (
+              <>
+                <BadgeDot badge={badgeFor(problems.get(outputId), "中")} inline />
+                <span className={ui.badge}>{output?.kind === "world" ? "world" : "item"}</span>
+              </>
+            )}
           </div>
         </li>
-        {outputOpen && renderTree(null, 1)}
+        {ownerOpen && renderTree(null, 1)}
       </ul>
       {nodes.length === 0 && <p className={ui.empty}>＋ から Entity を追加できます</p>}
     </nav>
+  );
+}
+
+/** インスタンスの行から、そのプレハブを開く */
+function OpenPrefabButton({ name, onOpen }: { name: string; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className={ui.iconBtn}
+      aria-label={`${name} のプレハブを開く`}
+      title="プレハブを開く"
+      onClick={onOpen}
+    >
+      <OpenIcon />
+    </button>
+  );
+}
+
+/** 開く（枠から外へ出る矢印） */
+function OpenIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path
+        d="M6.5 3H3.2A1.2 1.2 0 0 0 2 4.2v8.6A1.2 1.2 0 0 0 3.2 14h8.6a1.2 1.2 0 0 0 1.2-1.2V9.5M9 2h5v5M14 2 7.5 8.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -873,6 +959,10 @@ function CopyIcon() {
 // ---------------------------------------------------------------------------
 // Properties
 
+/** 丸に、差分と「戻す」の相手を付ける（相手がなければ、丸だけ） */
+const withTarget = (target: { entry: string; part: string } | undefined) =>
+  target ? { target } : {};
+
 function Properties() {
   const selection = useWorkspace((s) => s.selection);
   if (!selection) {
@@ -897,12 +987,12 @@ function Properties() {
 }
 
 function EntityProperties({ id }: { id: EntityId }) {
-  const { mode, runtime, stop, outputId, select, openDetail } = useWorkspace();
+  const { mode, runtime, stop, outputId, select, openDetail, openPrefab } = useWorkspace();
   const queryOf = useSystemQuery();
   const project = useProject();
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
-  const expanded = useExpanded();
+  const target = useEditTarget();
   useWorkspace((s) => (s.mode === "edit" ? s.rev : s.simRev));
   const [error, setError] = useState<string | null>(null);
   const [closedKoko, setClosedKoko] = useState<Record<string, boolean>>({});
@@ -930,11 +1020,16 @@ function EntityProperties({ id }: { id: EntityId }) {
   const [dupAnchor, setDupAnchor] = useState<HTMLElement | null>(null);
   const [systemAnchor, setSystemAnchor] = useState<HTMLElement | null>(null);
   const registry = project.registry();
+  // 開いているプレハブ（ADR 0076）。開いている間は、プレハブの中の Entity を直す
+  const prefab = target.prefabId ? project.prefab(target.prefabId) : undefined;
+  const ownerId = prefab ? prefab.id : outputId;
   // Edit：プレハブのインスタンスは、中身に展開した形で見せる（ADR 0076）
-  const shown = mode === "edit" ? expanded.entities.find((e) => e.id === id) : undefined;
+  const shown = mode === "edit" ? target.snapshot.entities.find((e) => e.id === id) : undefined;
   const origin = shown?.origin;
   /** プレハブから来た、インスタンスの中の Entity。いまは、インスタンスでは変えられない */
   const inside = origin !== undefined && origin.instance !== id;
+  /** 開いているプレハブの、いちばん上の Entity。消せず、複製できず、ほかの下に付けられない */
+  const isRoot = prefab !== undefined && prefab.root === id;
   const editing = canEdit && !inside;
 
   // Edit：制作データ、Play：実行中の World
@@ -947,7 +1042,7 @@ function EntityProperties({ id }: { id: EntityId }) {
       entity = { id, name: rt.nameOf(id), parent: rt.world.parentOf(id), states };
     }
   } else {
-    entity = shown ?? project.entity(id);
+    entity = shown ?? project.findEntity(id);
   }
   if (!entity) {
     return (
@@ -963,8 +1058,8 @@ function EntityProperties({ id }: { id: EntityId }) {
     materials: project.materials().map((m) => ({ id: m.id, name: m.name })),
     // states：KokoState の参照・フィールドの参照で、指せる Entity を絞るのに使う
     // インスタンスの中の Entity も指せる（展開した Entity の ID は、開き直しても変わらない）
-    entities: expanded.entities
-      .filter((e) => e.output === outputId)
+    entities: target.snapshot.entities
+      .filter((e) => e.output === ownerId)
       .map((e) => ({ id: e.id, name: e.name, states: Object.keys(e.states) })),
     assets: project.assets(),
   };
@@ -986,81 +1081,52 @@ function EntityProperties({ id }: { id: EntityId }) {
     const has = (k: { id: string | null }) => k.id !== null && attached.includes(k.id);
     return q.with.length > 0 && q.with.every(has) && !q.without.some(has);
   });
-  const projectEntity = mode === "edit" ? project.entity(id) : undefined;
+  // 制作データにある Entity（アウトプットのものか、開いているプレハブの中のもの）。展開で作ったものは、ない
+  const projectEntity = mode === "edit" ? project.findEntity(id) : undefined;
   /** その KokoState を、ここで変えられるか。プレハブから来た KokoState は、いまはインスタンスでは変えられない */
   const editable = (koko: string) =>
     editing && (!origin || (projectEntity !== undefined && koko in projectEntity.states));
   const prefabName = origin ? (project.prefab(origin.prefab)?.name ?? "（消えたプレハブ）") : "";
-  const kids = project.entities(outputId).filter((e) => e.parent === id);
+  // 同じ持ち主（アウトプットか、開いているプレハブ）の、制作データにある Entity
+  const peers = prefab ? project.prefabEntities(prefab.id) : project.entities(outputId);
+  const kids = peers.filter((e) => e.parent === id);
   const kokoKey = (koko: string) => `${id}:${koko}`;
   const allOpen = attached.length === 0 || attached.every((koko) => !closedKoko[kokoKey(koko)]);
-  const marks = projectEntity
-    ? entityChange(saved, projectEntity, {
-        saved: savedKeep(saved, outputId),
-        current: project.output(outputId)?.keep ?? [],
-      })
-    : null;
+  const keep: { saved: KeepMark[]; current: KeepMark[] } = prefab
+    ? { saved: savedPrefabKeep(saved, prefab.id), current: prefab.keep }
+    : { saved: savedKeep(saved, outputId), current: project.output(outputId)?.keep ?? [] };
+  const marks = projectEntity ? entityChange(saved, projectEntity, keep) : null;
+  /** 丸から開く差分と「戻す」。プレハブの中の Entity は、丸だけを出す（戻すのは、プレハブまるごと） */
+  const markTarget = (part: string) => (prefab ? undefined : { entry: `entity:${id}`, part });
 
   const duplicate = (withChildren: boolean) => {
     setDupAnchor(null);
-    const root = project.entity(id);
-    if (!root) return;
-    const created = new Map<string, string>();
-    const copy = (srcId: string, parent: EntityId | null, rename: boolean) => {
-      const src = project.entity(srcId);
-      if (!src || created.has(srcId)) return;
-      created.set(
-        srcId,
-        project.addEntity({
-          output: src.output,
-          name: rename ? `${src.name} のコピー` : src.name,
-          parent,
-          states: src.states,
-          // インスタンスを複製すると、同じプレハブのインスタンスが一つ増える
-          ...(src.instanceOf ? { instanceOf: src.instanceOf } : {}),
-        }),
-      );
-    };
-    copy(id, root.parent, true);
-    if (withChildren) {
-      const pending = [id];
-      const seen = new Set<string>(pending);
-      while (pending.length > 0) {
-        const cur = pending.shift();
-        if (!cur) break;
-        for (const kid of project.entities(root.output)) {
-          if (kid.parent !== cur || seen.has(kid.id)) continue;
-          seen.add(kid.id);
-          const parent = created.get(cur);
-          if (parent) copy(kid.id, parent, false);
-          pending.push(kid.id);
-        }
-      }
-    }
-    const made = created.get(id);
-    if (made) select({ kind: "entity", id: made });
+    safely(() => {
+      // インスタンスを複製すると、同じプレハブのインスタンスが一つ増える
+      const made = project.duplicateEntity(id, withChildren);
+      if (made) select({ kind: "entity", id: made });
+    });
   };
 
-  const addChild = () => {
-    const made = project.addEntity({
-      output: outputId,
-      name: "空の Entity",
-      parent: id,
+  const addChild = () =>
+    safely(() => {
+      const made = prefab
+        ? project.addPrefabEntity({ prefab: prefab.id, name: "空の Entity", parent: id })
+        : project.addEntity({ output: outputId, name: "空の Entity", parent: id });
+      select({ kind: "entity", id: made });
     });
-    select({ kind: "entity", id: made });
-  };
 
   const askRemove = () => {
-    const nodes = project.entities(outputId).map((e) => ({ id: e.id, parent: e.parent }));
-    const nested = selfAndDescendants(nodes, id).length - 1;
+    const nested = selfAndDescendants(peers, id).length - 1;
     const message =
       nested > 0
         ? `${entity.name} を削除しますか？中にある ${nested} 個も一緒に消えます。`
         : `${entity.name} を削除しますか？`;
-    if (confirm(message)) {
-      project.removeEntity(id);
-      select(null);
-    }
+    if (confirm(message))
+      safely(() => {
+        project.removeEntity(id);
+        select(null);
+      });
   };
 
   const toggleKokos = () => {
@@ -1082,11 +1148,11 @@ function EntityProperties({ id }: { id: EntityId }) {
             aria-haspopup={kids.length > 0 ? "menu" : undefined}
             aria-expanded={kids.length > 0 ? !!dupAnchor : undefined}
             title="複製"
-            disabled={!editing}
+            disabled={!editing || isRoot}
             onClick={(event) => {
               const button = event.currentTarget;
               setSystemAnchor(null);
-              if (!editing) return;
+              if (!editing || isRoot) return;
               if (kids.length === 0) {
                 duplicate(false);
                 return;
@@ -1101,7 +1167,7 @@ function EntityProperties({ id }: { id: EntityId }) {
             className={ui.iconBtn}
             aria-label={`${entity.name} を削除`}
             title="削除"
-            disabled={!editing}
+            disabled={!editing || isRoot}
             onClick={askRemove}
           >
             ✕
@@ -1153,7 +1219,7 @@ function EntityProperties({ id }: { id: EntityId }) {
             <SystemsIcon />
           </button>
         </div>
-        <MarkedLine kind={marks?.name ?? null} target={{ entry: `entity:${id}`, part: "name" }}>
+        <MarkedLine kind={marks?.name ?? null} {...withTarget(markTarget("name"))}>
           <div className={ui.field}>
             <label className={ui.label} htmlFor={`name-${id}`}>
               Name
@@ -1178,8 +1244,29 @@ function EntityProperties({ id }: { id: EntityId }) {
           <div className={ui.section}>
             <p className={ui.notice}>
               {inside
-                ? `プレハブ「${prefabName}」から来た Entity です。いまは、インスタンスでは変えられません。`
-                : `プレハブ「${prefabName}」のインスタンスです。名前と、場所・向き・大きさ（Transform）は、このインスタンスのものです。ほかの KokoState は、プレハブのものが出ています。`}
+                ? `プレハブ「${prefabName}」から来た Entity です。いまは、インスタンスでは変えられません。プレハブを開くと直せます。`
+                : `プレハブ「${prefabName}」のインスタンスです。名前と、場所・向き・大きさ（Transform）は、このインスタンスのものです。ほかの KokoState は、プレハブのものが出ています。プレハブを開くと直せます。`}
+            </p>
+            {mode === "edit" && project.prefab(origin.prefab) && (
+              <div className={ui.toolbar}>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  // アウトプットのインスタンスから開いたら、その横に出す
+                  onClick={() => openPrefab(origin.prefab, prefab ? null : origin.instance)}
+                >
+                  プレハブを開く
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {isRoot && (
+          <div className={ui.section}>
+            <p className={ui.notice}>
+              プレハブのいちばん上の Entity です。インスタンスの Entity
+              が、これに当たります。消したり、ほかの Entity
+              の下に付けたりはできません。向きと大きさ（Transform）は、インスタンスを置くときに写します。
             </p>
           </div>
         )}
@@ -1195,12 +1282,9 @@ function EntityProperties({ id }: { id: EntityId }) {
             </div>
           </div>
         )}
-        {editing && (
+        {editing && !isRoot && (
           <div className={ui.section}>
-            <MarkedLine
-              kind={marks?.parent ?? null}
-              target={{ entry: `entity:${id}`, part: "place" }}
-            >
+            <MarkedLine kind={marks?.parent ?? null} {...withTarget(markTarget("place"))}>
               <div className={ui.field}>
                 <label className={ui.label} htmlFor={`parent-${id}`}>
                   親
@@ -1211,10 +1295,10 @@ function EntityProperties({ id }: { id: EntityId }) {
                   value={entity.parent ?? ""}
                   onChange={(e) => safely(() => project.setParent(id, e.target.value || null))}
                 >
-                  <option value="">（なし）</option>
+                  {/* プレハブの中の Entity は、いちばん上の Entity の下に入る（親なしにはできない） */}
+                  {!prefab && <option value="">（なし）</option>}
                   {/* 親にできるのは、制作データにある Entity（インスタンスの中の Entity の下に付けるのは、まだ） */}
-                  {project
-                    .entities(outputId)
+                  {peers
                     .filter((e) => e.id !== id)
                     .map((e) => (
                       <option key={e.id} value={e.id}>
@@ -1252,7 +1336,7 @@ function EntityProperties({ id }: { id: EntityId }) {
                 </button>
                 <ChangeMark
                   kind={marks?.states[koko]?.kind ?? null}
-                  target={{ entry: `entity:${id}`, part: `state:${koko}` }}
+                  {...withTarget(markTarget(`state:${koko}`))}
                 />
                 <span className={styles.kokoIcon}>
                   <KokoRoleIcon role={def.role} />
@@ -1321,7 +1405,7 @@ function EntityProperties({ id }: { id: EntityId }) {
                     >
                       <ChangeMark
                         kind={marks?.states[koko]?.fields[f.id] ?? null}
-                        target={{ entry: `entity:${id}`, part: `field:${koko}:${f.id}` }}
+                        {...withTarget(markTarget(`field:${koko}:${f.id}`))}
                       />
                       <FieldInput
                         koko={koko}
@@ -1338,6 +1422,7 @@ function EntityProperties({ id }: { id: EntityId }) {
                           field={f.id}
                           label={`${def.name}.${f.name}`}
                           disabled={!editable(koko)}
+                          prefab={prefab?.id ?? null}
                         />
                       )}
                     </div>
@@ -1400,6 +1485,7 @@ function EntityProperties({ id }: { id: EntityId }) {
 /**
  * 状態維持のマーク：適用したとき、このフィールドの実行値を引き継ぐ（要件 §7）。
  * マークはアウトプットごとに持つので、同じ KokoState を使う別のアウトプットには波及しない。
+ * プレハブの中の Entity の印は、プレハブが持つ（インスタンスを置いたアウトプットの印に、足し合わされる。ADR 0076）。
  */
 function KeepToggle(props: {
   entity: string;
@@ -1407,15 +1493,22 @@ function KeepToggle(props: {
   field: string;
   label: string;
   disabled: boolean;
+  /** 開いているプレハブ（アウトプットの Entity なら null） */
+  prefab: string | null;
 }) {
   const project = useProject();
   const outputId = useWorkspace((s) => s.outputId);
   useWorkspace((s) => s.rev);
   const output = project.output(outputId);
-  if (!output) return null;
+  const prefab = props.prefab ? project.prefab(props.prefab) : undefined;
+  const keep = props.prefab ? prefab?.keep : output?.keep;
+  if (!keep) return null;
   const match = (k: { entity: string; koko: string; field: string }) =>
     k.entity === props.entity && k.koko === props.koko && k.field === props.field;
-  const on = output.keep.some(match);
+  const on = keep.some(match);
+  const next = on
+    ? keep.filter((k) => !match(k))
+    : [...keep, { entity: props.entity, koko: props.koko, field: props.field }];
   return (
     <button
       type="button"
@@ -1424,14 +1517,10 @@ function KeepToggle(props: {
       aria-label={`${props.label} を適用時に引き継ぐ`}
       title={on ? "適用時に実行値を引き継ぐ（オン）" : "適用時に実行値を引き継ぐ（オフ）"}
       disabled={props.disabled}
-      onClick={() =>
-        project.updateOutput({
-          ...output,
-          keep: on
-            ? output.keep.filter((k) => !match(k))
-            : [...output.keep, { entity: props.entity, koko: props.koko, field: props.field }],
-        })
-      }
+      onClick={() => {
+        if (prefab) project.updatePrefab({ ...prefab, keep: next });
+        else if (output) project.updateOutput({ ...output, keep: next });
+      }}
     >
       維持
     </button>

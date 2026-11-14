@@ -43,7 +43,8 @@ export function KokoPickerPanel() {
       // 覚えられなくても表示はできる
     }
   };
-  const entity = entityId ? project.entity(entityId) : undefined;
+  // アウトプットの Entity か、開いているプレハブの中の Entity
+  const entity = entityId ? project.findEntity(entityId) : undefined;
   if (!entityId || !entity)
     return (
       <p className={ui.empty}>Hierarchy で Entity を選ぶと、ここから KokoState を付けられます</p>

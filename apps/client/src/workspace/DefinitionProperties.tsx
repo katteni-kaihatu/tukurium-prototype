@@ -6,6 +6,8 @@ import {
   newId,
   type OutputDef,
   type OutputExposure,
+  type OutputSystem,
+  type PrefabEditPlace,
   packageSystems,
   packageTypeDefs,
   ResourcePathIndex,
@@ -27,6 +29,7 @@ import {
   kokoChange,
   materialChange,
   outputChange,
+  prefabChange,
   systemChange,
   typeDefChange,
 } from "./changeMarks";
@@ -162,6 +165,7 @@ function OutputProperties({ id }: { id: string }) {
     })),
   ];
   const update = (patch: Partial<OutputDef>) => project.updateOutput({ ...output, ...patch });
+  const systemName = (sid: string) => systems.find((s) => s.id === sid)?.name;
   // 有効な System のコードから読み取った、要る権限（ADR 0012）
   const capabilities = [
     ...new Set(
@@ -173,17 +177,6 @@ function OutputProperties({ id }: { id: string }) {
         ),
     ),
   ].sort();
-  const move = (i: number, d: -1 | 1) => {
-    const list = [...output.systems];
-    const j = i + d;
-    if (j < 0 || j >= list.length) return;
-    [list[i], list[j]] = [
-      list[j] as OutputDef["systems"][number],
-      list[i] as OutputDef["systems"][number],
-    ];
-    update({ systems: list });
-  };
-  const unused = systems.filter((s) => !output.systems.some((o) => o.id === s.id));
   const changed = outputChange(saved, output);
   // ライブラリは Entity を持たない。Entity があるうちはライブラリにできない（ADR 0055）
   const hasEntities = project.entities(id).length > 0;
@@ -309,60 +302,14 @@ function OutputProperties({ id }: { id: string }) {
           このアウトプットで動かす System と実行順。無効な System は Query
           にマッチしても動きません。
         </p>
-        <ul className={ui.list}>
-          {output.systems.map((ref, i) => {
-            const def = systems.find((s) => s.id === ref.id);
-            return (
-              <li key={ref.id} className={ui.item}>
-                <ChangeMark
-                  kind={changed.systemRows[ref.id] ?? null}
-                  target={{ entry: `output:${id}`, part: "systems" }}
-                />
-                <input
-                  type="checkbox"
-                  aria-label={`${def?.name ?? ref.id} を有効にする`}
-                  checked={ref.enabled}
-                  disabled={!editing}
-                  onChange={(e) =>
-                    update({
-                      systems: output.systems.map((s) =>
-                        s.id === ref.id ? { ...s, enabled: e.target.checked } : s,
-                      ),
-                    })
-                  }
-                />
-                <span className={ui.itemName}>{def?.name ?? "（削除された System）"}</span>
-                <button
-                  type="button"
-                  className={ui.iconBtn}
-                  aria-label="上へ"
-                  disabled={!editing || i === 0}
-                  onClick={() => move(i, -1)}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className={ui.iconBtn}
-                  aria-label="下へ"
-                  disabled={!editing || i === output.systems.length - 1}
-                  onClick={() => move(i, 1)}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className={ui.iconBtn}
-                  aria-label="一覧から外す"
-                  disabled={!editing}
-                  onClick={() => update({ systems: output.systems.filter((s) => s.id !== ref.id) })}
-                >
-                  ✕
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <SystemRows
+          systems={output.systems}
+          nameOf={systemName}
+          editing={editing}
+          rowMark={(sid) => changed.systemRows[sid] ?? null}
+          markTarget={{ entry: `output:${id}`, part: "systems" }}
+          onChange={(list) => update({ systems: list })}
+        />
         {running.length === 0 && <p className={ui.empty}>System がありません</p>}
         {fromPrefabs.length > 0 && (
           <>
@@ -394,26 +341,121 @@ function OutputProperties({ id }: { id: string }) {
             </ul>
           </>
         )}
-        {editing && unused.length > 0 && (
-          <select
-            className={ui.select}
-            aria-label="System を追加"
-            value=""
-            onChange={(e) =>
-              e.target.value &&
-              update({ systems: [...output.systems, { id: e.target.value, enabled: true }] })
-            }
-          >
-            <option value="">＋ System を追加…</option>
-            {unused.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+        {editing && (
+          <SystemAdder
+            systems={output.systems}
+            choices={systems}
+            onChange={(list) => update({ systems: list })}
+          />
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * 動かす System の並びと「入・切」。アウトプットと、プレハブで同じ画面を使う（ADR 0076）。
+ * 並び順が実行順。
+ */
+function SystemRows(props: {
+  systems: OutputSystem[];
+  nameOf: (id: string) => string | undefined;
+  editing: boolean;
+  /** 最後の保存からの変化の印（行ごと）。なければ出さない */
+  rowMark?: (id: string) => ChangeKind | null;
+  markTarget?: ChangeTarget;
+  onChange: (systems: OutputSystem[]) => void;
+}) {
+  const { systems, editing, onChange } = props;
+  const move = (i: number, d: -1 | 1) => {
+    const list = [...systems];
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j] as OutputSystem, list[i] as OutputSystem];
+    onChange(list);
+  };
+  return (
+    <ul className={ui.list}>
+      {systems.map((ref, i) => {
+        const name = props.nameOf(ref.id);
+        return (
+          <li key={ref.id} className={ui.item}>
+            {props.rowMark && (
+              <ChangeMark
+                kind={props.rowMark(ref.id)}
+                {...(props.markTarget ? { target: props.markTarget } : {})}
+              />
+            )}
+            <input
+              type="checkbox"
+              aria-label={`${name ?? ref.id} を有効にする`}
+              checked={ref.enabled}
+              disabled={!editing}
+              onChange={(e) =>
+                onChange(
+                  systems.map((s) => (s.id === ref.id ? { ...s, enabled: e.target.checked } : s)),
+                )
+              }
+            />
+            <span className={ui.itemName}>{name ?? "（削除された System）"}</span>
+            <button
+              type="button"
+              className={ui.iconBtn}
+              aria-label="上へ"
+              disabled={!editing || i === 0}
+              onClick={() => move(i, -1)}
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              className={ui.iconBtn}
+              aria-label="下へ"
+              disabled={!editing || i === systems.length - 1}
+              onClick={() => move(i, 1)}
+            >
+              ↓
+            </button>
+            <button
+              type="button"
+              className={ui.iconBtn}
+              aria-label="一覧から外す"
+              disabled={!editing}
+              onClick={() => onChange(systems.filter((s) => s.id !== ref.id))}
+            >
+              ✕
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** まだ並びにない System を、並びの終わりに足す */
+function SystemAdder(props: {
+  systems: OutputSystem[];
+  choices: { id: string; name: string }[];
+  onChange: (systems: OutputSystem[]) => void;
+}) {
+  const unused = props.choices.filter((s) => !props.systems.some((o) => o.id === s.id));
+  if (unused.length === 0) return null;
+  return (
+    <select
+      className={ui.select}
+      aria-label="System を追加"
+      value=""
+      onChange={(e) =>
+        e.target.value && props.onChange([...props.systems, { id: e.target.value, enabled: true }])
+      }
+    >
+      <option value="">＋ System を追加…</option>
+      {unused.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -437,7 +479,10 @@ function KokoDefProperties({ id }: { id: string }) {
       fields: def.fields.map((f) => (f.id === fid ? ({ ...f, ...patch } as FieldDef) : f)),
     });
 
-  const holders = project.entities().filter((e) => id in e.states);
+  // アウトプットの Entity と、プレハブの中の Entity（選ぶと、そのプレハブが開く）
+  const holders = [...project.entities(), ...project.prefabEntities()].filter(
+    (e) => id in e.states,
+  );
   const changed = kokoChange(saved, def);
   const queried = project.systems().filter((s) => {
     const q = queryOf(s.id);
@@ -547,7 +592,11 @@ function KokoDefProperties({ id }: { id: string }) {
                   className={ui.item}
                   onClick={() => select({ kind: "entity", id: e.id })}
                 >
-                  <span className={ui.itemName}>{e.name}</span>
+                  <span className={ui.itemName}>
+                    {"prefab" in e
+                      ? `プレハブ「${project.prefab(e.prefab)?.name ?? e.prefab}」の中の「${e.name}」`
+                      : e.name}
+                  </span>
                 </button>
               </li>
             ))}
@@ -1168,15 +1217,20 @@ function AssetProperties({ id }: { id: string }) {
 }
 
 /**
- * プレハブの詳細（ADR 0076）：名前・場所・中身の数・置いたインスタンス。ここから、いまのアウトプットに
- * インスタンスを置ける。中身は、いまは読むだけ（Hierarchy と Inspector で直すのは、次の段階）。
+ * プレハブの詳細（ADR 0076）：名前・編集する場所・System の並び・置いたインスタンス。
+ * ここから、プレハブを開いて中身を直し（Hierarchy と Inspector が、プレハブの中身に切り替わる）、
+ * いまのアウトプットにインスタンスを置ける。
  */
 function PrefabProperties({ id }: { id: string }) {
   const closeDetail = useCloseDetail();
   const project = useProject();
   const canEdit = useCanEdit();
+  const saved = useSavedFiles();
   const { error, safely } = useSafe();
-  const { select, outputId, setOutput, viewPoint } = useWorkspace();
+  const { select, outputId, setOutput, viewPoint, openPrefab, closePrefab } = useWorkspace();
+  const packages = useWorkspace((st) => st.packages);
+  const editMode = useWorkspace((st) => st.mode === "edit");
+  const open = useWorkspace((st) => st.mode === "edit" && st.editingPrefab?.id === id);
   const prefab = project.prefab(id);
   if (!prefab) return <p className={ui.empty}>プレハブが見つかりません</p>;
   const index = ResourcePathIndex.fromSnapshot(project.snapshot());
@@ -1184,7 +1238,17 @@ function PrefabProperties({ id }: { id: string }) {
   const instances = project.instancesOf(id);
   const output = project.output(outputId);
   const canPlace = canEdit && output !== undefined && output.kind !== "library";
-  const systemName = (sid: string) => project.system(sid)?.name ?? "（削除された System）";
+  // このプロジェクトの System と、依存のライブラリの System（アウトプットと同じ。ADR 0015）
+  const systems = [
+    ...project.systems().map((s) => ({ id: s.id, name: s.name })),
+    ...packageSystems(packages.values()).map((s) => ({ id: s.id, name: `@${s.alias}/${s.name}` })),
+  ];
+  const setSystems = (list: OutputSystem[]) => project.updatePrefab({ ...prefab, systems: list });
+  const setEditIn = (place: PrefabEditPlace) => {
+    // 初めの設定（その場）は、書かずに持つ
+    const { editIn: _old, ...rest } = prefab;
+    project.updatePrefab(place === "here" ? rest : { ...rest, editIn: place });
+  };
   const place = () =>
     safely(() => {
       const made = project.addInstance({
@@ -1204,81 +1268,133 @@ function PrefabProperties({ id }: { id: string }) {
     closeDetail();
   };
   return (
-    <div className={ui.section}>
-      <div className={ui.sectionHead}>
-        <h3 className={ui.sectionTitle}>プレハブ</h3>
+    <>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <ChangeMark
+            kind={prefabChange(saved, prefab, entities)}
+            target={{ entry: `prefab:${id}` }}
+          />
+          <h3 className={ui.sectionTitle}>プレハブ</h3>
+        </div>
+        <NameRow
+          id={id}
+          value={prefab.name}
+          disabled={!canEdit}
+          onCommit={(name) => safely(() => project.renamePrefab(id, name))}
+        />
+        {error && <p className={ui.error}>{error}</p>}
+        <div className={ui.field}>
+          <label className={ui.label} htmlFor={`edit-in-${id}`}>
+            編集する場所
+          </label>
+          <select
+            id={`edit-in-${id}`}
+            className={ui.select}
+            value={prefab.editIn ?? "here"}
+            disabled={!canEdit}
+            title="プレハブを開いたときに、中身を出す場所。その場：いまいるワークスペースの空間に出す（小さなプレハブ向け）／離れた空間：セッションから離した空間に、ポータルで入って直す（大きなプレハブ向け）"
+            onChange={(e) => setEditIn(e.target.value as PrefabEditPlace)}
+          >
+            <option value="here">その場</option>
+            <option value="isolated">離れた空間</option>
+          </select>
+        </div>
+        <InfoList
+          label="プレハブの情報"
+          rows={[
+            ["場所", index.pathOf(id) ?? "（フォルダが輪になっています）"],
+            ["中の Entity", `${entities.length} 個`],
+            ["インスタンス", `${instances.length} 個`],
+          ]}
+        />
+        <div className={ui.toolbar}>
+          {open ? (
+            <button type="button" className={ui.btn} onClick={closePrefab}>
+              アウトプットに戻る
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={ui.btnPrimary}
+              disabled={!editMode}
+              title={
+                editMode
+                  ? "Hierarchy と Inspector で、プレハブの中身を直す"
+                  : "Play mode 中は開けません"
+              }
+              onClick={() => openPrefab(id)}
+            >
+              開く
+            </button>
+          )}
+          <button
+            type="button"
+            className={ui.btn}
+            disabled={!canPlace}
+            title={
+              output?.kind === "library"
+                ? "ライブラリには置けません"
+                : "いま開いているアウトプットに、インスタンスを置く"
+            }
+            onClick={place}
+          >
+            アウトプットに置く
+          </button>
+          <button type="button" className={ui.btn} disabled={!canEdit} onClick={remove}>
+            プレハブを消す
+          </button>
+        </div>
       </div>
-      <NameRow
-        id={id}
-        value={prefab.name}
-        disabled={!canEdit}
-        onCommit={(name) => safely(() => project.renamePrefab(id, name))}
-      />
-      {error && <p className={ui.error}>{error}</p>}
-      <InfoList
-        label="プレハブの情報"
-        rows={[
-          ["場所", index.pathOf(id) ?? "（フォルダが輪になっています）"],
-          ["中の Entity", `${entities.length} 個`],
-          [
-            "System",
-            prefab.systems.length > 0
-              ? prefab.systems.map((s) => systemName(s.id)).join("、")
-              : "なし",
-          ],
-          ["インスタンス", `${instances.length} 個`],
-        ]}
-      />
-      <div className={ui.row}>
-        <button
-          type="button"
-          className={ui.btn}
-          disabled={!canPlace}
-          title={
-            output?.kind === "library"
-              ? "ライブラリには置けません"
-              : "いま開いているアウトプットに、インスタンスを置く"
-          }
-          onClick={place}
-        >
-          アウトプットに置く
-        </button>
-        <button type="button" className={ui.btn} disabled={!canEdit} onClick={remove}>
-          プレハブを消す
-        </button>
+      <div className={ui.section}>
+        <div className={ui.sectionHead}>
+          <h3 className={ui.sectionTitle}>Systems</h3>
+          <span className={ui.badge}>{prefab.systems.filter((s) => s.enabled).length} 有効</span>
+        </div>
+        <p className={ui.muted}>
+          このプレハブの System と実行順。インスタンスを置いたアウトプットで、アウトプットの System
+          のあとに動きます。
+        </p>
+        <SystemRows
+          systems={prefab.systems}
+          nameOf={(sid) => systems.find((s) => s.id === sid)?.name}
+          editing={canEdit}
+          onChange={setSystems}
+        />
+        {prefab.systems.length === 0 && <p className={ui.empty}>System がありません</p>}
+        {canEdit && (
+          <SystemAdder systems={prefab.systems} choices={systems} onChange={setSystems} />
+        )}
       </div>
-      <h3 className={ui.sectionTitle}>置いてある所</h3>
-      {instances.length === 0 ? (
-        <p className={ui.muted}>まだどこにも置いていません。</p>
-      ) : (
-        <ul className={ui.list} aria-label="インスタンス">
-          {instances.map((e) =>
-            "output" in e ? (
+      <div className={ui.section}>
+        <h3 className={ui.sectionTitle}>置いてある所</h3>
+        {instances.length === 0 ? (
+          <p className={ui.muted}>まだどこにも置いていません。</p>
+        ) : (
+          <ul className={ui.list} aria-label="インスタンス">
+            {instances.map((e) => (
               <li key={e.id}>
                 <button
                   type="button"
                   className={ui.item}
                   onClick={() => {
-                    if (e.output !== outputId) setOutput(e.output);
+                    // アウトプットのインスタンスは、そのアウトプットで選ぶ。プレハブの中のものは、そのプレハブを開いて選ぶ
+                    if ("output" in e && e.output !== outputId) setOutput(e.output);
                     select({ kind: "entity", id: e.id });
                   }}
                 >
                   <span className={ui.itemName}>
-                    {`${project.output(e.output)?.name ?? e.output} の「${e.name}」`}
+                    {"output" in e
+                      ? `${project.output(e.output)?.name ?? e.output} の「${e.name}」`
+                      : `プレハブ「${project.prefab(e.prefab)?.name ?? e.prefab}」の中の「${e.name}」`}
                   </span>
                 </button>
               </li>
-            ) : (
-              <li key={e.id} className={ui.item}>
-                <span className={ui.itemName}>
-                  {`プレハブ「${project.prefab(e.prefab)?.name ?? e.prefab}」の中の「${e.name}」`}
-                </span>
-              </li>
-            ),
-          )}
-        </ul>
-      )}
-    </div>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
   );
 }
 

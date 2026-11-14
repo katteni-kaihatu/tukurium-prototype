@@ -59,7 +59,10 @@ export function summarize(panelId: string): string[] {
       if (sel.kind === "output") {
         return [`output: ${project.output(sel.id)?.name ?? sel.id}`];
       }
-      const e = project.entity(sel.id);
+      if (sel.kind === "prefab") {
+        return [`prefab: ${project.prefab(sel.id)?.name ?? sel.id}`];
+      }
+      const e = project.findEntity(sel.id);
       if (!e) return [];
       const registry = project.registry();
       const lines = [e.name];

@@ -11,6 +11,10 @@ import {
   materialFilePath,
   type OutputDef,
   outputFilePath,
+  type PrefabDef,
+  type PrefabEntityDef,
+  prefabEntityFilePath,
+  prefabFilePath,
   type StoredKokoState,
   type StoredValues,
   systemCodePath,
@@ -77,17 +81,21 @@ function keepSet(marks: KeepMark[], entityId: string): Set<string> {
 }
 
 /**
- * Entity を、最後に保存したファイルと比べる。
+ * Entity を、最後に保存したファイルと比べる。アウトプットの Entity でも、プレハブの中の Entity でも同じ。
  * 保存がまだ読めていないときは印を出さない（全部を新しく見せないため）。
  * 並び順だけの違いは印にしない。維持の切り替えは、そのフィールドの変化にする。
  */
 export function entityChange(
   head: FileMap | null,
-  entity: EntityDef,
+  entity: EntityDef | PrefabEntityDef,
   keep?: { saved: KeepMark[]; current: KeepMark[] },
 ): EntityChange {
   if (!head) return NO_ENTITY;
-  const saved = readJson<SavedEntity>(head, entityFilePath(entity.output, entity.id));
+  const path =
+    "output" in entity
+      ? entityFilePath(entity.output, entity.id)
+      : prefabEntityFilePath(entity.prefab, entity.id);
+  const saved = readJson<SavedEntity>(head, path);
   const savedKeep = keepSet(keep?.saved ?? [], entity.id);
   const currentKeep = keepSet(keep?.current ?? [], entity.id);
   if (!saved) {
@@ -130,6 +138,34 @@ export function entityChange(
 export function savedKeep(head: FileMap | null, outputId: string): KeepMark[] {
   if (!head) return [];
   return readJson<OutputDef>(head, outputFilePath(outputId))?.keep ?? [];
+}
+
+/** 最後に保存したプレハブの「維持」の印（ADR 0076） */
+export function savedPrefabKeep(head: FileMap | null, prefabId: string): KeepMark[] {
+  if (!head) return [];
+  return readJson<PrefabDef>(head, prefabFilePath(prefabId))?.keep ?? [];
+}
+
+/**
+ * プレハブを、最後に保存したファイルと比べる（ADR 0076）。プレハブの設定か、中の Entity の
+ * どれかが変わっていれば「変わった」。細かな差分と「戻す」は、保存の差分（プレハブまるごと）で見る。
+ */
+export function prefabChange(
+  head: FileMap | null,
+  prefab: PrefabDef,
+  entities: readonly PrefabEntityDef[],
+): ChangeKind | null {
+  if (!head) return null;
+  const saved = readJson<PrefabDef>(head, prefabFilePath(prefab.id));
+  if (!saved) return "added";
+  if (!equalValues(saved, prefab)) return "modified";
+  // 中の Entity が増えた・減った
+  const file = prefabEntityFilePath(prefab.id, "x");
+  const prefix = file.slice(0, file.length - "x.json".length);
+  const savedCount = Object.keys(head).filter((path) => path.startsWith(prefix)).length;
+  if (savedCount !== entities.length) return "modified";
+  const keep = { saved: saved.keep ?? [], current: prefab.keep };
+  return entities.some((e) => entityChange(head, e, keep).kind !== null) ? "modified" : null;
 }
 
 export interface KokoChange {
