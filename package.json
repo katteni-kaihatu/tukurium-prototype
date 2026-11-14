@@ -13,7 +13,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
-    "lint": "biome check . && node scripts/check-dockerfile.mjs",
+    "lint": "biome check . && node scripts/check-dockerfile.mjs && node scripts/check-file-names.mjs",
     "format": "biome check --write .",
     "e2e": "playwright test",
     "smoke": "node scripts/smoke.mjs",

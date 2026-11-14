@@ -16,7 +16,7 @@
 | やること | コマンド |
 | --- | --- |
 | 開発サーバー（client :5173 / server :8787） | `pnpm dev` |
-| 整形 → lint（Biome と Dockerfile の検査） | `pnpm format && pnpm lint` |
+| 整形 → lint（Biome と、Dockerfile・ファイル名の検査） | `pnpm format && pnpm lint` |
 | 型・単体テスト | `pnpm typecheck` / `pnpm test` |
 | ブラウザでの通しテスト（背骨の 4 本、2 分ほど。開発サーバーを自動で起動） | `pnpm e2e` |
 | 本番ビルドの動作確認 | `pnpm build` のあと `AUTH_DEV_LOGIN=1 CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787`（開発用ログインで入る） |
@@ -37,6 +37,7 @@
 - **Host API（`world.*` など）を足したら**、`packages/runtime/src/hostApiSpec.ts` の `HOST_API_SPEC` に一件足す（引数・Capability・判定の場所・拒んだときの値・利用者向けの型と説明）。repo-model の `HOST_CAPABILITIES` にも同じ Capability を足す（テストが一致を検査する。ADR 0012）。
 - **通信の形**は `packages/shared/src/protocol.ts` の zod で決める。互換性がなくなる変更では `PROTOCOL_VERSION` を上げる。
 - **パッケージを足したら**、`docker/Dockerfile` に、その package.json の COPY を足す（`pnpm lint` が検査する）。
+- **大文字・小文字だけが違う名前のファイル**（`RingMenu.tsx` と `ringMenu.ts` など）を作らない。Windows では import が別のファイルに当たり、型・ビルド・開発サーバーが動かなくなる（`pnpm lint` が検査する）。
 - **サーバーが実行時に使う npm パッケージ**は `apps/server/package.json` の dependencies に書く。バンドルでは外部扱いになり、本番では node_modules から読む。
 - **E2E の `test`** は `e2e/helpers.ts` から import する（Biome で強制）。2 人目以降の参加者は `newPerson()` で開くと、テストの終わりに自動で閉じられる。
 - React のフックは、早期 return より前で呼ぶ（Biome の `useHookAtTopLevel`）。
