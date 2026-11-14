@@ -146,6 +146,8 @@ export interface EntityBase {
   prefabOverrides?: Record<string, PrefabEntityOverride>;
   /** インスタンスで足した System */
   instanceSystems?: OutputSystem[];
+  /** プレハブとのつながりを切ったときに残す、そのプレハブ本体の System。子の System より先に動く */
+  unpackedSystems?: OutputSystem[];
 }
 
 export interface EntityDef extends EntityBase {

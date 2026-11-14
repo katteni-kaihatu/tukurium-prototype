@@ -11,6 +11,7 @@ export * from "./packageDependency";
 export * from "./packageManifest";
 export * from "./prefab";
 export * from "./prefabFromEntity";
+export * from "./prefabInstance";
 export * from "./projectDoc";
 export * from "./resourcePath";
 export * from "./sampleModels";

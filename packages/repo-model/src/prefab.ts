@@ -402,6 +402,7 @@ class Expander {
       visited.add(e.id);
       const rel = e.id === root.id ? "" : e.id;
       const own = marked(e.states);
+      mergeSystems(systems, e.unpackedSystems ?? []);
       const origin = { prefab: prefabId, entity: e.id };
       const link = e.id === root.id ? undefined : e.instanceOf;
       let nested: Template | null = null;
@@ -450,12 +451,13 @@ class Expander {
             origin: t.origin,
           });
         mergeSystems(systems, nested.systems);
-        mergeSystems(systems, e.instanceSystems ?? []);
         for (const k of nested.keep) keep.push({ ...k, entity: join(rel, k.entity) });
         for (const [id, parent] of Object.entries(nested.deletedParents))
           deletedParents[join(rel, id)] = parent === null ? rel : join(rel, parent);
       }
       for (const kid of kids.get(e.id) ?? []) visit(kid, rel);
+      // 解除した Entity も、元の追加分は子の System のあとに置く。
+      mergeSystems(systems, e.instanceSystems ?? []);
     };
     visit(root, null);
 
@@ -512,6 +514,7 @@ class Expander {
           instanceOf: _link,
           prefabOverrides: _overrides,
           instanceSystems: _systems,
+          unpackedSystems: _unpacked,
           ...rest
         } = instance;
         // いちばん上の Entity：ID・名前・親・並び順と、場所・向き・大きさは、インスタンスのもの
@@ -539,7 +542,12 @@ class Expander {
   /** stack は、いま開いている途中のプレハブ（プレハブを編集用に開くときの、そのプレハブ） */
   run(stack: readonly string[] = []): ExpandedSnapshot {
     const snap = this.snap;
-    if (!snap.entities.some((e) => e.instanceOf)) return snap;
+    if (
+      !snap.entities.some(
+        (e) => e.instanceOf || e.unpackedSystems?.length || e.instanceSystems?.length,
+      )
+    )
+      return snap;
 
     const entities: ExpandedEntity[] = [];
     /** アウトプット → その中のインスタンス（制作データの並び） */
@@ -554,7 +562,11 @@ class Expander {
           : null;
       if (!e.instanceOf || !template) {
         // プレハブがないインスタンスは、そのまま残す（問題として出す）
-        entities.push(e);
+        if (e.instanceOf) entities.push(e);
+        else {
+          const { unpackedSystems: _unpacked, instanceSystems: _systems, ...rest } = e;
+          entities.push(rest);
+        }
         continue;
       }
       const key = stamps ? stringifyValue(e) : "";
@@ -619,17 +631,21 @@ class Expander {
     }
 
     const outputs = snap.outputs.map((o) => {
-      const list = used.get(o.id);
-      if (!list) return o;
-      const order = hierarchyOrder(snap.entities.filter((e) => e.output === o.id));
-      list.sort((a, b) => (order.get(a.instance.id) ?? 0) - (order.get(b.instance.id) ?? 0));
-      // System：アウトプットのものが先。プレハブのものは、Hierarchy の並びで先に出てくるインスタンスから足す。
-      // アウトプットにも同じ System があれば、アウトプットの「入・切」が勝つ
+      const list = used.get(o.id) ?? [];
+      const source = new Map(snap.entities.filter((e) => e.output === o.id).map((e) => [e.id, e]));
+      const templates = new Map(list.map(({ instance, template }) => [instance.id, template]));
+      // アウトプットのものが先。解除したプレハブ本体は子より前、元の追加分は子よりあとに置く。
       const extra: OutputSystem[] = [];
-      for (const { template, instance } of list) {
-        mergeSystems(extra, template.systems);
-        mergeSystems(extra, instance.instanceSystems ?? []);
-      }
+      walkHierarchy(
+        entities.filter((e) => e.output === o.id),
+        (id) => {
+          const e = source.get(id);
+          if (!e) return;
+          mergeSystems(extra, e.unpackedSystems ?? []);
+          mergeSystems(extra, templates.get(id)?.systems ?? []);
+        },
+        (id) => mergeSystems(extra, source.get(id)?.instanceSystems ?? []),
+      );
       const own = new Set(o.systems.map((s) => s.id));
       const systems = [...o.systems, ...extra.filter((s) => !own.has(s.id))];
       // 「維持」の印：プレハブの中で付けたものを、展開した Entity の ID にして足す
@@ -650,8 +666,12 @@ class Expander {
   }
 }
 
-/** Hierarchy に出る順（親が先、兄弟は並び順）での、Entity の番号 */
-function hierarchyOrder(entities: readonly EntityBase[]): Map<EntityId, number> {
+/** Hierarchy の子に入る前と、子を出たあとに呼ぶ。壊れた親子の輪も一度ずつたどる。 */
+function walkHierarchy(
+  entities: readonly EntityBase[],
+  enter: (id: EntityId) => void,
+  leave: (id: EntityId) => void,
+): void {
   const ids = new Set(entities.map((e) => e.id));
   const kids = new Map<string | null, EntityBase[]>();
   for (const e of entities) {
@@ -660,21 +680,28 @@ function hierarchyOrder(entities: readonly EntityBase[]): Map<EntityId, number> 
     if (list) list.push(e);
     else kids.set(parent, [e]);
   }
-  const out = new Map<EntityId, number>();
+  const seen = new Set<EntityId>();
   const walk = (parent: string | null) => {
     const list = [...(kids.get(parent) ?? [])].sort(
       (a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     for (const e of list) {
-      if (out.has(e.id)) continue;
-      out.set(e.id, out.size);
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      enter(e.id);
       walk(e.id);
+      leave(e.id);
     }
   };
   walk(null);
   // 親子が輪になっていて届かなかったものは、あとに回す
-  for (const e of entities) if (!out.has(e.id)) out.set(e.id, out.size);
-  return out;
+  for (const e of entities) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    enter(e.id);
+    walk(e.id);
+    leave(e.id);
+  }
 }
 
 /**

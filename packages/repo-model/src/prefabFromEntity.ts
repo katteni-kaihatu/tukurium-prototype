@@ -278,17 +278,50 @@ export function planPrefabFromEntity(
         states,
         prefab: prefabId,
         ...(def.instanceOf ? { instanceOf: structuredClone(def.instanceOf) } : {}),
+        ...(def.prefabOverrides
+          ? {
+              prefabOverrides: Object.fromEntries(
+                Object.entries(def.prefabOverrides).map(([path, patch]) => [
+                  path,
+                  {
+                    ...structuredClone(patch),
+                    ...(patch.parent === undefined || patch.parent === null
+                      ? {}
+                      : { parent: insideId(patch.parent) ?? patch.parent }),
+                    ...(patch.states
+                      ? { states: insideStates({ ...def, states: patch.states }) }
+                      : {}),
+                    ...(patch.addedStates
+                      ? { addedStates: insideStates({ ...def, states: patch.addedStates }) }
+                      : {}),
+                  },
+                ]),
+              ),
+            }
+          : {}),
+        ...(def.instanceSystems ? { instanceSystems: structuredClone(def.instanceSystems) } : {}),
+        ...(def.unpackedSystems ? { unpackedSystems: structuredClone(def.unpackedSystems) } : {}),
       };
     // いちばん上の Entity：向きと大きさは写す（あとで置くインスタンスが、同じ見た目になる）。場所は原点
     const transform = states[BUILTIN.Transform];
     if (transform) states[BUILTIN.Transform] = { ...transform, position: [0, 0, 0] };
-    return { id: rootId, name: def.name, parent: null, order: 0, states, prefab: prefabId };
+    return {
+      id: rootId,
+      name: def.name,
+      parent: null,
+      order: 0,
+      states,
+      prefab: prefabId,
+      ...(def.instanceSystems ? { instanceSystems: structuredClone(def.instanceSystems) } : {}),
+      ...(def.unpackedSystems ? { unpackedSystems: structuredClone(def.unpackedSystems) } : {}),
+    };
   });
 
   // 選んだ Entity は、Transform だけを持つインスタンスになる（ほかの KokoState は、プレハブのものが出る）
   const transform = source.states[BUILTIN.Transform];
+  const { instanceSystems: _systems, unpackedSystems: _unpacked, ...sourceBase } = source;
   const instance: EntityDef = {
-    ...source,
+    ...sourceBase,
     states: transform ? { [BUILTIN.Transform]: structuredClone(transform) } : {},
     instanceOf: { prefab: prefabId },
   };
