@@ -128,8 +128,12 @@ describe("プレハブを、編集用の並びにする", () => {
     const { doc, prefab: a } = targetProject();
     const b = doc.addPrefab("B");
     const inA = doc.addPrefabEntity({ prefab: a, name: "B を置く", instanceOf: { prefab: b } });
-    const inB = doc.addPrefabEntity({ prefab: b, name: "A を置く", instanceOf: { prefab: a } });
-    const self = doc.addPrefabEntity({ prefab: a, name: "自分", instanceOf: { prefab: a } });
+    const inB = doc.addPrefabEntity({ prefab: b, name: "A を置く" });
+    const self = doc.addPrefabEntity({ prefab: a, name: "自分" });
+    const broken = doc.snapshot();
+    for (const e of broken.prefabEntities ?? [])
+      if (e.id === inB || e.id === self) e.instanceOf = { prefab: a };
+    doc.load(broken);
     const ids = expandPrefabForEdit(doc.snapshot(), a)?.entities.map((e) => e.id);
     // B の中の「A を置く」と、自分のインスタンスは、中身に置き換えない
     expect(ids).toContain(expandedEntityId(inA, inB));

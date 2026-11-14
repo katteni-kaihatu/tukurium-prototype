@@ -515,8 +515,7 @@ function Hierarchy() {
     if (!editing) return;
     if (!id) {
       // Resources からプレハブをドラッグしてきた：落とした所に、インスタンスを置く。
-      // プレハブの中にインスタンスを置くのは、まだ（入れ子の画面は、あとの段階）
-      if (prefab || !event.dataTransfer.types.includes(PREFAB_DRAG)) return;
+      if (!event.dataTransfer.types.includes(PREFAB_DRAG)) return;
       event.preventDefault();
       event.stopPropagation();
       const key = targetId ?? "root";
@@ -541,17 +540,17 @@ function Hierarchy() {
     setDropOver(null);
     if (!id) {
       const dropped = event.dataTransfer.getData(PREFAB_DRAG);
-      if (!editing || prefab || !dropped) return;
+      if (!editing || !dropped) return;
       try {
         setError(null);
         const made = project.addInstance({
-          output: outputId,
+          ...(prefab ? { ownerPrefab: prefab.id } : { output: outputId }),
           prefab: dropped,
           parent: targetId,
           // いちばん上に置くときは、見ている先に置く。子にするときは、親の所に置く
-          ...(targetId === null ? { position: viewPoint?.() ?? [0, 1, 0] } : {}),
+          ...(!prefab && targetId === null ? { position: viewPoint?.() ?? [0, 1, 0] } : {}),
         });
-        openOf(targetId ?? outputId);
+        openOf(targetId ?? prefab?.root ?? outputId);
         select({ kind: "entity", id: made });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -1224,9 +1223,9 @@ function EntityProperties({ id }: { id: EntityId }) {
   // 同じ持ち主（アウトプットか、開いているプレハブ）の、制作データにある Entity
   const peers = target.snapshot.entities.filter((e) => e.output === ownerId);
   const kids = peers.filter((e) => e.parent === id);
-  /** この Entity からプレハブを作れるか（アウトプットのふつうの Entity だけ） */
+  /** ふつうの Entity から作れる。開いているプレハブのいちばん上は、別のインスタンスにはしない。 */
   const canMakePrefab =
-    editing && !prefab && !origin && projectEntity !== undefined && !projectEntity.instanceOf;
+    editing && !isRoot && !origin && projectEntity !== undefined && !projectEntity.instanceOf;
   const kokoKey = (koko: string) => `${id}:${koko}`;
   const allOpen = attached.length === 0 || attached.every((koko) => !closedKoko[kokoKey(koko)]);
   const keep: { saved: KeepMark[]; current: KeepMark[] } = prefab
@@ -1329,8 +1328,8 @@ function EntityProperties({ id }: { id: EntityId }) {
             title={
               origin
                 ? "プレハブにする（プレハブのインスタンスと、その中の Entity は、プレハブにできません）"
-                : prefab
-                  ? "プレハブにする（プレハブの中の Entity からは、作れません）"
+                : isRoot
+                  ? "プレハブにする（プレハブのいちばん上の Entity からは、作れません）"
                   : "プレハブにする"
             }
             disabled={!canMakePrefab}
@@ -1802,9 +1801,12 @@ function InstanceSystems({
     ...packageSystems(packages.values()).map((s) => ({ id: s.id, name: `@${s.alias}/${s.name}` })),
   ];
   const own = instance.instanceSystems ?? [];
-  const savedInstance = saved
-    ? fromFiles(saved).entities.find((e) => e.id === instance.id)
-    : undefined;
+  const savedSnapshot = saved ? fromFiles(saved) : undefined;
+  const savedInstance =
+    savedSnapshot &&
+    [...savedSnapshot.entities, ...(savedSnapshot.prefabEntities ?? [])].find(
+      (e) => e.id === instance.id,
+    );
   const changed = prefabChangeParts(savedInstance, instance).filter((p) => p.kind === "system");
   const setSystems = (systems: typeof own) => {
     try {
@@ -1834,10 +1836,14 @@ function InstanceSystems({
             editing={!disabled}
             onChange={setSystems}
             rowMark={(id) => (changed.some((p) => p.koko === id) ? "modified" : null)}
-            markTargetFor={(id) => ({
-              entry: `entity:${instance.id}`,
-              part: prefabPart("", "system", id),
-            })}
+            markTargetFor={(id) =>
+              "output" in instance
+                ? {
+                    entry: `entity:${instance.id}`,
+                    part: prefabPart("", "system", id),
+                  }
+                : undefined
+            }
             rowDecoration={(id) => (
               <PrefabMark
                 label="System の追加"

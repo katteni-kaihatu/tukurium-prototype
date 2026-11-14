@@ -151,7 +151,11 @@ describe("アウトプットの Entity からプレハブを作る（ADR 0076）
       parent: ID.base,
       output: OUT,
       order: before?.order,
-      states: { [BUILTIN.Transform]: before?.states[BUILTIN.Transform] },
+      states: {
+        [BUILTIN.Transform]: before?.states[BUILTIN.Transform],
+        [BUILTIN.Mesh]: {},
+        [link]: {},
+      },
       instanceOf: { prefab: plan.prefab.id },
     });
     // 中の Entity は、アウトプットからなくなり、新しい ID でプレハブに入る
@@ -408,20 +412,20 @@ describe("アウトプットの Entity からプレハブを作る（ADR 0076）
       return result.ok ? null : result.reason;
     };
     expect(reason("ent_nai")).toBe("Entity がありません");
-    // すでにインスタンス・プレハブから来た Entity・プレハブの中の Entity
+    // すでにインスタンス・プレハブから来た Entity・プレハブのいちばん上の Entity
     const plan = doc.makePrefabFromEntity(ID.target, { schemas });
     const core = plan.moved.find((m) => m.from === ID.core);
     expect(reason(ID.target)).toMatch(/すでにプレハブのインスタンス/);
     expect(reason(core?.expanded ?? "")).toMatch(/プレハブから来た Entity/);
-    expect(reason(core?.to ?? "")).toMatch(/プレハブの中の Entity/);
+    expect(reason(plan.prefab.root)).toMatch(/いちばん上の Entity/);
+    expect(reason(core?.to ?? "")).toBeNull();
     expect(() => doc.makePrefabFromEntity(ID.target, { schemas })).toThrow(/すでに/);
-    // インスタンスの中の Entity の下に足した Entity がある（込み入った形）
+    // 入れ子の中に足した Entity も、親の道を保って移せる。
     doc.addEntity({ output: OUT, name: "足した", parent: core?.expanded ?? "" });
     const snap = doc.snapshot();
     const base = planPrefabFromEntity(snap, ID.base, { schemas });
-    expect(base.ok ? null : base.reason).toMatch(
-      /中のインスタンスの下に足した Entity（「足した」）/,
-    );
+    expect(base.ok).toBe(true);
+    if (base.ok) expect(base.plan.moved.some((m) => m.name === "足した")).toBe(true);
     // ライブラリのアウトプット（古いデータなどで、Entity が入っていたとき）
     const lib = doc.addOutput("部品集", "library");
     const stray = planPrefabFromEntity(

@@ -427,9 +427,12 @@ class Expander {
       } else {
         // 入れ子のインスタンス：中のプレハブの Entity を、この Entity の下の ID に付け替えて足す
         const rebase = (t: TemplateEntity) =>
-          this.mapEntityRefs(t.states, t.refs, (id) =>
-            id.startsWith(MARK) ? MARK + join(rel, id.slice(MARK.length)) : undefined,
-          );
+          this.mapEntityRefs(t.states, t.refs, (id) => {
+            if (id.startsWith(MARK)) return MARK + join(rel, id.slice(MARK.length));
+            // 中のプレハブから、外側のプレハブの Entity を指す参照も、外側のインスタンスごとに付け替える。
+            const outer = relOf(id);
+            return outer === undefined ? undefined : MARK + outer;
+          });
         const states = mergeStateFields(rebase(nestedRoot), own.states);
         entities.push({
           rel,
@@ -540,7 +543,10 @@ class Expander {
   }
 
   /** stack は、いま開いている途中のプレハブ（プレハブを編集用に開くときの、そのプレハブ） */
-  run(stack: readonly string[] = []): ExpandedSnapshot {
+  run(
+    stack: readonly string[] = [],
+    ownerParents: Readonly<Record<string, string | null>> = {},
+  ): ExpandedSnapshot {
     const snap = this.snap;
     if (
       !snap.entities.some(
@@ -584,7 +590,7 @@ class Expander {
     }
 
     // プレハブで消えた親を指す追加 Entity と、親の上書きは、残っている最も近い祖先へ付ける。
-    const parents = new Map<string, string | null>();
+    const parents = new Map<string, string | null>(Object.entries(ownerParents));
     for (const list of used.values())
       for (const { instance, template } of list) {
         for (const [id, parent] of Object.entries(template.deletedParents))
@@ -764,7 +770,10 @@ export function expandPrefabForEdit(
     systems: prefab.systems,
     keep: prefab.keep,
   };
-  return new Expander({ ...snap, entities, outputs: [output] }, options).run([prefabId]);
+  return new Expander({ ...snap, entities, outputs: [output] }, options).run(
+    [prefabId],
+    prefab.deletedParents,
+  );
 }
 
 export type PrefabProblem =

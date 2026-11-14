@@ -11,7 +11,13 @@ import {
   type ValueSchema,
 } from "@tukurium/eks";
 import { BUILTIN, BUILTIN_KOKOSTATES } from "./builtins";
-import { EXPANDED_ID_SEPARATOR, expandedEntityId, type PrefabOwner } from "./prefab";
+import {
+  EXPANDED_ID_SEPARATOR,
+  expandPrefabForEdit,
+  expandPrefabs,
+  type PrefabOwner,
+} from "./prefab";
+import { prefabUsePath } from "./prefabNesting";
 import {
   type EntityBase,
   type EntityDef,
@@ -24,7 +30,7 @@ import {
 } from "./schema";
 
 /**
- * アウトプットの Entity から、プレハブを作る（ADR 0076 の 10）。
+ * アウトプットか、プレハブの中の Entity から、プレハブを作る（ADR 0076 の 10）。
  *
  * ここでは「何を移し、何を書き換えるか」の計画だけを作る（制作データは変えない）。確認の画面は、
  * この計画を見せる。実行は `ProjectDoc.makePrefabFromEntity()`。
@@ -81,6 +87,8 @@ export interface RefRewrite {
   targets: { from: EntityId; to: EntityId }[];
   /** 書き換えたあとの、フィールドの値 */
   value: FieldValue;
+  /** インスタンスの上書きの中にある参照。ないときは Entity 自身の値。 */
+  override?: { path: string; added: boolean };
 }
 
 /** プレハブに移す Entity が、プレハブに移さない Entity を指している所（ほかのアウトプットに置くと、切れる） */
@@ -104,21 +112,38 @@ export interface ScriptMention {
 export interface PrefabFromEntityPlan {
   /** 選んだ Entity（インスタンスになる。ID はそのまま） */
   entity: EntityId;
-  output: string;
+  owner: PrefabOwner;
   /** 作るプレハブ */
   prefab: PrefabDef;
   /** プレハブの中の Entity（いちばん上の Entity が先頭） */
   prefabEntities: PrefabEntityDef[];
   /** 変換のあとの、選んだ Entity（インスタンス） */
-  instance: EntityDef;
+  instance: EntityDef | PrefabEntityDef;
   /** プレハブに移す Entity（選んだ Entity が先頭。Hierarchy の並び） */
   moved: MovedEntity[];
   /** 書き換える参照 */
   rewrites: RefRewrite[];
-  /** プレハブに移す「維持」の印（from：アウトプットの印、to：プレハブの印） */
+  /** プレハブに移す「維持」の印（from：持ち主の印、to：新しいプレハブの印） */
   keepMoved: { from: KeepMark; to: KeepMark; entityName: string }[];
-  /** 変換のあとの、アウトプットの「維持」の印 */
-  outputKeep: KeepMark[];
+  /** 変換のあとの、元の持ち主の「維持」の印 */
+  ownerKeep: KeepMark[];
+  /** ほかの持ち主にある、展開した Entity を指す「維持」の印も書き換える */
+  keepRewrites: {
+    owner: PrefabOwner;
+    keep: KeepMark[];
+    changes: { from: KeepMark; to: KeepMark }[];
+  }[];
+  structureRewrites: {
+    owner: PrefabOwner;
+    entity: string;
+    name: string;
+    kind: string;
+    from: string;
+    to: string;
+  }[];
+  /** 実行は P5 と同じ、フィールドごとの書き込みを使う。 */
+  before: ProjectSnapshot;
+  after: ProjectSnapshot;
   outsideRefs: OutsideRef[];
   scriptMentions: ScriptMention[];
 }
@@ -152,27 +177,37 @@ export function planPrefabFromEntity(
   entityId: EntityId,
   options: PrefabFromEntityOptions = {},
 ): PrefabFromEntityResult {
-  const source = snap.entities.find((e) => e.id === entityId);
+  const source =
+    snap.entities.find((e) => e.id === entityId) ??
+    snap.prefabEntities?.find((e) => e.id === entityId);
   if (!source) {
     if (entityId.includes(EXPANDED_ID_SEPARATOR))
       return refuse(
         "プレハブから来た Entity は、プレハブにできません（中身は、プレハブのものです）",
       );
-    if (snap.prefabEntities?.some((e) => e.id === entityId))
-      return refuse(
-        "プレハブの中の Entity からは、プレハブを作れません。アウトプットの Entity から作ってください",
-      );
     return refuse("Entity がありません");
   }
   if (source.instanceOf) return refuse("この Entity は、すでにプレハブのインスタンスです");
-  const output = snap.outputs.find((o) => o.id === source.output);
-  if (!output) return refuse("Entity が入っているアウトプットがありません");
-  if (output.kind === "library")
+  const owner: PrefabOwner =
+    "prefab" in source
+      ? { kind: "prefab", id: source.prefab }
+      : { kind: "output", id: source.output };
+  const definition =
+    owner.kind === "prefab"
+      ? snap.prefabs?.find((p) => p.id === owner.id)
+      : snap.outputs.find((o) => o.id === owner.id);
+  if (!definition) return refuse("Entity の持ち主がありません");
+  if ("kind" in definition && definition.kind === "library")
     return refuse("ライブラリのアウトプットの Entity は、プレハブにできません");
+  if ("root" in definition && definition.root === source.id)
+    return refuse("プレハブのいちばん上の Entity は、プレハブにできません");
 
-  // 選んだ Entity と、中の Entity（同じアウトプットの中で、親をたどる）。Hierarchy の並びにする
-  const peers = snap.entities.filter((e) => e.output === source.output);
-  const kids = new Map<EntityId, EntityDef[]>();
+  // 選んだ Entity と、中の Entity（同じ持ち主の中で、親をたどる）。Hierarchy の並びにする
+  const peers: (EntityDef | PrefabEntityDef)[] =
+    owner.kind === "prefab"
+      ? (snap.prefabEntities ?? []).filter((e) => e.prefab === owner.id)
+      : snap.entities.filter((e) => e.output === owner.id);
+  const kids = new Map<EntityId, (EntityDef | PrefabEntityDef)[]>();
   for (const e of peers) {
     if (e.parent === null || e.id === source.id) continue;
     const list = kids.get(e.parent);
@@ -191,23 +226,17 @@ export function planPrefabFromEntity(
   };
   /** 元の ID → プレハブの中の ID */
   const inside = new Map<EntityId, EntityId>();
-  const moving: { def: EntityDef; depth: number }[] = [];
-  const walk = (e: EntityDef, depth: number) => {
+  const moving: { def: EntityDef | PrefabEntityDef; depth: number }[] = [];
+  const walk = (e: EntityDef | PrefabEntityDef, depth: number) => {
     if (inside.has(e.id)) return; // 親子が輪になっている（壊れたデータ）
     inside.set(e.id, fresh(e.id));
     moving.push({ def: e, depth });
     for (const kid of [...(kids.get(e.id) ?? [])].sort(byOrder)) walk(kid, depth + 1);
+    if (e.instanceOf)
+      for (const kid of peers.filter((p) => p.parent?.startsWith(`${e.id}/`)).sort(byOrder))
+        walk(kid, depth + 1);
   };
   walk(source, 0);
-
-  // インスタンスの中の Entity（展開した ID）を親にしている Entity は、プレハブの中にそのまま移せない
-  for (const e of peers) {
-    if (inside.has(e.id) || e.parent === null) continue;
-    if (e.parent.includes(EXPANDED_ID_SEPARATOR) && inside.has(headOf(e.parent)))
-      return refuse(
-        `中のインスタンスの下に足した Entity（「${e.name}」）があるので、プレハブにできません。先に、その Entity を外へ出してください`,
-      );
-  }
 
   const rootId = inside.get(source.id) as EntityId;
   /** プレハブの中での ID（プレハブに移さないものは undefined）。中のインスタンスの中（D/x）も、頭を付け替える */
@@ -215,12 +244,37 @@ export function planPrefabFromEntity(
     const to = inside.get(headOf(id));
     return to === undefined ? undefined : to + restOf(id);
   };
-  /** 変換のあと、アウトプットを展開したときの ID（プレハブに移さないものは undefined） */
+  if (
+    moving.some(({ def }) =>
+      Object.values(def.prefabOverrides ?? {}).some((p) => p.parent !== undefined),
+    )
+  ) {
+    const view =
+      owner.kind === "prefab"
+        ? expandPrefabForEdit(snap, owner.id, options)
+        : expandPrefabs(snap, options);
+    for (const { def } of moving) {
+      for (const [path, patch] of Object.entries(def.prefabOverrides ?? {})) {
+        if (patch.parent === undefined || path === "") continue;
+        const entity = view?.entities.find((e) => e.id === `${def.id}/${path}`);
+        const parent = entity?.parent ?? patch.parent;
+        if (parent === null || insideId(parent) !== undefined) continue;
+        const parentName = view?.entities.find((e) => e.id === parent)?.name ?? parent;
+        return refuse(
+          `「${entity?.name ?? path}」の親「${parentName}」がプレハブに移すまとまりの外にあります。中の Entity に付け替えてからプレハブにしてください`,
+        );
+      }
+    }
+  }
+  /** 変換後の ID。ほかのプレハブやアウトプットにある、この持ち主のインスタンスの中も書き換える。 */
   const expandedId = (id: string): string | undefined => {
-    const head = headOf(id);
-    const to = inside.get(head);
-    if (to === undefined) return undefined;
-    return head === source.id ? id : expandedEntityId(source.id, to) + restOf(id);
+    const parts = id.split(EXPANDED_ID_SEPARATOR);
+    const at = parts.findIndex((part) => part !== source.id && inside.has(part));
+    if (at < 0) return inside.has(parts[0] ?? "") ? id : undefined;
+    const to = inside.get(parts[at] ?? "") as string;
+    return [...parts.slice(0, at), source.id, to, ...parts.slice(at + 1)].join(
+      EXPANDED_ID_SEPARATOR,
+    );
   };
 
   const defs = new Map<string, KokoStateDef>();
@@ -244,7 +298,7 @@ export function planPrefabFromEntity(
 
   // プレハブの中の Entity：参照を、プレハブの中の ID に書き換える
   const outsideRefs: OutsideRef[] = [];
-  const insideStates = (e: EntityDef): Record<KokoStateId, KokoStateValues> => {
+  const insideStates = (e: EntityDef | PrefabEntityDef): Record<KokoStateId, KokoStateValues> => {
     const states = structuredClone(e.states);
     for (const r of refFields(states)) {
       const values = states[r.def.id];
@@ -261,19 +315,21 @@ export function planPrefabFromEntity(
             target: id,
             targetName: nameOf.get(headOf(id)) ?? id,
           });
-        return to;
+        return to ?? expandedId(id);
       }) as FieldValue;
     }
     return states;
   };
   const prefabId = options.ids?.prefab ?? newId("pf");
+  if (snap.prefabs?.some((p) => p.id === prefabId))
+    return refuse("新しいプレハブの ID が、すでに使われています");
   const prefabEntities: PrefabEntityDef[] = moving.map(({ def }) => {
     const states = insideStates(def);
     if (def.id !== source.id)
       return {
         id: inside.get(def.id) as EntityId,
         name: def.name,
-        parent: inside.get(def.parent ?? "") ?? rootId,
+        parent: insideId(def.parent ?? "") ?? rootId,
         order: def.order,
         states,
         prefab: prefabId,
@@ -317,29 +373,32 @@ export function planPrefabFromEntity(
     };
   });
 
-  // 選んだ Entity は、Transform だけを持つインスタンスになる（ほかの KokoState は、プレハブのものが出る）
-  const transform = source.states[BUILTIN.Transform];
+  // 値は Transform だけ残す。空の KokoState は、同じ Y.Map への同時編集を受け取るために残す。
   const { instanceSystems: _systems, unpackedSystems: _unpacked, ...sourceBase } = source;
-  const instance: EntityDef = {
+  const instance: EntityDef | PrefabEntityDef = {
     ...sourceBase,
-    states: transform ? { [BUILTIN.Transform]: structuredClone(transform) } : {},
+    states: Object.fromEntries(
+      Object.entries(source.states).map(([koko, values]) => [
+        koko,
+        koko === BUILTIN.Transform ? structuredClone(values) : {},
+      ]),
+    ),
     instanceOf: { prefab: prefabId },
+    prefabOverrides: {},
   };
 
-  // プレハブに移さない Entity（アウトプットのものと、ほかのプレハブの中のもの）から、中の Entity への参照
+  // プレハブに移さない Entity の値・上書き・親を、新しい展開 ID に付け替える。
   const rewrites: RefRewrite[] = [];
-  const others: { e: EntityBase; owner: PrefabOwner }[] = [
-    ...snap.entities
-      .filter((e) => !inside.has(e.id))
-      .map((e) => ({ e, owner: { kind: "output" as const, id: e.output } })),
-    ...(snap.prefabEntities ?? []).map((e) => ({
-      e,
-      owner: { kind: "prefab" as const, id: e.prefab },
-    })),
-  ];
-  for (const { e, owner } of others)
-    for (const r of refFields(e.states)) {
-      const values = e.states[r.def.id];
+  const structureRewrites: PrefabFromEntityPlan["structureRewrites"] = [];
+  const rewriteStates = (
+    e: EntityBase,
+    owner: PrefabOwner,
+    states: typeof e.states,
+    override?: RefRewrite["override"],
+  ) => {
+    const rewritten = structuredClone(states);
+    for (const r of refFields(states)) {
+      const values = rewritten[r.def.id];
       if (!values || !Object.hasOwn(values, r.field.id)) continue;
       const targets: { from: EntityId; to: EntityId }[] = [];
       const value = mapRefs(r.schema, values[r.field.id], (target, id) => {
@@ -360,17 +419,71 @@ export function planPrefabFromEntity(
           fieldName: r.field.name,
           targets,
           value,
+          ...(override ? { override } : {}),
         });
+      values[r.field.id] = value;
     }
+    return rewritten;
+  };
+  const after = structuredClone(snap);
+  after.entities = after.entities.filter((e) => !inside.has(e.id));
+  after.prefabEntities = (after.prefabEntities ?? []).filter((e) => !inside.has(e.id));
+  for (const e of [...after.entities, ...after.prefabEntities]) {
+    const eOwner: PrefabOwner =
+      "output" in e ? { kind: "output", id: e.output } : { kind: "prefab", id: e.prefab };
+    const mapStructure = (value: string, kind: string) => {
+      const next = expandedId(value) ?? value;
+      if (next !== value)
+        structureRewrites.push({
+          owner: eOwner,
+          entity: e.id,
+          name: e.name,
+          kind,
+          from: value,
+          to: next,
+        });
+      return next;
+    };
+    if (e.parent !== null) e.parent = mapStructure(e.parent, "親");
+    e.states = rewriteStates(e, eOwner, e.states);
+    if (e.prefabOverrides)
+      e.prefabOverrides = Object.fromEntries(
+        Object.entries(e.prefabOverrides).map(([path, patch]) => {
+          const original = path ? `${e.id}/${path}` : e.id;
+          const target = mapStructure(original, "上書きの対象");
+          const nextPath = target.startsWith(`${e.id}/`) ? target.slice(e.id.length + 1) : path;
+          return [
+            nextPath,
+            {
+              ...patch,
+              ...(typeof patch.parent === "string"
+                ? { parent: mapStructure(patch.parent, "上書きの親") }
+                : {}),
+              ...(patch.states
+                ? { states: rewriteStates(e, eOwner, patch.states, { path, added: false }) }
+                : {}),
+              ...(patch.addedStates
+                ? {
+                    addedStates: rewriteStates(e, eOwner, patch.addedStates, { path, added: true }),
+                  }
+                : {}),
+            },
+          ];
+        }),
+      );
+  }
+  if ("output" in instance) after.entities.push(instance);
+  else after.prefabEntities.push(instance);
+  after.prefabEntities.push(...prefabEntities);
 
   // 「維持」の印：プレハブに移した Entity を指すものは、プレハブに移す（あとで置くインスタンスにも効く）。
   // 選んだ Entity の Transform の印だけは、アウトプットに残す（Transform は、インスタンスそのものが持つ）
   const keepMoved: PrefabFromEntityPlan["keepMoved"] = [];
-  const outputKeep: KeepMark[] = [];
-  for (const k of output.keep) {
+  const ownerKeep: KeepMark[] = [];
+  for (const k of definition.keep) {
     const to = insideId(k.entity);
     if (to === undefined || (k.entity === source.id && k.koko === BUILTIN.Transform)) {
-      outputKeep.push(k);
+      ownerKeep.push({ ...k, entity: expandedId(k.entity) ?? k.entity });
       continue;
     }
     keepMoved.push({
@@ -379,12 +492,66 @@ export function planPrefabFromEntity(
       entityName: nameOf.get(headOf(k.entity)) ?? k.entity,
     });
   }
+  const keepRewrites: PrefabFromEntityPlan["keepRewrites"] = [];
+  for (const [kind, definitions] of [
+    ["output", snap.outputs],
+    ["prefab", snap.prefabs ?? []],
+  ] as const) {
+    for (const def of definitions) {
+      if (kind === owner.kind && def.id === owner.id) continue;
+      const changes: { from: KeepMark; to: KeepMark }[] = [];
+      const keep = def.keep.map((k) => {
+        const entity = expandedId(k.entity);
+        if (entity === undefined || entity === k.entity) return k;
+        const to = { ...k, entity };
+        changes.push({ from: k, to });
+        return to;
+      });
+      if (changes.length > 0) keepRewrites.push({ owner: { kind, id: def.id }, keep, changes });
+    }
+  }
 
   // プレハブにも入れる System：アウトプットの並びと「入・切」のまま
   const wanted = new Set(options.systems ?? []);
-  const systems: OutputSystem[] = output.systems
+  const systems: OutputSystem[] = definition.systems
     .filter((s) => wanted.has(s.id))
     .map((s) => ({ id: s.id, enabled: s.enabled }));
+  const prefab: PrefabDef = {
+    id: prefabId,
+    name: options.name ?? source.name,
+    root: rootId,
+    systems,
+    keep: keepMoved.map((k) => k.to),
+    ...("deletedParents" in definition && definition.deletedParents
+      ? {
+          deletedParents: Object.fromEntries(
+            Object.entries(definition.deletedParents).map(([id, parent]) => [
+              insideId(id) ?? id,
+              parent === null ? null : (insideId(parent) ?? parent),
+            ]),
+          ),
+        }
+      : {}),
+  };
+  for (const p of after.prefabs ?? []) {
+    p.keep =
+      p.id === owner.id && owner.kind === "prefab"
+        ? ownerKeep
+        : p.keep.map((k) => ({ ...k, entity: expandedId(k.entity) ?? k.entity }));
+    if (p.deletedParents)
+      p.deletedParents = Object.fromEntries(
+        Object.entries(p.deletedParents).map(([id, parent]) => [
+          expandedId(id) ?? id,
+          parent === null ? null : (expandedId(parent) ?? parent),
+        ]),
+      );
+  }
+  for (const o of after.outputs)
+    o.keep =
+      o.id === owner.id && owner.kind === "output"
+        ? ownerKeep
+        : o.keep.map((k) => ({ ...k, entity: expandedId(k.entity) ?? k.entity }));
+  after.prefabs = [...(after.prefabs ?? []), prefab];
 
   const moved: MovedEntity[] = moving.map(({ def, depth }) => ({
     from: def.id,
@@ -393,6 +560,16 @@ export function planPrefabFromEntity(
     name: def.name,
     depth,
   }));
+
+  if (
+    owner.kind === "prefab" &&
+    prefabUsePath(
+      { ...snap, prefabEntities: [...(snap.prefabEntities ?? []), ...prefabEntities] },
+      prefabId,
+      owner.id,
+    )
+  )
+    return refuse("プレハブの中に、自分自身を含めることはできません");
 
   // スクリプトが、ID の変わる Entity（中の Entity）を ID で探していないか。書き換えはしない
   const scriptMentions: ScriptMention[] = [];
@@ -407,20 +584,18 @@ export function planPrefabFromEntity(
     ok: true,
     plan: {
       entity: source.id,
-      output: source.output,
-      prefab: {
-        id: prefabId,
-        name: options.name ?? source.name,
-        root: rootId,
-        systems,
-        keep: keepMoved.map((k) => k.to),
-      },
+      owner,
+      prefab,
       prefabEntities,
       instance,
       moved,
       rewrites,
       keepMoved,
-      outputKeep,
+      ownerKeep,
+      keepRewrites,
+      structureRewrites,
+      before: snap,
+      after,
       outsideRefs,
       scriptMentions,
     },
