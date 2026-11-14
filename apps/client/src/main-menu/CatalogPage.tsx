@@ -325,7 +325,7 @@ const KIND_ICON: Record<string, string> = {
 };
 
 /** カードの絵：サムネイルがあればそれ、なければ種類の絵 */
-function WorkArt({ work, size }: { work: Work; size: number }) {
+export function WorkArt({ work, size }: { work: Work; size: number }) {
   if (work.thumbnail) return <Thumbnail id={work.thumbnail} name={work.name} />;
   return (
     <svg

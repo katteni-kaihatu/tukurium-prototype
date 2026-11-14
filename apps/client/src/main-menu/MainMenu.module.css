@@ -883,7 +883,21 @@
     height: 28px;
   }
 }
-.pageHeader > .button {
+.headerActions {
+  display: flex;
   flex-shrink: 0;
+  gap: 8px;
+}
+.headerActions .button {
   white-space: nowrap;
+}
+.backLink {
+  margin-bottom: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-brand);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
