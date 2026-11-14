@@ -1,8 +1,11 @@
+import { FIELD_TYPE } from "@tukurium/eks";
 import {
   BUILTIN,
   emptyProject,
   expandedEntityId,
+  expandPrefabs,
   fromFiles,
+  getPrefabOverride,
   ProjectDoc,
   toFiles,
 } from "@tukurium/repo-model";
@@ -46,6 +49,70 @@ function setup() {
 }
 
 describe("プレハブの差分と戻す（ADR 0076）", () => {
+  it.each(["stored", "override"])("格納先が変わったフィールドも保存前の形に戻す（%s）", (kind) => {
+    const { project, instance, root } = setup();
+    const koko = project.addKokoState("Health");
+    project.updateKokoState({
+      id: koko,
+      name: "Health",
+      fields: [{ id: "hp", name: "hp", type: FIELD_TYPE.number, default: 3 }],
+    });
+    project.addState(instance, koko, { hp: 5 });
+    project.addState(root, koko);
+    const head = fromFiles(toFiles(project.snapshot()));
+    project.setField(instance, koko, "hp", 7);
+    const part = kind === "stored" ? `field:${koko}:hp` : prefabPart("", "field", koko, "hp");
+    const revert = planRevert(project, head, `entity:${instance}`, part);
+    expect(revert).not.toBeNull();
+    revert?.();
+    expect(toFiles(project.snapshot())).toEqual(toFiles(head));
+    expect(describeDiff(head, project.snapshot())).toEqual([]);
+  });
+
+  it("最後のローカルフィールドを戻すと、空の上書きの印を出さない", () => {
+    const { project, instance, root } = setup();
+    const koko = project.addKokoState("Health");
+    project.updateKokoState({
+      id: koko,
+      name: "Health",
+      fields: [{ id: "hp", name: "hp", type: FIELD_TYPE.number, default: 3 }],
+    });
+    project.addState(instance, koko, { hp: 5 });
+    project.addState(root, koko);
+    project.revertPrefabField(instance, koko, "hp");
+    expect(getPrefabOverride(project.snapshot(), instance)).toBeUndefined();
+  });
+
+  it("最後のローカルフィールドを戻しても、同じ入れ物への別フィールドの同時追加は残る", () => {
+    const { project, instance, root } = setup();
+    const koko = project.addKokoState("Health");
+    project.updateKokoState({
+      id: koko,
+      name: "Health",
+      fields: [
+        { id: "hp", name: "hp", type: FIELD_TYPE.number, default: 3 },
+        { id: "max", name: "max", type: FIELD_TYPE.number, default: 10 },
+      ],
+    });
+    project.addState(root, koko);
+    const entity = project.entity(instance);
+    if (!entity) throw new Error("instance");
+    project.restoreEntity({ ...entity, states: { ...entity.states, [koko]: { hp: 5 } } });
+    const other = new ProjectDoc();
+    Y.applyUpdate(other.doc, Y.encodeStateAsUpdate(project.doc));
+    const vector = Y.encodeStateVector(project.doc);
+    project.revertPrefabField(instance, koko, "hp");
+    other.restoreEntityField(instance, koko, "max", { ...entity, states: { [koko]: { max: 50 } } });
+    const a = Y.encodeStateAsUpdate(project.doc, vector);
+    const b = Y.encodeStateAsUpdate(other.doc, vector);
+    Y.applyUpdate(project.doc, b);
+    Y.applyUpdate(other.doc, a);
+    expect(
+      expandPrefabs(project.snapshot()).entities.find((e) => e.id === instance)?.states[koko],
+    ).toEqual({ hp: 3, max: 50 });
+    expect(project.snapshot()).toEqual(other.snapshot());
+  });
+
   it.each([false, true])(
     "フィールドの保存戻しで、別のフィールドの同時編集を失わない（保存済み上書き=%s）",
     (savedOverride) => {

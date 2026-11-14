@@ -121,13 +121,16 @@ function entityRevert(
           );
         project.setInstanceSystems(id, list);
       } else {
-        project.restorePrefabOverridePart(
-          path ? `${id}/${path}` : id,
-          kind,
-          saved.prefabOverrides?.[path],
-          koko,
-          field,
-        );
+        if (path === "" && kind === "field" && koko && field)
+          project.restoreEntityField(id, koko, field, saved);
+        else
+          project.restorePrefabOverridePart(
+            path ? `${id}/${path}` : id,
+            kind,
+            saved.prefabOverrides?.[path],
+            koko,
+            field,
+          );
       }
     };
   if (part === "name") return () => project.renameEntity(id, saved.name);
@@ -152,7 +155,8 @@ function entityRevert(
     const value = before[field] as FieldValue;
     return () =>
       project.transact(() => {
-        project.setField(id, koko, field, value);
+        if (cur.instanceOf) project.restoreEntityField(id, koko, field, saved);
+        else project.setField(id, koko, field, value);
         setKeep(
           project,
           head,

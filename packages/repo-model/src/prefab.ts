@@ -96,17 +96,23 @@ export function getPrefabOverride(
   const sourceStates = { ...nestedRoot?.states, ...source?.states };
   const local = Object.fromEntries(
     Object.entries(address.path === "" ? address.instance.states : {}).filter(
-      ([koko]) => koko !== BUILTIN.Transform && sourceStates[koko],
+      ([koko, values]) =>
+        koko !== BUILTIN.Transform && sourceStates[koko] && Object.keys(values).length > 0,
     ),
   );
   const added = { ...explicit?.addedStates };
   for (const [koko, values] of Object.entries(added)) {
     if (!sourceStates[koko]) continue;
-    local[koko] = { ...local[koko], ...values };
+    if (Object.keys(values).length > 0) local[koko] = { ...local[koko], ...values };
     delete added[koko];
   }
-  if (Object.keys(local).length === 0) return explicit;
-  return { ...explicit, addedStates: added, states: mergeStateFields(local, explicit?.states) };
+  const states = mergeStateFields(local, explicit?.states);
+  for (const [koko, values] of Object.entries(states))
+    if (Object.keys(values).length === 0) delete states[koko];
+  const result: PrefabEntityOverride = { ...explicit, addedStates: added, states };
+  if (Object.keys(states).length === 0) delete result.states;
+  if (Object.keys(added).length === 0) delete result.addedStates;
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export interface ExpandOptions {

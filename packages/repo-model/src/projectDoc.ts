@@ -1025,6 +1025,25 @@ export class ProjectDoc {
     });
   }
 
+  /** 保存時のフィールドを、保存時と同じ場所へ戻す。値の入れ物は交換しない。 */
+  restoreEntityField(id: EntityId, koko: KokoStateId, field: string, saved: EntityBase): void {
+    if (!this.node(id)) return;
+    this.transact(() => {
+      const states = this.statesOf(id);
+      let values = states.get(koko);
+      const before = saved.states[koko];
+      if (before && Object.hasOwn(before, field)) {
+        if (!values) {
+          values = valueMap({});
+          states.set(koko, values);
+        }
+        values.set(field, encodeValue(before[field]));
+      } else values?.delete(field);
+      if (this.node(id)?.get("instanceOf"))
+        this.restorePrefabOverridePart(id, "field", saved.prefabOverrides?.[""], koko, field);
+    });
+  }
+
   /** 保存した上書きの一部分だけを戻す。他のフィールドの同時編集には触れない。 */
   restorePrefabOverridePart(
     id: EntityId,
