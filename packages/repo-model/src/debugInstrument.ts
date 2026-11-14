@@ -120,7 +120,7 @@ export function instrumentDebug(source: string): DebugInstrumentation {
                   replacements.push({
                     start: d.start,
                     end: d.end,
-                    text: "void 0" + source.slice(d.start, d.end).replace(/[^\r\n]/g, " "),
+                    text: `void 0${source.slice(d.start, d.end).replace(/[^\r\n]/g, " ")}`,
                   });
             }
           }

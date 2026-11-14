@@ -18,6 +18,7 @@ import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/Panel
 import { BagPanel } from "../session/BagPanel";
 import { SessionBelongings } from "../session/SessionBelongings";
 import type { SessionEngine } from "../session/SessionEngine";
+import { DebugPanel } from "./DebugPanel";
 import { DetailPanel, ResourceDetailDrawer } from "./DefinitionProperties";
 import { EditorPanel } from "./EditorPanel";
 import { HistoryPanel } from "./HistoryPanel";
@@ -92,6 +93,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const problemsOpen = useWorkspace((s) => s.problemsOpen);
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
+  const debugOpen = useWorkspace((s) => s.debugOpen);
   const importOpen = useWorkspace((s) => s.importOpen);
   const detail = useWorkspace((s) => s.detail);
   const kokoPickerOpen = useWorkspace((s) => s.kokoPickerOpen);
@@ -102,6 +104,14 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const editMode = useWorkspace((s) => s.mode === "edit");
   const panels: PanelSpec[] = [];
   if (ready) {
+    if (debugOpen)
+      panels.push({
+        id: "ws-debug",
+        title: "デバッグ",
+        initial: { right: 32, y: 150, width: 500, height: 600 },
+        render: () => <DebugPanel />,
+        onClose: () => useWorkspace.setState({ debugOpen: false }),
+      });
     if (saveOpen) {
       panels.push({
         id: "ws-save",

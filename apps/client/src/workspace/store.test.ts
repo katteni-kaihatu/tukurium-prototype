@@ -1,7 +1,8 @@
 import { World } from "@tukurium/eks";
-import { buildRegistry, emptyProject, ProjectDoc } from "@tukurium/repo-model";
+import { buildRegistry, DebugSettingsDoc, emptyProject, ProjectDoc } from "@tukurium/repo-model";
 import { Simulation } from "@tukurium/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
 
 const fake = vi.hoisted(() => {
   vi.stubGlobal("window", {});
@@ -61,6 +62,45 @@ function simulation() {
     nameOf: (id: string) => id,
   } as unknown as Simulation;
 }
+
+it("再接続した共同編集者は未送信のデバッグ設定を再送する", () => {
+  const project = useWorkspace.getState().project;
+  if (!project) throw new Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, role: "editor" });
+  const server = new Y.Doc();
+  receive({
+    t: "ws.debugDoc",
+    workspaceId: "w_test",
+    full: true,
+    update: Buffer.from(Y.encodeStateAsUpdate(server)).toString("base64"),
+  });
+  expect(useWorkspace.getState().debug?.read().enabled).toBe(true);
+  const sent = fake.send.mock.calls.map((c) => c[0]).find((m) => m.t === "ws.debugUpdate");
+  expect(sent).toBeDefined();
+  Y.applyUpdate(server, Buffer.from(sent.update, "base64"));
+  expect(server.getMap("settings").get("enabled")).toBe(true);
+  server.destroy();
+});
+
+it("再接続で閲覧権限になったら未送信のデバッグ設定を捨てる", () => {
+  const project = useWorkspace.getState().project;
+  if (!project) throw new Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, role: "viewer" });
+  const server = new Y.Doc();
+  receive({
+    t: "ws.debugDoc",
+    workspaceId: "w_test",
+    full: true,
+    update: Buffer.from(Y.encodeStateAsUpdate(server)).toString("base64"),
+  });
+  expect(useWorkspace.getState().debug?.read().enabled).toBe(false);
+  expect(fake.send.mock.calls.some((c) => c[0].t === "ws.debugUpdate")).toBe(false);
+  server.destroy();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

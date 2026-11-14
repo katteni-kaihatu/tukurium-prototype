@@ -1,6 +1,7 @@
 import { type EntityId, type FieldSchemas, World } from "@tukurium/eks";
 import {
   buildRegistry,
+  DebugSettingsDoc,
   type Diagnostic,
   EXPANDED_ID_SEPARATOR,
   type ObservedDiagnostics,
@@ -64,6 +65,10 @@ export interface RuntimeView {
 }
 
 interface WorkspaceState {
+  debug: DebugSettingsDoc | null;
+  debugReady: boolean;
+  debugRev: number;
+  debugOpen: boolean;
   workspaceId: string | null;
   project: ProjectDoc | null;
   awareness: Awareness | null;
@@ -216,6 +221,23 @@ interface WorkspaceState {
 const MAX_LOGS = 200;
 let seq = 0;
 let sync: WorkspaceSync | null = null;
+const DEBUG_REMOTE = Symbol("debug-remote");
+function newDebug(project: ProjectDoc): DebugSettingsDoc {
+  const debug = new DebugSettingsDoc(project);
+  debug.doc.on("update", (update: Uint8Array, origin: unknown) => {
+    const s = useWorkspace.getState();
+    if (s.debug !== debug) return;
+    useWorkspace.setState({ debugRev: s.debugRev + 1 });
+    if (
+      origin !== DEBUG_REMOTE &&
+      s.debugReady &&
+      s.workspaceId &&
+      (s.role === "editor" || s.role === "admin")
+    )
+      client().send({ t: "ws.debugUpdate", workspaceId: s.workspaceId, update: toB64(update) });
+  });
+  return debug;
+}
 let unobserve: (() => void) | null = null;
 // Stop や出力切替の後に、待機中だった Play が再生を戻さないようにする。
 let playGeneration = 0;
@@ -248,6 +270,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
   };
 
   return {
+    debug: null,
+    debugReady: false,
+    debugRev: 0,
+    debugOpen: false,
     workspaceId: null,
     project: null,
     awareness: null,
@@ -328,6 +354,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       if (get().workspaceId === workspaceId) return;
       get().leave();
       const project = new ProjectDoc(new Y.Doc());
+      const debug = newDebug(project);
       const awareness = new Awareness(project.doc);
       awareness.setLocalStateField("user", {
         name: useApp.getState().myName,
@@ -337,6 +364,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       sync = new WorkspaceSync(client(), workspaceId, project.doc, awareness);
       unobserve = project.observe(() => {
         const s = get();
+        if (s.role === "editor" || s.role === "admin") s.debug?.prune();
         // アウトプットが消えたら別のものに切り替える
         const outputs = s.project?.outputs() ?? [];
         const outputId = outputs.some((o) => o.id === s.outputId)
@@ -352,6 +380,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       });
       set({
         workspaceId,
+        debug,
+        debugReady: false,
+        debugRev: 0,
+        debugOpen: false,
         project,
         awareness,
         role: null,
@@ -405,7 +437,12 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       unobserve?.();
       unobserve = null;
       awareness?.destroy();
+      get().debug?.dispose();
       set({
+        debug: null,
+        debugReady: false,
+        debugRev: 0,
+        debugOpen: false,
         workspaceId: null,
         project: null,
         awareness: null,
@@ -551,6 +588,33 @@ const log = (message: string, level: LogEntry["level"] = "log") =>
 client().on((msg) => {
   const s = ws();
   switch (msg.t) {
+    case "ws.debugDoc": {
+      if (msg.workspaceId !== s.workspaceId || !s.project) return;
+      const canWrite = s.role === "editor" || s.role === "admin";
+      const debug = msg.full && (!s.debug || !canWrite) ? newDebug(s.project) : s.debug;
+      if (!debug) return;
+      if (msg.full) {
+        const server = new Y.Doc();
+        Y.applyUpdate(server, fromB64(msg.update));
+        const vector = Y.encodeStateVector(server);
+        server.destroy();
+        if (s.debug !== debug) s.debug?.dispose();
+        set({ debug, debugReady: true });
+        Y.applyUpdate(debug.doc, fromB64(msg.update), DEBUG_REMOTE);
+        if (canWrite) {
+          const missing = Y.encodeStateAsUpdate(debug.doc, vector);
+          if (missing.length > 2)
+            client().send({
+              t: "ws.debugUpdate",
+              workspaceId: msg.workspaceId,
+              update: toB64(missing),
+            });
+        }
+        return;
+      }
+      Y.applyUpdate(debug.doc, fromB64(msg.update), DEBUG_REMOTE);
+      return;
+    }
     case "ws.created":
       s.open(msg.workspaceId);
       return;

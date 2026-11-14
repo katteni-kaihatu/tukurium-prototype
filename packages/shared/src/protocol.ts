@@ -13,7 +13,7 @@ import { z } from "zod";
  * 14：制作データに、プレハブ（prefabs・prefabEntities）と、インスタンスの印（Entity の instanceOf）が入った
  * （ADR 0076）。
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;
@@ -334,6 +334,7 @@ export const ClientMessage = z.discriminatedUnion("t", [
   /** ワークスペースを閉じる（管理権限）。一覧からなくなり、開いていた人も出る */
   z.object({ t: z.literal("ws.end"), workspaceId: id }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),
+  z.object({ t: z.literal("ws.debugUpdate"), workspaceId: id, update: b64 }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
   z.object({
     t: z.literal("ws.setRole"),
@@ -477,6 +478,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
     by: z.string(),
   }),
   z.object({ t: z.literal("ws.doc"), workspaceId: id, update: b64, role: WorkspaceRole }),
+  z.object({ t: z.literal("ws.debugDoc"), workspaceId: id, update: b64, full: z.boolean() }),
   z.object({ t: z.literal("ws.denied"), workspaceId: id, reason: z.string() }),
   /** ワークスペースが閉じられた。開いていた人に届く */
   z.object({ t: z.literal("ws.ended"), workspaceId: id, reason: z.string() }),

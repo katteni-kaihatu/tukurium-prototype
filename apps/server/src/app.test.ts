@@ -723,6 +723,47 @@ describe("本人識別とセッション", () => {
 });
 
 describe("ワークスペース", () => {
+  it("デバッグ設定を共有し、閲覧者の変更を拒み、制作データには保存しない", async () => {
+    const { url, store } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("ws.debugDoc", (m) => m.full);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    await b.next("ws.debugDoc", (m) => m.full);
+    a.send({
+      t: "ws.debugUpdate",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("settings").set("enabled", true)),
+    });
+    const shared = await b.next("ws.debugDoc", (m) => !m.full);
+    const debug = new Y.Doc();
+    Y.applyUpdate(debug, Buffer.from(shared.update, "base64"));
+    expect(debug.getMap("settings").get("enabled")).toBe(true);
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "viewer" });
+    await b.next("ws.role");
+    b.send({
+      t: "ws.debugUpdate",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("settings").set("enabled", false)),
+    });
+    expect((await b.next("error")).message).toContain("共同編集");
+    a.send({
+      t: "ws.update",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("meta").set("name", "saved")),
+    });
+    await b.next("ws.update");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const saved = new Y.Doc();
+    const bytes = await store.loadDoc(workspaceId);
+    if (!bytes) throw new Error("保存されていません");
+    Y.applyUpdate(saved, bytes);
+    expect(saved.getMap("settings").size).toBe(0);
+    expect(saved.getMap("meta").get("name")).toBe("saved");
+    debug.destroy();
+    saved.destroy();
+  });
+
   it("既定の権限（共同編集）で参加し、互いの変更が届く", async () => {
     const { url } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);

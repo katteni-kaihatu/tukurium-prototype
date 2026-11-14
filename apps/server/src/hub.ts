@@ -136,6 +136,7 @@ interface LoadedRelease {
 }
 
 interface Workspace {
+  debugRoom: DocRoom;
   meta: WorkspaceMeta;
   session: Session;
   room: DocRoom;
@@ -475,6 +476,13 @@ export class Hub {
         if (w && !w.room.receive(conn.id, fromB64(msg.update))) {
           this.send(conn, { t: "error", message: "このワークスペースを編集する権限がありません" });
         }
+        return;
+      }
+      case "ws.debugUpdate": {
+        const w = this.workspaceFor(conn, msg.workspaceId);
+        if (!w || w.ended) return;
+        if (!w.debugRoom.receive(conn.id, fromB64(msg.update)))
+          return this.deny(conn, "デバッグ設定の変更には共同編集の権限が必要です");
         return;
       }
       case "ws.awareness": {
@@ -1346,6 +1354,10 @@ export class Hub {
     const existing = this.workspaces.get(meta.id);
     if (existing) return existing;
     const w: Workspace = {
+      debugRoom: new DocRoom((peerId) => {
+        const c = this.conns.get(peerId);
+        return c?.user ? this.roleOf(w, c.user.id) : null;
+      }),
       meta,
       session,
       room: new DocRoom((peerId) => {
@@ -1402,12 +1414,26 @@ export class Hub {
       false,
     );
     if (!joined) return;
+    w.debugRoom.join(
+      {
+        id: conn.id,
+        sendUpdate: (u) =>
+          this.send(conn, { t: "ws.debugDoc", workspaceId, update: toB64(u), full: false }),
+      },
+      false,
+    );
     // 全体は権限と一緒に送る
     this.send(conn, {
       t: "ws.doc",
       workspaceId,
       update: toB64(Y.encodeStateAsUpdate(w.room.doc)),
       role,
+    });
+    this.send(conn, {
+      t: "ws.debugDoc",
+      workspaceId,
+      update: toB64(Y.encodeStateAsUpdate(w.debugRoom.doc)),
+      full: true,
     });
     if (!w.host && role === "admin" && !conn.agent) this.setHost(w, conn);
     else if (w.lastFrame) this.send(conn, { t: "ws.frame", workspaceId, frame: w.lastFrame });
@@ -1421,6 +1447,7 @@ export class Hub {
     if (!w) return;
     w.conns.delete(conn);
     w.room.leave(conn.id);
+    w.debugRoom.leave(conn.id);
     if (w.host === conn) this.migrateHost(w);
     this.sendPreview(w, conn);
     this.broadcastSession(w.session);
@@ -1458,11 +1485,13 @@ export class Hub {
     for (const c of [...w.conns]) {
       c.open.delete(w.meta.id);
       w.room.leave(c.id);
+      w.debugRoom.leave(c.id);
       this.send(c, { t: "ws.ended", workspaceId: w.meta.id, reason });
     }
     w.conns.clear();
     w.host = null;
     w.room.doc.destroy();
+    w.debugRoom.doc.destroy();
     session.workspaces.delete(w.meta.id);
     this.workspaces.delete(w.meta.id);
     this.broadcastSession(session);
@@ -1526,6 +1555,7 @@ export class Hub {
     await this.store.saveWorkspace(w.meta);
     // 閲覧できなくなった接続を外す
     const removed = new Set(w.room.revalidate());
+    w.debugRoom.revalidate();
     for (const c of [...w.conns]) {
       if (c.user?.id !== userId) continue;
       const r = this.roleOf(w, userId);

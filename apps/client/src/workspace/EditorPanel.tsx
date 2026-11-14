@@ -21,6 +21,7 @@ import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
+import { debugGutter } from "./debugGutter";
 import { type LineChanges, lineChanges } from "./diffView";
 import { editorIntelligence } from "./editorIntelligence";
 import { useProject } from "./hooks";
@@ -228,6 +229,9 @@ function CodeView({ systemId }: { systemId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const marks = useRef(new Compartment());
+  const debugMarks = useRef(new Compartment());
+  const debugRev = useWorkspace((s) => s.debugRev);
+  const projectRev = useWorkspace((s) => s.rev);
   const lines = useProblems()
     .map((p) => (p.subject.id === systemId ? scriptLine(p) : null))
     .filter((n): n is number => n !== null);
@@ -271,6 +275,7 @@ function CodeView({ systemId }: { systemId: string }) {
           text ? yCollab(text, awareness) : [],
           EditorState.readOnly.of(readOnly),
           marks.current.of([]),
+          debugMarks.current.of(debugGutter(systemId)),
           lineChangesField,
           lineChangeGutter,
           EditorView.updateListener.of((u) => {
@@ -343,6 +348,11 @@ function CodeView({ systemId }: { systemId: string }) {
   }, [savedCode]);
 
   // 問題のある行の印
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 共有設定と本文の版が変わるたびに位置を読み直す
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: debugMarks.current.reconfigure(debugGutter(systemId)) });
+  }, [debugRev, projectRev, systemId]);
+
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
