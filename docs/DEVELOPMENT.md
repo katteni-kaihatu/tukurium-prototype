@@ -56,6 +56,14 @@
 - ブラウザでは型を確かめる処理を Worker（`typecheck.worker.ts`）に入れ、TypeScript の本体（約 4.7 MB）を画面の本体に入れない。ワークスペースの準備が終わる前に制作データを書き換えても、型の確かめは走らない（確かめ用のスクリプトでは少し待ってから書き換える）。
 - 開発サーバー（Vite）は、Worker で初めて読む `typescript6` をその場で取り込み直し、ページを読み込み直してしまう（背骨の E2E の m1 が途中で落ちた）。`apps/client/vite.config.ts` の `optimizeDeps.include` に入れて、起動時に取り込んでおく。
 
+## プレハブ（ADR 0076）
+
+- Entity を使う所（再生・表示・「指す先があるか」の確かめ）は、`expandPrefabs()` で展開した並びを読む。展開せずに `snapshot.entities` を読むと、インスタンスは Transform だけの Entity に見え、中の Entity は見つからない。画面では `useExpanded()`（`workspace/hooks.ts`）を使う。
+- 展開したあとの制作データは、読むだけにする。取っておいた結果（`PrefabExpansionCache`）を次の展開でも使うので、書き換えると、次の表示が壊れる。プレハブを開いた形の値は凍らせてあり、書き換えると例外になる。
+- プレハブの中の Entity は `snapshot.prefabEntities`（Y.Doc では `prefabEntities`）にあり、`entities` には入らない。Entity を全部たどる処理（KokoState・マテリアル・素材を消したときの片付けなど）は、両方をたどる（`ProjectDoc` の `nodes()`）。
+- 展開した Entity の ID は「インスタンスの ID `/` 中の Entity の ID」。セッションでは、さらに頭に配置の ID が付く（`配置/インスタンス/中の Entity`）。Entity の ID を `/` で切って意味を読まない。
+- 計測は `pnpm bench:prefab`。
+
 ## 物理（Rapier）
 
 - Collider は物理を 1 回進めるまでレイキャストに当たらない。そのため各ステップでは物理を先に進めてから、入力とスクリプトを処理する。プレイヤー側の当たり判定も、形を反映したあとに一度 `step` してから移動を問い合わせる（ADR 0068）。

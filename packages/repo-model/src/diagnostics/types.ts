@@ -12,7 +12,8 @@ export type ResourceKind =
   | "system"
   | "typedef"
   | "material"
-  | "asset";
+  | "asset"
+  | "prefab";
 
 export interface ResourceRef {
   kind: ResourceKind;

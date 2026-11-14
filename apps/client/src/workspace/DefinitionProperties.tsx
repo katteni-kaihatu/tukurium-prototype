@@ -31,7 +31,7 @@ import {
   typeDefChange,
 } from "./changeMarks";
 import { FieldInput } from "./FieldInput";
-import { useCanEdit, useProject } from "./hooks";
+import { useCanEdit, useExpanded, useProject } from "./hooks";
 import { KokoFieldRow } from "./KokoFieldRow";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
@@ -87,6 +87,8 @@ export function DefinitionProperties({
       return <AssetProperties key={selection.id} id={selection.id} />;
     case "folder":
       return <FolderProperties id={selection.id} />;
+    case "prefab":
+      return <PrefabProperties id={selection.id} />;
   }
 }
 
@@ -139,9 +141,13 @@ function OutputProperties({ id }: { id: string }) {
   const project = useProject();
   const canEdit = useCanEdit();
   const saved = useSavedFiles();
+  const expanded = useExpanded();
   const output = project.output(id);
   if (!output) return <p className={ui.empty}>アウトプットが見つかりません</p>;
   const editing = canEdit;
+  // 動かす System：アウトプットのものと、置いたプレハブのもの（ADR 0076）
+  const running = expanded.outputs.find((o) => o.id === id)?.systems ?? output.systems;
+  const fromPrefabs = running.filter((s) => !output.systems.some((o) => o.id === s.id));
   // このプロジェクトの System と、依存のライブラリの System（`@別名/名前`。ADR 0015）
   const systems = [
     ...project.systems().map((s) => ({
@@ -159,7 +165,7 @@ function OutputProperties({ id }: { id: string }) {
   // 有効な System のコードから読み取った、要る権限（ADR 0012）
   const capabilities = [
     ...new Set(
-      output.systems
+      running
         .filter((s) => s.enabled)
         .flatMap(
           (s) =>
@@ -297,7 +303,7 @@ function OutputProperties({ id }: { id: string }) {
         <div className={ui.sectionHead}>
           <ChangeMark kind={changed.systems} target={{ entry: `output:${id}`, part: "systems" }} />
           <h3 className={ui.sectionTitle}>Systems</h3>
-          <span className={ui.badge}>{output.systems.filter((s) => s.enabled).length} 有効</span>
+          <span className={ui.badge}>{running.filter((s) => s.enabled).length} 有効</span>
         </div>
         <p className={ui.muted}>
           このアウトプットで動かす System と実行順。無効な System は Query
@@ -357,7 +363,37 @@ function OutputProperties({ id }: { id: string }) {
             );
           })}
         </ul>
-        {output.systems.length === 0 && <p className={ui.empty}>System がありません</p>}
+        {running.length === 0 && <p className={ui.empty}>System がありません</p>}
+        {fromPrefabs.length > 0 && (
+          <>
+            <p className={ui.muted}>
+              置いたプレハブの System。上の System
+              のあとに動きます。切ると、このアウトプットでは動きません。
+            </p>
+            <ul className={ui.list} aria-label="プレハブの System">
+              {fromPrefabs.map((ref) => {
+                const def = systems.find((s) => s.id === ref.id);
+                return (
+                  <li key={ref.id} className={ui.item}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${def?.name ?? ref.id} を有効にする`}
+                      checked={ref.enabled}
+                      disabled={!editing}
+                      onChange={(e) =>
+                        update({
+                          systems: [...output.systems, { id: ref.id, enabled: e.target.checked }],
+                        })
+                      }
+                    />
+                    <span className={ui.itemName}>{def?.name ?? "（削除された System）"}</span>
+                    <span className={ui.badge}>プレハブ</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
         {editing && unused.length > 0 && (
           <select
             className={ui.select}
@@ -1131,6 +1167,121 @@ function AssetProperties({ id }: { id: string }) {
   );
 }
 
+/**
+ * プレハブの詳細（ADR 0076）：名前・場所・中身の数・置いたインスタンス。ここから、いまのアウトプットに
+ * インスタンスを置ける。中身は、いまは読むだけ（Hierarchy と Inspector で直すのは、次の段階）。
+ */
+function PrefabProperties({ id }: { id: string }) {
+  const closeDetail = useCloseDetail();
+  const project = useProject();
+  const canEdit = useCanEdit();
+  const { error, safely } = useSafe();
+  const { select, outputId, setOutput, viewPoint } = useWorkspace();
+  const prefab = project.prefab(id);
+  if (!prefab) return <p className={ui.empty}>プレハブが見つかりません</p>;
+  const index = ResourcePathIndex.fromSnapshot(project.snapshot());
+  const entities = project.prefabEntities(id);
+  const instances = project.instancesOf(id);
+  const output = project.output(outputId);
+  const canPlace = canEdit && output !== undefined && output.kind !== "library";
+  const systemName = (sid: string) => project.system(sid)?.name ?? "（削除された System）";
+  const place = () =>
+    safely(() => {
+      const made = project.addInstance({
+        output: outputId,
+        prefab: id,
+        position: viewPoint?.() ?? [0, 1, 0],
+      });
+      select({ kind: "entity", id: made });
+    });
+  const remove = () => {
+    const message =
+      instances.length > 0
+        ? `プレハブ「${prefab.name}」を消しますか？置いてある ${instances.length} 個のインスタンスは、中身のない Entity として残り、問題として出ます。`
+        : `プレハブ「${prefab.name}」を消しますか？`;
+    if (!confirm(message)) return;
+    project.removePrefab(id);
+    closeDetail();
+  };
+  return (
+    <div className={ui.section}>
+      <div className={ui.sectionHead}>
+        <h3 className={ui.sectionTitle}>プレハブ</h3>
+      </div>
+      <NameRow
+        id={id}
+        value={prefab.name}
+        disabled={!canEdit}
+        onCommit={(name) => safely(() => project.renamePrefab(id, name))}
+      />
+      {error && <p className={ui.error}>{error}</p>}
+      <InfoList
+        label="プレハブの情報"
+        rows={[
+          ["場所", index.pathOf(id) ?? "（フォルダが輪になっています）"],
+          ["中の Entity", `${entities.length} 個`],
+          [
+            "System",
+            prefab.systems.length > 0
+              ? prefab.systems.map((s) => systemName(s.id)).join("、")
+              : "なし",
+          ],
+          ["インスタンス", `${instances.length} 個`],
+        ]}
+      />
+      <div className={ui.row}>
+        <button
+          type="button"
+          className={ui.btn}
+          disabled={!canPlace}
+          title={
+            output?.kind === "library"
+              ? "ライブラリには置けません"
+              : "いま開いているアウトプットに、インスタンスを置く"
+          }
+          onClick={place}
+        >
+          アウトプットに置く
+        </button>
+        <button type="button" className={ui.btn} disabled={!canEdit} onClick={remove}>
+          プレハブを消す
+        </button>
+      </div>
+      <h3 className={ui.sectionTitle}>置いてある所</h3>
+      {instances.length === 0 ? (
+        <p className={ui.muted}>まだどこにも置いていません。</p>
+      ) : (
+        <ul className={ui.list} aria-label="インスタンス">
+          {instances.map((e) =>
+            "output" in e ? (
+              <li key={e.id}>
+                <button
+                  type="button"
+                  className={ui.item}
+                  onClick={() => {
+                    if (e.output !== outputId) setOutput(e.output);
+                    select({ kind: "entity", id: e.id });
+                  }}
+                >
+                  <span className={ui.itemName}>
+                    {`${project.output(e.output)?.name ?? e.output} の「${e.name}」`}
+                  </span>
+                </button>
+              </li>
+            ) : (
+              <li key={e.id} className={ui.item}>
+                <span className={ui.itemName}>
+                  {`プレハブ「${project.prefab(e.prefab)?.name ?? e.prefab}」の中の「${e.name}」`}
+                </span>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** ラベルと値を並べた、読むだけの一覧 */
 function InfoList({ label, rows }: { label: string; rows: [string, string][] }) {
   return (
@@ -1151,6 +1302,7 @@ const RESOURCE_KIND_LABEL = {
   kokostate: "KokoState",
   system: "Script",
   material: "Material",
+  prefab: "Prefab",
   model: "Model",
   image: "Texture",
   audio: "Audio",
@@ -1182,6 +1334,10 @@ function FolderProperties({ id }: { id: string }) {
       .materials()
       .filter((m) => inside(m.id))
       .map((m) => ({ id: m.id, name: m.name, kind: RESOURCE_KIND_LABEL.material })),
+    ...project
+      .prefabs()
+      .filter((x) => inside(x.id))
+      .map((x) => ({ id: x.id, name: x.name, kind: RESOURCE_KIND_LABEL.prefab })),
     ...project
       .assets()
       .filter((x) => inside(x.id))

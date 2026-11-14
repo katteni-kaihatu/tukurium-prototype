@@ -31,7 +31,7 @@ export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: s
 
 /** KokoState・マテリアル・スクリプト・素材。Inspector とは別の詳細パネルで開く */
 export type DetailTarget = {
-  kind: "koko" | "system" | "typedef" | "material" | "asset" | "folder";
+  kind: "koko" | "system" | "typedef" | "material" | "asset" | "folder" | "prefab";
   id: string;
 };
 

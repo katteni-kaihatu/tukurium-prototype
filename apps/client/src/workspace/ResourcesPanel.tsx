@@ -36,7 +36,7 @@ const loadView = (): View => {
 };
 
 /**
- * Resources：リポジトリの KokoState 定義・System・マテリアル・素材（アウトプット間で共有）。
+ * Resources：リポジトリの KokoState 定義・System・マテリアル・プレハブ・素材（アウトプット間で共有）。
  * デザインどおり、左にフォルダの木、右にいまのフォルダの中身を並べる。
  * - クリックで選ぶ（KokoState・マテリアル・スクリプト・テクスチャ・モデルは詳細パネルで開く）
  * - ダブルクリックで開く（フォルダに入る・コードを開く）
@@ -134,6 +134,7 @@ export function ResourcesPanel() {
     else if (it.kind === "system") showDetail("system", it.id);
     else if (it.kind === "typedef") showDetail("typedef", it.id);
     else if (it.kind === "material") showDetail("material", it.id);
+    else if (it.kind === "prefab") showDetail("prefab", it.id);
     else if (it.kind === "image" || it.kind === "model" || it.kind === "audio")
       showDetail("asset", it.id);
     else if (it.kind === "folder" && it.id !== BUILTIN_FOLDER) showDetail("folder", it.id);
@@ -157,7 +158,7 @@ export function ResourcesPanel() {
   const placeHere = (id: string) => {
     if (here && !readOnlyHere) project.moveResource(id, here);
   };
-  const create = (kind: "folder" | "koko" | "script" | "types" | "material") => {
+  const create = (kind: "folder" | "koko" | "script" | "types" | "material" | "prefab") => {
     setNewOpen(false);
     setError(null);
     // 作ったものを入れるフォルダ。そこで空いている名前を付ける（同じ場所で名前がぶつからないように）
@@ -186,6 +187,10 @@ export function ResourcesPanel() {
         placeHere(id);
         pick({ id, kind: "typedef", name: "", parent: here });
         openCode(id);
+      } else if (kind === "prefab") {
+        const id = project.addPrefab(project.freeName("新しいプレハブ", target));
+        placeHere(id);
+        pick({ id, kind: "prefab", name: "", parent: here });
       } else {
         const id = project.addMaterial(project.freeName("Material", target, numbered));
         placeHere(id);
@@ -238,6 +243,9 @@ export function ResourcesPanel() {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
             e.dataTransfer.setData("application/x-tukurium-resource", it.id);
+            // プレハブは、Hierarchy に落とすとインスタンスを置ける
+            if (it.kind === "prefab")
+              e.dataTransfer.setData("application/x-tukurium-prefab", it.id);
             e.dataTransfer.effectAllowed = "move";
           },
         }
@@ -420,6 +428,12 @@ export function ResourcesPanel() {
                 label="Material"
                 sub="色・粗さ・金属感・画像"
                 onClick={() => create("material")}
+              />
+              <NewItem
+                kind="prefab"
+                label="プレハブ"
+                sub="Entity のまとまりを部品にして、アウトプットに何個でも置く"
+                onClick={() => create("prefab")}
               />
               <NewItem
                 kind="folder"
@@ -629,7 +643,9 @@ export function ResourcesPanel() {
           </button>
         )}
         <span style={{ flex: 1 }} />
-        <span className={styles.hint}>ダブルクリックで開く · ドラッグでフォルダへ移す</span>
+        <span className={styles.hint}>
+          ダブルクリックで開く · ドラッグでフォルダへ移す · プレハブは Hierarchy へドラッグで置く
+        </span>
       </div>
     </div>
   );
@@ -752,6 +768,13 @@ function KindIcon({ item, size, large }: { item: ResItem; size: number; large?: 
       return (
         <svg {...p} aria-hidden="true">
           <path d="M8 4H6a2 2 0 0 0-2 2v4l-1.5 2L4 14v4a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v4l1.5 2-1.5 2v4a2 2 0 0 1-2 2h-2" />
+        </svg>
+      );
+    case "prefab":
+      return (
+        <svg {...p} aria-hidden="true">
+          <path d="M12 2.5l8.5 4.7v9.6L12 21.5l-8.5-4.7V7.2z" />
+          <path d="M12 8l4 2.2v4.4L12 17l-4-2.4v-4.4z" />
         </svg>
       );
     case "model":
