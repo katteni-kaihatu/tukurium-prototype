@@ -324,7 +324,9 @@ export class WorkspaceController {
       this.frameTimer += dt;
       if (this.frameTimer > FRAME_SEC) {
         this.frameTimer = 0;
-        sendFrame();
+        // デバッグで止まっている間は、止まったとき・値を変えたとき・進めたときに配っている。
+        // 同じ世界を配り続けない（音と効果が残っているときだけ配る）。
+        if (!ws.debugStop || sounds.length > 0 || effects.length > 0) sendFrame();
       }
       this.refreshUi(dt, ws.sim.systemStatus());
     } else if (ws.mode !== "edit" && ws.remote) {
