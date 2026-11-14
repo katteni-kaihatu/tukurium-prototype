@@ -351,6 +351,55 @@ describe("Simulation：System の扱い", () => {
       expect(sim.world.get("e1", "ks_h")?.cards).toEqual([{ label: "Z", joker: false }]);
     });
 
+    it("適用：維持を付けた入れ子のフィールドは、まるごと引き継ぐ。型の定義が変わっていたら、新しい型に合わせる", async () => {
+      const kept = () => {
+        const p = hand();
+        const out = p.outputs[0];
+        if (out) out.keep = [{ entity: "e1", koko: "ks_h", field: "cards" }];
+        return p;
+      };
+      sim = await Simulation.create(kept(), "out", { realm: "r", schemas });
+      const cards = () => sim?.world.get("e1", "ks_h")?.cards;
+      sim.step(0.1);
+      const before = [
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+      ];
+      expect(cards()).toEqual(before);
+
+      // 型が同じ：実行で足したカードも、中の参照も、そのまま残る
+      expect(sim.applyPart("r", "out", kept(), undefined, schemas)).toMatchObject({
+        kept: 1,
+        dropped: 0,
+      });
+      expect(cards()).toEqual(before);
+
+      // 型の文は同じで、型の定義にフィールドが足された：足りないフィールドを埋めて引き継ぐ
+      const withJoker: ValueSchema = {
+        kind: "record",
+        fields: [
+          { name: "label", optional: false, schema: { kind: "string" } },
+          { name: "owner", optional: false, schema: owner },
+          { name: "joker", optional: false, schema: { kind: "boolean" } },
+        ],
+      };
+      expect(
+        sim.applyPart("r", "out", kept(), undefined, {
+          ks_h: { cards: { kind: "list", item: withJoker } },
+        }),
+      ).toMatchObject({ kept: 1, dropped: 0 });
+      expect(cards()).toEqual(before.map((c) => ({ ...c, joker: false })));
+
+      // 型の定義が変わって、合わせても合わない（label が数になった）：引き継がず、制作データの値にする
+      const numbered = cardOf({ kind: "number" });
+      expect(
+        sim.applyPart("r", "out", kept(), undefined, {
+          ks_h: { cards: { kind: "list", item: numbered } },
+        }),
+      ).toMatchObject({ kept: 0, dropped: 1 });
+      expect(cards()).toEqual([{ label: "Z", owner: "e1" }]);
+    });
+
     it("スキーマが分からないフィールドは、値の確かめをせずに通す", async () => {
       sim = await Simulation.create(hand(), "out", { realm: "r" });
       sim.step(0.1);

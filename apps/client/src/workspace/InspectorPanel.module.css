@@ -317,6 +317,20 @@
   opacity: 0.5;
 }
 
+/* 入れ子の値（レコード・リストなど）で縦に伸びる欄は、印と「維持」を名前の行にそろえる */
+.fieldRow:has(> [data-block]) {
+  align-items: start;
+}
+
+.fieldRow:has(> [data-block]) > :first-child {
+  margin-top: 11px;
+}
+
+.fieldRow:has(> [data-block]) > .keep,
+.fieldRow:has(> [data-block]) > .keepOn {
+  margin-top: 4px;
+}
+
 /* KokoState を一つずつ枠で囲む（境界を分かりやすく） */
 .kokoCard {
   margin: 0 12px 10px;

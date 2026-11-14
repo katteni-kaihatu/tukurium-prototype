@@ -1,7 +1,5 @@
 import type { FieldDef, KokoStateDef } from "@tukurium/eks";
 import {
-  BASIC_FIELD_TYPES,
-  basicFieldType,
   type GuestPolicy,
   inferCapabilities,
   KOKO_ROLES,
@@ -34,6 +32,7 @@ import {
 } from "./changeMarks";
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useProject } from "./hooks";
+import { KokoFieldRow } from "./KokoFieldRow";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
 import { ThumbnailField } from "./ThumbnailField";
@@ -464,76 +463,15 @@ function KokoDefProperties({ id }: { id: string }) {
           </p>
         )}
         {def.fields.map((f) => (
-          <div
+          <KokoFieldRow
             key={f.id}
-            style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 6 }}
-          >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "8px minmax(0, 1fr) 110px 26px",
-                gap: 6,
-                alignItems: "center",
-              }}
-            >
-              <ChangeMark
-                kind={changed.fields[f.id] ?? null}
-                target={{ entry: `koko:${id}`, part: `field:${f.id}` }}
-              />
-              <input
-                key={`${f.id}:${f.name}`}
-                className={ui.input}
-                aria-label="フィールド名"
-                defaultValue={f.name}
-                disabled={!editing}
-                onBlur={(e) =>
-                  e.target.value !== f.name && setField(f.id, { name: e.target.value })
-                }
-                onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-              />
-              <select
-                className={ui.select}
-                aria-label={`${f.name} の型`}
-                title={f.type}
-                value={basicFieldType(f.type)?.type ?? f.type}
-                disabled={!editing}
-                onChange={(e) => {
-                  const t = BASIC_FIELD_TYPES.find((x) => x.type === e.target.value);
-                  if (t) setField(f.id, { type: t.type, default: structuredClone(t.default) });
-                }}
-              >
-                {BASIC_FIELD_TYPES.map((t) => (
-                  <option key={t.key} value={t.type}>
-                    {t.label}
-                  </option>
-                ))}
-                {/* 一覧にない型（TypeScript で書いた型）は、型の文をそのまま出す */}
-                {!basicFieldType(f.type) && <option value={f.type}>{f.type}</option>}
-              </select>
-              <button
-                type="button"
-                className={ui.iconBtn}
-                aria-label={`${f.name} を削除`}
-                disabled={!editing}
-                onClick={() => save({ ...def, fields: def.fields.filter((x) => x.id !== f.id) })}
-              >
-                ✕
-              </button>
-            </div>
-            <MarkedLine
-              kind={changed.fields[f.id] ?? null}
-              target={{ entry: `koko:${id}`, part: `field:${f.id}` }}
-            >
-              <FieldInput
-                koko={id}
-                field={{ ...f, name: "初期値" }}
-                value={f.default}
-                choices={{ materials: project.materials(), entities: [] }}
-                disabled={!editing}
-                onChange={(v) => setField(f.id, { default: v })}
-              />
-            </MarkedLine>
-          </div>
+            koko={def}
+            field={f}
+            mark={changed.fields[f.id] ?? null}
+            editing={editing}
+            onPatch={(patch) => setField(f.id, patch)}
+            onDelete={() => save({ ...def, fields: def.fields.filter((x) => x.id !== f.id) })}
+          />
         ))}
         {editing && (
           <div className={ui.toolbar}>

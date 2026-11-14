@@ -724,7 +724,18 @@ export class Simulation {
       this.instantiate(part);
       for (const k of kept.get(part.id) ?? []) {
         const values = this.world.get(k.entity, k.koko);
-        if (values && k.field in values) values[k.field] = k.value;
+        if (!values || !(k.field in values)) continue;
+        // 入れ子の値も、フィールドの値をまるごと引き継ぐ。型の文が同じでも、型の定義が変わっていることが
+        // あるので、新しい型に合わせる（足りないフィールドを埋め、ないものを捨てる）。それでも合わない値は引き継がない
+        const f = this.registry.get(k.koko)?.fields.find((x) => x.id === k.field);
+        const schema = f ? this.schemaOf(k.koko, f) : undefined;
+        const value = schema ? (conformValue(schema, k.value) as FieldValue) : k.value;
+        if (f && !this.accepts(k.koko, f, value)) {
+          report.kept--;
+          report.dropped++;
+          continue;
+        }
+        values[k.field] = value;
       }
     }
     this.restoreInHand(inHand);
