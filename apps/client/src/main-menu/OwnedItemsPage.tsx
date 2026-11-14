@@ -354,7 +354,11 @@ function useMyItems() {
       },
     );
   }, []);
+  // 本人が変わったら、前の人の一覧を残さない
   useEffect(() => {
+    seq.current++;
+    setWorks([]);
+    setLoaded(false);
     if (owner) reload();
   }, [owner, reload]);
   return { works, loaded, error, reload };
@@ -391,7 +395,7 @@ function MyItems({ onBack }: { onBack(): void }) {
             自分のアイテム <span className={styles.total}>{works.length}</span>
           </h1>
           <p className={common.muted}>
-            自分がリリースしたアイテムです。マーケットに出していない非公開のアイテムは、ここだけに出て、自分だけが取り出せます。
+            自分がリリースしたアイテムです。マーケットに出していない非公開のアイテムは、自分だけが取り出せます。
           </p>
         </div>
       </div>
