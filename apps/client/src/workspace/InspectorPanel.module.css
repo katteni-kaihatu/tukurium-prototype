@@ -1,18 +1,62 @@
 .split {
+  position: relative;
   display: grid;
-  /* 詳細は幅を固定し、パネルを広げた分はヒエラルキー側へ回す */
-  grid-template-columns: minmax(0, 1fr) 380px;
+  /* 詳細は幅を固定し、パネルを広げた分はヒエラルキー側へ回す。幅は境目で変える */
+  grid-template-columns: minmax(0, 1fr) var(--details-w, 380px);
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
   overflow: hidden;
 }
 
+.split[data-dragging="true"] {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .tree {
   min-height: 0;
   padding: 8px 6px 10px 8px;
-  border-right: 1px solid rgba(38, 38, 46, 0.08);
   overflow: auto;
+}
+
+/* 階層と詳細の境。ドラッグで詳細の固定幅を変える */
+.splitter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--details-w, 380px);
+  z-index: 3;
+  width: 10px;
+  height: auto;
+  margin: 0 -5px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.splitter::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: rgba(38, 38, 46, 0.12);
+}
+
+.splitter:hover::before,
+.splitter:focus-visible::before,
+.splitter[data-dragging="true"]::before {
+  background: var(--c-brand);
+}
+
+.splitter:focus-visible {
+  outline: none;
 }
 
 .treeHead {
@@ -168,8 +212,9 @@
 }
 
 .props {
-  width: 380px;
-  max-width: 380px;
+  width: var(--details-w, 380px);
+  max-width: var(--details-w, 380px);
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -227,13 +272,16 @@
     grid-template-columns: 1fr;
   }
 
+  .splitter {
+    display: none;
+  }
+
   .props {
     width: auto;
     max-width: none;
   }
 
   .tree {
-    border-right: 0;
     border-bottom: 1px solid rgba(38, 38, 46, 0.08);
     max-height: 200px;
   }
@@ -314,11 +362,6 @@
 .kokoCard .fieldRow label {
   color: var(--c-ink-2, #5e5c64);
   font-weight: 600;
-}
-
-.kokoCard .fieldRow > div {
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 6px;
 }
 
 /* 問題の場所から移ってきた KokoState と欄を、少しの間目立たせる */

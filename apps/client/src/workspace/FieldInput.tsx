@@ -203,7 +203,7 @@ export function FieldInput(props: {
   }
 
   return (
-    <div className={ui.row}>
+    <div className={ui.field}>
       <label
         htmlFor={id}
         className={ui.label}

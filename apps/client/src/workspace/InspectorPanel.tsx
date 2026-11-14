@@ -1,6 +1,15 @@
 import type { EntityId, FieldValue, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN, type EntityDef, isBuiltin, type MeshShape } from "@tukurium/repo-model";
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { usePanelPopover } from "../panels/popover";
 import { ChangeMark, MarkedLine } from "./ChangeMark";
@@ -16,8 +25,17 @@ import {
 } from "./changeMarks";
 import { DefinitionProperties } from "./DefinitionProperties";
 import { FieldInput } from "./FieldInput";
+import { fitLabelElement } from "./fitLabel";
 import { useCanEdit, useProject } from "./hooks";
 import styles from "./InspectorPanel.module.css";
+import {
+  clampDetailsWidth,
+  DETAILS_DEFAULT,
+  detailsWidthBounds,
+  fieldLabelWidth,
+  readDetailsWidth,
+  storeDetailsWidth,
+} from "./inspectorLayout";
 import { KokoRoleIcon } from "./KokoRoleIcon";
 import { LibraryContents } from "./LibraryContents";
 import { BadgeDot, badgeFor } from "./ProblemBadge";
@@ -77,6 +95,144 @@ function FloatMenu({
 }
 
 /**
+ * 詳細の固定幅と、欄の名前の幅。境目のドラッグで詳細を変えると、名前の幅も増える。
+ * 名前は省略せず、枠に入るまで文字を小さくする。
+ */
+function useDetailsColumn() {
+  const splitRef = useRef<HTMLDivElement>(null);
+  const propsRef = useRef<HTMLDivElement>(null);
+  const [preferred, setPreferred] = useState(readDetailsWidth);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [stacked, setStacked] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches,
+  );
+  const [dragging, setDragging] = useState(false);
+  const drag = useRef<{ pointer: number; startX: number; startW: number; width: number } | null>(
+    null,
+  );
+
+  useLayoutEffect(() => {
+    const el = splitRef.current;
+    if (!el) return;
+    const apply = () => setContainerWidth(el.clientWidth);
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const apply = () => setStacked(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  // 上下に分かれているときは、詳細がパネルの幅いっぱいになる
+  const detailsWidth = clampDetailsWidth(preferred, stacked ? 0 : containerWidth);
+  const labelWidth = fieldLabelWidth(stacked ? containerWidth || DETAILS_DEFAULT : detailsWidth);
+  const bounds = detailsWidthBounds(stacked ? 0 : containerWidth);
+
+  useLayoutEffect(() => {
+    const root = propsRef.current;
+    // 名前の幅が変わったフレームでも掛け直す（詳細の外枠の幅は変わらないことがある）
+    const labelClass = ui.label;
+    if (!root || labelWidth <= 0 || !labelClass) return;
+    const selector = `.${CSS.escape(labelClass)}`;
+    const fit = () => {
+      for (const el of root.querySelectorAll<HTMLElement>(selector)) fitLabelElement(el);
+    };
+    fit();
+    // 高さの変化（文字を縮めたこと）では掛け直さない。幅が変わったときだけ
+    let lastWidth = root.clientWidth;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width === lastWidth) return;
+      lastWidth = width;
+      fit();
+    });
+    ro.observe(root);
+    const mo = new MutationObserver(fit);
+    mo.observe(root, { childList: true, subtree: true, characterData: true });
+    let stop = false;
+    void document.fonts?.ready.then(() => {
+      if (!stop) fit();
+    });
+    return () => {
+      stop = true;
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [labelWidth]);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLHRElement>) => {
+    if (event.button !== 0 || stacked) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      pointer: event.pointerId,
+      startX: event.clientX,
+      startW: detailsWidth,
+      width: detailsWidth,
+    };
+    setDragging(true);
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLHRElement>) => {
+    const current = drag.current;
+    if (!current || event.pointerId !== current.pointer) return;
+    const total = splitRef.current?.clientWidth ?? containerWidth;
+    const next = clampDetailsWidth(current.startW + (current.startX - event.clientX), total);
+    current.width = next;
+    setPreferred(next);
+  };
+
+  const endDrag = (event: ReactPointerEvent<HTMLHRElement>) => {
+    const current = drag.current;
+    if (!current || event.pointerId !== current.pointer) return;
+    drag.current = null;
+    setDragging(false);
+    storeDetailsWidth(current.width);
+  };
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLHRElement>) => {
+    if (stacked) return;
+    const total = splitRef.current?.clientWidth ?? containerWidth;
+    const step = event.shiftKey ? 40 : 16;
+    const { min, max } = detailsWidthBounds(total);
+    let next: number | null = null;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = detailsWidth + step;
+    else if (event.key === "ArrowRight" || event.key === "ArrowDown") next = detailsWidth - step;
+    else if (event.key === "Home") next = min;
+    else if (event.key === "End") next = max;
+    if (next == null) return;
+    event.preventDefault();
+    const clamped = clampDetailsWidth(next, total);
+    setPreferred(clamped);
+    storeDetailsWidth(clamped);
+  };
+
+  return {
+    splitRef,
+    propsRef,
+    detailsWidth,
+    labelWidth,
+    bounds,
+    dragging,
+    stacked,
+    splitter: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: endDrag,
+      onPointerCancel: endDrag,
+      onLostPointerCapture: endDrag,
+      onKeyDown,
+    },
+  };
+}
+
+/**
  * Inspector：左に Hierarchy（アウトプットの Entity の木）、右に選んだものの Properties。
  * Play 中は実行中の World を読み取り専用で表示する（要件 §7「編集と実行を分ける」）。
  * ライブラリは Entity を持たないので、左は含めるリソースを選ぶ画面にする（ADR 0055）。
@@ -86,12 +242,37 @@ export function InspectorPanel() {
   const outputId = useWorkspace((s) => s.outputId);
   useWorkspace((s) => s.rev);
   const library = project.output(outputId)?.kind === "library";
+  const column = useDetailsColumn();
   return (
-    <div className={styles.split}>
+    <div
+      ref={column.splitRef}
+      className={styles.split}
+      data-dragging={column.dragging || undefined}
+      style={{ "--details-w": `${column.detailsWidth}px` } as CSSProperties}
+    >
       {library ? <LibraryContents /> : <Hierarchy />}
-      <div className={styles.props}>
+      <div
+        ref={column.propsRef}
+        className={styles.props}
+        style={{ "--field-label": `${column.labelWidth}px` } as CSSProperties}
+      >
         <Properties />
       </div>
+      {!column.stacked && (
+        <hr
+          className={styles.splitter}
+          aria-orientation="vertical"
+          aria-label="詳細の幅"
+          aria-valuemin={column.bounds.min}
+          aria-valuemax={column.bounds.max}
+          aria-valuenow={column.detailsWidth}
+          aria-valuetext={`${column.detailsWidth}px`}
+          tabIndex={0}
+          title="ドラッグして詳細の幅を変える"
+          data-dragging={column.dragging || undefined}
+          {...column.splitter}
+        />
+      )}
     </div>
   );
 }
@@ -887,7 +1068,7 @@ function EntityProperties({ id }: { id: EntityId }) {
           </button>
         </div>
         <MarkedLine kind={marks?.name ?? null} target={{ entry: `entity:${id}`, part: "name" }}>
-          <div className={ui.row}>
+          <div className={ui.field}>
             <label className={ui.label} htmlFor={`name-${id}`}>
               Name
             </label>
@@ -925,7 +1106,7 @@ function EntityProperties({ id }: { id: EntityId }) {
               kind={marks?.parent ?? null}
               target={{ entry: `entity:${id}`, part: "place" }}
             >
-              <div className={ui.row}>
+              <div className={ui.field}>
                 <label className={ui.label} htmlFor={`parent-${id}`}>
                   親
                 </label>
