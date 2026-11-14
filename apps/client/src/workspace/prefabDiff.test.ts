@@ -7,6 +7,7 @@ import {
   toFiles,
 } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
+import * as Y from "yjs";
 import { describeDiff } from "./diffView";
 import { prefabChangeParts, prefabPart } from "./prefabChanges";
 import { planRevert } from "./revert";
@@ -45,6 +46,36 @@ function setup() {
 }
 
 describe("プレハブの差分と戻す（ADR 0076）", () => {
+  it.each([false, true])(
+    "フィールドの保存戻しで、別のフィールドの同時編集を失わない（保存済み上書き=%s）",
+    (savedOverride) => {
+      const { project, core, instance } = setup();
+      const child = expandedEntityId(instance, core);
+      if (savedOverride) project.setField(child, BUILTIN.Transform, "position", [1, 2, 3]);
+      const head = fromFiles(toFiles(project.snapshot()));
+      project.setField(child, BUILTIN.Transform, "position", [9, 9, 9]);
+      const other = new ProjectDoc();
+      Y.applyUpdate(other.doc, Y.encodeStateAsUpdate(project.doc));
+      const vector = Y.encodeStateVector(project.doc);
+      planRevert(
+        project,
+        head,
+        `entity:${instance}`,
+        prefabPart(core, "field", BUILTIN.Transform, "position"),
+      )?.();
+      other.setField(child, BUILTIN.Transform, "scale", [7, 7, 7]);
+      const localUpdate = Y.encodeStateAsUpdate(project.doc, vector);
+      const remoteUpdate = Y.encodeStateAsUpdate(other.doc, vector);
+      Y.applyUpdate(project.doc, remoteUpdate);
+      Y.applyUpdate(other.doc, localUpdate);
+      const override =
+        project.entity(instance)?.prefabOverrides?.[core]?.states?.[BUILTIN.Transform];
+      expect(override?.scale).toEqual([7, 7, 7]);
+      expect(override?.position).toEqual(savedOverride ? [1, 2, 3] : undefined);
+      expect(other.snapshot()).toEqual(project.snapshot());
+    },
+  );
+
   it("子の値と名前の上書きは保存の差分に出て、一つずつ保存時の形へ戻せる", () => {
     const { project, head, core, instance, diff } = setup();
     const child = expandedEntityId(instance, core);

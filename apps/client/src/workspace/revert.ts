@@ -109,47 +109,26 @@ function entityRevert(
   const prefabPart = parsePrefabPart(part);
   if (prefabPart)
     return () => {
-      const next = structuredClone(cur);
       const { path, kind, koko, field } = prefabPart;
       if (kind === "system") {
         const value = saved.instanceSystems?.find((s) => s.id === koko);
-        const list = (next.instanceSystems ?? []).filter((s) => s.id !== koko);
+        const list = (project.entity(id)?.instanceSystems ?? []).filter((s) => s.id !== koko);
         if (value)
           list.splice(
             saved.instanceSystems?.findIndex((s) => s.id === koko) ?? list.length,
             0,
             value,
           );
-        next.instanceSystems = list;
+        project.setInstanceSystems(id, list);
       } else {
-        const value = saved.prefabOverrides?.[path];
-        const overrides = next.prefabOverrides ?? {};
-        const row = overrides[path] ?? {};
-        if (kind === "field" && koko && field) {
-          const states = row.states ?? {};
-          const values = states[koko] ?? {};
-          if (value?.states?.[koko] && Object.hasOwn(value.states[koko], field))
-            values[field] = structuredClone(value.states[koko][field]);
-          else delete values[field];
-          if (Object.keys(values).length) states[koko] = values;
-          else delete states[koko];
-          if (Object.keys(states).length) row.states = states;
-          else delete row.states;
-        } else if (kind === "state" && koko) {
-          const states = row.addedStates ?? {};
-          if (value?.addedStates?.[koko]) states[koko] = structuredClone(value.addedStates[koko]);
-          else delete states[koko];
-          if (Object.keys(states).length) row.addedStates = states;
-          else delete row.addedStates;
-        } else if (kind === "name" || kind === "parent" || kind === "order") {
-          if (value && Object.hasOwn(value, kind)) Object.assign(row, { [kind]: value[kind] });
-          else delete row[kind];
-        }
-        if (Object.keys(row).length) overrides[path] = row;
-        else delete overrides[path];
-        next.prefabOverrides = overrides;
+        project.restorePrefabOverridePart(
+          path ? `${id}/${path}` : id,
+          kind,
+          saved.prefabOverrides?.[path],
+          koko,
+          field,
+        );
       }
-      project.restoreEntity(next);
     };
   if (part === "name") return () => project.renameEntity(id, saved.name);
   if (part === "place") {

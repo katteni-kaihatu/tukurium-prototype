@@ -10,7 +10,7 @@ import {
   stringifyValue,
   type ValueSchema,
 } from "@tukurium/eks";
-import { BUILTIN_KOKOSTATES } from "./builtins";
+import { BUILTIN, BUILTIN_KOKOSTATES } from "./builtins";
 import type {
   EntityBase,
   EntityDef,
@@ -86,7 +86,27 @@ export function getPrefabOverride(
   id: EntityId,
 ): PrefabEntityOverride | undefined {
   const address = prefabInstanceAddress(snap, id);
-  return address?.instance.prefabOverrides?.[address.path];
+  if (!address) return undefined;
+  const explicit = address.instance.prefabOverrides?.[address.path];
+  const prefab = snap.prefabs?.find((p) => p.id === address.instance.instanceOf?.prefab);
+  const sourceId = address.path ? address.path.split("/").at(-1) : prefab?.root;
+  const source = snap.prefabEntities?.find((e) => e.id === sourceId);
+  const nested = snap.prefabs?.find((p) => p.id === source?.instanceOf?.prefab);
+  const nestedRoot = snap.prefabEntities?.find((e) => e.id === nested?.root);
+  const sourceStates = { ...nestedRoot?.states, ...source?.states };
+  const local = Object.fromEntries(
+    Object.entries(address.path === "" ? address.instance.states : {}).filter(
+      ([koko]) => koko !== BUILTIN.Transform && sourceStates[koko],
+    ),
+  );
+  const added = { ...explicit?.addedStates };
+  for (const [koko, values] of Object.entries(added)) {
+    if (!sourceStates[koko]) continue;
+    local[koko] = { ...local[koko], ...values };
+    delete added[koko];
+  }
+  if (Object.keys(local).length === 0) return explicit;
+  return { ...explicit, addedStates: added, states: mergeStateFields(local, explicit?.states) };
 }
 
 export interface ExpandOptions {
@@ -403,13 +423,14 @@ class Expander {
           this.mapEntityRefs(t.states, t.refs, (id) =>
             id.startsWith(MARK) ? MARK + join(rel, id.slice(MARK.length)) : undefined,
           );
+        const states = mergeStateFields(rebase(nestedRoot), own.states);
         entities.push({
           rel,
           parent: e.parent?.includes("/") ? (relOf(e.parent) ?? parent) : parent,
           name: e.name,
           order: e.order,
-          states: { ...rebase(nestedRoot), ...own.states },
-          refs: [...nestedRoot.refs.filter((r) => !Object.hasOwn(own.states, r.koko)), ...own.refs],
+          states,
+          refs: this.refFields(states),
           origin: nestedRoot.origin,
         });
         for (const t of nested.entities.slice(1))
@@ -440,7 +461,7 @@ class Expander {
         const before = entities[at];
         if (!before) continue;
         const values = marked(
-          mergeStateFields({ ...before.states, ...patch.addedStates }, patch.states),
+          mergeStateFields(mergeStateFields(before.states, patch.addedStates), patch.states),
         );
         entities[at] = {
           ...before,
@@ -478,7 +499,7 @@ class Expander {
     for (const t of template.entities) {
       let states = this.mapEntityRefs(t.states, t.refs, replace);
       const patch = instance.prefabOverrides?.[t.rel];
-      states = mergeStateFields({ ...states, ...patch?.addedStates }, patch?.states);
+      states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
       const origin: PrefabOrigin = { instance: instance.id, ...t.origin };
       if (t.rel === "") {
         const {
@@ -488,7 +509,9 @@ class Expander {
           ...rest
         } = instance;
         // いちばん上の Entity：ID・名前・親・並び順と、場所・向き・大きさは、インスタンスのもの
-        out.push({ ...rest, states: { ...states, ...instance.states }, origin });
+        states = mergeStateFields(this.mapEntityRefs(t.states, t.refs, replace), instance.states);
+        states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
+        out.push({ ...rest, states, origin });
       } else {
         out.push({
           id: join(instance.id, t.rel),

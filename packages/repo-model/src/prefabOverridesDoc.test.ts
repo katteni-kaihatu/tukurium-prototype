@@ -2,7 +2,7 @@ import { FIELD_TYPE } from "@tukurium/eks";
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
-import { expandPrefabForEdit, expandPrefabs } from "./prefab";
+import { expandPrefabForEdit, expandPrefabs, getPrefabOverride } from "./prefab";
 import { ProjectDoc } from "./projectDoc";
 import { emptyProject } from "./samples";
 
@@ -29,6 +29,75 @@ function setup() {
   const at = (id: string) => expandPrefabs(doc.snapshot()).entities.find((e) => e.id === id);
   return { doc, koko, prefab, root, a, b, instance, other, child: `${instance}/${a}`, at };
 }
+
+it("親なしの並べ替えでも、別のアウトプットの Entity を混ぜない", () => {
+  const doc = new ProjectDoc();
+  doc.load(emptyProject("並び"));
+  const output = doc.addOutput("別", "item");
+  doc.addEntity({ id: "a", output: "out_main", name: "A" });
+  doc.addEntity({ id: "b", output: "out_main", name: "B" });
+  doc.addEntity({ id: "x", output, name: "X" });
+  doc.placeEntity("a", null, 1);
+  expect(doc.entities("out_main").map((e) => e.id)).toEqual(["b", "a"]);
+  expect(doc.entity("x")?.order).toBe(0);
+});
+
+it("親の Group を複製しても、子のインスタンス内の追加 Entity を写す", () => {
+  const { doc, instance, child } = setup();
+  const group = doc.addEntity({ output: "out_main", name: "Group" });
+  doc.setParent(instance, group);
+  doc.addEntity({ output: "out_main", name: "追加", parent: child });
+  const copied = doc.duplicateEntity(group, true);
+  const copiedInstance = doc.entities().find((e) => e.parent === copied && e.instanceOf);
+  expect(copiedInstance).toBeDefined();
+  const copiedChild = child.replace(instance, copiedInstance?.id ?? "");
+  expect(
+    doc
+      .entities()
+      .filter((e) => e.parent === copiedChild)
+      .map((e) => e.name),
+  ).toEqual(["追加"]);
+});
+
+it("root に足した状態が後からプレハブに加わっても、フィールドを編集して戻せる", () => {
+  const { doc, root, instance, koko, at } = setup();
+  doc.removeState(root, koko);
+  doc.addState(instance, koko, { hp: 5, max: 8 });
+  doc.addState(root, koko, { hp: 3, max: 10 });
+  const def = doc.kokostate(koko);
+  if (!def) throw new Error("koko");
+  doc.updateKokoState({
+    ...def,
+    fields: [...def.fields, { id: "new", name: "new", type: FIELD_TYPE.number, default: 20 }],
+  });
+  doc.setField(root, koko, "new", 30);
+  expect(at(instance)?.states[koko]).toEqual({ hp: 5, max: 8, new: 30 });
+  expect(getPrefabOverride(doc.snapshot(), instance)?.states?.[koko]?.hp).toBe(5);
+  doc.setField(instance, koko, "hp", 7);
+  expect(at(instance)?.states[koko]?.hp).toBe(7);
+  doc.revertPrefabField(instance, koko, "hp");
+  expect(at(instance)?.states[koko]).toEqual({ hp: 3, max: 8, new: 30 });
+  doc.setField(root, koko, "hp", 4);
+  expect(at(instance)?.states[koko]?.hp).toBe(4);
+  doc.revertPrefabEntity(instance, "state", koko);
+  expect(at(instance)?.states[koko]).toEqual({ hp: 4, max: 10, new: 30 });
+  expect(doc.entity(instance)?.states[koko]).toBeUndefined();
+});
+
+it("中に足した状態が後からプレハブに加わっても、個別に元へ戻せる", () => {
+  const { doc, child, a, koko, at } = setup();
+  doc.removeState(a, koko);
+  doc.addState(child, koko, { hp: 5, max: 8 });
+  doc.addState(a, koko, { hp: 3, max: 10 });
+  expect(getPrefabOverride(doc.snapshot(), child)?.states?.[koko]?.hp).toBe(5);
+  expect(getPrefabOverride(doc.snapshot(), child)?.addedStates?.[koko]).toBeUndefined();
+  doc.setField(child, koko, "hp", 7);
+  expect(at(child)?.states[koko]?.hp).toBe(7);
+  doc.revertPrefabField(child, koko, "hp");
+  expect(at(child)?.states[koko]?.hp).toBe(3);
+  doc.revertPrefabEntity(child, "state", koko);
+  expect(at(child)?.states[koko]).toEqual({ hp: 3, max: 10 });
+});
 
 it("プレハブを開いていても、入れ子の中を親に追加・付け替えできる", () => {
   const { doc, prefab, a } = setup();
@@ -228,6 +297,75 @@ describe("インスタンスで変える操作", () => {
     ).toBe(false);
     doc.removeSystem(system);
     expect(doc.entity(instance)?.instanceSystems).toBeUndefined();
+  });
+
+  it("複製する追加 Entity を指す親の上書きと参照も、新しい側へ付け替える", () => {
+    const { doc, child, instance, koko, a, at } = setup();
+    const def = doc.kokostate(koko);
+    if (!def) throw new Error("koko");
+    doc.updateKokoState({
+      ...def,
+      fields: [
+        ...def.fields,
+        { id: "ref", name: "ref", type: FIELD_TYPE.entity, default: undefined },
+        { id: "external", name: "external", type: FIELD_TYPE.entity, default: undefined },
+      ],
+    });
+    const outside = doc.addEntity({ output: "out_main", name: "外" });
+    const added = doc.addEntity({
+      output: "out_main",
+      name: "追加した親",
+      parent: instance,
+      states: { [koko]: { ref: child, external: outside } },
+    });
+    doc.setParent(child, added);
+    doc.setField(child, koko, "ref", added);
+    const copied = doc.duplicateEntity(instance, true);
+    const copiedAdded = doc.entities().find((e) => e.parent === copied && e.name === "追加した親");
+    expect(copiedAdded).toBeDefined();
+    expect(at(`${copied}/${a}`)?.parent).toBe(copiedAdded?.id);
+    expect(at(`${copied}/${a}`)?.states[koko]?.ref).toBe(copiedAdded?.id);
+    expect(copiedAdded?.states[koko]).toMatchObject({ ref: `${copied}/${a}`, external: outside });
+    expect(doc.entity(copied ?? "")?.prefabOverrides?.[a]?.parent).toBe(copiedAdded?.id);
+  });
+
+  it("継承 Entity の枝をふつうの Entity に複製しても、枝の中の参照はコピーを指す", () => {
+    const { doc, child, prefab, a, instance, koko } = setup();
+    const def = doc.kokostate(koko);
+    if (!def) throw new Error("koko");
+    doc.updateKokoState({
+      ...def,
+      fields: [
+        ...def.fields,
+        { id: "ref", name: "ref", type: FIELD_TYPE.entity, default: undefined },
+        { id: "external", name: "external", type: FIELD_TYPE.entity, default: undefined },
+      ],
+    });
+    const grand = doc.addPrefabEntity({
+      prefab,
+      parent: a,
+      name: "継承した孫",
+      states: { [koko]: { ref: a } },
+    });
+    doc.setField(child, koko, "ref", `${instance}/${grand}`);
+    const added = doc.addEntity({
+      output: "out_main",
+      name: "追加した孫",
+      parent: child,
+      states: { [koko]: { ref: child, external: instance } },
+    });
+    const copied = doc.duplicateEntity(child, true);
+    const children = doc.entities().filter((e) => e.parent === copied);
+    const copiedGrand = children.find((e) => e.name === "継承した孫");
+    const copiedAdded = children.find((e) => e.name === "追加した孫");
+    expect(copiedGrand?.id).not.toBe(`${instance}/${grand}`);
+    expect(copiedAdded?.id).not.toBe(added);
+    expect(doc.entity(copied ?? "")?.states[koko]?.ref).toBe(copiedGrand?.id);
+    expect(copiedGrand?.states[koko]?.ref).toBe(copied);
+    expect(copiedAdded?.states[koko]).toMatchObject({ ref: copied, external: instance });
+    expect([doc.entity(copied ?? ""), ...children].every((e) => e?.instanceOf === undefined)).toBe(
+      true,
+    );
   });
 
   it("追加した親を消しても、その下へ移したプレハブ由来の枝と維持の印は残す", () => {
