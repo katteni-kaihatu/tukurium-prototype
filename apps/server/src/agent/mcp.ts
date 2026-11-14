@@ -42,6 +42,7 @@ const states = z
     '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。値はふつうの JSON。リスト・レコード・マップもそのまま書く。参照は ID か名前で渡す（入れ子の中でも）。「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す。Date・Map・Set などの書き方は guide の「値の渡し方」',
   );
 const fieldSpec = z.object({
+  description: z.string().optional().describe("フィールドの説明。空文字で消す"),
   name: z.string().min(1).max(64),
   type: z
     .string()
@@ -458,6 +459,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
       inputSchema: {
         name: z.string().min(1).max(64),
         fields: z.array(fieldSpec),
+        description: z.string().optional().describe("KokoState の説明"),
         role: z.string().optional().describe("役割（guide を参照）"),
         typeDefs: typeDefRefs.optional(),
       },
@@ -475,6 +477,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
         kokostate: z.string(),
         name: z.string().min(1).max(64).optional(),
         fields: z.array(fieldSpec).optional(),
+        description: z.string().optional().describe("KokoState の説明。空文字で消す"),
         role: z.string().optional(),
         typeDefs: typeDefRefs.optional(),
       },

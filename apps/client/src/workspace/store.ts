@@ -119,7 +119,7 @@ interface WorkspaceState {
   /** Play を始めたときの制作データ（実行の問題が、その後の変更で古くなったかを依存で決める） */
   runSnapshot: ProjectSnapshot | null;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
-  jumpTo: { systemId: string; line: number | null; seq: number } | null;
+  jumpTo: { systemId: string; line: number | null; position?: number; seq: number } | null;
   /** Inspector で開いて目立たせる Entity の KokoState と欄（問題の場所から移るとき。seq は何度でも移れるように） */
   focusField: { entity: string; koko: string; field: string | null; seq: number } | null;
   /** 問題の場所をエディタで開く */

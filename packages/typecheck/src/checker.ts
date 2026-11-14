@@ -19,6 +19,7 @@ import {
   typeImports,
   virtualProject,
 } from "./declarations";
+import type { EditorDefinition, EditorLocation, EditorQuery, EditorResults } from "./editor";
 import { fieldTypeSyntaxError, typeToSchema, UnsaveableType } from "./fieldSchema";
 
 /** 型の誤りの担い手（問題の一覧の「出どころ」） */
@@ -79,6 +80,8 @@ export class TypeChecker {
   private paths: Record<string, string[]> = {};
   /** System の ID → そのファイルのパス（最後に読み込んだ制作データのもの） */
   private systemFiles = new Map<string, string>();
+  private codeFiles = new Map<string, string>();
+  private definitions = new Map<string, { kind: "koko" | "code"; id: string }>();
   private readonly service: ts.LanguageService;
 
   constructor(private readonly options: TypeCheckerOptions) {
@@ -164,7 +167,112 @@ export class TypeChecker {
     this.setFiles(new Map([...v.files, ...fieldTexts]));
     this.paths = v.paths;
     this.systemFiles = v.systemFiles;
+    this.codeFiles = new Map([...v.systemFiles, ...typeDefs.map((f) => [f.id, f.file] as const)]);
+    this.definitions = new Map<string, { kind: "koko" | "code"; id: string }>([
+      ...[...v.kokoFiles].map(([file, id]) => [file, { kind: "koko" as const, id }] as const),
+      ...[...this.codeFiles].map(([id, file]) => [file, { kind: "code" as const, id }] as const),
+    ]);
     return fields;
+  }
+
+  /** 制作データを読み込み、スクリプトごとの確認の準備をする。 */
+  prepare(input: TypeCheckInput): TypeCheckResult {
+    const fields = this.load(input);
+    return { diagnostics: fields.diagnostics, schemas: fields.schemas };
+  }
+
+  /** 読み込み済みの System だけを確かめる。Worker はこの間に別の頼みを受け取れる。 */
+  checkSystem(id: string): Diagnostic[] {
+    return this.scripts({ systemIds: [id] });
+  }
+
+  private editorFile(location: EditorLocation): string | undefined {
+    const file = this.codeFiles.get(location.fileId);
+    if (!file || location.position < 0 || location.position > location.code.length) return;
+    const previous = this.files.get(file);
+    if (previous && previous.text !== location.code)
+      this.files.set(file, { text: location.code, version: previous.version + 1 });
+    return file;
+  }
+
+  private definition(file: string, position: number): EditorDefinition | null {
+    for (const def of this.service.getDefinitionAtPosition(file, position) ?? []) {
+      const target = this.definitions.get(def.fileName);
+      const source = this.service.getProgram()?.getSourceFile(def.fileName);
+      if (target && source)
+        return {
+          ...target,
+          position: def.textSpan.start,
+          line: source.getLineAndCharacterOfPosition(def.textSpan.start).line + 1,
+        };
+    }
+    return null;
+  }
+
+  query<K extends EditorQuery["kind"]>(query: Extract<EditorQuery, { kind: K }>): EditorResults[K];
+  query(query: EditorQuery): EditorResults[EditorQuery["kind"]];
+  query(query: EditorQuery): EditorResults[EditorQuery["kind"]] {
+    const file = this.editorFile(query);
+    let result: EditorResults[EditorQuery["kind"]] = null;
+    if (!file) return query.kind === "completions" ? [] : null;
+    const position = query.position;
+    switch (query.kind) {
+      case "hover": {
+        const info = this.service.getQuickInfoAtPosition(file, position);
+        const diagnostics = [
+          ...this.service.getSyntacticDiagnostics(file),
+          ...this.service.getSemanticDiagnostics(file),
+        ].filter(
+          (d) =>
+            d.start !== undefined && d.start <= position && position < d.start + (d.length ?? 1),
+        );
+        if (info || diagnostics.length)
+          result = {
+            from: info?.textSpan.start ?? position,
+            to: info ? info.textSpan.start + info.textSpan.length : position + 1,
+            display: ts.displayPartsToString(info?.displayParts),
+            documentation: documentation(info),
+            diagnostics: diagnostics.map((d) =>
+              ts.flattenDiagnosticMessageText(d.messageText, "\n"),
+            ),
+            definition: this.definition(file, position),
+          };
+        break;
+      }
+      case "completions":
+        result = (this.service.getCompletionsAtPosition(file, position, {})?.entries ?? []).map(
+          (e) => ({
+            name: e.name,
+            kind: e.kind,
+            sortText: e.sortText,
+            ...(e.source ? { source: e.source } : {}),
+            ...(e.insertText ? { insertText: e.insertText } : {}),
+          }),
+        );
+        break;
+      case "details": {
+        const info = this.service.getCompletionEntryDetails(
+          file,
+          position,
+          query.name,
+          {},
+          query.source,
+          {},
+          undefined,
+        );
+        result = info
+          ? {
+              display: ts.displayPartsToString(info.displayParts),
+              documentation: documentation(info),
+            }
+          : null;
+        break;
+      }
+      case "definition":
+        result = this.definition(file, position);
+        break;
+    }
+    return result;
   }
 
   /** フィールドの型の文を、KokoState ごとのファイルにする（文として読めないものは入れない） */
@@ -376,7 +484,7 @@ export class TypeChecker {
   }
 
   /** 読み込んだあとの、スクリプトの型エラー */
-  private scripts(input: TypeCheckInput): Diagnostic[] {
+  private scripts(input: Pick<TypeCheckInput, "systemIds">): Diagnostic[] {
     const systemFiles = this.systemFiles;
     const only = input.systemIds ? new Set(input.systemIds) : null;
     const out: Diagnostic[] = [];
@@ -420,4 +528,15 @@ export class TypeChecker {
       .getSemanticDiagnostics(HOST_FILE)
       .map((d) => ts.flattenDiagnosticMessageText(d.messageText, " "));
   }
+}
+
+function documentation(
+  info: { documentation?: ts.SymbolDisplayPart[]; tags?: readonly ts.JSDocTagInfo[] } | undefined,
+): string {
+  return [
+    ts.displayPartsToString(info?.documentation),
+    ...(info?.tags ?? []).map((tag) => `@${tag.name} ${ts.displayPartsToString(tag.text)}`.trim()),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

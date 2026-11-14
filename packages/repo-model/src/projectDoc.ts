@@ -91,6 +91,7 @@ type FieldMap = Y.Map<unknown>;
 function fieldMap(f: FieldDef, order: string): FieldMap {
   const m: FieldMap = new Y.Map<unknown>();
   m.set("name", f.name);
+  if (f.description !== undefined) m.set("description", f.description);
   m.set("type", f.type);
   m.set("default", encodeValue(f.default));
   m.set("order", order);
@@ -101,6 +102,7 @@ function kokoMapOf(def: KokoStateDef): KokoMap {
   const m: KokoMap = new Y.Map<unknown>();
   m.set("id", def.id);
   m.set("name", def.name);
+  if (def.description !== undefined) m.set("description", def.description);
   if (def.role !== undefined) m.set("role", def.role);
   if (def.typeDefs !== undefined) m.set("typeDefs", [...def.typeDefs]);
   const fields = new Y.Map<FieldMap>();
@@ -117,6 +119,9 @@ function readFields(fields: Y.Map<FieldMap>): (FieldDef & { order: string })[] {
   const list = [...fields.entries()].map(([id, f]) => ({
     id,
     name: String(f.get("name") ?? id),
+    ...(typeof f.get("description") === "string"
+      ? { description: f.get("description") as string }
+      : {}),
     type: String(f.get("type") ?? ""),
     default: decodeValue(f.get("default")) as FieldValue,
     order: String(f.get("order") ?? ""),
@@ -134,6 +139,9 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
   return {
     id: String(stored.get("id")),
     name: String(stored.get("name")),
+    ...(typeof stored.get("description") === "string"
+      ? { description: stored.get("description") as string }
+      : {}),
     ...(typeof role === "string" ? { role } : {}),
     ...(Array.isArray(typeDefs) ? { typeDefs: typeDefs.map(String) } : {}),
     fields: readFields(stored.get("fields") as Y.Map<FieldMap>).map(({ order: _order, ...f }) => f),
@@ -421,6 +429,10 @@ export class ProjectDoc {
       } else {
         // 変わった所だけを書く。同時に別のフィールドを変えた人の変更を、上書きしない
         if (prev?.name !== def.name) stored.set("name", def.name);
+        if (prev?.description !== def.description) {
+          if (def.description === undefined) stored.delete("description");
+          else stored.set("description", def.description);
+        }
         if (prev?.role !== def.role) {
           if (def.role === undefined) stored.delete("role");
           else stored.set("role", def.role);
@@ -442,6 +454,10 @@ export class ProjectDoc {
             return;
           }
           if (old.name !== f.name) m.set("name", f.name);
+          if (old.description !== f.description) {
+            if (f.description === undefined) m.delete("description");
+            else m.set("description", f.description);
+          }
           if (old.type !== f.type) m.set("type", f.type);
           if (!equalValues(old.default, f.default)) m.set("default", encodeValue(f.default));
           if (old.order !== key) m.set("order", key);

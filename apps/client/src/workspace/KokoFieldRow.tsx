@@ -148,6 +148,19 @@ export function KokoFieldRow(props: {
           ✕
         </button>
       </div>
+      <textarea
+        key={`${f.id}:description:${f.description ?? ""}`}
+        className={ui.input}
+        aria-label={`${f.name} の説明`}
+        placeholder="フィールドの説明"
+        rows={2}
+        defaultValue={f.description ?? ""}
+        disabled={!editing}
+        onBlur={(e) => {
+          if (e.target.value !== (f.description ?? ""))
+            props.onPatch({ description: e.target.value });
+        }}
+      />
       {ts && (
         <div className={css.stack} style={{ paddingLeft: 14 }}>
           <TypeTextInput name={f.name} value={f.type} disabled={!editing} onCommit={commitType} />

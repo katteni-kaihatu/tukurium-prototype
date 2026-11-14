@@ -24,6 +24,14 @@ export const PACKAGES_DIR = "/__packages";
 /** プロパティの名前として書ける形にする（書けない名前は引用符で囲む） */
 const key = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name));
 
+/** 説明をコメントとして書く。コメントの終端を含む文章も宣言を壊さない。 */
+const jsdoc = (text: string) =>
+  `/**\n${text
+    .replace(/\*\//g, "* / ")
+    .split(/\r?\n/)
+    .map((line) => ` * ${line}`)
+    .join("\n")}\n */`;
+
 /**
  * KokoState の宣言ファイルの中身。ID は実行時に __koko(ID, 名前) で渡るものと同じにする。
  * フィールドの型は、型の文をそのまま書く（ADR 0065）。型エラーのあるフィールド（badFields）は
@@ -31,16 +39,19 @@ const key = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.str
  */
 export function kokoStateDeclaration(
   id: string,
-  def: Pick<KokoStateDef, "name" | "fields">,
+  def: Pick<KokoStateDef, "name" | "fields" | "description">,
   badFields?: ReadonlySet<string>,
   imports = "",
 ): string {
   const fields = def.fields
-    .map((f) => `  ${key(f.name)}: ${badFields?.has(f.id) ? "unknown" : `(${f.type})`};`)
+    .map(
+      (f) =>
+        `${f.description ? `${jsdoc(f.description)}\n` : ""}  ${key(f.name)}: ${badFields?.has(f.id) ? "unknown" : `(${f.type})`};`,
+    )
     .join("\n");
   return [
     ...(imports ? [imports.trimEnd()] : []),
-    `/** ${def.name} */`,
+    jsdoc(def.description || def.name),
     `declare const koko: KokoState<${JSON.stringify(id)}, {\n${fields}\n}>;`,
     // 型としても使える（`KokoStateRef<Health>` のように、参照の型で指せる KokoState を書く。ADR 0065）
     "type koko = typeof koko;",
@@ -60,6 +71,8 @@ export interface VirtualProject {
   files: Map<string, string>;
   /** System の ID → そのファイルのパス */
   systemFiles: Map<string, string>;
+  /** KokoState の宣言ファイル → ID。同じ名前が別のフォルダにあっても区別する。 */
+  kokoFiles: Map<string, string>;
   /** `@builtin/*` と `@別名/*` を、仮想のファイルの場所へつなぐ */
   paths: Record<string, string[]>;
 }
@@ -270,6 +283,7 @@ export function virtualProject(
   const index = ResourcePathIndex.fromSnapshot(snap);
   const files = new Map<string, string>([[HOST_FILE, hostDeclarations]]);
   const systemFiles = new Map<string, string>();
+  const kokoFiles = new Map<string, string>();
   const paths: Record<string, string[]> = { "@builtin/*": [`${BUILTIN_DIR}/*`] };
   // 型の定義（ADR 0065）。KokoState の宣言は、使う型の定義を import する
   const typeDefs = new Map(typeDefFiles(snap, packages, index).map((f) => [f.id, f] as const));
@@ -283,14 +297,17 @@ export function virtualProject(
       names,
     );
 
-  for (const k of BUILTIN_KOKOSTATES)
+  for (const k of BUILTIN_KOKOSTATES) {
+    kokoFiles.set(`${BUILTIN_DIR}/${k.name}.koko.d.ts`, k.id);
     files.set(
       `${BUILTIN_DIR}/${k.name}.koko.d.ts`,
       kokoStateDeclaration(k.id, k, badFields.get(k.id), importsOf(k, undefined)),
     );
+  }
 
   for (const k of snap.kokostates) {
     const path = index.pathOf(k.id);
+    if (path) kokoFiles.set(`${path}.d.ts`, k.id);
     if (path)
       files.set(
         `${path}.d.ts`,
@@ -306,6 +323,7 @@ export function virtualProject(
       if (e.kind !== "kokostate" || typeof def?.name !== "string" || !Array.isArray(def.fields))
         continue;
       const id = packageResourceId(r.dependency, e.id);
+      kokoFiles.set(packageFile(alias, e.path), id);
       const uses = Array.isArray(def.typeDefs)
         ? def.typeDefs.map((t) => packageResourceId(r.dependency, String(t)))
         : undefined;
@@ -313,7 +331,11 @@ export function virtualProject(
         packageFile(alias, e.path),
         kokoStateDeclaration(
           id,
-          { name: def.name, fields: def.fields },
+          {
+            name: def.name,
+            fields: def.fields,
+            ...(typeof def.description === "string" ? { description: def.description } : {}),
+          },
           badFields.get(id),
           importsOf({ fields: def.fields }, uses),
         ),
@@ -326,5 +348,5 @@ export function virtualProject(
     files.set(path, s.code);
     systemFiles.set(s.id, path);
   }
-  return { files, systemFiles, paths };
+  return { files, systemFiles, kokoFiles, paths };
 }
