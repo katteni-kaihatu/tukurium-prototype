@@ -19,6 +19,7 @@ AI エージェント（Claude Code など）にも Tukurium で制作してほ�
 - **身元**：エージェントは人とは別の利用者で、「エージェント（名前）」と表示する。
 - **保存は人だけ**：エージェントの接続は、hub が保存（コミット）を断る。ワークスペースのホスト（再生の実行役）にもならない。のちに権限の設定で変えられるようにする。
 - **トークン・上限はまだない**：アカウントがまだないため。アカウントができたら、そのアカウントでトークンを発行し、権限を設定できるようにする。
+  - アカウントは [ADR 0074](0074-misskey-login-accounts.md) でできた。トークンはまだ作っていない（利用者と決めた。あとの作業）。エージェントは今もログインできない別の利用者として入る。
 
 使う人向けの案内は [`../AGENT_MCP.md`](../AGENT_MCP.md)。
 
@@ -28,8 +29,8 @@ AI エージェント（Claude Code など）にも Tukurium で制作してほ�
 | --- | --- |
 | 手引き | `guide`（考え方・進め方・System の見本・Host API の型） |
 | 入る | `list_sessions`・`join_session`・`list_workspaces`・`open_workspace` |
-| 見る | `get_project`・`get_entity`・`get_entities`・`get_system` |
-| 作る・変える | `create_entity`・`update_entity`・`delete_entity`・`apply_entities`・`create_kokostate`・`update_kokostate`・`create_system`・`update_system`・`set_output_systems`・`create_material`・`update_material`・`import_asset` |
+| 見る | `get_project`・`get_entity`・`get_entities`・`get_system`・`get_typedef` |
+| 作る・変える | `create_entity`・`update_entity`・`delete_entity`・`apply_entities`・`create_kokostate`・`update_kokostate`・`create_typedef`・`update_typedef`・`create_system`・`update_system`・`set_output_systems`・`create_material`・`update_material`・`import_asset` |
 | 確かめる | `check`（構造・参照・System の import）・`simulate`（サーバーで決まった時間だけ動かし、System の状態・ログ・Entity の状態を返す。人には見えない。最大 20 秒）・`preview`（開いている画面を、指定した位置から撮る） |
 
 一括・素材・プレビューの決めごとは [0059](0059-agent-batch-assets-preview.md)。

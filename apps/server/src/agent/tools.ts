@@ -1,27 +1,50 @@
 import {
+  acceptsUndefined,
   decodeValue,
+  emptyValueOf,
   type FieldDef,
-  type FieldType,
   type FieldValue,
+  isPlainObject,
   type KokoStateDef,
+  knownSchema,
   stringifyValue,
+  type ValueSchema,
   type Vec3,
+  validateValue,
   type World,
 } from "@tukurium/eks";
 import {
   type AssetKind,
+  BASIC_FIELD_TYPES,
   BUILTIN,
+  checkFieldValues,
   checkProjectReferences,
   checkProjectStructure,
   compileSystem,
   type Diagnostic,
+  type EntityDef,
+  expandPrefabForEdit,
+  expandPrefabs,
+  getPrefabOverride,
   gunAndTargetSample,
+  isBuiltin,
+  isPackageResourceId,
   KOKO_ROLES,
   newId,
   type PackageDependency,
   type PackageResolution,
+  type PrefabEntityDef,
+  type PrefabInstancePlan,
+  type PrefabOrigin,
   type ProjectDoc,
+  packageKokoStates,
+  prefabInstanceAddress,
+  REF_TARGET_LABEL,
+  RESOURCE_FIELD_KIND,
   ResourcePathIndex,
+  reachablePackages,
+  resolutionMap,
+  validateName,
 } from "@tukurium/repo-model";
 import {
   buildWorld,
@@ -30,8 +53,6 @@ import {
   Simulation,
   worldTransform,
 } from "@tukurium/runtime";
-import { TypeChecker } from "@tukurium/typecheck";
-import { nodeTypeCheckerOptions } from "@tukurium/typecheck/node";
 import {
   ASSET_TYPES,
   type AssetStore,
@@ -39,6 +60,7 @@ import {
   MAX_ASSET_BYTES,
 } from "../assets/assetStore";
 import type { RepoService } from "../repos/service";
+import { fieldSchemasOf, HOST_DECLARATIONS, sharedTypeChecker } from "../typecheck";
 import type { AgentClient } from "./AgentClient";
 
 /**
@@ -47,18 +69,8 @@ import type { AgentClient } from "./AgentClient";
  * KokoState・欄・System・アウトプットは、ID でも名前でも指せる。
  */
 
-export const FIELD_TYPES = [
-  "number",
-  "boolean",
-  "string",
-  "vec3",
-  "color",
-  "entity",
-  "texture",
-  "material",
-  "model",
-  "audio",
-] as const satisfies readonly FieldType[];
+/** 一覧から選べる型の名前（`BASIC_FIELD_TYPES`）。型は、これか TypeScript の型の文で書く */
+export const FIELD_TYPES = BASIC_FIELD_TYPES.map((t) => t.key);
 
 const MAX_SIM_SECONDS = 20;
 const MAX_LISTED_ENTITIES = 200;
@@ -66,6 +78,29 @@ const MAX_ENTITY_OPS = 200;
 const MAX_NEW_ENTITIES = 400;
 
 export class AgentError extends Error {}
+
+const loadedPackages = new WeakMap<ProjectDoc, readonly PackageResolution[]>();
+
+/** ライブラリの定義は読み取り用にだけ持ち、共同編集中の保存データには加えない。 */
+export function setProjectPackages(project: ProjectDoc, pool: readonly PackageResolution[]): void {
+  const ready = reachablePackages(project.dependencies(), pool);
+  project.setPackageKokoStates(packageKokoStates(ready));
+  project.setPackagePrefabs(ready);
+  loadedPackages.set(project, pool);
+}
+
+function projectSchemas(project: ProjectDoc) {
+  return project.prefabFieldSchemas(
+    fieldSchemasOf(
+      project.snapshot(),
+      resolutionMap(project.dependencies(), loadedPackages.get(project)),
+    ),
+  );
+}
+
+function readableSnapshot(project: ProjectDoc) {
+  return project.snapshotWithPackages(projectSchemas(project));
+}
 
 export function projectOf(agent: AgentClient): { project: ProjectDoc; workspaceId: string } {
   const w = agent.workspace;
@@ -114,8 +149,42 @@ function outputOf(project: ProjectDoc, ref: string | undefined) {
   return pick(outputs, ref, "アウトプット");
 }
 
-function entityOf(project: ProjectDoc, ref: string) {
-  return pick(project.entities(), ref, "Entity");
+type ReadableEntity = (EntityDef | PrefabEntityDef) & { origin?: PrefabOrigin };
+
+/** 人の Hierarchy と同じ展開結果を読む。実体が持つリンクも残し、編集は ProjectDoc に渡す。 */
+function readableEntities(project: ProjectDoc): ReadableEntity[] {
+  const schemas = projectSchemas(project);
+  const snapshot = project.snapshotWithPackages(schemas);
+  const options = {
+    schemas,
+    kokostates: project.registry().all(),
+  };
+  const merge = (e: ReadableEntity): ReadableEntity => ({ ...project.findEntity(e.id), ...e });
+  const result = expandPrefabs(snapshot, options).entities.map(merge);
+  for (const prefab of snapshot.prefabs ?? []) {
+    for (const { output: _output, ...e } of expandPrefabForEdit(snapshot, prefab.id, options)
+      ?.entities ?? [])
+      result.push(merge({ ...e, prefab: prefab.id }));
+  }
+  return result;
+}
+
+function entityOf(project: ProjectDoc, ref: string): ReadableEntity {
+  const entities = readableEntities(project);
+  return (
+    entities.find((e) => e.id === ref) ?? project.findEntity(ref) ?? pick(entities, ref, "Entity")
+  );
+}
+
+function prefabOf(project: ProjectDoc, ref: string) {
+  return project.prefab(ref) ?? pick(readableSnapshot(project).prefabs ?? [], ref, "プレハブ");
+}
+
+function editableEntity(project: ProjectDoc, ref: string) {
+  const entity = entityOf(project, ref);
+  if ("prefab" in entity && isPackageResourceId(entity.prefab))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  return entity;
 }
 
 /** ID か、一意な名前でリソースを一つに決める */
@@ -131,7 +200,7 @@ function resolveNamed(list: { id: string; name: string }[], value: string, what:
 }
 
 function assetsOf(project: ProjectDoc, kind: AssetKind) {
-  return project.assets().filter((a) => a.kind === kind);
+  return (readableSnapshot(project).assets ?? []).filter((a) => a.kind === kind);
 }
 
 /** 画像の素材を、ID か一意な名前で決める */
@@ -140,14 +209,131 @@ function imageOf(project: ProjectDoc, value: string, what: string): string {
 }
 
 /**
- * 欄の型に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
- * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
- * JSON には undefined がないので、null も「なし」として受け取る。
+ * フィールドのスキーマ。Tukurium が用意する型は、型の文から分かる。ほかの型（リスト・レコードなど）は、
+ * TypeScript で作る（初めて要るときだけ。ADR 0065）。型エラーで作れないフィールドは undefined。
  */
-function coerce(project: ProjectDoc, field: FieldDef, raw: unknown): FieldValue {
-  const bad = () =>
+function schemaFor(project: ProjectDoc, kokoId: string, field: FieldDef): ValueSchema | undefined {
+  return projectSchemas(project)[kokoId]?.[field.id] ?? knownSchema(field.type);
+}
+
+/**
+ * JSON から来た値を、型（スキーマ）に沿って読み替える（入れ子の中も）。
+ * - 参照（Entity・Material・素材）は、ID でも一意な名前でも指せる。名前は ID にする
+ * - KokoState の参照・フィールドの参照は、Entity・KokoState・フィールドを、ID でも名前でも書ける
+ * - JSON には undefined がないので、「なし」にできる所では、null も「なし」として受け取る
+ * 元の値は書き換えない。
+ */
+function resolveNames(
+  project: ProjectDoc,
+  schema: ValueSchema,
+  value: unknown,
+  what: string,
+): unknown {
+  if (value === null && acceptsUndefined(schema)) return undefined;
+  switch (schema.kind) {
+    case "ref": {
+      if (typeof value !== "string") return value;
+      const label = `${what}の${REF_TARGET_LABEL[schema.target]}`;
+      if (schema.target === "entity") return entityOf(project, value).id;
+      if (schema.target === "material")
+        return resolveNamed(readableSnapshot(project).materials, value, label);
+      const kind = RESOURCE_FIELD_KIND[schema.target] as AssetKind;
+      return resolveNamed(assetsOf(project, kind), value, label);
+    }
+    case "kokoRef":
+    case "fieldRef": {
+      if (
+        !isPlainObject(value) ||
+        typeof value.entity !== "string" ||
+        typeof value.koko !== "string"
+      )
+        return value;
+      const def = kokoOf(project, value.koko);
+      const out: Record<string, unknown> = {
+        ...value,
+        entity: entityOf(project, value.entity).id,
+        koko: def.id,
+      };
+      if (schema.kind === "fieldRef" && typeof value.field === "string")
+        out.field = fieldOf(def, value.field).id;
+      return out;
+    }
+    case "union": {
+      // 読み替えたあとで型に合う、最初の選択肢で読む（文字と参照が並ぶ型では、先に書いた方）
+      let failed: unknown;
+      for (const option of schema.options) {
+        try {
+          const read = resolveNames(project, option, value, what);
+          if (validateValue(option, read) === null) return read;
+        } catch (e) {
+          failed ??= e;
+        }
+      }
+      // どれにも合わない：名前が見つからなかったのなら、それを理由として返す
+      if (failed) throw failed;
+      return value;
+    }
+    case "tuple":
+      return Array.isArray(value)
+        ? value.map((v, i) => {
+            const item = schema.items[i];
+            return item ? resolveNames(project, item, v, what) : v;
+          })
+        : value;
+    case "list":
+      return Array.isArray(value)
+        ? value.map((v) => resolveNames(project, schema.item, v, what))
+        : value;
+    case "record": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = { ...value };
+      for (const f of schema.fields)
+        if (Object.hasOwn(value, f.name))
+          out[f.name] = resolveNames(project, f.schema, value[f.name], what);
+      return out;
+    }
+    case "map": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value))
+        out[key] = resolveNames(project, schema.value, value[key], what);
+      return out;
+    }
+    case "Map":
+      return value instanceof Map
+        ? new Map(
+            [...value].map(([k, v]) => [
+              resolveNames(project, schema.key, k, what),
+              resolveNames(project, schema.value, v, what),
+            ]),
+          )
+        : value;
+    case "Set":
+      return value instanceof Set
+        ? new Set([...value].map((v) => resolveNames(project, schema.item, v, what)))
+        : value;
+    default:
+      return value;
+  }
+}
+
+/**
+ * フィールドの型（スキーマ）に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
+ * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
+ * JSON には undefined がないので、参照と「なし」にできる型では、null も「なし」として受け取る。
+ * 参照（Entity・Material・素材・KokoState・フィールド）は、入れ子の中でも、ID でも一意な名前でも指せる。
+ * given：まだ制作データにないフィールド（作っている途中の定義）のスキーマ。
+ */
+function coerce(
+  project: ProjectDoc,
+  kokoId: string,
+  field: FieldDef,
+  raw: unknown,
+  given?: { schema: ValueSchema | undefined },
+): FieldValue {
+  const bad = (why?: string) =>
     new AgentError(
-      `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}`,
+      `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}${why ? `（${why}）` : ""}`,
     );
   let value: unknown;
   try {
@@ -155,47 +341,14 @@ function coerce(project: ProjectDoc, field: FieldDef, raw: unknown): FieldValue 
   } catch {
     throw bad();
   }
-  const none = value === null || value === undefined;
-  switch (field.type) {
-    case "number":
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      throw bad();
-    case "boolean":
-      if (typeof value === "boolean") return value;
-      throw bad();
-    case "string":
-      if (typeof value === "string") return value;
-      throw bad();
-    case "color":
-      if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) return value.toLowerCase();
-      throw bad();
-    case "vec3":
-      if (
-        Array.isArray(value) &&
-        value.length === 3 &&
-        value.every((n) => typeof n === "number" && Number.isFinite(n))
-      )
-        return value as Vec3;
-      throw bad();
-    case "material":
-      if (none) return undefined;
-      if (typeof value === "string")
-        return resolveNamed(project.materials(), value, `フィールド「${field.name}」の Material`);
-      throw bad();
-    case "model":
-    case "texture":
-    case "audio": {
-      if (none) return undefined;
-      if (typeof value !== "string") throw bad();
-      const kind = field.type === "model" ? "model" : field.type === "texture" ? "image" : "audio";
-      const label = field.type === "model" ? "モデル" : field.type === "texture" ? "画像" : "音声";
-      return resolveNamed(assetsOf(project, kind), value, `フィールド「${field.name}」の${label}`);
-    }
-    default:
-      if (none) return undefined;
-      if (typeof value === "string") return value;
-      throw bad();
-  }
+  const schema = given ? given.schema : schemaFor(project, kokoId, field);
+  // 型エラーで形が分からないフィールドは、値の形式で表せる値ならそのまま入れる（ADR 0065）
+  if (!schema) return value as FieldValue;
+  value = resolveNames(project, schema, value, `フィールド「${field.name}」`);
+  if (schema.kind === "color" && typeof value === "string") value = value.toLowerCase();
+  const why = validateValue(schema, value, { finite: isBuiltin(kokoId) });
+  if (why) throw bad(why);
+  return value as FieldValue;
 }
 
 /** { KokoState: { 欄: 値 } } を ID の形にする */
@@ -209,7 +362,7 @@ function toStates(
     const v: Record<string, FieldValue> = {};
     for (const [fieldRef, raw] of Object.entries(values ?? {})) {
       const f = fieldOf(def, fieldRef);
-      v[f.id] = coerce(project, f, raw);
+      v[f.id] = coerce(project, def.id, f, raw);
     }
     out[def.id] = v;
   }
@@ -220,10 +373,11 @@ function toStates(
 // 見る
 
 export function overview(project: ProjectDoc) {
-  const snap = project.snapshot();
+  const snap = readableSnapshot(project);
   const index = ResourcePathIndex.fromSnapshot(snap);
   const registry = project.registry();
   const nameOf = (id: string) => registry.get(id)?.name ?? id;
+  const entities = readableEntities(project);
   return {
     name: snap.name,
     outputs: snap.outputs.map((o) => ({
@@ -235,19 +389,27 @@ export function overview(project: ProjectDoc) {
         name: project.system(s.id)?.name ?? s.id,
         enabled: s.enabled,
       })),
-      entities: project.entities(o.id).map((e) => ({
-        id: e.id,
-        name: e.name,
-        parent: e.parent,
-        kokostates: Object.keys(e.states).map(nameOf),
-      })),
+      entities: entities
+        .filter((e) => "output" in e && e.output === o.id)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          parent: e.parent,
+          kokostates: Object.keys(e.states).map(nameOf),
+          ...(e.origin ? { origin: e.origin } : {}),
+        })),
     })),
     kokostates: snap.kokostates.map((k) => ({
       id: k.id,
       name: k.name,
       path: index.pathOf(k.id),
       fields: k.fields.map((f) => ({ id: f.id, name: f.name, type: f.type, default: f.default })),
+      // 使う型の定義（フィールドの型の文から、その型を名前で使える）
+      ...(k.typeDefs?.length
+        ? { typeDefs: k.typeDefs.map((id) => project.typeDef(id)?.name ?? id) }
+        : {}),
     })),
+    typeDefs: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, path: index.pathOf(t.id) })),
     builtinKokostates: registry
       .all()
       .filter((k) => k.builtin)
@@ -259,6 +421,19 @@ export function overview(project: ProjectDoc) {
     systems: snap.systems.map((s) => ({ id: s.id, name: s.name, path: index.pathOf(s.id) })),
     materials: snap.materials,
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, kind: a.kind })),
+    prefabs: (snap.prefabs ?? []).map((p) => ({
+      ...p,
+      path: index.pathOf(p.id),
+      entities: entities
+        .filter((e) => "prefab" in e && e.prefab === p.id)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          parent: e.parent,
+          kokostates: Object.keys(e.states).map(nameOf),
+          ...(e.instanceOf ? { instanceOf: e.instanceOf } : {}),
+        })),
+    })),
     dependencies: snap.dependencies ?? [],
   };
 }
@@ -269,8 +444,13 @@ export function entityDetail(project: ProjectDoc, ref: string) {
   return {
     id: e.id,
     name: e.name,
-    output: e.output,
+    ...("output" in e ? { output: e.output } : { prefab: e.prefab }),
     parent: e.parent,
+    ...(e.instanceOf ? { instanceOf: e.instanceOf } : {}),
+    ...(e.origin
+      ? { origin: e.origin, overrides: getPrefabOverride(readableSnapshot(project), e.id, e) ?? {} }
+      : {}),
+    ...(e.instanceSystems ? { instanceSystems: e.instanceSystems } : {}),
     states: Object.fromEntries(
       Object.entries(e.states).map(([koko, values]) => {
         const def = registry.get(koko);
@@ -286,8 +466,8 @@ export function entityDetail(project: ProjectDoc, ref: string) {
 }
 
 export function systemDetail(project: ProjectDoc, ref: string) {
-  const s = pick(project.systems(), ref, "System");
-  return { id: s.id, name: s.name, code: project.code(s.id)?.toString() ?? "" };
+  const s = pick(readableSnapshot(project).systems, ref, "System");
+  return { id: s.id, name: s.name, code: s.code };
 }
 
 /** 制作データの親子から、実行時と同じ行列で世界座標を求める（配置の親は含めない） */
@@ -321,7 +501,7 @@ export function getEntities(
     parent?: string | null;
   },
 ) {
-  let list = project.entities();
+  let list = readableEntities(project).filter((e): e is EntityDef => "output" in e);
   if (args.entities) {
     const ids = new Set(args.entities.map((r) => entityOf(project, r).id));
     list = list.filter((e) => ids.has(e.id));
@@ -335,7 +515,7 @@ export function getEntities(
     list = list.filter((e) => koko in e.states);
   }
   if (args.material) {
-    const mat = resolveNamed(project.materials(), args.material, "Material");
+    const mat = resolveNamed(readableSnapshot(project).materials, args.material, "Material");
     list = list.filter((e) => e.states[BUILTIN.Mesh]?.material === mat);
   }
   if (args.parent !== undefined) {
@@ -348,7 +528,9 @@ export function getEntities(
   const worldOf = (output: string) => {
     let world = worlds.get(output);
     if (!world) {
-      world = buildWorld(project.snapshot(), output, project.registry()).world;
+      world = buildWorld(readableSnapshot(project), output, project.registry(), {
+        schemas: projectSchemas(project),
+      }).world;
       worlds.set(output, world);
     }
     return world;
@@ -371,19 +553,179 @@ export interface NamedRef {
   name: string;
 }
 
+export function prefabDetail(project: ProjectDoc, ref: string) {
+  const prefab = prefabOf(project, ref);
+  return {
+    ...prefab,
+    entities: readableEntities(project)
+      .filter((e) => "prefab" in e && e.prefab === prefab.id)
+      .map((e) => entityDetail(project, e.id)),
+  };
+}
+
+function prefabSystems(project: ProjectDoc, systems: { system: string; enabled?: boolean }[]) {
+  return systems.map((s) => ({
+    id: pick(readableSnapshot(project).systems, s.system, "System").id,
+    enabled: s.enabled !== false,
+  }));
+}
+
+function checkPrefabName(project: ProjectDoc, name: string, self?: string) {
+  if (validateName(name) !== null) throw new AgentError("プレハブの名前に使えない文字があります");
+  const index = ResourcePathIndex.fromSnapshot(project.snapshot());
+  const parent = self ? (index.entry(self)?.parent ?? null) : null;
+  const conflict = index
+    .all()
+    .some(
+      (entry) => entry.id !== self && entry.parent === parent && norm(entry.name) === norm(name),
+    );
+  if (conflict) throw new AgentError(`同じ場所に「${name}」があります`);
+}
+
+export function createPrefab(
+  project: ProjectDoc,
+  args: {
+    name: string;
+    editIn?: "here" | "isolated";
+    systems?: { system: string; enabled?: boolean }[];
+  },
+) {
+  checkPrefabName(project, args.name);
+  const systems = prefabSystems(project, args.systems ?? []);
+  let id = "";
+  project.transact(() => {
+    id = project.addPrefab(args.name);
+    const prefab = project.prefab(id);
+    if (prefab)
+      project.updatePrefab({ ...prefab, systems, ...(args.editIn ? { editIn: args.editIn } : {}) });
+  });
+  return prefabDetail(project, id);
+}
+
+export function updatePrefab(
+  project: ProjectDoc,
+  args: {
+    prefab: string;
+    name?: string;
+    editIn?: "here" | "isolated";
+    systems?: { system: string; enabled?: boolean }[];
+  },
+) {
+  const prefab = prefabOf(project, args.prefab);
+  if (isPackageResourceId(prefab.id))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  if (args.name !== undefined) checkPrefabName(project, args.name, prefab.id);
+  const systems = args.systems ? prefabSystems(project, args.systems) : prefab.systems;
+  project.transact(() => {
+    if (args.name !== undefined) project.renamePrefab(prefab.id, args.name);
+    project.updatePrefab({
+      ...prefab,
+      name: args.name ?? prefab.name,
+      systems,
+      editIn: args.editIn ?? prefab.editIn,
+    });
+  });
+  return prefabDetail(project, prefab.id);
+}
+
+export function makePrefabFromEntity(
+  project: ProjectDoc,
+  args: { entity: string; name?: string; systems?: string[] },
+) {
+  const entity = editableEntity(project, args.entity);
+  if (args.name !== undefined) checkPrefabName(project, args.name);
+  const systems = args.systems?.map((s) => pick(readableSnapshot(project).systems, s, "System").id);
+  const plan = project.makePrefabFromEntity(entity.id, {
+    name: args.name,
+    systems,
+    schemas: projectSchemas(project),
+  });
+  return {
+    prefab: prefabDetail(project, plan.prefab.id),
+    owner: plan.owner,
+    moved: plan.moved,
+    rewrites: plan.rewrites,
+    outsideRefs: plan.outsideRefs,
+    scriptMentions: plan.scriptMentions,
+  };
+}
+
+export function placePrefab(
+  project: ProjectDoc,
+  args: {
+    prefab: string;
+    output?: string;
+    ownerPrefab?: string;
+    name?: string;
+    parent?: string;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+  },
+): NamedRef {
+  const prefab = prefabOf(project, args.prefab);
+  if (args.ownerPrefab && args.output)
+    throw new AgentError("output と ownerPrefab は同時に指定できません");
+  const owner = args.ownerPrefab
+    ? prefabOf(project, args.ownerPrefab)
+    : outputOf(project, args.output);
+  if (args.ownerPrefab && isPackageResourceId(owner.id))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  const parent = args.parent ? entityOf(project, args.parent) : null;
+  if (
+    parent &&
+    (args.ownerPrefab
+      ? !("prefab" in parent) || parent.prefab !== owner.id
+      : !("output" in parent) || parent.output !== owner.id)
+  )
+    throw new AgentError("親は同じアウトプットかプレハブの Entity にしてください");
+  let id = "";
+  project.transact(() => {
+    id = project.addInstance({
+      prefab: prefab.id,
+      ...(args.ownerPrefab ? { ownerPrefab: owner.id } : { output: owner.id }),
+      name: args.name,
+      parent: parent?.id,
+      position: args.position,
+    });
+    if (args.rotation) project.setField(id, BUILTIN.Transform, "rotation", args.rotation);
+    if (args.scale) project.setField(id, BUILTIN.Transform, "scale", args.scale);
+  });
+  return { id, name: args.name ?? prefab.name };
+}
+
 export function createEntity(
   project: ProjectDoc,
   args: {
     name: string;
     output?: string;
+    prefab?: string;
     parent?: string | null;
     states?: Record<string, Record<string, unknown>>;
   },
 ): NamedRef {
-  const output = outputOf(project, args.output);
-  const parent = args.parent ? entityOf(project, args.parent).id : null;
+  if (args.prefab && args.output) throw new AgentError("output と prefab は同時に指定できません");
+  const parent = args.parent ? entityOf(project, args.parent) : null;
   const states = toStates(project, args.states ?? {});
-  const id = project.addEntity({ output: output.id, name: args.name, parent, states });
+  let id: string;
+  if (args.prefab) {
+    const prefab = prefabOf(project, args.prefab);
+    if (isPackageResourceId(prefab.id))
+      throw new AgentError("ライブラリのプレハブの中身は変えられません");
+    if (parent && (!("prefab" in parent) || parent.prefab !== prefab.id))
+      throw new AgentError("親は同じプレハブの Entity にしてください");
+    id = project.addPrefabEntity({
+      prefab: prefab.id,
+      name: args.name,
+      parent: parent?.id,
+      states,
+    });
+  } else {
+    const output = outputOf(project, args.output);
+    if (parent && (!("output" in parent) || parent.output !== output.id))
+      throw new AgentError("親は同じアウトプットの Entity にしてください");
+    id = project.addEntity({ output: output.id, name: args.name, parent: parent?.id, states });
+  }
   return { id, name: args.name };
 }
 
@@ -395,17 +737,25 @@ export function updateEntity(
     parent?: string | null;
     states?: Record<string, Record<string, unknown>>;
     removeStates?: string[];
+    index?: number;
   },
 ): NamedRef {
-  const e = entityOf(project, args.entity);
+  const e = editableEntity(project, args.entity);
   const states = toStates(project, args.states ?? {});
   const remove = (args.removeStates ?? []).map((r) => kokoOf(project, r).id);
+  const parent =
+    args.parent === undefined
+      ? undefined
+      : args.parent === null
+        ? null
+        : entityOf(project, args.parent).id;
   project.transact(() => {
+    if (args.index !== undefined)
+      project.placeEntity(e.id, parent === undefined ? e.parent : parent, args.index);
+    else if (parent !== undefined) project.setParent(e.id, parent);
     if (args.name !== undefined) project.renameEntity(e.id, args.name);
-    if (args.parent !== undefined)
-      project.setParent(e.id, args.parent ? entityOf(project, args.parent).id : null);
     for (const [koko, values] of Object.entries(states)) {
-      if (!(koko in (project.entity(e.id)?.states ?? {}))) project.addState(e.id, koko, values);
+      if (!(koko in e.states)) project.addState(e.id, koko, values);
       else for (const [f, v] of Object.entries(values)) project.setField(e.id, koko, f, v);
     }
     for (const koko of remove) project.removeState(e.id, koko);
@@ -414,73 +764,263 @@ export function updateEntity(
 }
 
 export function deleteEntity(project: ProjectDoc, ref: string): NamedRef {
-  const e = entityOf(project, ref);
+  const e = editableEntity(project, ref);
   project.removeEntity(e.id);
   return { id: e.id, name: e.name };
 }
 
+/** 同じ実体の操作を使い、インスタンスと、その中の Entity をそれぞれの形で複製する。 */
+export function duplicateEntity(
+  project: ProjectDoc,
+  args: {
+    entity: string;
+    name?: string;
+    withChildren?: boolean;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+  },
+) {
+  const e = editableEntity(project, args.entity);
+  const schemas = projectSchemas(project);
+  let copied = "";
+  project.transact(() => {
+    copied = project.duplicateEntity(e.id, args.withChildren !== false, schemas) ?? "";
+    if (!copied) throw new AgentError("Entity を複製できませんでした");
+    if (args.name !== undefined) project.renameEntity(copied, args.name);
+    if (args.position || args.rotation || args.scale) project.addState(copied, BUILTIN.Transform);
+    for (const field of ["position", "rotation", "scale"] as const)
+      if (args[field]) project.setField(copied, BUILTIN.Transform, field, args[field]);
+  });
+  return entityDetail(project, copied);
+}
+
+export function setInstanceSystems(
+  project: ProjectDoc,
+  args: { entity: string; systems: { system: string; enabled?: boolean }[] },
+) {
+  const e = editableEntity(project, args.entity);
+  project.setInstanceSystems(e.id, prefabSystems(project, args.systems));
+  return entityDetail(project, e.id);
+}
+
+export function revertPrefabChange(
+  project: ProjectDoc,
+  args: {
+    entity: string;
+    kind: "field" | "state" | "name" | "parent" | "order" | "systems";
+    kokostate?: string;
+    field?: string;
+  },
+) {
+  const e = editableEntity(project, args.entity);
+  if (!prefabInstanceAddress(readableSnapshot(project), e.id))
+    throw new AgentError("インスタンスの Entity を選んでください");
+  if (args.kind === "field" || args.kind === "state") {
+    if (!args.kokostate) throw new AgentError("KokoState を指定してください");
+    const koko = kokoOf(project, args.kokostate);
+    if (args.kind === "field") {
+      if (!args.field) throw new AgentError("フィールドを指定してください");
+      project.revertPrefabField(e.id, koko.id, fieldOf(koko, args.field).id);
+    } else project.revertPrefabEntity(e.id, "state", koko.id);
+  } else if (args.kind === "systems") project.setInstanceSystems(e.id, []);
+  else project.revertPrefabEntity(e.id, args.kind);
+  return entityDetail(project, e.id);
+}
+
+function showPrefabInstancePlan(plan: PrefabInstancePlan) {
+  return {
+    entity: plan.entity,
+    prefab: plan.prefab,
+    prefabName: plan.prefabName,
+    owner: plan.owner,
+    changes: plan.changes,
+    moved: plan.moved,
+    rewrites: plan.rewrites,
+    keepMoved: plan.keepMoved,
+    warnings: plan.warnings,
+  };
+}
+
+export function applyPrefabInstance(project: ProjectDoc, ref: string) {
+  const e = editableEntity(project, ref);
+  return showPrefabInstancePlan(
+    project.applyPrefabInstance(e.id, { schemas: projectSchemas(project) }),
+  );
+}
+
+export function unpackPrefabInstance(project: ProjectDoc, ref: string) {
+  const e = editableEntity(project, ref);
+  return showPrefabInstancePlan(
+    project.unpackPrefabInstance(e.id, { schemas: projectSchemas(project) }),
+  );
+}
+
 interface FieldSpec {
   name: string;
-  type: FieldType;
+  description?: string;
+  /** 一覧の名前（`FIELD_TYPES`）か、TypeScript の型の文 */
+  type: string;
   default?: unknown;
 }
 
-const DEFAULTS: Record<FieldType, FieldValue> = {
-  number: 0,
-  boolean: false,
-  string: "",
-  vec3: [0, 0, 0],
-  color: "#ffffff",
-  entity: undefined,
-  texture: undefined,
-  material: undefined,
-  model: undefined,
-  audio: undefined,
-};
-
-/** 欄の定義を作る。同じ名前の欄があれば、その ID を引き継ぐ（値が切れないように） */
-function toFields(project: ProjectDoc, specs: FieldSpec[], prev: FieldDef[] = []): FieldDef[] {
-  return specs.map((s) => {
+/**
+ * フィールドの定義を作る。同じ名前のフィールドがあれば、その ID を引き継ぐ（値が切れないように）。
+ * 初期値を省いたときは、一覧の型ならその初期値、TypeScript で書いた型なら空の値（「なし」にできる型は
+ * undefined、リストは空、数は 0 など）にする。
+ */
+function toFields(
+  project: ProjectDoc,
+  kokoId: string,
+  specs: FieldSpec[],
+  prev: FieldDef[] = [],
+  typeDefs?: string[],
+): FieldDef[] {
+  const bases = specs.map((s) => {
     const id =
       prev.find((p) => norm(p.name) === norm(s.name))?.id ??
       `f_${s.name.replace(/[^A-Za-z0-9_]/g, "") || "field"}_${Math.random().toString(36).slice(2, 6)}`;
-    const base = { id, name: s.name, type: s.type, default: DEFAULTS[s.type] } as FieldDef;
-    return {
-      ...base,
-      default: s.default === undefined ? base.default : coerce(project, base, s.default),
+    const basic = BASIC_FIELD_TYPES.find((t) => t.key === s.type);
+    const base: FieldDef = {
+      id,
+      name: s.name,
+      ...(s.description !== undefined ? { description: s.description } : {}),
+      type: basic?.type ?? s.type,
+      default: structuredClone(basic?.default),
     };
+    return { spec: s, basic, base };
   });
+  // TypeScript で書いた型のスキーマは、新しいフィールドを入れた仮の定義から、まとめて作る
+  // （ほかの KokoState の名前と、使う型の定義の型を、型の文から使えるように）
+  let probed: Record<string, ValueSchema> | undefined;
+  const schemaOf = (base: FieldDef): ValueSchema | undefined => {
+    const known = knownSchema(base.type);
+    if (known) return known;
+    if (!probed) {
+      const probe = project.snapshot();
+      probe.kokostates = probe.kokostates.map((k) =>
+        k.id === kokoId
+          ? {
+              ...k,
+              fields: bases.map((b) => b.base),
+              ...(typeDefs ? { typeDefs } : {}),
+            }
+          : k,
+      );
+      probed = fieldSchemasOf(probe, new Map())[kokoId] ?? {};
+    }
+    return probed[base.id];
+  };
+  return bases.map(({ spec, basic, base }) => {
+    if (spec.default !== undefined)
+      return {
+        ...base,
+        default: coerce(project, kokoId, base, spec.default, { schema: schemaOf(base) }),
+      };
+    if (basic) return base;
+    const schema = schemaOf(base);
+    return { ...base, default: schema ? emptyValueOf(schema) : undefined };
+  });
+}
+
+/** 型の定義を、ID か名前で指した一覧を、ID の一覧にする */
+function typeDefIds(project: ProjectDoc, refs: string[]): string[] {
+  const all = project.typeDefs();
+  return [...new Set(refs.map((ref) => pick(all, ref, "型の定義").id))];
 }
 
 export function createKokoState(
   project: ProjectDoc,
-  args: { name: string; fields: FieldSpec[]; role?: string },
+  args: {
+    name: string;
+    fields: FieldSpec[];
+    role?: string;
+    typeDefs?: string[];
+    description?: string;
+  },
 ): NamedRef {
+  const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : undefined;
   const id = project.addKokoState(args.name);
   const def = project.kokostate(id);
   if (!def) throw new AgentError("KokoState を作れませんでした");
-  project.updateKokoState({
-    ...def,
-    fields: toFields(project, args.fields),
-    ...(args.role ? { role: args.role } : {}),
-  });
+  try {
+    project.updateKokoState({
+      ...def,
+      fields: toFields(project, id, args.fields, [], typeDefs),
+      ...(args.description !== undefined ? { description: args.description } : {}),
+      ...(args.role ? { role: args.role } : {}),
+      ...(typeDefs?.length ? { typeDefs } : {}),
+    });
+  } catch (e) {
+    // 初期値が型に合わないなどで作れなかったら、空の KokoState を残さない
+    project.removeKokoState(id);
+    throw e;
+  }
   return { id, name: args.name };
 }
 
 export function updateKokoState(
   project: ProjectDoc,
-  args: { kokostate: string; name?: string; fields?: FieldSpec[]; role?: string },
+  args: {
+    kokostate: string;
+    name?: string;
+    description?: string;
+    fields?: FieldSpec[];
+    role?: string;
+    typeDefs?: string[];
+  },
 ): NamedRef {
   const def = kokoOf(project, args.kokostate);
   if (def.builtin) throw new AgentError("Built-in の KokoState は変えられません");
+  if (isPackageResourceId(def.id)) throw new AgentError("ライブラリの KokoState は変えられません");
   const name = args.name ?? def.name;
+  const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : def.typeDefs;
+  const { typeDefs: _old, ...rest } = def;
   project.updateKokoState({
-    ...def,
+    ...rest,
     name,
-    fields: args.fields ? toFields(project, args.fields, def.fields) : def.fields,
+    ...(args.description !== undefined ? { description: args.description } : {}),
+    fields: args.fields ? toFields(project, def.id, args.fields, def.fields, typeDefs) : def.fields,
     ...(args.role !== undefined ? { role: args.role } : {}),
+    ...(typeDefs?.length ? { typeDefs } : {}),
   });
   return { id: def.id, name };
+}
+
+// 型の定義（ADR 0065）：名前を付けた型を TypeScript で書き、KokoState のフィールドの型から使う
+
+export function typeDefDetail(project: ProjectDoc, ref: string) {
+  const t = pick(project.typeDefs(), ref, "型の定義");
+  return {
+    id: t.id,
+    name: t.name,
+    code: project.code(t.id)?.toString() ?? "",
+    usedBy: project
+      .kokostates()
+      .filter((k) => k.typeDefs?.includes(t.id))
+      .map((k) => k.name),
+  };
+}
+
+export function createTypeDef(project: ProjectDoc, args: { name: string; code: string }): NamedRef {
+  return { id: project.addTypeDef(args.name, args.code), name: args.name };
+}
+
+export function updateTypeDef(
+  project: ProjectDoc,
+  args: { typedef: string; code?: string; name?: string },
+): NamedRef {
+  const t = pick(project.typeDefs(), args.typedef, "型の定義");
+  project.transact(() => {
+    if (args.name !== undefined) project.renameTypeDef(t.id, args.name);
+    if (args.code !== undefined) {
+      const text = project.code(t.id);
+      if (!text) throw new AgentError("型の定義のコードが見つかりません");
+      text.delete(0, text.length);
+      text.insert(0, args.code);
+    }
+  });
+  return { id: t.id, name: args.name ?? t.name };
 }
 
 export function createSystem(
@@ -518,7 +1058,7 @@ export function setOutputSystems(
 ): NamedRef {
   const output = outputOf(project, args.output);
   const systems = args.systems.map((s) => ({
-    id: pick(project.systems(), s.system, "System").id,
+    id: pick(readableSnapshot(project).systems, s.system, "System").id,
     enabled: s.enabled !== false,
   }));
   project.updateOutput({ ...output, systems });
@@ -785,7 +1325,7 @@ function commitStep(project: ProjectDoc, step: Step) {
   if (step.name !== undefined) project.renameEntity(step.id, step.name);
   if (step.parent !== undefined) project.setParent(step.id, step.parent);
   for (const [koko, values] of Object.entries(step.states)) {
-    if (!(koko in (project.entity(step.id)?.states ?? {}))) project.addState(step.id, koko, values);
+    if (!(koko in entityOf(project, step.id).states)) project.addState(step.id, koko, values);
     else for (const [f, v] of Object.entries(values)) project.setField(step.id, koko, f, v);
   }
   for (const koko of step.remove) project.removeState(step.id, koko);
@@ -883,6 +1423,8 @@ export function applyEntities(project: ProjectDoc, ops: EntityOp[]): ApplyItem[]
       } else {
         const source = resolveLive(live, refs, failedRefs, op.entity);
         const kids = liveDescendants(live, source.id);
+        if ([source, ...kids].some((entity) => project.findEntity(entity.id)?.instanceOf))
+          throw new AgentError("インスタンスを含む枝の複製には duplicate_entity を使ってください");
         if (created + (1 + kids.length) * op.copies.length > MAX_NEW_ENTITIES)
           throw new AgentError(`一度に作れる Entity は ${MAX_NEW_ENTITIES} までです`);
         if (source.parent && !live.get(source.parent)?.alive)
@@ -1009,10 +1551,6 @@ const showDiagnostic = (d: Diagnostic) => ({
   ...(d.detail ? { detail: d.detail } : {}),
 });
 
-/** スクリプトの型を確かめる（ADR 0058）。TypeScript の本体は重いので、初めて使うときに作り、使い回す */
-let typeChecker: TypeChecker | null = null;
-const HOST_DECLARATIONS = hostApiDeclarations();
-
 /**
  * 作っている途中の問題：構造・参照・System の書き方と import・型の誤り
  * （スクリプトの実行時の問題は simulate で）。型の誤りがあっても simulate は動く。
@@ -1023,16 +1561,35 @@ export async function check(
 ): Promise<ReturnType<typeof showDiagnostic>[]> {
   const snap = project.snapshot();
   const index = ResourcePathIndex.fromSnapshot(snap);
+  // スクリプトとフィールドの型を確かめ、フィールドのスキーマを作る（ADR 0058・0065）
+  const types = sharedTypeChecker().checkAll({
+    snapshot: snap,
+    packages,
+    hostDeclarations: HOST_DECLARATIONS,
+  });
+  const schemas = project.prefabFieldSchemas(types.schemas);
+  const readable = project.snapshotWithPackages(schemas);
   const out: Diagnostic[] = [
     ...checkProjectStructure(snap, index),
-    ...checkProjectReferences(snap),
+    ...checkProjectReferences(
+      {
+        ...readable,
+        dependencies: [
+          ...(snap.dependencies ?? []),
+          ...reachablePackages(snap.dependencies, loadedPackages.get(project)).map(
+            (r) => r.dependency,
+          ),
+        ],
+      },
+      schemas,
+    ),
+    ...checkFieldValues(readable, schemas),
   ];
   for (const s of snap.systems) {
     const compiled = compileSystem(s.id, s.code, index, packages);
     if (!compiled.ok) out.push(...compiled.diagnostics);
   }
-  typeChecker ??= new TypeChecker(nodeTypeCheckerOptions());
-  out.push(...typeChecker.check({ snapshot: snap, packages, hostDeclarations: HOST_DECLARATIONS }));
+  out.push(...types.diagnostics);
   return out.map(showDiagnostic);
 }
 
@@ -1060,13 +1617,16 @@ export async function simulate(
     equip?: string[];
   },
 ) {
+  setProjectPackages(project, pool);
   const output = outputOf(project, args.output);
   const seconds = Math.min(Math.max(args.seconds ?? 2, 0), MAX_SIM_SECONDS);
   const logs: LogEntry[] = [];
-  const sim = await Simulation.create(project.snapshot(), output.id, {
+  const snapshot = project.snapshot();
+  const sim = await Simulation.create(snapshot, output.id, {
     realm: `agent:${workspaceId}`,
     onLog: (l) => logs.push(l),
     packages: pool,
+    schemas: projectSchemas(project),
   });
   try {
     // 道具（EquipmentTool）を、始める前にエージェントが装備する（撃つなどの入力は装備した道具に届く）
@@ -1096,7 +1656,9 @@ export async function simulate(
     }
     const registry = project.registry();
     const watch = args.watch?.map((r) => entityOf(project, r).id);
-    const matched = project.entities(output.id).filter((e) => !watch || watch.includes(e.id));
+    const matched = readableEntities(project).filter(
+      (e) => "output" in e && e.output === output.id && (!watch || watch.includes(e.id)),
+    );
     const entities = matched.slice(0, MAX_LISTED_ENTITIES).map((e) => ({
       id: e.id,
       name: e.name,
@@ -1140,6 +1702,7 @@ export function guide(): string {
     "- Collider が、プレイヤーと RigidBody の両方がぶつかる形。Mesh だけではすり抜ける。sensor が true なら押し返さず、当たったことだけが onCollision に届く。",
     "- Collider の shape が mesh（初期値）のときは Mesh の形。size が 0,0,0（初期値）のときは Mesh の大きさ。box / sphere / cylinder / capsule / plane と size で、見た目と別の当たり判定にできる。offset で中心からずらす。",
     "- RigidBody が無い Collider は動かない（壁・床・坂）。type は dynamic（重力で落ちる。初期値）/ kinematic（Transform に付いて動く）/ fixed。gravityScale を 0 にすると落ちない。高さ 0 の地面でも dynamic は止まる（原点からおよそ 200m の範囲）。",
+    "- 物を 1 つの平面の中で動かす（スイカゲーム・ピンボールなど 2D 風の遊び）ときは、RigidBody の lockMoveX / lockMoveY / lockMoveZ（その軸へ動かさない）と lockRotateX / lockRotateY / lockRotateZ（その軸まわりに回さない）を true にする。XY 平面なら lockMoveZ・lockRotateX・lockRotateY。軸はワールドの軸で、dynamic のときだけ効く。System で毎フレーム位置を書き戻さない。",
     "- 街や地形では、歩かせたい床・止めたい壁・上れる坂に Collider を付ける。段差はおよそ 35cm までならプレイヤーが上れる。",
     "- 動きは System（TypeScript）で書く。System はアウトプットに入れて有効にすると動く。",
     '- KokoState は import して使う（例：import Gun from "./Gun.koko";、Built-in は @builtin/Transform.koko、ライブラリは @別名/...）。Query の with・without にも import した値を書く（"Gun" のような名前の文字列は使えない）。',
@@ -1160,8 +1723,32 @@ export function guide(): string {
     "   - preview は、人がワークスペースを開いている必要がある。再生中なら再生の画面、編集中なら制作データの見た目が写る。",
     "6. 終わったら、人に「保存してください」と伝える。",
     "",
+    "## プレハブ",
+    "- プレハブは、Entity・KokoState・System をまとめた部品。create_prefab で空から作るか、make_prefab_from_entity で子を含めて作る。変換後は、返ってきた moved の ID 対応と scriptMentions を読む。スクリプト内の ID は自動では変わらない。",
+    "- get_prefab で中身を読み、create_entity の prefab で Entity を足す。update_entity / delete_entity には中の Entity の ID を渡す。いちばん上の Entity は消せない。update_prefab で名前・編集する場所・System を変える。",
+    "- place_prefab でアウトプットに何個でも置ける。プレハブの中身を変えると、同じプレハブから置いたものにも届く。ライブラリのプレハブの中身は変えられない。",
+    "- get_project / get_entities には、展開した Entity の ID と、元のプレハブを表す origin が出る。update_entity で中のフィールド・親・並び順を変えられる。元の Entity や KokoState は消せない。duplicate_entity はインスタンスの複製も扱う。",
+    "- revert_prefab_change で変更を一つずつ戻す。apply_prefab_instance は確認なしで変更をプレハブへ適用する。ライブラリのプレハブには適用できない。unpack_prefab_instance はつながりを切り、ふつうの Entity に戻す。",
+    "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
-    `## フィールドの型: ${FIELD_TYPES.join(", ")}`,
+    "## フィールドの型",
+    `- 一覧の名前：${FIELD_TYPES.join(", ")}。`,
+    '- または TypeScript の型の文。例：`{ suit: string; rank: number }[]`（レコードのリスト）、`Record<string, number>`（マップ）、`"easy" | "hard"`（選択肢）、`EntityRef | undefined`。',
+    "- 保存できる型だけを書ける：数・文字・真偽・bigint・undefined・リテラル・リスト・タプル・レコード・`Record<string, V>`・`Map`・`Set`・`Date`・`Vec3`・`Color`・参照。関数やクラスは型エラーになる。「なし」は undefined（null は型に書けない）。",
+    "- 参照の型：`EntityRef`・`MaterialRef`・`TextureRef`・`ModelRef`・`AudioRef`、Entity についた KokoState を指す `KokoStateRef<Health>`、そのフィールドを指す `FieldRef<number>`（`<>` を省くと、どれでも指せる）。System からは `world.getState(ref)`・`world.setState(ref, values)`・`world.getField(ref)`・`world.setField(ref, value)` で、指す先を読み書きする。",
+    '- 名前を付けた型（`Card` など）は、型の定義に書く：create_typedef で `export type Card = { ... };` を作り、KokoState の typeDefs にその型の定義を入れると、フィールドの型の文で `Card[]` と書ける。System からは `import type { Card } from "./Cards.types";`（パスは get_project の typeDefs の path）。',
+    "- 初期値を省くと、型の空の値になる（「なし」にできる型は undefined、数は 0、リスト・マップは空）。",
+    "",
+    "## 値の渡し方（フィールドの値・初期値）",
+    "- ふつうの JSON で渡す。数は数、リストは配列、レコードと `Record<string, V>` はオブジェクト。",
+    "- JSON で表せない値は、`$t` のキーを持つオブジェクトで渡す（読むときも、この形で返る）：",
+    '  - なし：`{"$t":"undefined"}`（渡すときは null でもよい）',
+    '  - 日時：`{"$t":"Date","v":"2026-01-02T03:04:05.000Z"}`',
+    '  - Map：`{"$t":"Map","v":[["a",1],["b",2]]}`、Set：`{"$t":"Set","v":["a","b"]}`',
+    '  - 大きな整数：`{"$t":"bigint","v":"123"}`、数の NaN・Infinity：`{"$t":"number","v":"NaN"}`',
+    "- 参照は、入れ子の中でも、ID でも一意な名前でも渡せる（保存されるのは ID）。",
+    '  - KokoState の参照：`{"entity":"的1","koko":"Target"}`。フィールドの参照：`{"entity":"的1","koko":"Target","field":"hp"}`。',
+    "- 型に合わない値は、どこが合わないかを付けて断る。",
     "",
     "## System の書き方（見本：サンプル「銃と的」の Shoot）",
     "```ts",

@@ -1,4 +1,4 @@
-import type { EntityDef, ProjectSnapshot } from "@tukurium/repo-model";
+import type { EntityDef, PrefabDef, PrefabEntityDef, ProjectSnapshot } from "@tukurium/repo-model";
 import { toFiles } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,8 +8,11 @@ import {
   kokoChange,
   materialChange,
   outputChange,
+  prefabChange,
+  savedPrefabKeep,
   systemChange,
   treeMark,
+  typeDefChange,
 } from "./changeMarks";
 
 function snap(partial: Partial<ProjectSnapshot> = {}): ProjectSnapshot {
@@ -62,6 +65,10 @@ describe("保存との差", () => {
     const moved = entityChange(head, { ...before, parent: "ent_root" });
     expect(moved.parent).toBe("modified");
 
+    // プレハブのインスタンスになった（Entity からプレハブを作った）ら、変わった印を出す
+    const linked = entityChange(head, { ...before, instanceOf: { prefab: "pf_box" } });
+    expect(linked).toMatchObject({ kind: "modified", name: null, parent: null, states: {} });
+
     const valued = entityChange(head, {
       ...before,
       states: { "builtin.Transform": { position: [1, 1, 0] } },
@@ -97,7 +104,7 @@ describe("保存との差", () => {
     });
 
     // KokoState の初期値も同じ
-    const field = { id: "mat", name: "mat", type: "material" as const };
+    const field = { id: "mat", name: "mat", type: "MaterialRef | undefined" };
     const def = (value: string | undefined) => ({
       id: "ks",
       name: "K",
@@ -144,6 +151,23 @@ describe("保存との差", () => {
       "modified",
     );
     expect(kokoChange(head, { ...def, builtin: true }).kind).toBeNull();
+  });
+
+  it("型の定義は名前とコードを分け、KokoState は使う型の定義の出し入れも変化にする（ADR 0065）", () => {
+    const def = { id: "ks", name: "Hand", fields: [], typeDefs: ["td"] };
+    const head = toFiles(
+      snap({ kokostates: [def], types: [{ id: "td", name: "Cards", code: "export type A = 1;" }] }),
+    );
+    expect(typeDefChange(head, "td", "Cards", "export type A = 1;").kind).toBeNull();
+    expect(typeDefChange(head, "td", "Deck", "export type A = 1;")).toEqual({
+      kind: "modified",
+      name: "modified",
+      code: null,
+    });
+    expect(typeDefChange(head, "td", "Cards", "export type A = 2;").code).toBe("modified");
+    expect(typeDefChange(head, "td_new", "New", "").kind).toBe("added");
+    expect(kokoChange(head, def).kind).toBeNull();
+    expect(kokoChange(head, { ...def, typeDefs: [] }).kind).toBe("modified");
   });
 
   it("System は名前とコードを分け、マテリアルとアウトプットも箇所を分ける", () => {
@@ -223,5 +247,55 @@ describe("階層", () => {
     expect(treeMark(null, true, ["modified"])).toEqual({ kind: "modified", nested: true });
     expect(treeMark(null, true, ["modified", "added"])).toEqual({ kind: "added", nested: true });
     expect(treeMark("modified", true, ["added"])).toEqual({ kind: "modified", nested: false });
+  });
+});
+
+describe("プレハブの中の変化（ADR 0076）", () => {
+  const prefab: PrefabDef = { id: "pf", name: "的", root: "ent_root", systems: [], keep: [] };
+  const root: PrefabEntityDef = {
+    id: "ent_root",
+    name: "的",
+    parent: null,
+    prefab: "pf",
+    order: 0,
+    states: { "builtin.Transform": { position: [0, 0, 0] } },
+  };
+  const core: PrefabEntityDef = {
+    id: "ent_core",
+    name: "芯",
+    parent: "ent_root",
+    prefab: "pf",
+    order: 0,
+    states: { "builtin.Transform": { position: [0, 1, 0] } },
+  };
+  const head = toFiles(snap({ prefabs: [prefab], prefabEntities: [root, core] }));
+
+  it("中の Entity を、プレハブのファイルと比べる", () => {
+    expect(entityChange(head, core).kind).toBeNull();
+    const moved = entityChange(head, {
+      ...core,
+      states: { "builtin.Transform": { position: [0, 2, 0] } },
+    });
+    expect(moved.states["builtin.Transform"]?.fields).toEqual({ position: "modified" });
+    expect(entityChange(head, { ...core, id: "ent_new" }).kind).toBe("added");
+    // 「維持」の切り替えは、そのフィールドの変化にする（印は、プレハブが持つ）
+    const kept = entityChange(head, core, {
+      saved: savedPrefabKeep(head, "pf"),
+      current: [{ entity: "ent_core", koko: "builtin.Transform", field: "position" }],
+    });
+    expect(kept.states["builtin.Transform"]?.fields).toEqual({ position: "modified" });
+  });
+
+  it("プレハブは、設定か、中の Entity のどれかが変わっていれば「変わった」", () => {
+    expect(prefabChange(null, prefab, [root, core])).toBeNull();
+    expect(prefabChange(head, prefab, [root, core])).toBeNull();
+    expect(prefabChange(toFiles(snap()), prefab, [root, core])).toBe("added");
+    expect(prefabChange(head, { ...prefab, editIn: "isolated" }, [root, core])).toBe("modified");
+    expect(prefabChange(head, prefab, [root, { ...core, name: "まんなか" }])).toBe("modified");
+    // 中の Entity が増えた・減った
+    expect(prefabChange(head, prefab, [root])).toBe("modified");
+    expect(prefabChange(head, prefab, [root, core, { ...core, id: "ent_new" }])).toBe("modified");
+    // 並び順だけの違いは、印にしない
+    expect(prefabChange(head, prefab, [root, { ...core, order: 3 }])).toBeNull();
   });
 });

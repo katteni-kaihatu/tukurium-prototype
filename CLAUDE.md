@@ -19,14 +19,14 @@
 | 整形 → lint（Biome と、Dockerfile・ファイル名の検査） | `pnpm format && pnpm lint` |
 | 型・単体テスト | `pnpm typecheck` / `pnpm test` |
 | ブラウザでの通しテスト（背骨の 4 本、2 分ほど。開発サーバーを自動で起動） | `pnpm e2e` |
-| 本番ビルドの動作確認 | `pnpm build` のあと `CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787` |
-| 計測 | `pnpm bench:sim` / `pnpm bench:server <ws URL>` |
+| 本番ビルドの動作確認 | `pnpm build` のあと `AUTH_DEV_LOGIN=1 CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787`（開発用ログインで入る） |
+| 計測 | `pnpm bench:sim` / `pnpm bench:prefab` / `pnpm bench:server <ws URL>` |
 
 ## テストの方針（プロトタイプの間）
 
 - PR の合否を決めるのは lint・型・単体テスト・ビルド（CI の `check`）だけ。ロジック（制作データ・ランタイム・サーバー）は単体テストで守る。
 - Markdown、`docs/`、`.claude/`だけの変更では通常CIを実行しない。`main`のE2Eも、これらと通常CI設定だけの変更では実行しない。コード、依存関係、ビルド・実行・E2E設定に触れた場合は省略しない。
-- E2E は「背骨」の 4 本だけ：一人で作って撃つ（m1）、2 人で編集・再生（m2）、セッションに出して適用（m3）、3 人で一周（m6）。PR では実行せず、`main` へのマージ後・毎日の定期実行・手動実行で状態と失敗ログを確認する。
+- E2E は「背骨」の 4 本だけ：一人で作って撃つ（m1）、2 人で編集・再生（m2）、セッションに出して適用（m3）、保存してリリースし、ライブラリから置く（m6）。PR では実行せず、`main` へのマージ後・毎日の定期実行・手動実行で状態と失敗ログを確認する。
 - `main` の E2E が落ちても、後続 PR の作成・マージは止めない。テスト名と失敗箇所を残課題に記録し、E2E の確認・修正を別の作業として行う。
 - 機能ごとの細かい E2E は足さない。画面の変更は、`verify-change` スキルの手順（使い捨てのスクリプトでスクリーンショット）で確かめる。
 - 背骨の流れを変えたときだけ、該当する E2E を直す。
@@ -41,5 +41,6 @@
 - **サーバーが実行時に使う npm パッケージ**は `apps/server/package.json` の dependencies に書く。バンドルでは外部扱いになり、本番では node_modules から読む。
 - **E2E の `test`** は `e2e/helpers.ts` から import する（Biome で強制）。2 人目以降の参加者は `newPerson()` で開くと、テストの終わりに自動で閉じられる。
 - React のフックは、早期 return より前で呼ぶ（Biome の `useHookAtTopLevel`）。
+- **本人はログインの Cookie で決まる**（ADR 0074）。HTTP と WebSocket で、画面から名乗った名前や ID を信じない。GET 以外の `/api` は同じオリジンからだけ受ける。手元・E2E・確認用のスクリプトは開発用ログイン（`POST /api/auth/dev`、E2E は `e2e/helpers.ts` の `login()`）で入る。
 - `window.__workspace` などのデバッグ用の入口は開発ビルドだけにある。E2E や確認用のスクリプトはこれに頼ってよいが、本番向けのスモークテスト（`scripts/smoke.mjs`）では使わない。
 - コミットメッセージや PR に、モデルの名前や ID を書かない。

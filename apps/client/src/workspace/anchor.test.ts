@@ -5,6 +5,7 @@ import {
   EXIT_BEHIND_ARRIVAL,
   exitPortalAt,
   PORTAL_RADIUS,
+  prefabAnchor,
   workspaceAnchor,
 } from "./anchor";
 
@@ -40,11 +41,34 @@ describe("独立した空間の出口", () => {
     for (const anchor of [
       workspaceAnchor([workspace("w", "editor")], "w", "world"),
       workspaceAnchor([workspace("p", null)], "p", "item"),
+      prefabAnchor([workspace("w", "editor")], "w"),
     ]) {
       expect(anchor.isolated).toBe(true);
       const exit = exitPortalAt(anchor.position);
       const dist = Math.hypot(exit[0] - anchor.portal[0], exit[2] - anchor.portal[2]);
       expect(dist).toBeGreaterThan(100);
     }
+  });
+});
+
+describe("プレハブを離れた空間で編集するときの置き場所", () => {
+  it("区画とポータルは、ワークスペースのもの。空間は、ワールド・非公開の作業と重ならない", () => {
+    const list = [workspace("a", "editor"), workspace("w", "editor"), workspace("p", null)];
+    for (const id of ["a", "w", "p"]) {
+      const prefab = prefabAnchor(list, id);
+      const world = workspaceAnchor(list, id, "world");
+      expect(prefab.isolated).toBe(true);
+      expect(prefab.slot).toEqual(world.slot);
+      expect(prefab.portal).toEqual(world.portal);
+      // ほかのどのワークスペースの空間（アイテム・ワールド・非公開）からも、100 m より離れている
+      for (const other of list)
+        for (const kind of ["item", "world"] as const) {
+          const at = workspaceAnchor(list, other.id, kind).position;
+          const dist = Math.hypot(prefab.position[0] - at[0], prefab.position[2] - at[2]);
+          expect(dist).toBeGreaterThan(100);
+        }
+    }
+    // ワークスペースごとに、別の場所
+    expect(prefabAnchor(list, "a").position).not.toEqual(prefabAnchor(list, "w").position);
   });
 });

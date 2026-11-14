@@ -23,7 +23,9 @@ pnpm install
 pnpm dev
 ```
 
-クライアント（http://localhost:5173 ）とサーバー（http://localhost:8787 ）が起動する。クライアントの `/api` と `/ws` はサーバーへ中継される。複数のブラウザ（またはシークレットウィンドウ）で開くと、互いの位置が見える。
+クライアント（http://localhost:5173 ）とサーバー（http://localhost:8787 ）が起動する。クライアントの `/api` と `/ws` はサーバーへ中継される。
+
+ログインは Misskey（misskey.resonite.love）でするが、手元では Misskey から戻れないので、ログインの画面の「開発用ログイン」に名前を入れて入る（`apps/server/dev.env` の `AUTH_DEV_LOGIN=1` で開く。本番では開かない。ADR 0074）。複数のブラウザ（またはシークレットウィンドウ）で別の名前で入ると、互いの位置が見える。
 
 | コマンド | 内容 |
 | --- | --- |
@@ -31,7 +33,7 @@ pnpm dev
 | `pnpm typecheck` | 型チェック |
 | `pnpm lint` / `pnpm format` | Biome による検査・整形 |
 | `pnpm build` | クライアントとサーバーのビルド |
-| `pnpm e2e` | ブラウザでの通しテスト（Playwright。背骨の 4 本：一人で作って撃つ・2 人で編集・セッションに出して適用・3 人で一周） |
+| `pnpm e2e` | ブラウザでの通しテスト（Playwright。背骨の 4 本：一人で作って撃つ・2 人で編集・セッションに出して適用・保存してリリースし置く） |
 | `pnpm smoke <URL>` | 設置した環境の動作確認（セッション作成・ワークスペース作成・再生） |
 
 ### 周辺サービス（PostgreSQL・S3 互換ストレージ）

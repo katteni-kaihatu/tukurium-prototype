@@ -123,8 +123,9 @@ const PRELUDE = (hostNames: string[]) => `
 const __codec = (${VALUE_CODEC_SOURCE})();
 const __write = (v) => JSON.stringify(__codec.encode(v));
 const __read = (text) => __codec.decode(JSON.parse(text));
-// Entity の値のうち、fields（KokoState の ID → フィールド名）に書いたフィールドだけを fn に通す
-const __eachField = (entities, fields, fn) => {
+// Entity の値のうち、fields（KokoState の ID → フィールド名）に書いたフィールドだけを、値の形式から戻す
+// （encode が false）・値の形式に書き出す（true）。全 Entity の分を毎回通るので、よく通る道を軽くしてある
+const __eachField = (entities, fields, encode) => {
   const kokos = Object.keys(fields);
   for (let i = 0; i < entities.length; i++) {
     const states = entities[i].states;
@@ -134,8 +135,18 @@ const __eachField = (entities, fields, fn) => {
       const names = fields[kokos[j]];
       for (let k = 0; k < names.length; k++) {
         const name = names[k];
-        // 消したフィールド（キーがない）は、そのままにする。undefined を入れたフィールドは運ぶ
-        if (name in values) values[name] = fn(values[name]);
+        const v = values[name];
+        if (encode) {
+          // 有限の数・文字・真偽は、そのままで JSON になる（v - v は、NaN と Infinity では 0 にならない）
+          const t = typeof v;
+          if (t === "string" || t === "boolean" || (t === "number" && v - v === 0)) continue;
+          // 消したフィールド（キーがない）は、そのままにする。undefined を入れたフィールドは運ぶ
+          if (v === undefined && !(name in values)) continue;
+          values[name] = __codec.encode(v);
+        } else if (v !== null && typeof v === "object") {
+          // タグは、いつもオブジェクト。数・文字などは、そのままで値になっている
+          values[name] = __codec.decode(v);
+        }
       }
     }
   }
@@ -219,7 +230,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
   if (typeof fn !== "function") return entitiesJson;
   const fields = fieldsJson === "" ? null : JSON.parse(fieldsJson);
   const entities = fields ? JSON.parse(entitiesJson) : __read(entitiesJson);
-  if (fields) __eachField(entities, fields.read, __codec.decode);
+  if (fields) __eachField(entities, fields.read, false);
   const args = __read(argsJson);
   __current = id;
   try {
@@ -244,7 +255,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
     __entity = null;
   }
   if (!fields) return __write(entities);
-  __eachField(entities, fields.write, __codec.encode);
+  __eachField(entities, fields.write, true);
   try {
     return JSON.stringify(entities);
   } catch (e) {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { AvatarFace } from "../app/AvatarFace";
 import { useApp } from "../app/store";
 import { CatalogNotice, ItemAction, ItemArt } from "./CatalogPage";
 import { refreshRecent, useCatalog } from "./catalogStore";
@@ -152,7 +153,7 @@ export function HomeHub({ active }: { active: boolean }) {
                 {online.map((f) => (
                   <div className={styles.friendRow} key={f.user.id}>
                     <span className={styles.avatar} data-status={f.profile.availability}>
-                      {f.user.name.slice(0, 1)}
+                      <AvatarFace user={f.user} />
                     </span>
                     <span className={styles.friendText}>
                       <strong>{f.user.name}</strong>

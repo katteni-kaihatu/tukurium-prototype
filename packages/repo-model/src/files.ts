@@ -5,16 +5,22 @@ import type {
   MaterialDef,
   OutputDef,
   PackageDependency,
+  PrefabDef,
+  PrefabEntityDef,
   ProjectSnapshot,
   Provenance,
   SystemDef,
+  TypeDef,
 } from "./schema";
 import {
   decodeKokoState,
+  decodePrefabOverrides,
   decodeStates,
   encodeKokoState,
+  encodePrefabOverrides,
   encodeStates,
   type StoredKokoState,
+  type StoredPrefabOverrides,
   type StoredValues,
 } from "./storedValues";
 
@@ -37,6 +43,12 @@ export function systemMetaPath(id: string): string {
 export function systemCodePath(id: string): string {
   return `systems/${safe(id)}.ts`;
 }
+export function typeMetaPath(id: string): string {
+  return `types/${safe(id)}.json`;
+}
+export function typeCodePath(id: string): string {
+  return `types/${safe(id)}.d.ts`;
+}
 export function materialFilePath(id: string): string {
   return `materials/${safe(id)}.json`;
 }
@@ -44,9 +56,17 @@ export function outputFilePath(id: string): string {
   return `outputs/${safe(id)}/output.json`;
 }
 
-/** ファイルに書く Entity（値は保存する形。アウトプットはパスで分かるので書かない） */
-type StoredEntity = Omit<EntityDef, "output" | "states"> & {
+export function prefabFilePath(id: string): string {
+  return `prefabs/${safe(id)}.json`;
+}
+export function prefabEntityFilePath(prefabId: string, entityId: string): string {
+  return `prefabs/${safe(prefabId)}/entities/${safe(entityId)}.json`;
+}
+
+/** ファイルに書く Entity（値は保存する形。アウトプット・プレハブはパスで分かるので書かない） */
+type StoredEntity = Omit<EntityDef, "output" | "states" | "prefabOverrides"> & {
   states: Record<string, StoredValues>;
+  prefabOverrides?: StoredPrefabOverrides;
 };
 
 /**
@@ -66,13 +86,29 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
     files[systemMetaPath(s.id)] = json({ id: s.id, name: s.name } satisfies SystemDef);
     files[systemCodePath(s.id)] = s.code;
   }
+  // 型の定義は、.d.ts のファイルとして保存する（ADR 0065）
+  for (const t of snap.types ?? []) {
+    files[typeMetaPath(t.id)] = json({ id: t.id, name: t.name } satisfies TypeDef);
+    files[typeCodePath(t.id)] = t.code;
+  }
   for (const m of snap.materials) files[materialFilePath(m.id)] = json(m);
   for (const a of snap.assets ?? []) files[`assets/${safe(a.id)}.json`] = json(a);
   for (const o of snap.outputs) files[outputFilePath(o.id)] = json(o);
   for (const e of snap.entities) {
-    const { output, states, ...rest } = e;
+    const { output, states, prefabOverrides, ...rest } = e;
     files[entityFilePath(output, e.id)] = json({
       ...rest,
+      ...(prefabOverrides ? { prefabOverrides: encodePrefabOverrides(prefabOverrides) } : {}),
+      states: encodeStates(states),
+    } satisfies StoredEntity);
+  }
+  // プレハブと、その中の Entity（ADR 0076）
+  for (const p of snap.prefabs ?? []) files[prefabFilePath(p.id)] = json(p);
+  for (const e of snap.prefabEntities ?? []) {
+    const { prefab, states, prefabOverrides, ...rest } = e;
+    files[prefabEntityFilePath(prefab, e.id)] = json({
+      ...rest,
+      ...(prefabOverrides ? { prefabOverrides: encodePrefabOverrides(prefabOverrides) } : {}),
       states: encodeStates(states),
     } satisfies StoredEntity);
   }
@@ -108,14 +144,45 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
       // スクリプトは .ts。以前の保存の .js も読む
       const base = p.replace(/\.json$/, "");
       snap.systems.push({ ...def, code: files[`${base}.ts`] ?? files[`${base}.js`] ?? "" });
+    } else if (p.startsWith("types/") && p.endsWith(".json")) {
+      const def = parse<TypeDef>(p);
+      snap.types ??= [];
+      snap.types.push({ ...def, code: files[p.replace(/\.json$/, ".d.ts")] ?? "" });
     } else if (/^outputs\/[^/]+\/output\.json$/.test(p)) snap.outputs.push(parse<OutputDef>(p));
+    else if (/^prefabs\/[^/]+\.json$/.test(p)) {
+      snap.prefabs ??= [];
+      snap.prefabs.push(parse<PrefabDef>(p));
+    }
+  }
+  for (const pf of snap.prefabs ?? []) {
+    const prefix = `prefabs/${safe(pf.id)}/entities/`;
+    for (const p of paths) {
+      if (!p.startsWith(prefix)) continue;
+      const stored = parse<StoredEntity>(p);
+      snap.prefabEntities ??= [];
+      snap.prefabEntities.push({
+        ...stored,
+        ...(stored.prefabOverrides
+          ? { prefabOverrides: decodePrefabOverrides(stored.prefabOverrides) }
+          : {}),
+        states: decodeStates(stored.states),
+        prefab: pf.id,
+      } satisfies PrefabEntityDef);
+    }
   }
   for (const o of snap.outputs) {
     const prefix = `outputs/${safe(o.id)}/entities/`;
     for (const p of paths) {
       if (!p.startsWith(prefix)) continue;
       const stored = parse<StoredEntity>(p);
-      snap.entities.push({ ...stored, states: decodeStates(stored.states), output: o.id });
+      snap.entities.push({
+        ...stored,
+        ...(stored.prefabOverrides
+          ? { prefabOverrides: decodePrefabOverrides(stored.prefabOverrides) }
+          : {}),
+        states: decodeStates(stored.states),
+        output: o.id,
+      });
     }
   }
   if (files["provenance.json"]) snap.provenance = parse<Provenance[]>("provenance.json");

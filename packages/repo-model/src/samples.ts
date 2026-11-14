@@ -1,7 +1,17 @@
+import { FIELD_TYPE } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
 import type { EntityDef, ProjectSnapshot } from "./schema";
 
 /** 新しいリポジトリの初期内容。空のアイテム 1 つ。 */
+/** 新しい型の定義の中身（ADR 0065）。`export` を付けた型を、KokoState のフィールドの型から使える */
+export const NEW_TYPES_CODE = `// 型の定義：名前を付けた型を、KokoState のフィールドの型から使えます。
+// 書けるのは type と interface。export を付けた型が使えます。
+export interface Card {
+  suit: "spade" | "heart" | "diamond" | "club";
+  rank: number;
+}
+`;
+
 export function emptyProject(name: string): ProjectSnapshot {
   return {
     version: 1,
@@ -144,22 +154,78 @@ export function gunAndTargetSample(): ProjectSnapshot {
       {
         id: "ks_gun",
         name: "Gun",
+        description: "残弾と射撃の間隔、与えるダメージを持つ銃。",
         fields: [
-          { id: "f_ammo", name: "ammo", type: "number", default: 12 },
-          { id: "f_maxAmmo", name: "maxAmmo", type: "number", default: 12 },
-          { id: "f_interval", name: "interval", type: "number", default: 0.2 },
-          { id: "f_cooldown", name: "cooldown", type: "number", default: 0 },
-          { id: "f_damage", name: "damage", type: "number", default: 1 },
+          {
+            id: "f_ammo",
+            name: "ammo",
+            description: "残っている弾の数。",
+            type: FIELD_TYPE.number,
+            default: 12,
+          },
+          {
+            id: "f_maxAmmo",
+            name: "maxAmmo",
+            description: "リロードしたときの弾の数。",
+            type: FIELD_TYPE.number,
+            default: 12,
+          },
+          {
+            id: "f_interval",
+            name: "interval",
+            description: "次の射撃まで空ける秒数。",
+            type: FIELD_TYPE.number,
+            default: 0.2,
+          },
+          {
+            id: "f_cooldown",
+            name: "cooldown",
+            description: "次に撃てるまでの残り秒数。",
+            type: FIELD_TYPE.number,
+            default: 0,
+          },
+          {
+            id: "f_damage",
+            name: "damage",
+            description: "一発で相手に与えるダメージ。",
+            type: FIELD_TYPE.number,
+            default: 1,
+          },
         ],
       },
       {
         id: "ks_target",
         name: "Target",
+        description: "ダメージを受けると倒れ、時間がたつと戻る的。",
         fields: [
-          { id: "f_hp", name: "hp", type: "number", default: 3 },
-          { id: "f_maxHp", name: "maxHp", type: "number", default: 3 },
-          { id: "f_respawn", name: "respawn", type: "number", default: 2 },
-          { id: "f_downTime", name: "downTime", type: "number", default: 0 },
+          {
+            id: "f_hp",
+            name: "hp",
+            description: "残りの体力。0 以下になると倒れる。",
+            type: FIELD_TYPE.number,
+            default: 3,
+          },
+          {
+            id: "f_maxHp",
+            name: "maxHp",
+            description: "復帰したときの体力。",
+            type: FIELD_TYPE.number,
+            default: 3,
+          },
+          {
+            id: "f_respawn",
+            name: "respawn",
+            description: "倒れてから戻るまでの秒数。",
+            type: FIELD_TYPE.number,
+            default: 2,
+          },
+          {
+            id: "f_downTime",
+            name: "downTime",
+            description: "復帰するまでの残り秒数。",
+            type: FIELD_TYPE.number,
+            default: 0,
+          },
         ],
       },
     ],

@@ -10,8 +10,10 @@ export type ResourceKind =
   | "entity"
   | "kokostate"
   | "system"
+  | "typedef"
   | "material"
-  | "asset";
+  | "asset"
+  | "prefab";
 
 export interface ResourceRef {
   kind: ResourceKind;

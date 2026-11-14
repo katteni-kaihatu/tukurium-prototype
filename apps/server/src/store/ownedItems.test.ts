@@ -60,5 +60,41 @@ for (const [name, create] of [
         }
       },
     );
+
+    it.skipIf(!create)("同時に買っても一回だけ払い、足りなければ何も変えない", async () => {
+      const store: Store = (create as () => Store)();
+      const buyer = `u_${randomUUID()}`;
+      const seller = `u_${randomUUID()}`;
+      const workId = `work-${randomUUID()}`;
+      const item = { userId: buyer, workId, releaseId: "r1", acquiredAt: "2026-11-13T00:00:00Z" };
+      const sale = (id: string, price: number) => ({
+        id,
+        workId,
+        sellerId: seller,
+        buyerId: buyer,
+        releaseId: "r1",
+        price,
+        earned: Math.floor(price * 0.9),
+        at: "2026-11-13T00:00:00Z",
+      });
+      await store.init();
+      try {
+        expect(await store.balance(buyer)).toBe(1000);
+        const tooMuch = await store.purchase(item, sale(`s-${randomUUID()}`, 1001));
+        expect(tooMuch).toEqual({ ok: false, reason: "funds", balance: 1000 });
+        expect(await store.ownedItems(buyer)).toEqual([]);
+        const results = await Promise.all([
+          store.purchase(item, sale(`s-${randomUUID()}`, 300)),
+          store.purchase(item, sale(`s-${randomUUID()}`, 300)),
+        ]);
+        expect(results.filter((r) => r.ok && r.created)).toHaveLength(1);
+        expect(await store.balance(buyer)).toBe(700);
+        expect(await store.balance(seller)).toBe(1270);
+        expect(await store.sales({ sellerId: seller })).toHaveLength(1);
+        expect(await store.ownedItems(buyer)).toEqual([item]);
+      } finally {
+        await store.close();
+      }
+    });
   });
 }

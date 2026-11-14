@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "dev": "tsx watch --env-file=dev.env --env-file-if-exists=.env src/main.ts",
     "build": "node build.mjs",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json",
@@ -23,6 +23,7 @@
     "@tukurium/shared": "workspace:*",
     "@tukurium/typecheck": "workspace:*",
     "fastify": "5.12.8",
+    "fflate": "0.8.2",
     "isomorphic-git": "1.44.10",
     "postgres": "4.0.0",
     "quickjs-emscripten-core": "0.32.0",

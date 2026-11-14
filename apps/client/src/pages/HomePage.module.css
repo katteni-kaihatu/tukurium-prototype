@@ -115,6 +115,7 @@
 
 .page {
   padding-left: var(--app-content-left);
+  padding-right: var(--app-content-right);
 }
 .main {
   padding-top: var(--app-panel-top);

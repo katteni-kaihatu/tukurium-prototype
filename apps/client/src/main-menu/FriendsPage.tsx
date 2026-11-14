@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { AvatarFace } from "../app/AvatarFace";
 import { useApp } from "../app/store";
 import { api, type PersonResult } from "../net/api";
 import { Invitations } from "./Invitations";
@@ -251,7 +252,7 @@ export function FriendsPage({ active }: { active: boolean }) {
                   className={styles.avatar}
                   data-status={f.presence.online ? f.profile.availability : "offline"}
                 >
-                  {f.user.name.slice(0, 1)}
+                  <AvatarFace user={f.user} />
                 </span>
                 <span className={styles.friendText}>
                   <strong>{f.user.name}</strong>
@@ -267,8 +268,11 @@ export function FriendsPage({ active }: { active: boolean }) {
           </div>
           {chosen && (
             <aside className={styles.detail} aria-label="フレンドの詳細">
-              <span className={styles.avatar}>{chosen.user.name.slice(0, 1)}</span>
+              <span className={styles.avatar}>
+                <AvatarFace user={chosen.user} />
+              </span>
               <h2>{chosen.user.name}</h2>
+              {chosen.user.account && <p className={styles.caption}>{chosen.user.account}</p>}
               <StatusBadge
                 availability={chosen.profile.availability}
                 online={chosen.presence.online}

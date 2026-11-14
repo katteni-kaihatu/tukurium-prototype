@@ -40,12 +40,7 @@ export function workspaceAnchor(
   workspaceId: string,
   outputKind: "item" | "world",
 ): WorkspaceAnchor {
-  const index = Math.max(
-    workspaces.findIndex((w) => w.id === workspaceId),
-    0,
-  );
-  const slot: [number, number, number] = [index * SLOT_GAP, 0, 0];
-  const portal: [number, number, number] = [index * SLOT_GAP, 0, -3];
+  const { index, slot, portal } = slotOf(workspaces, workspaceId);
   const info = workspaces.find((w) => w.id === workspaceId);
   if (info?.defaultRole === null) {
     return { position: [ISOLATED_X + index * ISOLATED_GAP, 0, 0], isolated: true, slot, portal };
@@ -54,4 +49,33 @@ export function workspaceAnchor(
     return { position: [-ISOLATED_X - index * ISOLATED_GAP, 0, 0], isolated: true, slot, portal };
   }
   return { position: slot, isolated: false, slot, portal };
+}
+
+/**
+ * プレハブを「離れた空間」で編集するときの置き場所（ADR 0076）。ワールドの編集と同じ決め方で、
+ * セッションから離した独立した空間に、区画のポータルで入る。ワールドの編集・非公開の作業の空間とは、
+ * 重ならない所（さらに奥）にする。アウトプットがワールドでも、開いている間は、プレハブの中身だけが見える。
+ */
+export function prefabAnchor(
+  workspaces: readonly WorkspaceInfo[],
+  workspaceId: string,
+): WorkspaceAnchor {
+  const { index, slot, portal } = slotOf(workspaces, workspaceId);
+  return {
+    position: [-ISOLATED_X - index * ISOLATED_GAP, 0, -ISOLATED_X],
+    isolated: true,
+    slot,
+    portal,
+  };
+}
+
+/** セッションの中の、そのワークスペースの区画（何番目かに応じて、横にずらす） */
+function slotOf(workspaces: readonly WorkspaceInfo[], workspaceId: string) {
+  const index = Math.max(
+    workspaces.findIndex((w) => w.id === workspaceId),
+    0,
+  );
+  const slot: [number, number, number] = [index * SLOT_GAP, 0, 0];
+  const portal: [number, number, number] = [index * SLOT_GAP, 0, -3];
+  return { index, slot, portal };
 }

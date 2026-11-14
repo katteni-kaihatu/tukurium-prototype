@@ -9,7 +9,7 @@ import {
   listReleases,
   savedLabel,
   sparkCounts,
-} from "./projectList";
+} from "./projectHomeModel";
 
 const now = new Date(2026, 10, 12, 15, 0, 0).getTime();
 

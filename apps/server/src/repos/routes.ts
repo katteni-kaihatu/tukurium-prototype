@@ -11,8 +11,16 @@ import {
 import { workTagsSchema } from "@tukurium/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { Store, User } from "../store/store";
+import type { AssetStore } from "../assets/assetStore";
+import type { Auth } from "../auth/auth";
+import { type Store, type User, userInfo } from "../store/store";
 import { ItemCatalog } from "./catalog";
+import {
+  archiveDisposition,
+  exportProject,
+  importProject,
+  MAX_ARCHIVE_BYTES,
+} from "./projectArchive";
 import { HttpError, type RepoService } from "./service";
 
 const TEMPLATES = {
@@ -30,6 +38,8 @@ const Selection = z.object({
   systems: z.array(z.string()).default([]),
   materials: z.array(z.string()).default([]),
   assets: z.array(z.string()).default([]),
+  types: z.array(z.string()).default([]),
+  prefabs: z.array(z.string()).default([]),
 });
 
 /** リポジトリ・作品・プロフィールの API（ADR 0007） */
@@ -42,15 +52,14 @@ export function registerRepoRoutes(
   app: FastifyInstance,
   store: Store,
   repos: RepoService,
+  assets: AssetStore,
+  auth: Auth,
   hooks: RepoRouteHooks = {},
 ) {
-  const userOf = async (req: FastifyRequest): Promise<User | null> => {
-    const token = req.headers["x-tukurium-token"];
-    return typeof token === "string" ? store.userByToken(token) : null;
-  };
+  const userOf = (req: FastifyRequest): Promise<User | null> => auth.userOf(req.raw);
   const needUser = async (req: FastifyRequest) => {
     const u = await userOf(req);
-    if (!u) throw new HttpError(401, "本人確認ができません（接続し直してください）");
+    if (!u) throw new HttpError(401, "ログインしてください");
     return u;
   };
   const handle =
@@ -89,10 +98,47 @@ export function registerRepoRoutes(
               workTagsSchema,
             ])
             .default([]),
+          kind: z.enum(["all", "item", "world"]).default("all"),
+          sort: z.enum(["new", "popular", "cheap"]).default("new"),
         })
         .parse(req.query);
-      return catalog.search(await userOf(req), q.q, q.offset, q.limit, q.tag);
+      return catalog.search(await userOf(req), q.q, q.offset, q.limit, q.tag, q.kind, q.sort);
     }),
+  );
+  const listingSchema = z.object({
+    price: z.number().int().min(0).max(100000),
+    tags: workTagsSchema.optional(),
+    autoPublish: z.boolean(),
+    releaseId: z.string().min(1).max(64).optional(),
+  });
+  app.get(
+    "/api/me/wallet",
+    handle(async (req) => catalog.wallet(await needUser(req))),
+  );
+  app.get(
+    "/api/me/market",
+    handle(async (req) => catalog.mine(await needUser(req))),
+  );
+  app.post(
+    "/api/market/listings",
+    handle(async (req) => {
+      const user = await needUser(req);
+      const body = listingSchema.extend({ workId: z.string().min(1).max(64) }).parse(req.body);
+      return catalog.register(user, body.workId, body);
+    }),
+  );
+  app.patch(
+    "/api/market/listings/:workId",
+    handle<{ workId: string }>(async (req) => {
+      const user = await needUser(req);
+      return catalog.editListing(user, req.params.workId, listingSchema.partial().parse(req.body));
+    }),
+  );
+  app.delete(
+    "/api/market/listings/:workId",
+    handle<{ workId: string }>(async (req) =>
+      catalog.unlist(await needUser(req), req.params.workId),
+    ),
   );
   app.get(
     "/api/me/items",
@@ -102,8 +148,7 @@ export function registerRepoRoutes(
     "/api/me/items/:workId",
     handle<{ workId: string }>(async (req) => {
       const user = await needUser(req);
-      const { releaseId } = z.object({ releaseId: z.string().min(1).max(64) }).parse(req.body);
-      return catalog.acquire(user, req.params.workId, releaseId);
+      return catalog.acquire(user, req.params.workId);
     }),
   );
   app.put(
@@ -142,6 +187,41 @@ export function registerRepoRoutes(
       const kind =
         body.template === "forest" ? "world" : body.template === "marubatsu" ? "item" : body.kind;
       return withOwner(await repos.create(user, { ...body, kind, snapshot }));
+    }),
+  );
+
+  // プロジェクトの Zip（エクスポート・インポート）。Zip の本文をそのまま受け取る
+  app.addContentTypeParser(
+    ["application/zip", "application/x-zip-compressed"],
+    { parseAs: "buffer", bodyLimit: MAX_ARCHIVE_BYTES },
+    (_req, body, done) => done(null, body),
+  );
+  app.post(
+    "/api/repos/import",
+    handle(async (req) => {
+      const user = await needUser(req);
+      if (!Buffer.isBuffer(req.body))
+        throw new HttpError(415, "Zip ファイル（application/zip）を送ってください");
+      const q = z
+        .object({
+          name: z.string().max(64).optional(),
+          description: z.string().max(300).optional(),
+          visibility: z.enum(["public", "private"]).optional(),
+        })
+        .parse(req.query);
+      return withOwner(await importProject(repos, assets, user, req.body, q));
+    }),
+  );
+
+  app.get(
+    "/api/repos/:id/export",
+    handle<{ id: string }>(async (req, reply) => {
+      const { name, zip } = await exportProject(repos, assets, await needUser(req), req.params.id);
+      return reply
+        .header("content-type", "application/zip")
+        .header("content-disposition", archiveDisposition(name))
+        .header("cache-control", "private, no-store")
+        .send(Buffer.from(zip));
     }),
   );
 
@@ -322,8 +402,12 @@ export function registerRepoRoutes(
             : null;
           const output = snap?.outputs.find((o) => o.id === w.outputId);
           const outputKind = output?.kind ?? null;
+          const listing = await store.listing(w.id);
+          const published = listing ? await store.release(listing.releaseId) : null;
           return {
             ...(await withOwner(w)),
+            // 名前は、マーケットで公開中の版（無ければ最新の版）のアウトプットの名前
+            name: await catalog.shownName(w, published, latest, output?.name),
             repoName: (await store.repo(w.repoId))?.name ?? "?",
             latest,
             outputKind,
@@ -371,7 +455,9 @@ export function registerRepoRoutes(
     handle<{ id: string }>(async (req) => {
       const user = await needUser(req);
       const { commit } = z.object({ commit: z.string().optional() }).parse(req.body ?? {});
-      return repos.release(user, req.params.id, commit);
+      const release = await repos.release(user, req.params.id, commit);
+      await catalog.released(release);
+      return release;
     }),
   );
 
@@ -392,7 +478,7 @@ export function registerRepoRoutes(
       const list = [];
       for (const r of await store.repos({ owner: u.id }))
         if (await repos.canRead(viewer, r)) list.push(r);
-      return { ...u, repos: list, works: await store.works({ owner: u.id }) };
+      return { ...userInfo(u), repos: list, works: await store.works({ owner: u.id }) };
     }),
   );
 }

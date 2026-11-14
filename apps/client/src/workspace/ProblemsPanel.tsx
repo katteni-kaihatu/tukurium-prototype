@@ -26,7 +26,9 @@ import { useWorkspaceProblems } from "./useProblems";
 /** 問題 1 件の場所の表示（「Shoot.ts 4 行目」） */
 export function problemPlace(name: string, p: Diagnostic): string {
   const line = scriptLine(p);
-  return `${name}.ts${line ? ` ${line} 行目` : ""}`;
+  // 型の定義（ADR 0065）のファイルは .d.ts
+  const ext = p.subject.kind === "typedef" ? ".d.ts" : ".ts";
+  return `${name}${ext}${line ? ` ${line} 行目` : ""}`;
 }
 
 const isScript = (d: Diagnostic) =>
@@ -49,6 +51,7 @@ export function ProblemsPanel() {
   const project = useProject();
   const { items, count, index } = useWorkspaceProblems();
   const { select, setOutput, outputId, showProblem, openDetail, placeDetail } = useWorkspace();
+  const edit = useWorkspace((st) => st.mode === "edit");
   const [filter, setFilter] = useState<ProblemFilter>(DEFAULT_FILTER);
   const [groupBy, setGroupBy] = useState<ProblemGroupBy>("none");
   /** 「選んでいるアウトプットだけ」。アウトプットを選び直したら、その新しいアウトプットで絞る */
@@ -103,7 +106,11 @@ export function ProblemsPanel() {
   const toggle = <T,>(list: readonly T[], values: readonly T[], on: boolean): T[] =>
     on ? [...new Set([...list, ...values])] : list.filter((v) => !values.includes(v));
   /** スクリプトはコードのその行へ。定義は詳細パネル、Entity は Inspector */
-  const openDef = (el: EventTarget | null, kind: "koko" | "system" | "material", id: string) => {
+  const openDef = (
+    el: EventTarget | null,
+    kind: "koko" | "system" | "material" | "prefab",
+    id: string,
+  ) => {
     const mode =
       el instanceof Element && el.closest("[data-mode]")?.getAttribute("data-mode") === "3d"
         ? "3d"
@@ -139,6 +146,24 @@ export function ProblemsPanel() {
         select({ kind: "output", id });
       };
     if (kind === "kokostate") return (e) => openDef(e.currentTarget, "koko", id);
+    if (kind === "prefab") {
+      // プレハブの中の Entity の問題は、プレハブを開いて、その Entity と欄まで移る（ADR 0076）
+      const inside = prefabEntityOf(d);
+      if (inside && edit && project.prefabEntity(inside.entity)?.prefab === id)
+        return () => {
+          select({ kind: "entity", id: inside.entity });
+          if (inside.koko)
+            useWorkspace.setState((s) => ({
+              focusField: {
+                entity: inside.entity,
+                koko: inside.koko ?? "",
+                field: inside.field,
+                seq: (s.focusField?.seq ?? 0) + 1,
+              },
+            }));
+        };
+      return (e) => openDef(e.currentTarget, "prefab", id);
+    }
     if (kind === "system" || kind === "material") return (e) => openDef(e.currentTarget, kind, id);
     return null;
   };
@@ -305,11 +330,14 @@ export function ProblemsPanel() {
                         title={
                           isScript(d)
                             ? "コードを開く"
-                            : d.subject.kind === "kokostate" ||
-                                d.subject.kind === "system" ||
-                                d.subject.kind === "material"
-                              ? "詳細パネルで開く"
-                              : (d.detail ?? "Inspector で選ぶ")
+                            : d.subject.kind === "prefab" && edit && prefabEntityOf(d)
+                              ? "プレハブを開いて、Inspector で選ぶ"
+                              : d.subject.kind === "kokostate" ||
+                                  d.subject.kind === "system" ||
+                                  d.subject.kind === "material" ||
+                                  d.subject.kind === "prefab"
+                                ? "詳細パネルで開く"
+                                : (d.detail ?? "Inspector で選ぶ")
                         }
                         onClick={go}
                       >
@@ -349,6 +377,24 @@ export function ProblemsPanel() {
       ))}
     </section>
   );
+}
+
+/**
+ * プレハブを相手にした問題が、中のどの Entity（と KokoState・欄）のものか。
+ * 場所の道は「entities / Entity の ID / KokoState / 欄」か「instanceOf / Entity の ID」（ADR 0076）
+ */
+function prefabEntityOf(
+  d: Diagnostic,
+): { entity: string; koko: string | null; field: string | null } | null {
+  const path = d.location?.kind === "property" ? d.location.path : [];
+  const entity = path[1];
+  if (!entity || (path[0] !== "entities" && path[0] !== "instanceOf")) return null;
+  const inStates = path[0] === "entities";
+  return {
+    entity,
+    koko: inStates ? (path[2] ?? null) : null,
+    field: inStates ? (path[3] ?? null) : null,
+  };
 }
 
 /** 問題の対象の場所（リソースは論理パス、Entity・アウトプットは名前） */

@@ -2,12 +2,24 @@ import { type Browser, type BrowserContext, test as base, type Page } from "@pla
 
 const extraContexts: BrowserContext[] = [];
 
+/** playwright.config.ts の baseURL。ログインの POST は同じオリジンの Origin が要る（ADR 0074） */
+const BASE_URL = "http://localhost:5173";
+
+/** 開発用ログインで、そのブラウザコンテキストを name の人にする（Cookie はコンテキストの中で共有される） */
+export async function login(page: Page, name: string): Promise<void> {
+  const res = await page.request.post("/api/auth/dev", {
+    data: { name },
+    headers: { origin: BASE_URL },
+  });
+  if (!res.ok()) throw new Error(`開発用ログインに失敗しました（${res.status()}）`);
+}
+
 /** 2 人目以降の参加者（別のブラウザコンテキスト）。テストの終わりに closePeople で閉じる */
 export async function newPerson(browser: Browser, name: string): Promise<Page> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   extraContexts.push(ctx);
   const page = await ctx.newPage();
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  await login(page, name);
   return page;
 }
 
@@ -70,7 +82,27 @@ export async function equip(
       };
       const target = tools.find(mine);
       if (!target) return false;
-      const at = world.get(target, "builtin.Transform")?.position ?? [0, 0, 0];
+      // Transform は親から見た値なので、親をたどって空間の中の位置にする（セッションでは配置の位置も足される）
+      const rotate = (v: number[], deg: number[]) => {
+        const [ax, ay, az] = deg.map((d) => (d * Math.PI) / 180);
+        // 回転の順は XYZ（three.js の Euler と同じ）。ベクトルには Z → Y → X の順でかかる
+        let [x, y, z] = v;
+        [x, y] = [x * Math.cos(az) - y * Math.sin(az), x * Math.sin(az) + y * Math.cos(az)];
+        [x, z] = [x * Math.cos(ay) + z * Math.sin(ay), -x * Math.sin(ay) + z * Math.cos(ay)];
+        [y, z] = [y * Math.cos(ax) - z * Math.sin(ax), y * Math.sin(ax) + z * Math.cos(ax)];
+        return [x, y, z];
+      };
+      let at = [0, 0, 0];
+      for (let e: string | null = target; e; e = world.parentOf(e)) {
+        const t = world.get(e, "builtin.Transform") ?? {};
+        const scale = t.scale ?? [1, 1, 1];
+        const r = rotate(
+          at.map((v, i) => v * scale[i]),
+          t.rotation ?? [0, 0, 0],
+        );
+        const pos = t.position ?? [0, 0, 0];
+        at = r.map((v, i) => v + pos[i]);
+      }
       const origin = [at[0], at[1] + 0.5, at[2] + 1];
       const d = [at[0] - origin[0], at[1] - origin[1], at[2] - origin[2]];
       const len = Math.hypot(d[0], d[1], d[2]);
@@ -162,7 +194,7 @@ export async function createSessionAndWorkspace(
   name: string,
   kind: "sample" | "empty",
 ): Promise<string> {
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  await login(page, name);
   await page.goto("/");
   await page.getByRole("button", { name: "セッションを作って入る" }).click();
   await page.waitForURL(/\/s\/s_/);

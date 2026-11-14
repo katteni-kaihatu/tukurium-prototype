@@ -1,7 +1,8 @@
-import { type EntityId, World } from "@tukurium/eks";
+import { type EntityId, type FieldSchemas, World } from "@tukurium/eks";
 import {
   buildRegistry,
   type Diagnostic,
+  EXPANDED_ID_SEPARATOR,
   type ObservedDiagnostics,
   type PackageResolution,
   ProjectDoc,
@@ -27,15 +28,31 @@ import { mergeRun, runDiagnostics, scriptLine } from "./problems";
 import { WorkspaceSync } from "./WorkspaceSync";
 
 /** Hierarchy で選んだもの。Inspector の右側に出る */
-export type Selection = { kind: "entity"; id: string } | { kind: "output"; id: string };
+export type Selection =
+  | { kind: "entity"; id: string }
+  | { kind: "output"; id: string }
+  /** 開いているプレハブそのもの（Hierarchy のいちばん上の行） */
+  | { kind: "prefab"; id: string };
+
+/** 開いているプレハブ（ADR 0076）。from は、開いた元のインスタンス（アウトプットの Entity の ID） */
+export interface PrefabEdit {
+  id: string;
+  from: string | null;
+}
 
 /** KokoState・マテリアル・スクリプト・素材。Inspector とは別の詳細パネルで開く */
 export type DetailTarget = {
-  kind: "koko" | "system" | "material" | "asset" | "folder";
+  kind: "koko" | "system" | "typedef" | "material" | "asset" | "folder" | "prefab";
   id: string;
 };
 
 const NO_DIAGNOSTICS: ObservedDiagnostics = { diagnostics: [], observedVersion: 0 };
+
+/**
+ * 編集中の Entity の ID の頭（制作データにある Entity の ID）。展開した Entity の ID は
+ * 「インスタンスの ID / 中の ID」なので、頭は、アウトプットかプレハブの中の Entity（ADR 0076）
+ */
+const headOf = (id: string): string => id.split(EXPANDED_ID_SEPARATOR)[0] ?? id;
 
 export type Mode = PlayMode;
 export type WorkspaceLog = LogEntry & { seq: number };
@@ -64,6 +81,11 @@ interface WorkspaceState {
   /** 依存の依存の中身も含めた集まり（別の版が混ざっていないかを見るのに使う） */
   packagePool: readonly PackageResolution[];
   outputId: string;
+  /**
+   * 開いているプレハブ（ADR 0076）。null なら、アウトプットを編集している。
+   * 開いている間、Hierarchy・Inspector・空間は、プレハブの中身を出す。人ごとの状態で、同期しない。
+   */
+  editingPrefab: PrefabEdit | null;
   selection: Selection | null;
   /** 開いている詳細（KokoState・マテリアル・スクリプト）。null ならパネルを出さない */
   detail: (DetailTarget & { seq: number }) | null;
@@ -83,6 +105,11 @@ interface WorkspaceState {
   checkProblems: ObservedDiagnostics[];
   /** 型の誤り（Worker で確かめた結果と、調べたときの版。ADR 0058） */
   typeProblems: ObservedDiagnostics;
+  /**
+   * フィールドのスキーマ（型を確かめる Worker が、制作データから作る。ADR 0065）。保存も同期もしない。
+   * まだないフィールドは、型の文から分かる分だけを使う（`schemaOfField`）
+   */
+  fieldSchemas: FieldSchemas;
   /** 「確かめ直す」を押した回数（変わったら、すべての System を調べ直す） */
   recheckSeq: number;
   /** スクリプトを確かめている最中 */
@@ -92,7 +119,7 @@ interface WorkspaceState {
   /** Play を始めたときの制作データ（実行の問題が、その後の変更で古くなったかを依存で決める） */
   runSnapshot: ProjectSnapshot | null;
   /** エディタで開いて、その行へ移る（seq は同じ行へ何度でも移れるように） */
-  jumpTo: { systemId: string; line: number | null; seq: number } | null;
+  jumpTo: { systemId: string; line: number | null; position?: number; seq: number } | null;
   /** Inspector で開いて目立たせる Entity の KokoState と欄（問題の場所から移るとき。seq は何度でも移れるように） */
   focusField: { entity: string; koko: string; field: string | null; seq: number } | null;
   /** 問題の場所をエディタで開く */
@@ -161,6 +188,10 @@ interface WorkspaceState {
   openDetail(target: DetailTarget): void;
   closeDetail(): void;
   setOutput(id: string): void;
+  /** プレハブを開いて、編集の対象にする。from は、開いた元のインスタンス（その横に出す） */
+  openPrefab(id: string, from?: string | null): void;
+  /** プレハブを閉じて、アウトプットに戻る */
+  closePrefab(): void;
   play(): void;
   pause(): void;
   resume(): void;
@@ -228,6 +259,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     packages: new Map(),
     packagePool: [],
     outputId: "",
+    editingPrefab: null,
     selection: null,
     detail: null,
     mode: "edit",
@@ -237,6 +269,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     systemStatus: [],
     checkProblems: [],
     typeProblems: NO_DIAGNOSTICS,
+    fieldSchemas: {},
     recheckSeq: 0,
     checking: false,
     runProblems: NO_DIAGNOSTICS,
@@ -244,7 +277,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     jumpTo: null,
     focusField: null,
     showProblem: (p) => {
-      if (p.subject.kind !== "system") return;
+      // コードの問題（System と、型の定義）は、エディタでその行へ移る
+      if (p.subject.kind !== "system" && p.subject.kind !== "typedef") return;
       const systemId = p.subject.id;
       get().openSystem(systemId);
       set((s) => ({
@@ -308,7 +342,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         const outputId = outputs.some((o) => o.id === s.outputId)
           ? s.outputId
           : (outputs[0]?.id ?? "");
-        set({ rev: s.rev + 1, outputId });
+        // 開いていたプレハブが消えたら、アウトプットに戻る
+        const gone = s.editingPrefab !== null && !s.project?.prefab(s.editingPrefab.id);
+        set({
+          rev: s.rev + 1,
+          outputId,
+          ...(gone ? { editingPrefab: null, selection: null } : {}),
+        });
       });
       set({
         workspaceId,
@@ -318,6 +358,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         isHost: false,
         ready: false,
         error: null,
+        editingPrefab: null,
         selection: null,
         detail: null,
         packages: new Map(),
@@ -331,6 +372,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         detailPlace: null,
         checkProblems: [],
         typeProblems: NO_DIAGNOSTICS,
+        fieldSchemas: {},
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,
@@ -373,12 +415,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         sim: null,
         remote: null,
         mode: "edit",
+        editingPrefab: null,
         selection: null,
         detail: null,
         packages: new Map(),
         packagePool: [],
         checkProblems: [],
         typeProblems: NO_DIAGNOSTICS,
+        fieldSchemas: {},
         checking: false,
         runProblems: NO_DIAGNOSTICS,
         runSnapshot: null,
@@ -401,7 +445,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       });
     },
 
-    select: (selection) => set({ selection }),
+    select: (selection) => {
+      const s = get();
+      // 選んだものが、いま Hierarchy に出ているもの（アウトプットか、開いているプレハブ）の中にあるようにする。
+      // プレハブの中の Entity を選んだら、そのプレハブを開く。アウトプットやその Entity を選んだら、プレハブを閉じる
+      let editingPrefab = s.editingPrefab;
+      if (s.mode === "edit" && selection) {
+        const inPrefab =
+          selection.kind === "prefab"
+            ? selection.id
+            : selection.kind === "entity"
+              ? (s.project?.prefabEntity(headOf(selection.id))?.prefab ?? null)
+              : null;
+        if (inPrefab === null) editingPrefab = null;
+        else if (inPrefab !== editingPrefab?.id) editingPrefab = { id: inPrefab, from: null };
+      }
+      set({ selection, editingPrefab });
+    },
 
     openDetail: (target) => set((s) => ({ detail: { ...target, seq: (s.detail?.seq ?? 0) + 1 } })),
 
@@ -409,7 +469,28 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
 
     setOutput: (outputId) => {
       if (get().mode !== "edit") get().stop();
-      set({ outputId, selection: { kind: "output", id: outputId } });
+      set({ outputId, editingPrefab: null, selection: { kind: "output", id: outputId } });
+    },
+
+    openPrefab: (id, from = null) => {
+      const s = get();
+      // 再生中は、プレハブも編集できない（今のアウトプットと同じ扱い）
+      if (s.mode !== "edit" || !s.project?.prefab(id)) return;
+      set({ editingPrefab: { id, from }, selection: { kind: "prefab", id } });
+    },
+
+    closePrefab: () => {
+      const s = get();
+      if (!s.editingPrefab) return;
+      // 開いた元のインスタンスがあれば、それを選んだ所へ戻る
+      const from = s.editingPrefab.from;
+      set({
+        editingPrefab: null,
+        selection:
+          from && s.project?.entity(from)
+            ? { kind: "entity", id: from }
+            : { kind: "output", id: s.outputId },
+      });
     },
 
     play: () => command("play"),
@@ -593,6 +674,8 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     // 同じワークスペース（＝同じリポジトリ）の System は同じ領域で動かす
     realm: workspaceId,
     packages,
+    // 型を確かめる Worker が作ったスキーマ（まだなければ、型の文から分かる分だけで確かめる）
+    schemas: ws().fieldSchemas,
     onLog: (entry) => {
       if (!started && !current()) return;
       pushLog(entry);
@@ -718,6 +801,8 @@ useWorkspace.subscribe((s, prev) => {
     useWorkspace.setState({
       runProblems: { diagnostics: runDiagnostics(s.systemStatus), observedVersion: s.rev },
       runSnapshot: s.project?.snapshot() ?? null,
+      // 再生は、アウトプットに戻ってから始める（ADR 0076 の 9）。だれが Play を押しても、ここを通る
+      ...(s.editingPrefab ? { editingPrefab: null, selection: null } : {}),
     });
   } else if (
     s.systemStatus !== prev.systemStatus &&

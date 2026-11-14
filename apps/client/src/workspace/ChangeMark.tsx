@@ -25,15 +25,18 @@ export interface ChangeTarget {
 export function MarkedLine({
   kind,
   target,
+  decoration,
   children,
 }: {
   kind: ChangeKind | null;
   target?: ChangeTarget;
+  decoration?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className={ui.markedLine}>
       <ChangeMark kind={kind} target={target} />
+      {decoration}
       <div className={ui.markedBody}>{children}</div>
     </div>
   );

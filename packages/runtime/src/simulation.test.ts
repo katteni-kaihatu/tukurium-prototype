@@ -1,4 +1,10 @@
-import { parseValue, stringifyValue, type Vec3 } from "@tukurium/eks";
+import {
+  type FieldSchemas,
+  parseValue,
+  stringifyValue,
+  type ValueSchema,
+  type Vec3,
+} from "@tukurium/eks";
 import {
   BUILTIN,
   emptyProject,
@@ -215,7 +221,7 @@ describe("Simulation：System の扱い", () => {
     p.kokostates.push({
       id: "ks_l",
       name: "Link",
-      fields: [{ id: "to", name: "to", type: "entity", default: "e1" }],
+      fields: [{ id: "to", name: "to", type: "EntityRef | undefined", default: "e1" }],
     });
     const e1 = p.entities[0];
     if (e1) e1.states.ks_l = { to: undefined };
@@ -245,7 +251,7 @@ describe("Simulation：System の扱い", () => {
     p.kokostates.push({
       id: "ks_l",
       name: "Link",
-      fields: [{ id: "to", name: "to", type: "entity", default: undefined }],
+      fields: [{ id: "to", name: "to", type: "EntityRef | undefined", default: undefined }],
     });
     const e1 = p.entities[0];
     if (e1) e1.states.ks_l = { to: "e1" };
@@ -258,6 +264,267 @@ describe("Simulation：System の扱い", () => {
     const after = sim.world.get("e1", "ks_l") ?? {};
     expect("to" in after).toBe(true);
     expect(after.to).toBeUndefined();
+  });
+
+  describe("TypeScript で書いた型のフィールド（ADR 0065）", () => {
+    const owner: ValueSchema = {
+      kind: "union",
+      options: [{ kind: "ref", target: "entity" }, { kind: "undefined" }],
+    };
+    const cardOf = (label: ValueSchema): ValueSchema => ({
+      kind: "record",
+      fields: [
+        { name: "label", optional: false, schema: label },
+        { name: "owner", optional: false, schema: owner },
+      ],
+    });
+    const card = cardOf({ kind: "string" });
+    const schemas: FieldSchemas = { ks_h: { cards: { kind: "list", item: card } } };
+    const hand = () => {
+      const p = project(`import C from "./Counter.koko";
+        import H from "./Hand.koko";
+        export default system({
+          query: { with: [C, H] },
+          onUpdate(e) {
+            const c = e.get(C);
+            const h = e.get(H);
+            if (c.n === 0) h.cards.push({ label: "A", owner: e.id });
+            else if (c.n === 1) h.cards.push({ label: 2, owner: undefined });
+            else if (c.n === 2) h.drawn = new Date(5);
+            else if (c.n === 3) c.n = NaN;
+            if (c.n === c.n) c.n += 1;
+          },
+        });`);
+      p.kokostates.push({
+        id: "ks_h",
+        name: "Hand",
+        fields: [
+          {
+            id: "cards",
+            name: "cards",
+            type: "{ label: string; owner: EntityRef | undefined }[]",
+            default: [],
+          },
+          { id: "drawn", name: "drawn", type: "Date | undefined", default: undefined },
+        ],
+      });
+      const e1 = p.entities[0];
+      if (e1) e1.states.ks_h = { cards: [{ label: "Z", owner: "e1" }], drawn: undefined };
+      return p;
+    };
+
+    it("レコードのリストと日時を System から読み書きでき、型に合わない書き込みは無視する", async () => {
+      sim = await Simulation.create(hand(), "out", { realm: "r", schemas });
+      const values = () => sim?.world.get("e1", "ks_h") ?? {};
+      sim.step(0.1);
+      expect(values().cards).toEqual([
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+      ]);
+      // label が数のカードを足した書き込みは、フィールドごと受け入れない
+      sim.step(0.1);
+      expect(values().cards).toHaveLength(2);
+      sim.step(0.1);
+      expect(values().drawn).toEqual(new Date(5));
+      // 自作の KokoState の数は、NaN も入る（Built-in の数は、有限の数だけ）
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_c")?.n).toBeNaN();
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
+
+    it("型の定義を変えたあとの値は、型に合わせてから使う（足りないフィールドを埋め、ないものを捨てる）", async () => {
+      // カードに joker が足され、owner が消えた型
+      const next: ValueSchema = {
+        kind: "list",
+        item: {
+          kind: "record",
+          fields: [
+            { name: "label", optional: false, schema: { kind: "string" } },
+            { name: "joker", optional: false, schema: { kind: "boolean" } },
+          ],
+        },
+      };
+      sim = await Simulation.create(hand(), "out", {
+        realm: "r",
+        schemas: { ks_h: { cards: next } },
+      });
+      expect(sim.world.get("e1", "ks_h")?.cards).toEqual([{ label: "Z", joker: false }]);
+    });
+
+    it("適用：維持を付けた入れ子のフィールドは、まるごと引き継ぐ。型の定義が変わっていたら、新しい型に合わせる", async () => {
+      const kept = () => {
+        const p = hand();
+        const out = p.outputs[0];
+        if (out) out.keep = [{ entity: "e1", koko: "ks_h", field: "cards" }];
+        return p;
+      };
+      sim = await Simulation.create(kept(), "out", { realm: "r", schemas });
+      const cards = () => sim?.world.get("e1", "ks_h")?.cards;
+      sim.step(0.1);
+      const before = [
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+      ];
+      expect(cards()).toEqual(before);
+
+      // 型が同じ：実行で足したカードも、中の参照も、そのまま残る
+      expect(sim.applyPart("r", "out", kept(), undefined, schemas)).toMatchObject({
+        kept: 1,
+        dropped: 0,
+      });
+      expect(cards()).toEqual(before);
+
+      // 型の文は同じで、型の定義にフィールドが足された：足りないフィールドを埋めて引き継ぐ
+      const withJoker: ValueSchema = {
+        kind: "record",
+        fields: [
+          { name: "label", optional: false, schema: { kind: "string" } },
+          { name: "owner", optional: false, schema: owner },
+          { name: "joker", optional: false, schema: { kind: "boolean" } },
+        ],
+      };
+      expect(
+        sim.applyPart("r", "out", kept(), undefined, {
+          ks_h: { cards: { kind: "list", item: withJoker } },
+        }),
+      ).toMatchObject({ kept: 1, dropped: 0 });
+      expect(cards()).toEqual(before.map((c) => ({ ...c, joker: false })));
+
+      // 型の定義が変わって、合わせても合わない（label が数になった）：引き継がず、制作データの値にする
+      const numbered = cardOf({ kind: "number" });
+      expect(
+        sim.applyPart("r", "out", kept(), undefined, {
+          ks_h: { cards: { kind: "list", item: numbered } },
+        }),
+      ).toMatchObject({ kept: 0, dropped: 1 });
+      expect(cards()).toEqual([{ label: "Z", owner: "e1" }]);
+    });
+
+    it("スキーマが分からないフィールドは、値の確かめをせずに通す", async () => {
+      sim = await Simulation.create(hand(), "out", { realm: "r" });
+      sim.step(0.1);
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_h")?.cards).toEqual([
+        { label: "Z", owner: "e1" },
+        { label: "A", owner: "e1" },
+        { label: 2, owner: undefined },
+      ]);
+    });
+
+    it("セッションでは、入れ子の中の Entity の参照も、その配置の中の ID になる", async () => {
+      sim = await Simulation.createSession();
+      sim.addPart({
+        id: "p1",
+        realm: "r",
+        outputId: "out",
+        snapshot: hand(),
+        schemas,
+        position: [0, 0, 0],
+        yaw: 0,
+      });
+      const koko = sim.stateIdOf("p1", "ks_h") ?? "";
+      expect(sim.world.get("p1/e1", koko)?.cards).toEqual([{ label: "Z", owner: "p1/e1" }]);
+      // 適用でスキーマが変わったら、新しいスキーマで確かめる（label は "Z" だけ）
+      const onlyZ = cardOf({ kind: "literal", value: "Z" });
+      sim.applyPart("r", "out", hand(), undefined, {
+        ks_h: { cards: { kind: "list", item: onlyZ } },
+      });
+      sim.step(0.1);
+      // label が "A" のカードを足す書き込みは、新しい型に合わないので入らない
+      expect(sim.world.get("p1/e1", sim.stateIdOf("p1", "ks_h") ?? "")?.cards).toEqual([
+        { label: "Z", owner: "p1/e1" },
+      ]);
+    });
+  });
+
+  describe("参照から読み書きする（ADR 0065）", () => {
+    const gauge = () => {
+      const p = project(`import G from "./Gauge.koko";
+        export default system({
+          query: { with: [G] },
+          onUpdate(e) {
+            const g = e.get(G);
+            const hp = world.getField(g.hp);
+            const state = world.getState(g.owner);
+            if (hp === 0) {
+              g.seen = [hp, state && state.n, world.getField(g.gone), world.getState(g.none)].join("/");
+              g.ok = [
+                world.setField(g.hp, hp + 1),
+                world.setField(g.hp, "x"),
+                world.setField(g.gone, 1),
+              ].join();
+            } else if (hp === 1) {
+              world.setState(g.owner, { n: 100, nope: 1 });
+            }
+          },
+        });`);
+      p.kokostates.push({
+        id: "ks_g",
+        name: "Gauge",
+        fields: [
+          { id: "hp", name: "hp", type: "FieldRef<number>", default: undefined },
+          { id: "owner", name: "owner", type: "KokoStateRef<Counter>", default: undefined },
+          { id: "gone", name: "gone", type: "FieldRef", default: undefined },
+          { id: "none", name: "none", type: "KokoStateRef", default: undefined },
+          { id: "seen", name: "seen", type: "string", default: "" },
+          { id: "ok", name: "ok", type: "string", default: "" },
+        ],
+      });
+      p.entities.push({
+        id: "e2",
+        name: "ゲージ",
+        parent: null,
+        output: "out",
+        order: 1,
+        states: {
+          ks_g: {
+            hp: { entity: "e1", koko: "ks_c", field: "n" },
+            owner: { entity: "e1", koko: "ks_c" },
+            // フィールドがない・KokoState を持っていない
+            gone: { entity: "e1", koko: "ks_c", field: "missing" },
+            none: { entity: "e2", koko: "ks_c" },
+          },
+        },
+      });
+      return p;
+    };
+    const schemas: FieldSchemas = {
+      ks_g: {
+        hp: { kind: "fieldRef", value: { kind: "number" } },
+        owner: { kind: "kokoRef", koko: "ks_c" },
+        gone: { kind: "fieldRef" },
+        none: { kind: "kokoRef" },
+      },
+    };
+
+    it("フィールドの参照と KokoState の参照の先を読み書きする。指す先がなければ undefined・false", async () => {
+      sim = await Simulation.create(gauge(), "out", { realm: "r", schemas });
+      sim.step(0.1);
+      expect(sim.world.get("e2", "ks_g")).toMatchObject({ seen: "0/0//", ok: "true,false,false" });
+      expect(sim.world.get("e1", "ks_c")?.n).toBe(1);
+      sim.step(0.1);
+      expect(sim.world.get("e1", "ks_c")).toEqual({ n: 100 });
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
+
+    it("セッションでも、その配置の中の Entity を指す", async () => {
+      sim = await Simulation.createSession();
+      const part = { realm: "r", outputId: "out", snapshot: gauge(), schemas, yaw: 0 };
+      sim.addPart({ ...part, id: "p1", position: [0, 0, 0] });
+      sim.addPart({ ...part, id: "p2", position: [5, 0, 0] });
+      const counter = sim.stateIdOf("p1", "ks_c") ?? "";
+      expect(sim.world.get("p1/e2", sim.stateIdOf("p1", "ks_g") ?? "")?.hp).toEqual({
+        entity: "p1/e1",
+        koko: "ks_c",
+        field: "n",
+      });
+      sim.step(0.1);
+      sim.step(0.1);
+      // それぞれの配置のゲージが、自分の配置のカウンターだけを書く
+      expect(sim.world.get("p1/e1", counter)?.n).toBe(100);
+      expect(sim.world.get("p2/e1", counter)?.n).toBe(100);
+      expect(sim.systemStatus().every((s) => s.error === null)).toBe(true);
+    });
   });
 
   it("spawn / destroy / find / get / set が使える", async () => {
@@ -948,5 +1215,163 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
     const pos = sim.world.get("ball", BUILTIN.Transform)?.position as Vec3;
     expect(pos[0]).toBeGreaterThan(1);
     expect(pos[1]).toBeGreaterThan(0);
+  });
+
+  describe("軸の固定（ADR 0078）", () => {
+    /** 球の下に、Z の向きへ下る坂を置く。固定しなければ、球は Z へ転がる */
+    const onSlope = (rigid: Record<string, unknown>) => {
+      const p = ball(rigid, {}, {}, 3);
+      p.entities.push({
+        id: "slope",
+        name: "坂",
+        parent: null,
+        output: "out_main",
+        order: 1,
+        states: {
+          [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [30, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: { shape: "box", size: [6, 0.2, 6], material: undefined, color: "#fff" },
+          [BUILTIN.Collider]: { sensor: false },
+        },
+      });
+      return p;
+    };
+
+    interface Result {
+      pos: Vec3;
+      rot: Vec3;
+      linvel: Vec3;
+      angvel: Vec3;
+    }
+
+    /** いまの球の位置・角度・速度 */
+    function read(s: Simulation, id = "ball"): Result {
+      const t = s.world.get(id, BUILTIN.Transform);
+      const rb = s.world.get(id, BUILTIN.RigidBody);
+      if (!t || !rb) throw new Error(`${id} がありません`);
+      return {
+        pos: t.position as Vec3,
+        rot: t.rotation as Vec3,
+        linvel: rb.linvel as Vec3,
+        angvel: rb.angvel as Vec3,
+      };
+    }
+
+    async function run(p: ProjectSnapshot, frames = 240, output = "out_main"): Promise<Result> {
+      const s = await Simulation.create(p, output, { realm: "r" });
+      sim = s;
+      for (let i = 0; i < frames; i++) s.step(1 / 60);
+      return read(s);
+    }
+
+    it("固定しなければ坂を Z へ転がり、lockMoveZ なら押されても Z は動かない", async () => {
+      const free = await run(onSlope({}));
+      expect(Math.abs(free.pos[2])).toBeGreaterThan(0.5);
+
+      const locked = await run(onSlope({ lockMoveZ: true }));
+      expect(locked.pos[2]).toBe(0);
+      expect(locked.pos[0]).toBeCloseTo(0, 3);
+      // 坂に押され続けても暴れず、坂の上で止まる
+      expect(locked.pos[1]).toBeGreaterThan(1);
+      expect(locked.pos[1]).toBeLessThan(1.8);
+      expect(locked.linvel[2]).toBe(0);
+      expect(Math.hypot(...locked.linvel)).toBeLessThan(0.05);
+    });
+
+    it("lockMoveY なら重力でも落ちず、ほかの軸へは動く", async () => {
+      const { pos } = await run(ball({ lockMoveY: true, linvel: [1, 0, 0], linearDamping: 0 }), 60);
+      expect(pos[1]).toBe(4);
+      expect(pos[0]).toBeCloseTo(1, 1);
+    });
+
+    it("固定した軸へは、スクリプトが書いた速度でも動かない", async () => {
+      const p = project(
+        `import RigidBody from "@builtin/RigidBody.koko";
+        export default system({
+          query: { with: [RigidBody] },
+          onUpdate(e) {
+            e.get(RigidBody).linvel = [2, 0, 5];
+          },
+        });`,
+      );
+      const [source] = ball({ lockMoveZ: true, gravityScale: 0 }, {}, {}, 3).entities;
+      if (!source) throw new Error("球がありません");
+      p.entities.push({ ...source, output: "out", order: 1 });
+      // 物理のあとに System が動くので、読める速度は書いた値のまま。位置だけを見る
+      const { pos } = await run(p, 60, "out");
+      expect(pos[2]).toBe(0);
+      expect(pos[0]).toBeGreaterThan(1);
+    });
+
+    it("lockRotate を 3 つとも付けると、転がっても向きが変わらない", async () => {
+      const rolling = { linvel: [3, 0, 0] as Vec3 };
+      const sphere = { shape: "sphere", size: [0.5, 0.5, 0.5] as Vec3 };
+      const free = await run(ball(rolling, { friction: 1 }, sphere, 0.25), 60);
+      expect(Math.hypot(...free.rot)).toBeGreaterThan(5);
+
+      const locked = await run(
+        ball(
+          { ...rolling, lockRotateX: true, lockRotateY: true, lockRotateZ: true },
+          { friction: 1 },
+          sphere,
+          0.25,
+        ),
+        60,
+      );
+      expect(Math.hypot(...locked.rot)).toBeCloseTo(0, 6);
+      expect(locked.angvel).toEqual([0, 0, 0]);
+    });
+
+    it("回転は軸ごとに止められる（Z まわりだけ回る）", async () => {
+      const { rot } = await run(
+        ball(
+          {
+            gravityScale: 0,
+            angularDamping: 0,
+            angvel: [2, 2, 2],
+            lockRotateX: true,
+            lockRotateY: true,
+          },
+          {},
+          {},
+          3,
+        ),
+        30,
+      );
+      expect(rot[0]).toBeCloseTo(0, 4);
+      expect(rot[1]).toBeCloseTo(0, 4);
+      expect(Math.abs(rot[2])).toBeGreaterThan(30);
+    });
+
+    it("dynamic でなければ効かない：kinematic は Transform に付いて動く", async () => {
+      const p = ball();
+      p.entities.push({
+        id: "deck",
+        name: "台",
+        parent: null,
+        output: "out_main",
+        order: 1,
+        states: {
+          [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: { shape: "box", size: [4, 0.2, 4], material: undefined, color: "#fff" },
+          [BUILTIN.Collider]: { sensor: false },
+          [BUILTIN.RigidBody]: {
+            type: "kinematic",
+            lockMoveX: true,
+            lockMoveY: true,
+            lockMoveZ: true,
+          },
+        },
+      });
+      const s = await Simulation.create(p, "out_main", { realm: "r" });
+      sim = s;
+      s.step(1 / 60);
+      const deck = s.world.get("deck", BUILTIN.Transform);
+      if (!deck) throw new Error("台がありません");
+      deck.position = [0, 2, 0];
+      for (let i = 0; i < 240; i++) s.step(1 / 60);
+      const y = read(s).pos[1];
+      expect(y).toBeGreaterThan(2.2);
+      expect(y).toBeLessThan(2.5);
+    });
   });
 });

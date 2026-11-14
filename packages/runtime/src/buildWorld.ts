@@ -1,18 +1,26 @@
 import { type EntityId, type KokoStateRegistry, World } from "@tukurium/eks";
-import { buildRegistry, type ProjectSnapshot } from "@tukurium/repo-model";
+import {
+  buildRegistry,
+  type ExpandOptions,
+  expandPrefabs,
+  type ProjectSnapshot,
+} from "@tukurium/repo-model";
 
 /**
  * 制作データ（スナップショット）から、1 つのアウトプットの World を組み立てる。
  * Edit モードの表示と、Play の開始時の両方で使う。親を先に作り、親が見つからない Entity は飛ばす。
+ * プレハブのインスタンスは、プレハブの中身に展開してから並べる（ADR 0076。展開済みなら、そのまま使う）。
  */
 export function buildWorld(
   snapshot: ProjectSnapshot,
   outputId: string,
   registry: KokoStateRegistry = buildRegistry(snapshot.kokostates),
+  expand: ExpandOptions = {},
 ): { world: World; names: Map<EntityId, string> } {
   const world = new World(registry);
   const names = new Map<EntityId, string>();
-  const entities = snapshot.entities.filter((e) => e.output === outputId);
+  const expanded = expandPrefabs(snapshot, { kokostates: registry.all(), ...expand });
+  const entities = expanded.entities.filter((e) => e.output === outputId);
   const ids = new Set(entities.map((e) => e.id));
   const pending = [...entities];
   while (pending.length > 0) {

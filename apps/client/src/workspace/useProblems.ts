@@ -1,5 +1,6 @@
 import {
   belongsToDependency,
+  checkFieldValues,
   checkPackageVersions,
   checkProjectReferences,
   checkProjectStructure,
@@ -12,6 +13,7 @@ import {
   packageKokoStates,
   type QueryItem,
   ResourcePathIndex,
+  reachablePackages,
   readSystemQuery,
   summarizeDiagnostics,
   summarizeHierarchy,
@@ -23,6 +25,7 @@ import { IncrementalCheck } from "./incrementalCheck";
 import { resolvePackagePool, resolvePackages } from "./packages";
 import { checkScripts, type Problem, runSetsByChanges, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
+import { setEditorTypecheck, TypecheckClient } from "./typecheckClient";
 
 /** Host API の宣言（型を確かめるときに Worker へ渡す） */
 const HOST_DECLARATIONS = hostApiDeclarations();
@@ -74,35 +77,39 @@ export function useTypeCheck(): void {
   const ready = useWorkspace((s) => s.ready);
   const rev = useWorkspace((s) => s.rev);
   const packages = useWorkspace((s) => s.packages);
-  const worker = useRef<Worker | null>(null);
+  const worker = useRef<TypecheckClient | null>(null);
   const seq = useRef(0);
-  useEffect(
-    () => () => {
-      worker.current?.terminate();
-      worker.current = null;
-    },
-    [],
-  );
   useEffect(() => {
     if (!project || !ready) return;
+    const client = new TypecheckClient(
+      new Worker(new URL("./typecheck.worker.ts", import.meta.url), { type: "module" }),
+    );
+    worker.current = client;
+    setEditorTypecheck(client);
+    return () => {
+      client.dispose();
+      worker.current = null;
+      setEditorTypecheck(null);
+    };
+  }, [project, ready]);
+  useEffect(() => {
+    const client = worker.current;
+    if (!project || !ready || !client) return;
+    const id = ++seq.current;
+    const input = {
+      snapshot: project.snapshot(),
+      packages: [...packages],
+      hostDeclarations: HOST_DECLARATIONS,
+    };
+    client.updateContext(input);
     const timer = setTimeout(() => {
-      worker.current ??= new Worker(new URL("./typecheck.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      const w = worker.current;
-      const id = ++seq.current;
-      w.onmessage = (e: MessageEvent<{ id: number; diagnostics: Diagnostic[] }>) => {
+      void client.check(input).then((result) => {
         // 最後に頼んだものの結果だけを受け取る
-        if (e.data.id !== seq.current || useWorkspace.getState().project !== project) return;
+        if (!result || id !== seq.current || useWorkspace.getState().project !== project) return;
         useWorkspace.setState({
-          typeProblems: { diagnostics: e.data.diagnostics, observedVersion: rev },
+          typeProblems: { diagnostics: result.diagnostics, observedVersion: rev },
+          fieldSchemas: result.schemas,
         });
-      };
-      w.postMessage({
-        id,
-        snapshot: project.snapshot(),
-        packages: [...packages],
-        hostDeclarations: HOST_DECLARATIONS,
       });
     }, 600);
     return () => clearTimeout(timer);
@@ -139,28 +146,45 @@ export function useProjectDiagnostics(): {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
   const pool = useWorkspace((s) => s.packagePool);
+  const schemas = useWorkspace((s) => s.fieldSchemas);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(() => {
     if (!project) return { diagnostics: [], index: null, summary: new Map() };
     const snap = project.snapshot();
+    const readable = project.snapshotWithPackages(schemas);
     const index = ResourcePathIndex.fromSnapshot(snap);
     const diagnostics = [
       ...checkProjectStructure(snap, index),
-      ...checkProjectReferences(snap),
+      ...checkProjectReferences(
+        {
+          ...readable,
+          dependencies: [
+            ...(snap.dependencies ?? []),
+            ...reachablePackages(snap.dependencies, pool).map((r) => r.dependency),
+          ],
+        },
+        project.prefabFieldSchemas(schemas),
+      ),
+      // 値が型に合っているか（ADR 0065）
+      ...checkFieldValues(snap, schemas),
       ...checkPackageVersions(snap.dependencies, pool),
     ];
     return { diagnostics, index, summary: summarizeDiagnostics(diagnostics, index) };
-  }, [project, rev]);
+  }, [project, rev, schemas]);
 }
 
 /** 制作データの依存グラフ（「どこで使っているか」の表示に使う）。制作データが変わるたびに作り直す */
 export function useDependencyGraph(): ProjectDependencyGraph | null {
   const project = useWorkspace((s) => s.project);
   const rev = useWorkspace((s) => s.rev);
+  const schemas = useWorkspace((s) => s.fieldSchemas);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(
-    () => (project ? ProjectDependencyGraph.fromSnapshot(project.snapshot()) : null),
-    [project, rev],
+    () =>
+      project
+        ? ProjectDependencyGraph.fromSnapshot(project.snapshotWithPackages(schemas), schemas)
+        : null,
+    [project, rev, schemas],
   );
 }
 
@@ -265,8 +289,9 @@ export function usePackageDefinitions(): void {
       last = key;
       void Promise.all([resolvePackages(deps), resolvePackagePool(deps)]).then(([map, pool]) => {
         if (cancelled || last !== key || useWorkspace.getState().project !== project) return;
-        // 使う側から見えるのは直接の依存だけ（依存の依存は、ライブラリの System のために読み込む）
-        project.setPackageKokoStates(packageKokoStates(map.values()));
+        // 入れ子のプレハブの表示には、依存先が使う KokoState の定義も要る。
+        project.setPackageKokoStates(packageKokoStates(pool));
+        project.setPackagePrefabs(pool);
         // 定義は Y.Doc の外なので、変わったことを rev で知らせる
         useWorkspace.setState((s) => ({ packages: map, packagePool: pool, rev: s.rev + 1 }));
       });

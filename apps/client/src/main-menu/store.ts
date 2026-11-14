@@ -17,6 +17,7 @@ export const TOOL_WINDOWS = [
   ["library", "ライブラリ"],
   ["workspaces", "ワークスペースを開く"],
   ["status", "ステータス"],
+  ["account", "アカウント"],
 ] as const;
 export type ToolWindow = (typeof TOOL_WINDOWS)[number][0];
 export const isMenuPage = (id: ToolWindow): id is MenuPage =>

@@ -1,10 +1,12 @@
+import type { FieldSchemas } from "@tukurium/eks";
 import {
   collectSelection,
+  collectSelectionDependencies,
   type ExtractSelection,
   extractInto,
   isBuiltin,
+  type PackageResolution,
   type ProjectSnapshot,
-  parsePackageResourceId,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import { useEffect, useMemo, useState } from "react";
@@ -15,22 +17,28 @@ import styles from "./ImportPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
 
-type Group = keyof ExtractSelection;
+/** 選んだもの（型の定義も、いつも一覧を持つ） */
+type Picked = Required<ExtractSelection>;
+type Group = keyof Picked;
 
 const GROUPS: { key: Group; label: string }[] = [
   { key: "outputs", label: "アウトプット" },
+  { key: "prefabs", label: "プレハブ" },
   { key: "kokostates", label: "KokoState" },
   { key: "systems", label: "Script" },
   { key: "materials", label: "Material" },
   { key: "assets", label: "素材" },
+  { key: "types", label: "型の定義" },
 ];
 
-const EMPTY: ExtractSelection = {
+const EMPTY: Picked = {
   outputs: [],
   kokostates: [],
   systems: [],
   materials: [],
   assets: [],
+  types: [],
+  prefabs: [],
 };
 
 interface Source {
@@ -38,6 +46,9 @@ interface Source {
   repoName: string;
   commit: string;
   snapshot: ProjectSnapshot;
+  /** 取り出し元のフィールドのスキーマ（サーバーが作る。ADR 0065） */
+  schemas?: FieldSchemas;
+  packages?: PackageResolution[];
 }
 
 interface Row {
@@ -66,7 +77,7 @@ export function ImportPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [picked, setPicked] = useState<ExtractSelection>(EMPTY);
+  const [picked, setPicked] = useState<Picked>(EMPTY);
 
   useEffect(() => {
     let alive = true;
@@ -110,7 +121,8 @@ export function ImportPanel() {
 
   const rows = useMemo(() => (source ? rowsOf(source.snapshot) : null), [source]);
   const together = useMemo(
-    () => (source ? withDependencies(source.snapshot, picked) : null),
+    () =>
+      source ? withDependencies(source.snapshot, picked, source.schemas, source.packages) : null,
     [source, picked],
   );
   const count = GROUPS.reduce((n, g) => n + picked[g.key].length, 0);
@@ -130,6 +142,9 @@ export function ImportPanel() {
         picked,
         { repoId: source.repoId, repoName: source.repoName, commit: source.commit },
         { ...project.snapshot(), name: project.name },
+        undefined,
+        source.schemas,
+        source.packages,
       );
       project.mergeAdditions(merged);
       setDone(`${source.repoName} から ${count} 件を取り込みました`);
@@ -264,15 +279,19 @@ function rowsOf(snap: ProjectSnapshot): Record<Group, Row[]> {
     systems: snap.systems.map((x) => ({ id: x.id, name: x.name, where: where(x.id) })),
     materials: snap.materials.map((m) => ({ id: m.id, name: m.name, where: where(m.id) })),
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, where: where(a.id) })),
+    types: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, where: where(t.id) })),
+    prefabs: (snap.prefabs ?? []).map((p) => ({ id: p.id, name: p.name, where: where(p.id) })),
   };
 }
 
 /** 選んだものが使うもの（選んだもの自身は除く）と、使うライブラリの別名 */
 function withDependencies(
   snap: ProjectSnapshot,
-  picked: ExtractSelection,
+  picked: Picked,
+  schemas: FieldSchemas | undefined,
+  packages?: readonly PackageResolution[],
 ): { rows: { id: string; name: string; kind: string }[]; libraries: string[] } {
-  const all = collectSelection(snap, picked);
+  const all: Picked = { ...EMPTY, ...collectSelection(snap, picked, schemas) };
   const chosen = new Set(GROUPS.flatMap((g) => picked[g.key]));
   const rows: { id: string; name: string; kind: string }[] = [];
   const label: Record<Group, string> = {
@@ -281,6 +300,8 @@ function withDependencies(
     systems: "Script",
     materials: "Material",
     assets: "素材",
+    types: "型の定義",
+    prefabs: "プレハブ",
   };
   const nameOf = (group: Group, id: string): string | null => {
     switch (group) {
@@ -294,6 +315,10 @@ function withDependencies(
         return snap.materials.find((x) => x.id === id)?.name ?? null;
       case "assets":
         return snap.assets?.find((x) => x.id === id)?.name ?? null;
+      case "types":
+        return snap.types?.find((x) => x.id === id)?.name ?? null;
+      case "prefabs":
+        return snap.prefabs?.find((x) => x.id === id)?.name ?? null;
     }
   };
   for (const g of GROUPS) {
@@ -303,22 +328,10 @@ function withDependencies(
       if (name) rows.push({ id, name, kind: label[g.key] });
     }
   }
-  // ライブラリ：依存から取り込んだ ID（pkg:…）か、`@別名/` の import を使っているもの
-  const deps = snap.dependencies ?? [];
-  const libraries = new Set<string>();
-  const ids = [...all.kokostates, ...all.systems];
-  for (const e of snap.entities) {
-    if (!all.outputs.includes(e.output)) continue;
-    ids.push(...Object.keys(e.states));
-  }
-  for (const id of ids) {
-    const ref = parsePackageResourceId(id);
-    const dep = ref && deps.find((d) => d.packageId === ref.packageId && d.version === ref.version);
-    if (dep) libraries.add(dep.alias);
-  }
-  for (const s of snap.systems) {
-    if (!all.systems.includes(s.id)) continue;
-    for (const d of deps) if (s.code.includes(`"@${d.alias}/`)) libraries.add(d.alias);
-  }
-  return { rows, libraries: [...libraries].sort() };
+  return {
+    rows,
+    libraries: collectSelectionDependencies(snap, all, packages)
+      .map((dep) => dep.alias)
+      .sort(),
+  };
 }

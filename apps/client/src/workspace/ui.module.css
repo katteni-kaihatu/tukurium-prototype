@@ -133,12 +133,18 @@
   color: var(--c-ink);
 }
 
-.row {
+/* 欄の名前と入力。名前の幅は --field-label（詳細の幅から決める）。入りきらない名前は文字を縮める */
+.field {
   display: grid;
-  grid-template-columns: 88px 1fr;
+  grid-template-columns: var(--field-label, 104px) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-height: 30px;
+  min-width: 0;
+}
+
+.field > * {
+  min-width: 0;
 }
 
 .label {
@@ -147,6 +153,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 枠に収まるよう縮めたあとは、省略記号を出さない */
+.label[data-fit] {
+  text-overflow: clip;
 }
 
 .input,
@@ -310,6 +321,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  min-height: 30px;
 }
 
 .toolbar {

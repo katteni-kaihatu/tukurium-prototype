@@ -27,7 +27,7 @@ const text = (value: unknown) => ({
 });
 
 /** 道具の中で起きたエラーは、MCP のエラーの結果として返す（エージェントが読んで直せるように） */
-async function run(fn: () => unknown | Promise<unknown>) {
+async function toolResult(fn: () => unknown | Promise<unknown>) {
   try {
     return text(await fn());
   } catch (e) {
@@ -39,16 +39,43 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const states = z
   .record(z.string(), z.record(z.string(), z.unknown()))
   .describe(
-    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。参照（Entity・Material・素材）の「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す',
+    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。値はふつうの JSON。リスト・レコード・マップもそのまま書く。参照は ID か名前で渡す（入れ子の中でも）。「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す。Date・Map・Set などの書き方は guide の「値の渡し方」',
   );
 const fieldSpec = z.object({
+  description: z.string().optional().describe("フィールドの説明。空文字で消す"),
   name: z.string().min(1).max(64),
-  type: z.enum(T.FIELD_TYPES),
-  default: z.unknown().optional(),
+  type: z
+    .string()
+    .min(1)
+    .max(2000)
+    .describe(
+      `一覧の名前（${T.FIELD_TYPES.join(", ")}）か、TypeScript の型の文（例：{ suit: string; rank: number }[]、Record<string, number>、KokoStateRef<Health> | undefined）。書ける型は guide の「フィールドの型」`,
+    ),
+  default: z
+    .unknown()
+    .optional()
+    .describe("初期値（値の渡し方は guide）。省くと、型の空の値になる"),
 });
+const typeDefRefs = z
+  .array(z.string())
+  .max(50)
+  .describe(
+    "使う型の定義（ID か名前）。入れると、その型の定義が export している型を、フィールドの型の文で名前のまま使える",
+  );
 
 export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: AssetStore) {
   const agent = new AgentClient(hub);
+  const prepare = async () => {
+    if (!agent.workspace) return;
+    const project = agent.workspace.project;
+    const { pool } = await T.resolvePackages(repos, agent.me, project.dependencies());
+    T.setProjectPackages(project, pool);
+  };
+  const run = (fn: () => unknown | Promise<unknown>) =>
+    toolResult(async () => {
+      await prepare();
+      return fn();
+    });
   const server = new McpServer(
     { name: "tukurium", version: "0.1.0" },
     {
@@ -136,6 +163,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     ({ workspaceId }) =>
       run(async () => {
         const w = await agent.openWorkspace(workspaceId);
+        await prepare();
         return { role: w.role, project: T.overview(w.project) };
       }),
   );
@@ -144,7 +172,8 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "get_project",
     {
       title: "プロジェクトの要約",
-      description: "アウトプット・Entity の木・KokoState・System・Material・素材の一覧",
+      description:
+        "アウトプット・プレハブ・展開した Entity の木・KokoState・型の定義・System・Material・素材の一覧",
     },
     () => run(() => T.overview(T.projectOf(agent).project)),
   );
@@ -195,11 +224,95 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
       inputSchema: {
         name: z.string().min(1).max(64),
         output: z.string().optional().describe("アウトプットの ID か名前（省くと最初のもの）"),
+        prefab: z
+          .string()
+          .optional()
+          .describe("プレハブの ID か名前。中に作るときに指定（output と併用できない）"),
         parent: z.string().optional().describe("親の Entity の ID か名前"),
         states: states.optional(),
       },
     },
     (args) => run(() => T.createEntity(T.writable(agent), args)),
+  );
+
+  reg(
+    "get_prefab",
+    {
+      title: "プレハブを読む",
+      description: "プレハブの設定と、中の Entity の値を読む",
+      inputSchema: { prefab: z.string().describe("プレハブの ID か名前") },
+    },
+    ({ prefab }) => run(() => T.prefabDetail(T.projectOf(agent).project, prefab)),
+  );
+
+  const prefabSystems = z.array(z.object({ system: z.string(), enabled: z.boolean().optional() }));
+  reg(
+    "create_prefab",
+    {
+      title: "空のプレハブを作る",
+      description:
+        "いちばん上の Entity を一つ持つプレハブを作る。中身は create_entity の prefab で足せる",
+      inputSchema: {
+        name: z.string().min(1).max(64),
+        editIn: z.enum(["here", "isolated"]).optional(),
+        systems: prefabSystems.optional(),
+      },
+    },
+    (args) => run(() => T.createPrefab(T.writable(agent), args)),
+  );
+  reg(
+    "update_prefab",
+    {
+      title: "プレハブの設定を変える",
+      description:
+        "名前・編集する場所・System の並びと入切を変える。中の Entity は update_entity で変える。ライブラリの中身は変えられない",
+      inputSchema: {
+        prefab: z.string(),
+        name: z.string().min(1).max(64).optional(),
+        editIn: z.enum(["here", "isolated"]).optional(),
+        systems: prefabSystems.optional(),
+      },
+    },
+    (args) => run(() => T.updatePrefab(T.writable(agent), args)),
+  );
+  reg(
+    "make_prefab_from_entity",
+    {
+      title: "Entity をプレハブにする",
+      description:
+        "アウトプットかプレハブの中の Entity を、子も含めて新しいプレハブに移す。元の Entity は同じ ID のインスタンスになる。参照の書き換えと ID の対応、スクリプトに書かれた ID の注意を返す",
+      inputSchema: {
+        entity: z.string(),
+        name: z.string().min(1).max(64).optional(),
+        systems: z
+          .array(z.string())
+          .optional()
+          .describe("プレハブにも入れる、元のアウトプットの System（ID か名前）"),
+      },
+    },
+    (args) => run(() => T.makePrefabFromEntity(T.writable(agent), args)),
+  );
+  reg(
+    "place_prefab",
+    {
+      title: "プレハブを置く",
+      description:
+        "プレハブのインスタンスをアウトプットか別のプレハブに置く。場所・向き・大きさを指定できる。自分を含む入れ子は作れない",
+      inputSchema: {
+        prefab: z.string(),
+        output: z.string().optional(),
+        ownerPrefab: z
+          .string()
+          .optional()
+          .describe("置き先のプレハブ（ID か名前）。output と併用できない"),
+        name: z.string().min(1).max(64).optional(),
+        parent: z.string().optional(),
+        position: vec3.optional(),
+        rotation: vec3.optional(),
+        scale: vec3.optional(),
+      },
+    },
+    (args) => run(() => T.placePrefab(T.writable(agent), args)),
   );
 
   reg(
@@ -212,6 +325,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
         entity: z.string(),
         name: z.string().min(1).max(64).optional(),
         parent: z.string().nullable().optional().describe("null でいちばん上へ"),
+        index: z.number().int().min(0).optional().describe("兄弟の中の位置。0 が先頭"),
         states: states.optional(),
         removeStates: z.array(z.string()).optional(),
       },
@@ -223,6 +337,69 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "delete_entity",
     { title: "Entity を消す", description: "Entity を消す", inputSchema: { entity: z.string() } },
     ({ entity }) => run(() => T.deleteEntity(T.writable(agent), entity)),
+  );
+
+  reg(
+    "duplicate_entity",
+    {
+      title: "Entity を複製する",
+      description:
+        "インスタンスを複製すると同じプレハブのインスタンスが増える。中の Entity を複製すると、独立した Entity になる",
+      inputSchema: {
+        entity: z.string(),
+        name: z.string().min(1).max(64).optional(),
+        withChildren: z.boolean().optional().describe("子も複製する（省くと true）"),
+        position: vec3.optional(),
+        rotation: vec3.optional(),
+        scale: vec3.optional(),
+      },
+    },
+    (args) => run(() => T.duplicateEntity(T.writable(agent), args)),
+  );
+  reg(
+    "set_instance_systems",
+    {
+      title: "インスタンスの System を変える",
+      description:
+        "インスタンスで足す System の並びと入切を指定する。プレハブから来る System は残る",
+      inputSchema: { entity: z.string(), systems: prefabSystems },
+    },
+    (args) => run(() => T.setInstanceSystems(T.writable(agent), args)),
+  );
+  reg(
+    "revert_prefab_change",
+    {
+      title: "プレハブからの変更を戻す",
+      description:
+        "フィールド・KokoState・名前・親・並び順・足した System を、プレハブの状態に戻す",
+      inputSchema: {
+        entity: z.string(),
+        kind: z.enum(["field", "state", "name", "parent", "order", "systems"]),
+        kokostate: z.string().optional().describe("field・state のときは KokoState の ID か名前"),
+        field: z.string().optional().describe("field のときはフィールドの ID か名前"),
+      },
+    },
+    (args) => run(() => T.revertPrefabChange(T.writable(agent), args)),
+  );
+  reg(
+    "apply_prefab_instance",
+    {
+      title: "変更をプレハブに適用する",
+      description:
+        "インスタンスで変えた所を、確認なしでプレハブへ書き戻し、ほかのインスタンスにも反映する。置き方は適用しない。ライブラリのプレハブには適用できない",
+      inputSchema: { entity: z.string() },
+    },
+    ({ entity }) => run(() => T.applyPrefabInstance(T.writable(agent), entity)),
+  );
+  reg(
+    "unpack_prefab_instance",
+    {
+      title: "ふつうの Entity に戻す",
+      description:
+        "選んだインスタンスとプレハブのつながりを切る。見た目・System・参照を保ち、中の入れ子はインスタンスのまま残す",
+      inputSchema: { entity: z.string() },
+    },
+    ({ entity }) => run(() => T.unpackPrefabInstance(T.writable(agent), entity)),
   );
 
   const copyPose = z.object({
@@ -282,7 +459,9 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
       inputSchema: {
         name: z.string().min(1).max(64),
         fields: z.array(fieldSpec),
+        description: z.string().optional().describe("KokoState の説明"),
         role: z.string().optional().describe("役割（guide を参照）"),
+        typeDefs: typeDefRefs.optional(),
       },
     },
     (args) => run(() => T.createKokoState(T.writable(agent), args)),
@@ -293,15 +472,56 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "KokoState を変える",
       description:
-        "名前・フィールド・役割を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ）",
+        "名前・フィールド・役割・使う型の定義を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ。型を変えたフィールドの値は、初期値になる）。typeDefs は使う型の定義の全部",
       inputSchema: {
         kokostate: z.string(),
         name: z.string().min(1).max(64).optional(),
         fields: z.array(fieldSpec).optional(),
+        description: z.string().optional().describe("KokoState の説明。空文字で消す"),
         role: z.string().optional(),
+        typeDefs: typeDefRefs.optional(),
       },
     },
     (args) => run(() => T.updateKokoState(T.writable(agent), args)),
+  );
+
+  reg(
+    "get_typedef",
+    {
+      title: "型の定義を読む",
+      description: "型の定義のコードと、それを使っている KokoState",
+      inputSchema: { typedef: z.string().describe("型の定義の ID か名前") },
+    },
+    ({ typedef }) => run(() => T.typeDefDetail(T.projectOf(agent).project, typedef)),
+  );
+
+  reg(
+    "create_typedef",
+    {
+      title: "型の定義を作る",
+      description:
+        "名前を付けた型を TypeScript で書く（export type Card = { suit: string; rank: number };）。書けるのは type と interface だけ。KokoState の typeDefs に入れると、フィールドの型の文から使える",
+      inputSchema: {
+        name: z.string().min(1).max(64),
+        code: z.string().max(200_000),
+      },
+    },
+    (args) => run(() => T.createTypeDef(T.writable(agent), args)),
+  );
+
+  reg(
+    "update_typedef",
+    {
+      title: "型の定義を変える",
+      description:
+        "型の定義のコード（全体）か名前を変える。すでにある値は書き換えない（足したフィールドは空の値で埋めて使い、型が変わった所は check に問題として出る）",
+      inputSchema: {
+        typedef: z.string(),
+        code: z.string().max(200_000).optional(),
+        name: z.string().min(1).max(64).optional(),
+      },
+    },
+    (args) => run(() => T.updateTypeDef(T.writable(agent), args)),
   );
 
   reg(

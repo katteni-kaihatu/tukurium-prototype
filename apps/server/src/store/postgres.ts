@@ -1,13 +1,17 @@
-import { createHash } from "node:crypto";
 import type { SocialProfile } from "@tukurium/shared";
 import postgres from "postgres";
 import {
+  DEFAULT_BALANCE,
   type Friendship,
-  newToken,
+  type Listing,
+  type LoginProfile,
+  type MarketEvent,
   newUserId,
   type OwnedItem,
+  type PurchaseResult,
   type Release,
   type RepoMeta,
+  type Sale,
   type SessionInvitation,
   type Store,
   type User,
@@ -15,7 +19,29 @@ import {
   type WorkspaceMeta,
 } from "./store";
 
-const hash = (token: string) => createHash("sha256").update(token).digest("hex");
+/**
+ * 保存の形の版。上げると、起動時に今までの表をすべて消して作り直す
+ * （プロトタイプの間は移行しない。ADR 0074 で利用者のアカウントを入れたときに 2 にした）
+ */
+const SCHEMA_VERSION = 2;
+const TABLES = [
+  "users",
+  "auth_sessions",
+  "workspaces",
+  "repos",
+  "works",
+  "releases",
+  "owned_items",
+  "wallets",
+  "listings",
+  "market_events",
+  "sales",
+  "friend_links",
+  "social_profiles",
+  "session_invitations",
+];
+/** 利用者を読むときの列 */
+const USER_COLUMNS = 'id, name, account, avatar_url as "avatarUrl"';
 
 /** PostgreSQL の Store。テーブルは起動時に作る（初版は簡易なマイグレーション）。 */
 export class PostgresStore implements Store {
@@ -26,12 +52,29 @@ export class PostgresStore implements Store {
   }
 
   async init(): Promise<void> {
+    await this.sql`create table if not exists tukurium_schema (version integer not null)`;
+    const [current] = await this.sql<{ version: number }[]>`select version from tukurium_schema`;
+    if (current?.version !== SCHEMA_VERSION) {
+      await this.sql.begin(async (tx) => {
+        for (const table of TABLES) await tx`drop table if exists ${tx(table)} cascade`;
+        await tx`delete from tukurium_schema`;
+        await tx`insert into tukurium_schema (version) values (${SCHEMA_VERSION})`;
+      });
+    }
     await this.sql`
       create table if not exists users (
         id text primary key,
         name text not null,
-        token_hash text not null unique,
+        login_key text unique,
+        account text,
+        avatar_url text,
         created_at timestamptz not null default now()
+      )`;
+    await this.sql`
+      create table if not exists auth_sessions (
+        token_hash text primary key,
+        user_id text not null references users(id) on delete cascade,
+        expires_at timestamptz not null
       )`;
     await this.sql`
       create table if not exists workspaces (
@@ -50,6 +93,18 @@ export class PostgresStore implements Store {
     await this.sql`create table if not exists owned_items (
       user_id text not null, work_id text not null, data jsonb not null,
       primary key (user_id, work_id))`;
+    // マーケット：所持金・登録・履歴・入手の記録
+    await this
+      .sql`create table if not exists wallets (user_id text primary key, balance integer not null)`;
+    await this
+      .sql`create table if not exists listings (work_id text primary key, owner text not null, data jsonb not null)`;
+    await this
+      .sql`create table if not exists market_events (id text primary key, work_id text not null, at text not null, data jsonb not null)`;
+    await this.sql`create index if not exists market_events_work_id on market_events(work_id)`;
+    await this
+      .sql`create table if not exists sales (id text primary key, work_id text not null, seller_id text not null, at text not null, data jsonb not null)`;
+    await this.sql`create index if not exists sales_seller_id on sales(seller_id)`;
+    await this.sql`create index if not exists sales_work_id on sales(work_id)`;
     await this
       .sql`create table if not exists friend_links (left_id text not null, right_id text not null, data jsonb not null, primary key(left_id,right_id))`;
     await this.sql`create index if not exists friend_links_right_id on friend_links(right_id)`;
@@ -65,25 +120,53 @@ export class PostgresStore implements Store {
     await this.sql.end({ timeout: 5 });
   }
 
-  async userByToken(token: string): Promise<User | null> {
-    const rows = await this.sql<
-      User[]
-    >`select id, name from users where token_hash = ${hash(token)}`;
-    return rows[0] ?? null;
+  async loginUser(profile: LoginProfile) {
+    const [user] = await this.sql<User[]>`
+      insert into users (id, name, login_key, account, avatar_url)
+      values (${newUserId()}, ${profile.name}, ${profile.key}, ${profile.account}, ${profile.avatarUrl})
+      on conflict (login_key) do update set account = excluded.account, avatar_url = excluded.avatar_url
+      returning ${this.sql.unsafe(USER_COLUMNS)}`;
+    if (!user) throw new Error("利用者を保存できませんでした");
+    return user;
   }
 
   async createUser(name: string) {
     const user = { id: newUserId(), name };
-    const token = newToken();
+    await this.sql`insert into users (id, name) values (${user.id}, ${name})`;
+    return user;
+  }
+
+  async createAuthSession(tokenHash: string, userId: string, expiresAt: number) {
+    await this.sql`insert into auth_sessions (token_hash, user_id, expires_at)
+      values (${tokenHash}, ${userId}, ${new Date(expiresAt)})`;
+  }
+
+  async authSession(tokenHash: string) {
+    const [row] = await this.sql<(User & { expiresAt: Date })[]>`
+      select u.id, u.name, u.account, u.avatar_url as "avatarUrl", s.expires_at as "expiresAt"
+      from auth_sessions s join users u on u.id = s.user_id where s.token_hash = ${tokenHash}`;
+    if (!row) return null;
+    const { expiresAt, ...user } = row;
+    return { user, expiresAt: expiresAt.getTime() };
+  }
+
+  async extendAuthSession(tokenHash: string, expiresAt: number) {
     await this
-      .sql`insert into users (id, name, token_hash) values (${user.id}, ${name}, ${hash(token)})`;
-    return { user, token };
+      .sql`update auth_sessions set expires_at = ${new Date(expiresAt)} where token_hash = ${tokenHash}`;
+  }
+
+  async deleteAuthSession(tokenHash: string) {
+    await this.sql`delete from auth_sessions where token_hash = ${tokenHash}`;
+  }
+
+  async deleteExpiredAuthSessions(now: number) {
+    await this.sql`delete from auth_sessions where expires_at <= ${new Date(now)}`;
   }
 
   async ensureUser(user: User) {
-    // token は使わない（誰も知らない値の hash を入れて、ログインできないようにする）
+    // login_key を持たないので、ログインはできない
     await this
-      .sql`insert into users (id, name, token_hash) values (${user.id}, ${user.name}, ${hash(newToken())}) on conflict (id) do nothing`;
+      .sql`insert into users (id, name) values (${user.id}, ${user.name}) on conflict (id) do nothing`;
   }
 
   async renameUser(id: string, name: string) {
@@ -109,7 +192,9 @@ export class PostgresStore implements Store {
   }
 
   async user(id: string) {
-    const rows = await this.sql<User[]>`select id, name from users where id = ${id}`;
+    const rows = await this.sql<
+      User[]
+    >`select ${this.sql.unsafe(USER_COLUMNS)} from users where id = ${id}`;
     return rows[0] ?? null;
   }
 
@@ -210,10 +295,96 @@ export class PostgresStore implements Store {
     await this.sql`delete from owned_items where user_id = ${userId} and work_id = ${workId}`;
   }
 
+  async balance(userId: string) {
+    const rows = await this.sql<
+      { balance: number }[]
+    >`select balance from wallets where user_id = ${userId}`;
+    return rows[0]?.balance ?? DEFAULT_BALANCE;
+  }
+
+  async listing(workId: string) {
+    const rows = await this.sql<
+      { data: Listing }[]
+    >`select data from listings where work_id = ${workId}`;
+    return rows[0]?.data ?? null;
+  }
+
+  async listings(filter: { owner?: string } = {}) {
+    const rows = filter.owner
+      ? await this.sql<{ data: Listing }[]>`select data from listings where owner = ${filter.owner}`
+      : await this.sql<{ data: Listing }[]>`select data from listings`;
+    return rows.map((r) => r.data);
+  }
+
+  async saveListing(listing: Listing) {
+    await this.sql`
+      insert into listings (work_id, owner, data) values (${listing.workId}, ${listing.owner}, ${this.sql.json(listing as never)})
+      on conflict (work_id) do update set owner = excluded.owner, data = excluded.data`;
+  }
+
+  async removeListing(workId: string) {
+    await this.sql`delete from listings where work_id = ${workId}`;
+  }
+
+  async marketEvents(workId: string) {
+    const rows = await this.sql<
+      { data: MarketEvent }[]
+    >`select data from market_events where work_id = ${workId} order by at desc`;
+    return rows.map((r) => r.data);
+  }
+
+  async addMarketEvent(event: MarketEvent) {
+    await this.sql`insert into market_events (id, work_id, at, data)
+      values (${event.id}, ${event.workId}, ${event.at}, ${this.sql.json(event as never)})`;
+  }
+
+  async sales(filter: { sellerId?: string; workId?: string }) {
+    const rows = filter.workId
+      ? await this.sql<
+          { data: Sale }[]
+        >`select data from sales where work_id = ${filter.workId} order by at desc`
+      : filter.sellerId
+        ? await this.sql<
+            { data: Sale }[]
+          >`select data from sales where seller_id = ${filter.sellerId} order by at desc`
+        : await this.sql<{ data: Sale }[]>`select data from sales order by at desc`;
+    return rows
+      .map((r) => r.data)
+      .filter((s) => !filter.sellerId || s.sellerId === filter.sellerId);
+  }
+
+  async purchase(item: OwnedItem, sale: Sale): Promise<PurchaseResult> {
+    return this.sql.begin(async (tx) => {
+      // 買う人の財布を先に作って行をロックし、同時の入手で二重に引かないようにする
+      await tx`insert into wallets (user_id, balance) values (${item.userId}, ${DEFAULT_BALANCE})
+        on conflict (user_id) do nothing`;
+      const [wallet] = await tx<
+        { balance: number }[]
+      >`select balance from wallets where user_id = ${item.userId} for update`;
+      const balance = wallet?.balance ?? DEFAULT_BALANCE;
+      const [existing] = await tx<
+        { data: OwnedItem }[]
+      >`select data from owned_items where user_id = ${item.userId} and work_id = ${item.workId}`;
+      if (existing) return { ok: true as const, item: existing.data, balance, created: false };
+      if (balance < sale.price) return { ok: false as const, reason: "funds" as const, balance };
+      await tx`update wallets set balance = balance - ${sale.price} where user_id = ${item.userId}`;
+      if (sale.sellerId !== item.userId) {
+        await tx`insert into wallets (user_id, balance) values (${sale.sellerId}, ${DEFAULT_BALANCE + sale.earned})
+          on conflict (user_id) do update set balance = wallets.balance + ${sale.earned}`;
+      }
+      await tx`insert into owned_items (user_id, work_id, data)
+        values (${item.userId}, ${item.workId}, ${tx.json(item as never)})`;
+      await tx`insert into sales (id, work_id, seller_id, at, data)
+        values (${sale.id}, ${sale.workId}, ${sale.sellerId}, ${sale.at}, ${tx.json(sale as never)})`;
+      return { ok: true as const, item, balance: balance - sale.price, created: true };
+    }) as Promise<PurchaseResult>;
+  }
+
   async searchUsers(query: string, limit: number) {
-    return this.sql<
-      User[]
-    >`select id,name from users where id=${query} or position(lower(${query}) in lower(name))>0 order by name,id limit ${limit}`;
+    return this.sql<User[]>`select ${this.sql.unsafe(USER_COLUMNS)} from users
+      where id=${query} or position(lower(${query}) in lower(name))>0
+        or position(lower(${query}) in lower(coalesce(account, '')))>0
+      order by name,id limit ${limit}`;
   }
   async friendships(userId: string) {
     const rows = await this.sql<

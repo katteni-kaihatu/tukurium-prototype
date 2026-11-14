@@ -17,8 +17,10 @@ const KIND_LABEL: Record<PathKind, string> = {
   folder: "フォルダ",
   kokostate: "KokoState",
   system: "Script",
+  typedef: "型の定義",
   material: "Material",
   asset: "素材",
+  prefab: "プレハブ",
 };
 
 const ref = (kind: PathKind, id: string): ResourceRef => ({ kind, id });

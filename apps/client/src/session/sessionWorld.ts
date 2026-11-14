@@ -1,5 +1,10 @@
 import { KokoStateRegistry, World, type WorldSnapshot } from "@tukurium/eks";
-import type { MaterialDef, PackageResolution, ProjectSnapshot } from "@tukurium/repo-model";
+import {
+  type MaterialDef,
+  type PackageResolution,
+  type ProjectSnapshot,
+  parseFieldSchemas,
+} from "@tukurium/repo-model";
 import {
   type BagItem,
   type CapabilityId,
@@ -92,6 +97,8 @@ function addPart(sim: Simulation, part: HostPart): void {
       snapshot: part.snapshot as ProjectSnapshot,
       // 依存の中身（サーバーが持ち主の許可で取り出したもの。ADR 0015）
       ...(part.packages ? { packages: part.packages as PackageResolution[] } : {}),
+      // フィールドのスキーマ（出した人の画面か、サーバーが作ったもの。ADR 0065）
+      ...(part.schemas ? { schemas: parseFieldSchemas(part.schemas) } : {}),
       position: part.position,
       yaw: part.yaw,
       // 置いた物への付与（null は宣言どおり。ADR 0012）
@@ -140,6 +147,7 @@ client().on((msg) => {
           msg.outputId,
           snap,
           msg.packages as PackageResolution[] | undefined,
+          msg.schemas ? parseFieldSchemas(msg.schemas) : undefined,
         );
         const name = snap.outputs.find((o) => o.id === msg.outputId)?.name ?? msg.outputId;
         log(

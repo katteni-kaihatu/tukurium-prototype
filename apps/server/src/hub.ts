@@ -18,8 +18,10 @@ import {
   type WorkspaceRole,
 } from "@tukurium/shared";
 import * as Y from "yjs";
+import { ItemCatalog } from "./repos/catalog";
 import type { RepoService } from "./repos/service";
-import type { Store, User, WorkspaceMeta } from "./store/store";
+import { type Store, type User, userInfo, type WorkspaceMeta } from "./store/store";
+import { fieldSchemasOf, packagesByAlias } from "./typecheck";
 import { canRead, canWrite, DocRoom } from "./workspaces/docRoom";
 
 export interface Peer {
@@ -43,6 +45,13 @@ interface Conn {
   id: string;
   peer: Peer;
   user: User | null;
+  /** ログインのセッションのキー。ログアウトしたら、そのセッションの接続を閉じる（ADR 0074） */
+  sessionKey?: string;
+  /**
+   * つないだ時点のログインの本人。hello を受けたら user に入れる
+   * （それまでは一斉の知らせを送らない。welcome より先に届かないように）
+   */
+  login?: User;
   session: Session | null;
   pose: Omit<Participant, "id" | "name">;
   open: Set<string>;
@@ -114,6 +123,12 @@ function looksLikeSnapshot(v: unknown, outputId: string): boolean {
 }
 
 /** セッションに置けるリリース（作品と、その時点の制作データ） */
+/** スナップショットから、アウトプットの名前を取り出す */
+function outputNameOf(snapshot: unknown, outputId: string): string | undefined {
+  const outputs = (snapshot as { outputs?: { id: string; name?: string }[] } | null)?.outputs;
+  return outputs?.find((o) => o.id === outputId)?.name;
+}
+
 interface LoadedRelease {
   release: { id: string; version: number };
   work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
@@ -160,11 +175,16 @@ export class Hub {
   private readonly workspaces = new Map<string, Workspace>();
   private readonly opts: Required<Omit<HubOptions, "repos">>;
   private readonly repos: RepoService | null;
+  private readonly catalog: ItemCatalog | null;
   /**
    * 制作データ（オブジェクト）→ その依存の中身。ホストへ配置を渡すときに添える（ADR 0015）。
    * 制作データを捨てれば一緒に消える
    */
   private readonly packages = new WeakMap<object, PackageResolution[]>();
+  /** 制作データ → フィールドのスキーマ（出した人の画面が作ったものか、リリースのためにサーバーが作ったもの。ADR 0065） */
+  private readonly schemas = new WeakMap<object, unknown>();
+  /** リリース → フィールドのスキーマ（リリースの中身は変わらないので、一度作れば使い回せる） */
+  private readonly releaseSchemas = new Map<string, unknown>();
   /** 適用の通し番号（依存の取り出しを待つ間に、次の適用が来たら古い方を捨てる） */
   private readonly applySeq = new Map<string, number>();
   /** 開いている画面への撮影（ADR 0059）。requestId → 待っている約束 */
@@ -191,6 +211,7 @@ export class Hub {
       ...rest,
     };
     this.repos = repos ?? null;
+    this.catalog = repos ? new ItemCatalog(store, repos) : null;
   }
 
   get stats() {
@@ -232,14 +253,20 @@ export class Hub {
       .catch((e) => this.opts.log(`social update: ${e}`));
   }
 
+  /**
+   * 接続を受ける。人の接続は、つなぐ時点でログインの本人（user）を渡す（ADR 0074）。
+   * 本人の無い接続は hello で断る。エージェントの内部の接続は hello の名前で利用者を作る
+   */
   connect(
     peer: Peer,
-    options: { agent?: boolean } = {},
+    options: { agent?: boolean; user?: User; sessionKey?: string } = {},
   ): { onMessage(raw: string): void; onClose(): void } {
     const conn: Conn = {
       id: randomUUID(),
       peer,
       user: null,
+      ...(options.user ? { login: { ...options.user } } : {}),
+      ...(options.sessionKey ? { sessionKey: options.sessionKey } : {}),
       session: null,
       pose: { position: [0, 0, 0], yaw: 0, pitch: 0 },
       open: new Set(),
@@ -259,6 +286,15 @@ export class Hub {
         queue = queue.then(() => this.disconnect(conn));
       },
     };
+  }
+
+  /** ログアウトしたセッションの接続を閉じる（ほかのタブで開いていたものも） */
+  endAuthSession(sessionKey: string): void {
+    for (const c of this.conns.values()) {
+      if (c.sessionKey !== sessionKey) continue;
+      this.send(c, { t: "auth.required" });
+      c.peer.close();
+    }
   }
 
   /** すべてのワークスペースを保存する（終了時） */
@@ -354,6 +390,7 @@ export class Hub {
           await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
         if (this.applySeq.get(key) !== seq) return;
         s.builds.set(key, msg.snapshot);
+        this.rememberSchemas(msg.snapshot, msg.schemas);
         if (s.host) {
           const packages = this.packagesOf(msg.snapshot);
           this.send(s.host, {
@@ -362,6 +399,7 @@ export class Hub {
             outputId: msg.outputId,
             snapshot: msg.snapshot,
             ...(packages ? { packages } : {}),
+            ...(msg.schemas !== undefined ? { schemas: msg.schemas } : {}),
             by: user.name,
           });
         }
@@ -600,23 +638,15 @@ export class Hub {
       return;
     }
     if (conn.user) return;
-    let token = msg.token;
-    let user = token ? await this.store.userByToken(token) : null;
-    if (!user || !token) {
-      const created = await this.store.createUser(msg.name);
-      user = created.user;
-      token = created.token;
-    } else if (user.name !== msg.name) {
-      user.name = msg.name;
-      await this.store.renameUser(user.id, msg.name);
+    const user =
+      conn.login ?? (conn.agent && msg.name ? await this.store.createUser(msg.name) : null);
+    if (!user) {
+      this.send(conn, { t: "auth.required" });
+      conn.peer.close();
+      return;
     }
     conn.user = user;
-    this.send(conn, {
-      t: "welcome",
-      protocol: PROTOCOL_VERSION,
-      you: { id: user.id, name: user.name },
-      token,
-    });
+    this.send(conn, { t: "welcome", protocol: PROTOCOL_VERSION, you: userInfo(user) });
     this.send(conn, { t: "sessions", sessions: this.sessionList() });
     this.notifySocial(user.id);
   }
@@ -769,9 +799,13 @@ export class Hub {
       return {
         id: s.id,
         name: s.name,
-        owner: { id: s.owner, name: ownerConn?.user?.name ?? "（退出中）" },
+        owner: ownerConn?.user ? userInfo(ownerConn.user) : { id: s.owner, name: "（退出中）" },
         count: new Set([...s.conns].map((c) => c.user?.id)).size,
-        participants: this.participants(s).map(({ id, name }) => ({ id, name })),
+        participants: [
+          ...new Map(
+            [...s.conns].flatMap((c) => (c.user ? [[c.user.id, userInfo(c.user)] as const] : [])),
+          ).values(),
+        ],
       };
     });
   }
@@ -817,7 +851,7 @@ export class Hub {
           outputKind: this.placementKind(s, p),
         };
       }),
-      participants: [...users.values()].map((u) => ({ id: u.id, name: u.name })),
+      participants: [...users.values()].map(userInfo),
       workspaces: [...s.workspaces].flatMap((wid) => {
         const w = this.workspaces.get(wid);
         if (!w) return [];
@@ -876,6 +910,7 @@ export class Hub {
     if (hasDependencies(msg.snapshot))
       await this.attachPackages(msg.snapshot, await this.workspaceOwner(w));
     s.builds.set(buildKey(msg.workspaceId, msg.outputId), msg.snapshot);
+    this.rememberSchemas(msg.snapshot, msg.schemas);
     const p: Placement = {
       id: shortId("pl"),
       workspaceId: msg.workspaceId,
@@ -894,6 +929,8 @@ export class Hub {
   private hostPart(s: Session, p: Placement): HostPart {
     const snapshot = p.workspaceId ? s.builds.get(buildKey(p.workspaceId, p.outputId)) : p.snapshot;
     const packages = this.packagesOf(snapshot);
+    const schemas =
+      typeof snapshot === "object" && snapshot !== null ? this.schemas.get(snapshot) : undefined;
     return {
       id: p.id,
       // リリースから置いたものは、ワークスペースとは別の領域（KokoState の名前の範囲）にする
@@ -901,6 +938,7 @@ export class Hub {
       outputId: p.outputId,
       snapshot,
       ...(packages ? { packages } : {}),
+      ...(schemas !== undefined ? { schemas } : {}),
       position: p.position,
       yaw: p.yaw,
       grants: p.grants,
@@ -1088,7 +1126,7 @@ export class Hub {
           const loaded = await this.loadRelease(msg.releaseId);
           if (!loaded) return failure("バージョンが見つかりません");
           const current = await this.store.work(loaded.work.id);
-          if (!current || (!current.perms.use && current.owner !== user.id))
+          if (!current || !(await this.canUse(user.id, current)))
             return failure("このリリースを利用する権限がありません");
           if (conn.session !== s || !this.sessions.has(s.id))
             return failure("取り出し先のセッションが変わりました");
@@ -1113,7 +1151,7 @@ export class Hub {
     if (!s || !user || !this.repos) return;
     const loaded = await this.loadRelease(msg.releaseId);
     if (!loaded) return this.deny(conn, "バージョンが見つかりません");
-    if (!loaded.work.perms.use && loaded.work.owner !== user.id) {
+    if (!(await this.canUse(user.id, loaded.work))) {
       return this.deny(conn, "このリリースを利用する権限がありません");
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
@@ -1145,6 +1183,15 @@ export class Hub {
     this.scheduleWorldChange(s, user, loaded);
   }
 
+  /** 利用の権限があり、マーケットで有料なら入手しているか */
+  private canUse(
+    userId: string,
+    work: { id: string; owner: string; perms: { use: boolean } },
+  ): Promise<boolean> {
+    if (this.catalog) return this.catalog.canUse(userId, work);
+    return Promise.resolve(work.perms.use || work.owner === userId);
+  }
+
   /** 利用できるワールドのリリースか。開けないときは、その理由を返す */
   private async loadUsableWorld(
     conn: Conn,
@@ -1153,8 +1200,13 @@ export class Hub {
     if (!conn.user || !this.repos) return { ok: false, message: "バージョンが見つかりません" };
     const loaded = await this.loadRelease(releaseId);
     if (!loaded) return { ok: false, message: "バージョンが見つかりません" };
-    if (!loaded.work.perms.use && loaded.work.owner !== conn.user.id) {
-      return { ok: false, message: "このリリースを利用する権限がありません" };
+    if (!(await this.canUse(conn.user.id, loaded.work))) {
+      return {
+        ok: false,
+        message: loaded.work.perms.use
+          ? "このワールドは有料です。マーケットで入手すると開けます"
+          : "このリリースを利用する権限がありません",
+      };
     }
     const kind = loaded.snapshot.outputs.find((o) => o.id === loaded.work.outputId)?.kind;
     if (kind !== "world") return { ok: false, message: "ワールドではありません" };
@@ -1209,7 +1261,21 @@ export class Hub {
     const snapshot = await this.repos.snapshot(work.repoId, release.commit);
     // リリースの依存は、作品の持ち主の許可で取り出す
     if (hasDependencies(snapshot)) await this.attachPackages(snapshot, work.owner);
+    // リリースのフィールドのスキーマは、サーバーが作って付ける。セッションのホストは、
+    // TypeScript を読み込まずに値を確かめられる（ADR 0065）
+    let schemas = this.releaseSchemas.get(release.id);
+    if (schemas === undefined) {
+      schemas = fieldSchemasOf(snapshot, packagesByAlias(this.packagesOf(snapshot)));
+      this.releaseSchemas.set(release.id, schemas);
+    }
+    this.schemas.set(snapshot, schemas);
     return { release, work, snapshot };
+  }
+
+  /** 出した人の画面が作ったスキーマを、制作データに結び付けて覚える（ホストへ一緒に渡す） */
+  private rememberSchemas(snapshot: unknown, schemas: unknown): void {
+    if (schemas !== undefined && typeof snapshot === "object" && snapshot !== null)
+      this.schemas.set(snapshot, schemas);
   }
 
   /** 制作データの依存の中身を、持ち主の許可で取り出して覚える（ADR 0015） */
@@ -1249,7 +1315,8 @@ export class Hub {
       workspaceId: null,
       releaseId: loaded.release.id,
       snapshot: loaded.snapshot,
-      label: `${loaded.work.name} v${loaded.release.version}`,
+      // 名前は、その版のアウトプットの名前（リリースしたときの名前は、見つからないときだけ）
+      label: `${outputNameOf(loaded.snapshot, loaded.work.outputId) || loaded.work.name} v${loaded.release.version}`,
       outputId: loaded.work.outputId,
       position,
       yaw,

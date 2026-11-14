@@ -1,0 +1,215 @@
+/* 入れ子の値の入力（レコード・リスト・マップ。ADR 0065） */
+
+/* 1 行に収まらない型のフィールド：名前の行の下に、枠を開く */
+.blockField {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.blockHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 中の値を、左の線でひとまとまりに見せる */
+.nest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 2px 0 4px 5px;
+  padding-left: 8px;
+  border-left: 2px solid var(--c-line);
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: minmax(28px, 34%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  min-width: 0;
+}
+
+.entry > * {
+  min-width: 0;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 12px;
+  color: var(--c-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--c-ink-4);
+}
+
+.summary {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--c-ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.head > .name {
+  flex: 0 1 auto;
+  max-width: 50%;
+}
+
+.head > .summary {
+  flex: 1 1 0;
+}
+
+.none {
+  font-size: 11.5px;
+  color: var(--c-ink-4);
+}
+
+.raw {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.warn {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8a2a2a;
+  overflow-wrap: anywhere;
+}
+
+/* 入力を縦に重ねる（型の選択と値、Entity とフィールド） */
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.fold,
+.act {
+  flex: none;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--c-ink-3);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fold:hover:not(:disabled),
+.act:hover:not(:disabled) {
+  background: rgba(38, 38, 46, 0.07);
+}
+
+.act:disabled {
+  opacity: 0.3;
+}
+
+.add {
+  align-self: flex-start;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px dashed var(--c-line);
+  border-radius: 7px;
+  background: transparent;
+  font-size: 11.5px;
+  color: var(--c-ink-3);
+}
+
+.add:hover {
+  background: rgba(38, 38, 46, 0.05);
+}
+
+/* 値の形式の文字で直す・構造で直すの切り替え */
+.mode {
+  flex: none;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--c-line);
+  border-radius: 6px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--c-ink-4);
+}
+
+.mode[aria-pressed="true"] {
+  border-color: var(--c-brand);
+  background: var(--c-brand-soft);
+  color: var(--c-brand);
+}
+
+.text {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+  background: #fff;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-ink);
+  resize: vertical;
+}
+
+.text:focus {
+  outline: 2px solid rgba(96, 61, 86, 0.35);
+  outline-offset: 0;
+}
+
+.text:disabled {
+  background: #f6f2ec;
+  color: var(--c-ink-3);
+}
+
+/* 枠の中で入力を重ねるとき（型の選択の下に中の値、文字で直す欄）は、重ねたもの全体を左の線でまとめる */
+.group > .stack,
+.blockField > .stack {
+  margin: 2px 0 4px 5px;
+  padding-left: 8px;
+  border-left: 2px solid var(--c-line);
+}
+
+.stack > .nest {
+  margin: 0;
+  padding-left: 0;
+  border-left: 0;
+}

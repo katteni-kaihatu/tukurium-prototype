@@ -1,8 +1,14 @@
-import { isResourceFieldType, type KokoStateDef, stringifyValue } from "@tukurium/eks";
+import {
+  type FieldSchemas,
+  type KokoStateDef,
+  schemaOfField,
+  stringifyValue,
+  visitRefs,
+} from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { ResourcePathIndex } from "./resourcePath";
-import type { ProjectSnapshot } from "./schema";
+import type { EntityBase, ProjectSnapshot } from "./schema";
 import { compileSystem } from "./systemCompiler";
 
 /**
@@ -11,6 +17,8 @@ import { compileSystem } from "./systemCompiler";
  *
  * - Material → 画像の素材
  * - Entity → 持っている KokoState・指しているリソースや Entity・親の Entity
+ * - インスタンスの Entity → プレハブ（ADR 0076）
+ * - プレハブ → その System・中の Entity が持っている KokoState や指しているリソース・中で使っているプレハブ
  * - Output → その System・その Entity
  * - System → import した KokoState（安定 ID）
  * - System → `@別名/...` で import したライブラリ（`name:package/<別名>`。ADR 0015）
@@ -49,32 +57,81 @@ export class ProjectDependencyGraph {
   /** 依存元（A → B の A） */
   private readonly in = new Map<string, Set<string>>();
 
-  static fromSnapshot(snap: ProjectSnapshot): ProjectDependencyGraph {
-    return new ProjectDependencyGraph(snap);
+  /**
+   * schemas：TypeScript で作ったフィールドのスキーマ（あれば、入れ子の中の参照までたどる）。
+   * なくても、Tukurium が用意する型のフィールドはたどれる。
+   * kokostates：ライブラリから読み込んだ定義。制作データに複製せず、参照の型を読むために使う。
+   */
+  static fromSnapshot(
+    snap: ProjectSnapshot,
+    schemas?: FieldSchemas,
+    kokostates: readonly KokoStateDef[] = [],
+  ): ProjectDependencyGraph {
+    return new ProjectDependencyGraph(snap, schemas, kokostates);
   }
 
-  private constructor(snap: ProjectSnapshot) {
+  private constructor(
+    snap: ProjectSnapshot,
+    schemas?: FieldSchemas,
+    kokostates: readonly KokoStateDef[] = [],
+  ) {
     const defs = new Map<string, KokoStateDef>();
-    for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
+    for (const k of [...BUILTIN_KOKOSTATES, ...kokostates, ...snap.kokostates]) defs.set(k.id, k);
 
     for (const m of snap.materials)
       if (m.map) this.edge({ kind: "material", id: m.id }, { kind: "asset", id: m.map });
 
-    for (const e of snap.entities) {
-      const from: GraphRef = { kind: "entity", id: e.id };
-      if (e.parent) this.edge(from, { kind: "entity", id: e.parent });
-      for (const [kokoId, values] of Object.entries(e.states)) {
+    // KokoState → フィールドの型で使う、型の定義（ADR 0065）
+    for (const k of snap.kokostates)
+      for (const id of k.typeDefs ?? [])
+        this.edge({ kind: "kokostate", id: k.id }, { kind: "typedef", id });
+
+    // 展開した Entity を指すときは、保存元のインスタンスに依存する。
+    const entityOwner = (id: string) => id.split("/")[0] ?? id;
+    const usesStates = (from: GraphRef, states: EntityBase["states"], inPrefab: boolean) => {
+      for (const [kokoId, values] of Object.entries(states)) {
         this.edge(from, { kind: "kokostate", id: kokoId });
-        for (const f of defs.get(kokoId)?.fields ?? []) {
-          const v = values[f.id];
-          if (typeof v !== "string" || v === "") continue;
-          if (isResourceFieldType(f.type))
-            this.edge(from, { kind: f.type === "material" ? "material" : "asset", id: v });
-          else if (f.type === "entity") this.edge(from, { kind: "entity", id: v });
+        // 依存の定義がなくても、渡された型情報があれば、そのフィールドの参照をたどる。
+        const fields =
+          defs.get(kokoId)?.fields ??
+          Object.keys(schemas?.[kokoId] ?? {}).map((id) => ({ id, type: "" }));
+        for (const f of fields) {
+          const schema = schemaOfField(schemas, kokoId, f);
+          if (!schema) continue;
+          visitRefs(schema, values[f.id], (target, id) => {
+            if (target === "entity" && inPrefab) return;
+            const kind = target === "entity" || target === "material" ? target : "asset";
+            this.edge(from, { kind, id: target === "entity" ? entityOwner(id) : id });
+          });
         }
       }
+    };
+    /** Entity と、インスタンスで足した値や System が使うもの。プレハブの中では Entity どうしの辺は持たない */
+    const uses = (from: GraphRef, e: EntityBase, inPrefab: boolean) => {
+      if (e.instanceOf) this.edge(from, { kind: "prefab", id: e.instanceOf.prefab });
+      usesStates(from, e.states, inPrefab);
+      for (const override of Object.values(e.prefabOverrides ?? {})) {
+        usesStates(from, override.states ?? {}, inPrefab);
+        usesStates(from, override.addedStates ?? {}, inPrefab);
+        if (override.parent && !inPrefab)
+          this.edge(from, { kind: "entity", id: entityOwner(override.parent) });
+      }
+      for (const system of [...(e.unpackedSystems ?? []), ...(e.instanceSystems ?? [])])
+        this.edge(from, { kind: "system", id: system.id });
+    };
+
+    for (const e of snap.entities) {
+      const from: GraphRef = { kind: "entity", id: e.id };
+      if (e.parent) this.edge(from, { kind: "entity", id: entityOwner(e.parent) });
+      uses(from, e, false);
       this.edge({ kind: "output", id: e.output }, from);
     }
+
+    // プレハブ（ADR 0076）。中の Entity が使うものは、プレハブが使うものとして持つ
+    for (const p of snap.prefabs ?? [])
+      for (const s of p.systems)
+        this.edge({ kind: "prefab", id: p.id }, { kind: "system", id: s.id });
+    for (const e of snap.prefabEntities ?? []) uses({ kind: "prefab", id: e.prefab }, e, true);
 
     for (const o of snap.outputs)
       for (const s of o.systems)
@@ -153,11 +210,15 @@ function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
     out.set(refKey({ kind, id }), stringifyValue(v));
   for (const k of snap.kokostates) put("kokostate", k.id, k);
   for (const s of snap.systems) put("system", s.id, s);
+  for (const t of snap.types ?? []) put("typedef", t.id, t);
   for (const m of snap.materials) put("material", m.id, m);
   for (const a of snap.assets ?? []) put("asset", a.id, a);
   for (const o of snap.outputs) put("output", o.id, o);
   for (const e of snap.entities) put("entity", e.id, e);
   for (const f of snap.folders ?? []) put("folder", f.id, f);
+  // プレハブは、中の Entity も合わせて一つのリソースとして比べる
+  for (const p of snap.prefabs ?? [])
+    put("prefab", p.id, [p, (snap.prefabEntities ?? []).filter((e) => e.prefab === p.id)]);
   return out;
 }
 

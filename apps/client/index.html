@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ツクリウム</title>
+    <!-- Misskey の OAuth の client_id はこのページ。戻り先とアプリ名をここで示す（ADR 0074）。オリジンの印はサーバーが書き換える -->
+    <link rel="redirect_uri" href="__ORIGIN__/api/auth/misskey/callback" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,6 +14,7 @@
     />
   </head>
   <body>
+    <div class="h-app" hidden><a class="u-url p-name" href="__ORIGIN__/">ツクリウム</a></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

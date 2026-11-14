@@ -1,9 +1,34 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { SocialProfile, WorkspaceRole } from "@tukurium/shared";
+import type { SocialProfile, UserInfo, WorkspaceRole } from "@tukurium/shared";
 
 export interface User {
   id: string;
+  /** 表示名。最初はログインに使ったアカウントの名前で、Tukurium の中で変えられる */
   name: string;
+  /** ログインに使ったアカウント（例：`@rhenium@misskey.resonite.love`）。エージェント・公式は持たない */
+  account?: string | null;
+  /** アイコンの画像（Misskey のアバター）。なければ名前の 1 文字目を出す */
+  avatarUrl?: string | null;
+}
+
+/** 画面に送る形（空のアカウント・アイコンは送らない） */
+export const userInfo = (user: User): UserInfo => ({
+  id: user.id,
+  name: user.name,
+  ...(user.account ? { account: user.account } : {}),
+  ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
+});
+
+/**
+ * ログインで確かめた外部のアカウント（ADR 0074）。`key` で同じ人を引く
+ * （Misskey は `misskey:<ユーザー ID>`、開発用ログインは `dev:<名前>`）。
+ */
+export interface LoginProfile {
+  key: string;
+  /** 初めてログインしたときの表示名 */
+  name: string;
+  account: string;
+  avatarUrl: string | null;
 }
 
 export interface RepoMeta {
@@ -61,6 +86,56 @@ export interface OwnedItem {
   acquiredAt: string;
 }
 
+/** はじめの所持金（ポイント）。まだ記録のない人はこの額を持っている。 */
+export const DEFAULT_BALANCE = 1000;
+/** 売れたとき作者に入る割合（残りは消える） */
+export const AUTHOR_SHARE = 0.9;
+
+/**
+ * マーケットへの登録。作品（リリース）ごとに一つ。登録したものだけがマーケットに出て、入手できる。
+ * 自動公開がオンなら、新しい版を出したときに公開する版も替わる。
+ */
+export interface Listing {
+  workId: string;
+  owner: string;
+  /** 価格（ポイント）。0 は無料 */
+  price: number;
+  autoPublish: boolean;
+  /** マーケットで公開している版 */
+  releaseId: string;
+  listedAt: string;
+  updatedAt: string;
+}
+
+/** マーケットの履歴（誰でも見える。入手の記録は含めない） */
+export type MarketEvent = {
+  id: string;
+  workId: string;
+  at: string;
+} & (
+  | { kind: "listed"; version: number; price: number }
+  | { kind: "published"; version: number; auto: boolean }
+  | { kind: "price"; from: number; to: number }
+  | { kind: "unlisted" }
+);
+
+/** 入手の記録。買った人（buyerId）は作者に見せない。 */
+export interface Sale {
+  id: string;
+  workId: string;
+  sellerId: string;
+  buyerId: string;
+  releaseId: string;
+  price: number;
+  /** 作者に入ったポイント */
+  earned: number;
+  at: string;
+}
+
+export type PurchaseResult =
+  | { ok: true; item: OwnedItem; balance: number; created: boolean }
+  | { ok: false; reason: "funds"; balance: number };
+
 export interface Friendship {
   from: string;
   to: string;
@@ -97,8 +172,19 @@ export interface WorkspaceMeta {
 export interface Store {
   init(): Promise<void>;
   close(): Promise<void>;
-  userByToken(token: string): Promise<User | null>;
-  createUser(name: string): Promise<{ user: User; token: string }>;
+  /**
+   * ログインした人を引く（なければ作る）。表示名は作るときだけ決め、
+   * アカウント名とアイコンはログインのたびに合わせる
+   */
+  loginUser(profile: LoginProfile): Promise<User>;
+  /** ログインできない利用者を作る（AI エージェント。ADR 0054） */
+  createUser(name: string): Promise<User>;
+  /** ログインのセッション。トークンそのものは持たず、ハッシュで引く。期限は Unix 時刻（ミリ秒） */
+  createAuthSession(tokenHash: string, userId: string, expiresAt: number): Promise<void>;
+  authSession(tokenHash: string): Promise<{ user: User; expiresAt: number } | null>;
+  extendAuthSession(tokenHash: string, expiresAt: number): Promise<void>;
+  deleteAuthSession(tokenHash: string): Promise<void>;
+  deleteExpiredAuthSessions(now: number): Promise<void>;
   /** 決まった ID の利用者を用意する（なければ作る。ログインはできない。公式の発行者に使う） */
   ensureUser(user: User): Promise<void>;
   renameUser(id: string, name: string): Promise<void>;
@@ -121,6 +207,21 @@ export interface Store {
   /** 所持している版を替える。所持していなければ null（入手日は変えない） */
   updateOwnedItem(userId: string, workId: string, releaseId: string): Promise<OwnedItem | null>;
   removeOwnedItem(userId: string, workId: string): Promise<void>;
+  /** 所持金。記録がなければ DEFAULT_BALANCE */
+  balance(userId: string): Promise<number>;
+  listing(workId: string): Promise<Listing | null>;
+  listings(filter?: { owner?: string }): Promise<Listing[]>;
+  saveListing(listing: Listing): Promise<void>;
+  removeListing(workId: string): Promise<void>;
+  marketEvents(workId: string): Promise<MarketEvent[]>;
+  addMarketEvent(event: MarketEvent): Promise<void>;
+  /** 入手の記録（新しい順） */
+  sales(filter: { sellerId?: string; workId?: string }): Promise<Sale[]>;
+  /**
+   * 入手をひとまとめに行う：もう持っていれば何もしない。所持金が足りなければ断る。
+   * 足りれば買った人から引き、作者に sale.earned を足し、所持と記録を残す。
+   */
+  purchase(item: OwnedItem, sale: Sale): Promise<PurchaseResult>;
   searchUsers(query: string, limit: number): Promise<User[]>;
   friendships(userId: string): Promise<Friendship[]>;
   requestFriendship(request: Friendship): Promise<Friendship>;
@@ -138,13 +239,14 @@ export interface Store {
   ): Promise<SessionInvitation | null>;
 }
 
-export const newToken = () => randomBytes(24).toString("base64url");
+export const newToken = () => randomBytes(32).toString("base64url");
 export const newUserId = () => `u_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 
 /** メモリ上の Store（テストと、DATABASE_URL がないときの開発用）。再起動で消える。 */
 export class MemoryStore implements Store {
   private readonly users = new Map<string, User>();
-  private readonly tokens = new Map<string, string>();
+  private readonly loginKeys = new Map<string, string>();
+  private readonly authSessions = new Map<string, { userId: string; expiresAt: number }>();
   private readonly workspaces = new Map<string, WorkspaceMeta>();
   private readonly docs = new Map<string, Uint8Array>();
   private readonly repoMap = new Map<string, RepoMeta>();
@@ -154,20 +256,54 @@ export class MemoryStore implements Store {
   private readonly friends = new Map<string, Friendship>();
   private readonly profiles = new Map<string, SocialProfile>();
   private readonly invites = new Map<string, SessionInvitation>();
+  private readonly wallets = new Map<string, number>();
+  private readonly listingMap = new Map<string, Listing>();
+  private readonly events: MarketEvent[] = [];
+  private readonly saleList: Sale[] = [];
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
 
-  async userByToken(token: string): Promise<User | null> {
-    const id = this.tokens.get(token);
-    return id ? (this.users.get(id) ?? null) : null;
+  async loginUser(profile: LoginProfile) {
+    const id = this.loginKeys.get(profile.key);
+    const found = id ? this.users.get(id) : undefined;
+    if (found) {
+      found.account = profile.account;
+      found.avatarUrl = profile.avatarUrl;
+      return { ...found };
+    }
+    const user: User = {
+      id: newUserId(),
+      name: profile.name,
+      account: profile.account,
+      avatarUrl: profile.avatarUrl,
+    };
+    this.users.set(user.id, user);
+    this.loginKeys.set(profile.key, user.id);
+    return { ...user };
   }
   async createUser(name: string) {
     const user = { id: newUserId(), name };
-    const token = newToken();
     this.users.set(user.id, user);
-    this.tokens.set(token, user.id);
-    return { user: { ...user }, token };
+    return { ...user };
+  }
+  async createAuthSession(tokenHash: string, userId: string, expiresAt: number) {
+    this.authSessions.set(tokenHash, { userId, expiresAt });
+  }
+  async authSession(tokenHash: string) {
+    const s = this.authSessions.get(tokenHash);
+    const user = s && this.users.get(s.userId);
+    return s && user ? { user: { ...user }, expiresAt: s.expiresAt } : null;
+  }
+  async extendAuthSession(tokenHash: string, expiresAt: number) {
+    const s = this.authSessions.get(tokenHash);
+    if (s) s.expiresAt = expiresAt;
+  }
+  async deleteAuthSession(tokenHash: string) {
+    this.authSessions.delete(tokenHash);
+  }
+  async deleteExpiredAuthSessions(now: number) {
+    for (const [k, s] of this.authSessions) if (s.expiresAt <= now) this.authSessions.delete(k);
   }
   async ensureUser(user: User) {
     if (!this.users.has(user.id)) this.users.set(user.id, { ...user });
@@ -263,10 +399,70 @@ export class MemoryStore implements Store {
     this.owned.delete(`${userId}:${workId}`);
   }
 
+  async balance(userId: string) {
+    return this.wallets.get(userId) ?? DEFAULT_BALANCE;
+  }
+  async listing(workId: string) {
+    const l = this.listingMap.get(workId);
+    return l ? { ...l } : null;
+  }
+  async listings(filter: { owner?: string } = {}) {
+    return [...this.listingMap.values()]
+      .filter((l) => !filter.owner || l.owner === filter.owner)
+      .map((l) => ({ ...l }));
+  }
+  async saveListing(listing: Listing) {
+    this.listingMap.set(listing.workId, { ...listing });
+  }
+  async removeListing(workId: string) {
+    this.listingMap.delete(workId);
+  }
+  async marketEvents(workId: string) {
+    return this.events
+      .filter((e) => e.workId === workId)
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .map((e) => ({ ...e }));
+  }
+  async addMarketEvent(event: MarketEvent) {
+    this.events.push({ ...event });
+  }
+  async sales(filter: { sellerId?: string; workId?: string }) {
+    return this.saleList
+      .filter(
+        (s) =>
+          (!filter.sellerId || s.sellerId === filter.sellerId) &&
+          (!filter.workId || s.workId === filter.workId),
+      )
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .map((s) => ({ ...s }));
+  }
+  async purchase(item: OwnedItem, sale: Sale): Promise<PurchaseResult> {
+    const key = `${item.userId}:${item.workId}`;
+    const existing = this.owned.get(key);
+    // 途中で await しない（同時の入手で二重に引かないように、ひと続きで行う）
+    const balance = this.wallets.get(item.userId) ?? DEFAULT_BALANCE;
+    if (existing) return { ok: true, item: { ...existing }, balance, created: false };
+    if (balance < sale.price) return { ok: false, reason: "funds", balance };
+    this.wallets.set(item.userId, balance - sale.price);
+    if (sale.sellerId !== item.userId)
+      this.wallets.set(
+        sale.sellerId,
+        (this.wallets.get(sale.sellerId) ?? DEFAULT_BALANCE) + sale.earned,
+      );
+    this.owned.set(key, { ...item });
+    this.saleList.push({ ...sale });
+    return { ok: true, item: { ...item }, balance: balance - sale.price, created: true };
+  }
+
   async searchUsers(query: string, limit: number) {
     const needle = query.toLocaleLowerCase();
     return [...this.users.values()]
-      .filter((u) => u.id === query || u.name.toLocaleLowerCase().includes(needle))
+      .filter(
+        (u) =>
+          u.id === query ||
+          u.name.toLocaleLowerCase().includes(needle) ||
+          (u.account ?? "").toLocaleLowerCase().includes(needle),
+      )
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .slice(0, limit)
       .map((u) => ({ ...u }));

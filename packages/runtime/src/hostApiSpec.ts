@@ -17,6 +17,12 @@ const entityId = z.string({ error: "Entity の ID（文字列）を渡してく�
 /** 無効なら「無いもの」として扱う（今まで黙って無視していた引数のため） */
 const lenient = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 const record = z.record(z.string(), z.unknown());
+/** KokoState の参照（`{ entity, koko }`）と、フィールドの参照（`{ entity, koko, field }`）。どれも ID */
+const stateRef = z.object({
+  entity: z.string(),
+  koko: z.string(),
+  field: lenient(z.string()),
+});
 
 /**
  * API の安定度（ADR 0019）。experimental：互換性なく変えうる／preview：変えるときは major を上げ、移し方と診断を
@@ -185,7 +191,7 @@ export const HOST_API_SPEC = {
     note: "U1 で、自分の配置の中だけを探すようにした（別の配置は「見つからない」）",
     denied: null,
     params: "(name: string)",
-    returns: "string | null",
+    returns: "EntityRef | null",
     doc: "同じ配置の中から、名前で Entity を探して ID を返す",
   }),
   "world.get": entry({
@@ -212,6 +218,54 @@ export const HOST_API_SPEC = {
     returns: "boolean",
     doc: "同じ配置の Entity の KokoState の値を書く",
   }),
+  "world.getState": entry({
+    args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
+    capability: "state.read",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "runtime-host",
+    note: "world.get と同じ決まり（自分の配置の Entity だけ）。参照の値は ID で、名前を変えても切れない（ADR 0065）",
+    denied: undefined,
+    params: "<K extends KokoState>(ref: KokoStateRef<K>)",
+    returns: "FieldsOf<K> | undefined",
+    doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を読む（指す先がなければ undefined）",
+  }),
+  "world.setState": entry({
+    args: z.tuple([lenient(stateRef), lenient(record)]).rest(z.unknown()),
+    capability: "state.write",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "server-revalidate",
+    note: "world.set と同じ決まり（自分の配置の Entity だけ。型が合う値だけを書く）",
+    denied: false,
+    params: "<K extends KokoState>(ref: KokoStateRef<K>, values: Partial<FieldsOf<K>>)",
+    returns: "boolean",
+    doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を書く",
+  }),
+  "world.getField": entry({
+    args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
+    capability: "state.read",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "runtime-host",
+    note: "world.get と同じ決まり（自分の配置の Entity だけ）。フィールドは ID で指す",
+    denied: undefined,
+    params: "<T>(ref: FieldRef<T>)",
+    returns: "T | undefined",
+    doc: "フィールドの参照が指す、同じ配置の Entity のフィールドの値を読む（指す先がなければ undefined）",
+  }),
+  "world.setField": entry({
+    args: z.tuple([lenient(stateRef), z.unknown()]).rest(z.unknown()),
+    capability: "state.write",
+    currentReach: "own-placement",
+    crossPlacement: "target-policy",
+    authority: "server-revalidate",
+    note: "world.set と同じ決まり（自分の配置の Entity だけ。型が合う値だけを書く）",
+    denied: false,
+    params: "<T>(ref: FieldRef<T>, value: T)",
+    returns: "boolean",
+    doc: "フィールドの参照が指す、同じ配置の Entity のフィールドに値を書く（型が合わなければ false）",
+  }),
   "world.spawn": entry({
     args: z
       .tuple([
@@ -232,7 +286,7 @@ export const HOST_API_SPEC = {
     denied: null,
     params:
       "(desc?: { name?: string; parent?: string; states?: Record<string, Record<string, unknown>> })",
-    returns: "string | null",
+    returns: "EntityRef | null",
     doc: "Entity を作って ID を返す。作った Entity は、この System の配置のものになる",
   }),
   "world.destroy": entry({
@@ -337,7 +391,7 @@ const note = (capability: CapabilityId, stability: Stability = DEFAULT_STABILITY
 const SYSTEM_DECLARATIONS = [
   "/** System が処理する Entity。get() に渡せるのは、その System の query.with に書いた KokoState だけ */",
   "interface SystemEntity<Q extends KokoState> {",
-  "  readonly id: string;",
+  "  readonly id: EntityRef;",
   "  /** KokoState の値を取る。書き換えると、その Entity の値が変わる */",
   "  get<K extends KokoState>(",
   "    koko: K & ([K] extends [Q] ? unknown : { queryのwithに書いていないKokoStateです: never }),",
@@ -359,7 +413,7 @@ const SYSTEM_DECLARATIONS = [
   "/** world.emit で届いたイベント（onEvent） */",
   "interface ScriptEvent { name: string; data?: unknown }",
   "/** ぶつかった・離れた（onCollision） */",
-  "interface CollisionEvent { other: string; started: boolean }",
+  "interface CollisionEvent { other: EntityRef; started: boolean }",
   "/** 外に公開する操作（ほかの作者の物からも届く。ADR 0012） */",
   "interface SystemContracts<E> {",
   "  Damage?(e: E, payload: { amount: number; type?: string }): void;",
@@ -382,6 +436,35 @@ export function hostApiDeclarations(): string {
   const lines = [
     "// Host API の宣言（packages/runtime/src/hostApiSpec.ts から作った。手で書き換えない）",
     "type Vec3 = [number, number, number];",
+    '/** 色（"#rrggbb" の文字） */',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: 利用者向けの宣言に書く、TypeScript のテンプレートの型
+    "type Color = `#${string}`;",
+    "/** Entity の参照（Entity の ID）。e.id・world.find()・world.spawn() が返す。「なし」は undefined */",
+    'type EntityRef = string & { readonly __tukurium: "EntityRef" };',
+    "/** リソースの参照（テクスチャ・マテリアル・モデル・音声の ID）。Inspector で選ぶ */",
+    'type TextureRef = string & { readonly __tukurium: "TextureRef" };',
+    'type MaterialRef = string & { readonly __tukurium: "MaterialRef" };',
+    'type ModelRef = string & { readonly __tukurium: "ModelRef" };',
+    'type AudioRef = string & { readonly __tukurium: "AudioRef" };',
+    "/**",
+    " * Entity についた KokoState の参照（例：「的 3 の Health」）。K は、指せる KokoState（import した KokoState）。",
+    " * 値は Entity と KokoState の ID なので、名前を変えても切れない。world.getState()・world.setState() で読み書きする",
+    " */",
+    "interface KokoStateRef<K extends KokoState = KokoState> {",
+    "  readonly entity: EntityRef;",
+    '  readonly koko: K["id"];',
+    "}",
+    "/**",
+    " * Entity についた KokoState のフィールドの参照（例：「的 3 の Health.hp」）。T は、指せるフィールドの型。",
+    " * world.getField()・world.setField() で読み書きする",
+    " */",
+    "interface FieldRef<T = unknown> {",
+    "  readonly entity: EntityRef;",
+    "  readonly koko: string;",
+    "  readonly field: string;",
+    "  /** 型のためだけの印（実行時にはない） */",
+    "  readonly __value?: T;",
+    "}",
     "/** import した KokoState。Id は KokoState の ID、F はフィールドの型（ADR 0058） */",
     "interface KokoState<Id extends string = string, F = Record<string, unknown>> {",
     "  readonly id: Id;",
@@ -395,7 +478,7 @@ export function hostApiDeclarations(): string {
     "/** Raycast の結果（opaque handle）。別の作者の物に当たったときは entity が null */",
     "interface Hit {",
     "  readonly token: string;",
-    "  readonly entity: string | null;",
+    "  readonly entity: EntityRef | null;",
     "  readonly distance: number;",
     "  readonly point: Vec3;",
     ...HIT_METHODS.map(

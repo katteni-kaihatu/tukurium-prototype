@@ -5,8 +5,15 @@ import { z } from "zod";
  * 8：メッセージを、タグ付きの JSON（ADR 0065）で運ぶ。フィールドの値に undefined・Date・Map・Set・
  * bigint・NaN が入り、参照の「なし」は null から undefined に変わった。送るときは stringifyValue、
  * 受けるときは parseValue（@tukurium/eks）を使う。
+ * 9：制作データのフィールドの型が、決まった名前（vec3 など）から TypeScript の型の文（Vec3 など）に変わった。
+ * 配置・適用・ホストへの配置に、フィールドのスキーマ（schemas）を付けられる。
+ * 10：編集中の制作データ（Y.Doc）の KokoState の定義が、フィールドごとの Y.Map になった。
+ * 11：制作データに、型の定義（types）と、KokoState が使う型の定義の一覧（typeDefs）が入った。
+ * 12：参照から読み書きする Host API（world.getState など）と、参照の値（KokoState・フィールドの参照）が入った。
+ * 14：制作データに、プレハブ（prefabs・prefabEntities）と、インスタンスの印（Entity の instanceOf）が入った
+ * （ADR 0076）。
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 15;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;
@@ -27,7 +34,14 @@ export type PlayMode = z.infer<typeof PlayMode>;
 // ---------------------------------------------------------------------------
 // 共有する状態
 
-export const UserInfo = z.object({ id, name: z.string() });
+export const UserInfo = z.object({
+  id,
+  name: z.string(),
+  /** ログインに使ったアカウント（例：`@rhenium@misskey.resonite.love`）。エージェントは持たない */
+  account: z.string().optional(),
+  /** アイコンの画像の URL（ADR 0074） */
+  avatarUrl: z.string().optional(),
+});
 export type UserInfo = z.infer<typeof UserInfo>;
 
 export const SocialProfile = z.object({
@@ -240,6 +254,8 @@ export const HostPart = z.object({
   snapshot: z.unknown(),
   /** 依存の中身（サーバーが持ち主の許可で取り出したもの。依存がなければない。ADR 0015） */
   packages: z.array(z.unknown()).optional(),
+  /** フィールドのスキーマ（出した人の画面か、サーバーが作る。なければ、型の文から分かる分だけで確かめる。ADR 0065） */
+  schemas: z.unknown().optional(),
   position: vec3,
   yaw: z.number(),
   grants: PlacementGrants,
@@ -281,9 +297,11 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("hello"),
     protocol: z.number(),
-    name: z.string().min(1).max(32),
-    /** 前回もらったトークン（本人識別）。なければ新しく発行する */
-    token: z.string().max(128).optional(),
+    /**
+     * 本人は接続したときのログインの Cookie で決まる（ADR 0074）。名前は AI エージェントの
+     * 内部の接続だけが使う（人の接続では無視する）
+     */
+    name: z.string().min(1).max(40).optional(),
   }),
   z.object({ t: z.literal("rename"), name: z.string().min(1).max(32) }),
   z.object({ t: z.literal("sessions.list") }),
@@ -345,6 +363,7 @@ export const ClientMessage = z.discriminatedUnion("t", [
     workspaceId: id,
     outputId: z.string(),
     snapshot: z.unknown(),
+    schemas: z.unknown().optional(),
     position: vec3,
     yaw: z.number(),
   }),
@@ -384,7 +403,13 @@ export const ClientMessage = z.discriminatedUnion("t", [
    */
   z.object({ t: z.literal("session.openWorld"), releaseId: id }),
   /** 適用：このワークスペース・アウトプットにリンクしている配置をすべて更新する */
-  z.object({ t: z.literal("apply"), workspaceId: id, outputId: z.string(), snapshot: z.unknown() }),
+  z.object({
+    t: z.literal("apply"),
+    workspaceId: id,
+    outputId: z.string(),
+    snapshot: z.unknown(),
+    schemas: z.unknown().optional(),
+  }),
   z.object({ t: z.literal("unplace"), placementId: id }),
   /** 置いた物への付与を変える（セッションの持ち主・置いた人・そのワークスペースの共同編集以上。null で宣言どおり） */
   z.object({ t: z.literal("setGrants"), placementId: id, grants: PlacementGrants }),
@@ -412,7 +437,9 @@ export const ServerMessage = z.discriminatedUnion("t", [
     placementId: id.nullable(),
     error: z.string().nullable(),
   }),
-  z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo, token: z.string() }),
+  z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo }),
+  /** ログインしていない（期限切れ・ログアウトを含む）。このあと接続は閉じられる */
+  z.object({ t: z.literal("auth.required") }),
   z.object({ t: z.literal("sessions"), sessions: z.array(SessionSummary) }),
   z.object({ t: z.literal("session.entered"), sessionId: id, requestId: id.optional() }),
   z.object({
@@ -484,6 +511,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
     outputId: z.string(),
     snapshot: z.unknown(),
     packages: z.array(z.unknown()).optional(),
+    schemas: z.unknown().optional(),
     by: z.string(),
   }),
   z.object({ t: z.literal("host.removePart"), id }),

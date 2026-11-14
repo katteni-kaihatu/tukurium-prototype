@@ -1,20 +1,13 @@
-import type { FieldDef, FieldValue, Vec3 } from "@tukurium/eks";
-import {
-  BUILTIN,
-  COLLIDER_SHAPES,
-  MESH_SHAPES,
-  RESOURCE_FIELD_KIND,
-  RIGID_BODY_TYPES,
-} from "@tukurium/repo-model";
-import { useEffect, useId, useState } from "react";
+import { conformValue, type FieldDef, type FieldValue, schemaOfField } from "@tukurium/eks";
+import { BUILTIN, COLLIDER_SHAPES, MESH_SHAPES, RIGID_BODY_TYPES } from "@tukurium/repo-model";
+import { useId, useState } from "react";
+import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
+import { type FieldChoices, TextValueInput, ValueInput } from "./ValueInput";
+import css from "./ValueInput.module.css";
+import { countLabel, isInlineSchema } from "./valueEdit";
 
-export interface FieldChoices {
-  materials: { id: string; name: string }[];
-  entities: { id: string; name: string }[];
-  /** 素材（GLB・画像・音声） */
-  assets?: { id: string; name: string; kind: string }[];
-}
+export type { FieldChoices } from "./ValueInput";
 
 /** 文字列で選ぶ Built-in のフィールド */
 const ENUMS: Record<string, readonly string[]> = {
@@ -51,11 +44,18 @@ const FIELD_TITLE: Record<string, string> = {
   [`${BUILTIN.RigidBody}/linvel`]: "速度（メートル/秒）。実行が書き換えることがあります",
   [`${BUILTIN.RigidBody}/angvel`]: "回転の速度（ラジアン/秒）",
   [`${BUILTIN.RigidBody}/ccd`]: "速い物が薄い床をすり抜けないようにします",
+  [`${BUILTIN.RigidBody}/lockMoveX`]: "オンにすると X の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockMoveY`]: "オンにすると Y の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockMoveZ`]: "オンにすると Z の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateX`]: "オンにすると X 軸まわりに回りません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateY`]: "オンにすると Y 軸まわりに回りません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateZ`]: "オンにすると Z 軸まわりに回りません（ワールドの軸）",
 };
 
 /**
- * KokoState のフィールド 1 つ分の入力。型ごとに入力部品を変える。
- * 数値は入力中の途中の文字（「1.」「-」など）を壊さないよう、確定（Enter・フォーカスを外す）で反映する。
+ * KokoState のフィールド 1 つ分の入力。型（スキーマ）ごとに入力部品を変える（`ValueInput`）。
+ * レコード・リスト・マップなど、1 行に収まらない型は、名前の行の下に枠を開いて出す。
+ * そこでは、値の形式の文字で直すこともできる（専用の入力がない型と、型が分からないフィールドは、いつも文字）。
  */
 export function FieldInput(props: {
   koko: string;
@@ -65,198 +65,100 @@ export function FieldInput(props: {
   disabled?: boolean;
   onChange: (value: FieldValue) => void;
 }) {
-  const { field, value, disabled, onChange } = props;
+  const { field, disabled, onChange } = props;
   const id = useId();
+  const [open, setOpen] = useState(true);
+  const [asText, setAsText] = useState(false);
   const enumValues = ENUMS[`${props.koko}/${field.id}`];
 
-  let control: React.ReactNode;
+  const schemas = useWorkspace((st) => st.fieldSchemas);
+  const project = useWorkspace((st) => st.project);
+  // 型の文から決まる入力。TypeScript で作ったスキーマがあればそれ、なければ型の文から分かるもの
+  const schema = schemaOfField(project?.prefabFieldSchemas(schemas) ?? schemas, props.koko, field);
+  // 型の定義を変えたあとの値は、足りないフィールドを埋めた形で見せる（値の確かめ・実行と同じ形）
+  const value = (schema ? conformValue(schema, props.value) : props.value) as FieldValue;
+
+  const label = (
+    <label
+      htmlFor={id}
+      className={ui.label}
+      title={FIELD_TITLE[`${props.koko}/${field.id}`] ?? field.name}
+    >
+      {field.name}
+    </label>
+  );
+
   if (enumValues) {
-    control = (
-      <select
-        id={id}
-        className={ui.select}
-        value={String(value)}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {enumValues.map((v) => (
-          <option key={v} value={v}>
-            {SHAPE_LABEL[v] ?? v}
-          </option>
-        ))}
-      </select>
+    return (
+      <div className={ui.field}>
+        {label}
+        <select
+          id={id}
+          className={ui.select}
+          value={String(value)}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {enumValues.map((v) => (
+            <option key={v} value={v}>
+              {SHAPE_LABEL[v] ?? v}
+            </option>
+          ))}
+        </select>
+      </div>
     );
-  } else {
-    switch (field.type) {
-      case "number":
-        control = (
-          <NumberInput id={id} value={Number(value)} disabled={disabled} onCommit={onChange} />
-        );
-        break;
-      case "boolean":
-        control = (
-          <input
-            id={id}
-            type="checkbox"
-            checked={Boolean(value)}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.checked)}
-          />
-        );
-        break;
-      case "string":
-        control = (
-          <TextInput id={id} value={String(value ?? "")} disabled={disabled} onCommit={onChange} />
-        );
-        break;
-      case "color":
-        control = (
-          <span className={ui.color}>
-            <input
-              id={id}
-              type="color"
-              value={String(value)}
-              disabled={disabled}
-              onChange={(e) => onChange(e.target.value)}
-            />
-            <code className={ui.num}>{String(value).toUpperCase()}</code>
-          </span>
-        );
-        break;
-      case "vec3": {
-        const v = (Array.isArray(value) ? value : [0, 0, 0]) as Vec3;
-        control = (
-          <span className={ui.vec3}>
-            {(["X", "Y", "Z"] as const).map((axis, i) => (
-              // 軸ごとに色を付けた印を、入力欄の頭に出す（X 赤・Y 緑・Z 青）
-              <span key={axis} className={ui.axisBox} data-axis={axis}>
-                <span className={ui.axisTag} aria-hidden="true">
-                  {axis}
-                </span>
-                <NumberInput
-                  id={i === 0 ? id : undefined}
-                  label={`${field.name} ${axis}`}
-                  value={v[i] ?? 0}
-                  disabled={disabled}
-                  onCommit={(n) => {
-                    const next = [...v] as Vec3;
-                    next[i] = n;
-                    onChange(next);
-                  }}
-                />
-              </span>
-            ))}
-          </span>
-        );
-        break;
-      }
-      case "texture":
-      case "material":
-      case "model":
-      case "audio":
-      case "entity": {
-        const assets = props.choices.assets ?? [];
-        const kind = field.type === "entity" ? null : RESOURCE_FIELD_KIND[field.type];
-        const options =
-          field.type === "entity"
-            ? props.choices.entities
-            : kind === "material"
-              ? props.choices.materials
-              : assets.filter((a) => a.kind === kind);
-        control = (
-          <select
-            id={id}
-            className={ui.select}
-            value={typeof value === "string" ? value : ""}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
-          >
-            <option value="">（なし）</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        );
-        break;
-      }
-    }
   }
 
+  const input = { value, onChange, disabled, choices: props.choices, label: field.name };
+  if (schema && isInlineSchema(schema)) {
+    return (
+      <div className={ui.field}>
+        {label}
+        <ValueInput {...input} id={id} schema={schema} />
+      </div>
+    );
+  }
+
+  // 専用の入力がある型か（Map・Set と、型エラーで形が分からないフィールドには、ない）
+  const structured = schema !== undefined && schema.kind !== "Map" && schema.kind !== "Set";
   return (
-    <div className={ui.row}>
-      <label
-        htmlFor={id}
-        className={ui.label}
-        title={FIELD_TITLE[`${props.koko}/${field.id}`] ?? field.name}
-      >
-        {field.name}
-      </label>
-      {control}
+    <div className={css.blockField} data-block="">
+      <div className={ui.field}>
+        {label}
+        <span className={css.blockHead}>
+          <button
+            type="button"
+            id={open && (asText || !structured) ? undefined : id}
+            className={css.fold}
+            aria-expanded={open}
+            aria-label={`${field.name} を${open ? "閉じる" : "開く"}`}
+            onClick={() => setOpen(!open)}
+          >
+            {open ? "▾" : "▸"}
+          </button>
+          <span className={css.summary} title={field.type}>
+            {(schema && countLabel(schema, value)) || field.type}
+          </span>
+          {structured && (
+            <button
+              type="button"
+              className={css.mode}
+              aria-pressed={asText}
+              aria-label={`${field.name} を文字で直す`}
+              title="値の形式の文字で直す"
+              onClick={() => setAsText(!asText)}
+            >
+              {"{ }"}
+            </button>
+          )}
+        </span>
+      </div>
+      {open &&
+        (structured && !asText ? (
+          <ValueInput {...input} schema={schema} />
+        ) : (
+          <TextValueInput {...input} id={id} schema={schema} />
+        ))}
     </div>
   );
-}
-
-function NumberInput(props: {
-  id?: string;
-  label?: string;
-  value: number;
-  disabled?: boolean;
-  onCommit: (n: number) => void;
-}) {
-  const [text, setText] = useState(format(props.value));
-  useEffect(() => setText(format(props.value)), [props.value]);
-  const commit = () => {
-    const n = Number(text);
-    if (text.trim() !== "" && Number.isFinite(n)) {
-      if (n !== props.value) props.onCommit(n);
-    } else {
-      setText(format(props.value));
-    }
-  };
-  return (
-    <input
-      id={props.id}
-      aria-label={props.label}
-      className={`${ui.input} ${ui.num}`}
-      inputMode="decimal"
-      value={text}
-      disabled={props.disabled}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") commit();
-        if (e.key === "Escape") setText(format(props.value));
-      }}
-    />
-  );
-}
-
-function TextInput(props: {
-  id: string;
-  value: string;
-  disabled?: boolean;
-  onCommit: (s: string) => void;
-}) {
-  const [text, setText] = useState(props.value);
-  useEffect(() => setText(props.value), [props.value]);
-  return (
-    <input
-      id={props.id}
-      className={ui.input}
-      value={text}
-      disabled={props.disabled}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text !== props.value && props.onCommit(text)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && text !== props.value) props.onCommit(text);
-      }}
-    />
-  );
-}
-
-function format(n: number): string {
-  if (!Number.isFinite(n)) return "0";
-  return String(Math.round(n * 10000) / 10000);
 }

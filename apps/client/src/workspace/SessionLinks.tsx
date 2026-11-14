@@ -45,6 +45,7 @@ export function SessionLinks() {
       workspaceId,
       outputId,
       snapshot: project.snapshot(),
+      schemas: useWorkspace.getState().fieldSchemas,
       position: at.position,
       yaw: at.yaw,
     });
@@ -89,7 +90,14 @@ export function SessionLinks() {
               : `リンク先 ${links.length} 個を更新します`
           }
           onClick={() =>
-            client.send({ t: "apply", workspaceId, outputId, snapshot: project.snapshot() })
+            client.send({
+              t: "apply",
+              workspaceId,
+              outputId,
+              snapshot: project.snapshot(),
+              // 型を確かめる Worker が作ったスキーマ（ホストが値を確かめるのに使う。ADR 0065）
+              schemas: useWorkspace.getState().fieldSchemas,
+            })
           }
         >
           適用

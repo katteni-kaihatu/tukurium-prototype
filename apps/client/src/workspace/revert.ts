@@ -1,4 +1,4 @@
-import type { FieldValue } from "@tukurium/eks";
+import type { FieldValue, KokoStateDef } from "@tukurium/eks";
 import type {
   EntityDef,
   KeepMark,
@@ -7,6 +7,7 @@ import type {
   ProjectSnapshot,
 } from "@tukurium/repo-model";
 import type { DiffEntry } from "./diffView";
+import { parsePrefabPart } from "./prefabChanges";
 
 /**
  * 差分（DiffEntry の id と、DiffLine の part）を、最後に保存した形に戻す手順にする。
@@ -34,6 +35,8 @@ export function planRevert(
       return codeRevert(project, head, id, part);
     case "material":
       return materialRevert(project, head, id, part);
+    case "prefab":
+      return part ? null : prefabRevert(project, head, id);
     case "model":
     case "image":
     case "audio":
@@ -43,6 +46,14 @@ export function planRevert(
     default:
       return null;
   }
+}
+
+/** プレハブを、中の Entity ごと、保存した形に戻す（保存になければ消す。ADR 0076） */
+function prefabRevert(project: ProjectDoc, head: ProjectSnapshot, id: string): (() => void) | null {
+  const saved = head.prefabs?.find((p) => p.id === id);
+  if (!saved) return project.prefab(id) ? () => project.removePrefab(id) : null;
+  const entities = (head.prefabEntities ?? []).filter((e) => e.prefab === id);
+  return () => project.restorePrefab(saved, entities);
 }
 
 /** 差分のうち、part に当たる行だけにする（Inspector の丸に出す分）。part がなければそのまま。 */
@@ -95,6 +106,33 @@ function entityRevert(
       });
   }
   if (!saved || !cur) return null;
+  const prefabPart = parsePrefabPart(part);
+  if (prefabPart)
+    return () => {
+      const { path, kind, koko, field } = prefabPart;
+      if (kind === "system") {
+        const value = saved.instanceSystems?.find((s) => s.id === koko);
+        const list = (project.entity(id)?.instanceSystems ?? []).filter((s) => s.id !== koko);
+        if (value)
+          list.splice(
+            saved.instanceSystems?.findIndex((s) => s.id === koko) ?? list.length,
+            0,
+            value,
+          );
+        project.setInstanceSystems(id, list);
+      } else {
+        if (path === "" && kind === "field" && koko && field)
+          project.restoreEntityField(id, koko, field, saved);
+        else
+          project.restorePrefabOverridePart(
+            path ? `${id}/${path}` : id,
+            kind,
+            saved.prefabOverrides?.[path],
+            koko,
+            field,
+          );
+      }
+    };
   if (part === "name") return () => project.renameEntity(id, saved.name);
   if (part === "place") {
     if (!project.output(saved.output)) return null;
@@ -117,7 +155,8 @@ function entityRevert(
     const value = before[field] as FieldValue;
     return () =>
       project.transact(() => {
-        project.setField(id, koko, field, value);
+        if (cur.instanceOf) project.restoreEntityField(id, koko, field, saved);
+        else project.setField(id, koko, field, value);
         setKeep(
           project,
           head,
@@ -169,6 +208,12 @@ function outputRevert(
   };
 }
 
+/** 使う型の定義（ADR 0065）を、保存したときの一覧に戻した定義 */
+function withSavedTypeDefs(cur: KokoStateDef, saved: KokoStateDef): KokoStateDef {
+  const { typeDefs: _now, ...rest } = cur;
+  return saved.typeDefs ? { ...rest, typeDefs: [...saved.typeDefs] } : rest;
+}
+
 function kokoRevert(
   project: ProjectDoc,
   head: ProjectSnapshot,
@@ -184,6 +229,7 @@ function kokoRevert(
   }
   if (!saved || !cur) return null;
   if (part === "name") return () => project.updateKokoState({ ...cur, name: saved.name });
+  if (part === "typeDefs") return () => project.updateKokoState(withSavedTypeDefs(cur, saved));
   if (part.startsWith("field:")) {
     const fid = part.slice("field:".length);
     const was = saved.fields.find((f) => f.id === fid);
@@ -206,6 +252,19 @@ function codeRevert(
   id: string,
   part?: string,
 ): (() => void) | null {
+  // 型の定義（ADR 0065）も、コードとして同じ形で戻す
+  const savedType = head.types?.find((t) => t.id === id);
+  const curType = project.typeDef(id);
+  if (savedType || curType) {
+    if (!part) {
+      if (!savedType) return () => project.removeTypeDef(id);
+      return () => project.restoreTypeDef({ id, name: savedType.name }, savedType.code);
+    }
+    if (!savedType || !curType) return null;
+    if (part === "name") return () => project.renameTypeDef(id, savedType.name);
+    if (part === "code") return () => project.restoreTypeDef(curType, savedType.code);
+    return null;
+  }
   const saved = head.systems.find((s) => s.id === id);
   const cur = project.system(id);
   if (!part) {

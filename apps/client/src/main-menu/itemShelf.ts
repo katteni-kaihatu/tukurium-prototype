@@ -137,9 +137,13 @@ export function shelfItems(
   });
 }
 
-/** 所持している版より新しい版が出ていれば、その版を返す。利用できないときは返さない。 */
+/**
+ * 所持している版より新しい版が出ていれば、その版を返す。利用できないときは返さない。
+ * マーケットに登録されている作品は、マーケットで公開中の版まで（作者は最新まで）。
+ */
 export function newerRelease(item: OwnedItem) {
-  const latest = item.work?.latest;
+  const work = item.work;
+  const latest = work?.market && work.owner !== item.userId ? work.market.release : work?.latest;
   if (!item.available || !latest || latest.id === item.releaseId) return null;
   return !item.release || latest.version > item.release.version ? latest : null;
 }

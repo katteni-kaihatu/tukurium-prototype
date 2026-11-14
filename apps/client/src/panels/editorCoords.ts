@@ -69,19 +69,27 @@ function layoutBox(el: HTMLElement): DOMRect {
   const editor = in3dEditor(el);
   const scroller = editor && scrollerOf(editor);
   if (!editor || !scroller) return el.getBoundingClientRect();
+  // tooltip は scroller の兄弟。エディタ本体と兄弟も、scroller と同じ原点で測る。
+  if (el === editor)
+    return new DOMRect(-scroller.offsetLeft, -scroller.offsetTop, el.offsetWidth, el.offsetHeight);
   let x = 0;
   let y = 0;
   let n: HTMLElement | null = el;
-  while (n && n !== scroller) {
+  while (n && n !== scroller && n !== editor) {
     x += n.offsetLeft;
     y += n.offsetTop;
     const next: HTMLElement | null = n.offsetParent instanceof HTMLElement ? n.offsetParent : null;
     if (!next || next === n) break;
-    if (next !== scroller && !scroller.contains(next)) break;
+    if (next === editor) {
+      x -= scroller.offsetLeft;
+      y -= scroller.offsetTop;
+      break;
+    }
+    if (next !== scroller && !editor.contains(next)) break;
     n = next;
   }
   let s: HTMLElement | null = el.parentElement;
-  while (s && scroller.contains(s)) {
+  while (s && s !== editor && editor.contains(s)) {
     x -= s.scrollLeft;
     y -= s.scrollTop;
     s = s.parentElement;
@@ -159,8 +167,15 @@ function rangeRect(range: Range): DOMRect | null {
 function caretAt(x: number, y: number): Range | null {
   const doc = document as Document & {
     caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
   };
-  return doc.caretRangeFromPoint?.(x, y) ?? null;
+  if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
+  const caret = doc.caretPositionFromPoint?.(x, y);
+  if (!caret) return null;
+  const range = document.createRange();
+  range.setStart(caret.offsetNode, caret.offset);
+  range.collapse(true);
+  return range;
 }
 
 function layoutPoint(e: MouseEvent): { x: number; y: number } | null {
@@ -180,10 +195,9 @@ function layoutPoint(e: MouseEvent): { x: number; y: number } | null {
 
 function rewrite(e: Event): void {
   if (!(e instanceof MouseEvent) || rewritten.has(e)) return;
-  const dragging = e.type === "mousemove" || e.type === "pointermove";
-  if (dragging) {
-    if ((e.buttons & 1) === 0) return;
-  } else if (e.button !== 0) return;
+  // 候補やホバー内のボタンは文字位置に置き換えない。
+  if (e.target instanceof Element && e.target.closest(".cm-tooltip")) return;
+  if (e.type !== "mousemove" && e.button !== 0) return;
   const point = layoutPoint(e);
   if (!point) return;
   const dest =

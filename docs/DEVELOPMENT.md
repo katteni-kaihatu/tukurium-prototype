@@ -14,6 +14,8 @@
 | 失敗の原因が分からない | — | `test-results/<テスト名>/error-context.md` に、失敗時の画面の構造（アクセシビリティツリー）が残る。まずそれを読む |
 | runtime のクラス（Simulation など）にメソッドを足したのに、画面で「〜 is not a function」が出続ける。E2E は通る | 長く動かしていた開発サーバーが、変更前のモジュールを持ち続けていた（E2E は `reuseExistingServer` で同じサーバーを使うので、ページのエラーを見落とす） | packages/ のクラスの形を変えたら `pnpm dev` を起動し直す。確認用のスクリプトでは `pageerror` を数えて 0 件を確かめる |
 | ポインターロック中はクリックがパネルに届かない | ヘッドレスではポインターロックが不安定 | 入力は `__workspace.getState().input(...)` などで直接渡す。パネルのクリックを確かめるときは `page.mouse.click()` で座標をクリックする |
+| セッションで撃っても的の HP が減らない（m3・m6） | `equip()` が銃の Transform（親から見た位置）をそのまま空間の位置として使い、装備のレイが外れていた。セッションに出した物は、親や配置の位置が足される | `equip()` は親をたどって空間の中の位置を求める。Entity の位置を空間で使うときは、親の Transform を足す |
+| 2 人目が参加した直後、「ワークスペース」のボタンが 5 秒で見つからない | ソフトウェアの WebGL で、参加した直後の画面の準備が重い（5 秒ほどかかる） | 参加直後の確認だけ待ち時間を 20 秒にする |
 
 ## 3D パネル（CSS3DRenderer）
 
@@ -46,11 +48,31 @@
 
 ### 利用者のスクリプトの TypeScript（ADR 0058）
 
+- フィールドの型の文からスキーマを作る方法は二つある（ADR 0065）：TypeScript で読む（`packages/typecheck/src/fieldSchema.ts`）のと、Tukurium が用意する型だけをじかに読む（`packages/eks/src/schema.ts` の `knownSchema()`）。Host API の宣言の型（`Vec3`・`Color`・`EntityRef` など）を変えたら両方を直す。同じ結果になることは `fieldSchema.test.ts` が検査する。
+- スキーマは、TypeScript の準備ができるまで届かない（ワークスペースを開いた直後など）。スキーマを使う所は、`schemaOfField()` で「届いたスキーマ、なければ型の文から分かる分」を取り、どちらもなければ確かめずに通す。型ごとの分岐（`field.type === "..."`）は書かない（型は文字なので、空白の違いなどで外れる）。
 - 利用者のスクリプトの型を確かめる TypeScript は 6.0 系で、リポジトリの開発に使う TypeScript 7（Go の版。ブラウザで動かない）とは別に入れている。同じ名前の `typescript` では二つの版を一つの package.json に書けないので、`typescript6`（`npm:typescript@6.0.3`）という名前で入れ、`import ts from "typescript6"` で読む。
 - 日本語の型エラーの文は、TypeScript の公開の型に無い `setLocalizedDiagnosticMessages` で差し替えている。版を上げるときは、この関数が残っているかを `packages/typecheck` のテスト（文が日本語になるか）で確かめる。
 - 型を消すのは sucrase。型を消しても行の数は変わらないが、行の中の位置はずれる。import のパスの範囲は `rangeInSource()` で元のコードの範囲に戻してから書き換える。
 - ブラウザでは型を確かめる処理を Worker（`typecheck.worker.ts`）に入れ、TypeScript の本体（約 4.7 MB）を画面の本体に入れない。ワークスペースの準備が終わる前に制作データを書き換えても、型の確かめは走らない（確かめ用のスクリプトでは少し待ってから書き換える）。
 - 開発サーバー（Vite）は、Worker で初めて読む `typescript6` をその場で取り込み直し、ページを読み込み直してしまう（背骨の E2E の m1 が途中で落ちた）。`apps/client/vite.config.ts` の `optimizeDeps.include` に入れて、起動時に取り込んでおく。
+
+## プレハブ（ADR 0076）
+
+- Entity を使う所（再生・表示・「指す先があるか」の確かめ）は、`expandPrefabs()` で展開した並びを読む。展開せずに `snapshot.entities` を読むと、インスタンスは Transform だけの Entity に見え、中の Entity は見つからない。画面では `useExpanded()`（`workspace/hooks.ts`）を使う。
+- 展開したあとの制作データは、読むだけにする。取っておいた結果（`PrefabExpansionCache`）を次の展開でも使うので、書き換えると、次の表示が壊れる。プレハブを開いた形の値は凍らせてあり、書き換えると例外になる。
+- プレハブの中の Entity は `snapshot.prefabEntities`（Y.Doc では `prefabEntities`）にあり、`entities` には入らない。Entity を全部たどる処理（KokoState・マテリアル・素材を消したときの片付けなど）は、両方をたどる（`ProjectDoc` の `nodes()`）。
+- 展開した Entity の ID は「インスタンスの ID `/` 中の Entity の ID」。セッションでは、さらに頭に配置の ID が付く（`配置/インスタンス/中の Entity`）。Entity の ID を `/` で切って意味を読まない。
+- 計測は `pnpm bench:prefab`。機械が混んでいると値がぶれるので、何回か流して落ち着いた値を見る。
+- 展開のあとの手直し（消えた親の付け替え・親子の輪の確かめ・System を集めること）は、展開した Entity すべてをたどらない（ADR 0076 の 5。`Expander.run()`）。展開に手を入れるときは、すべてをたどる展開（`thorough`）と同じ結果になることを `prefabExpandShortcut.test.ts` で確かめ、`pnpm bench:prefab` の「何も変わっていない」が 1 ms を超えないことを見る。展開のたびに、すべての Entity を回る処理（`entities.map()` で索引を作る、など）を足すと、すぐに数 ms になる。
+- インスタンスの上書き（`prefabOverrides`）をじかに読むと、効いていないもの（プレハブ側で外した KokoState へのフィールドの上書き。データは残してある）も入っている。「変えた所」を数える所は、`getPrefabOverride()` に展開した Entity を渡すか、`splitPrefabOverride()`・`hasEffectivePrefabOverrides()` で、効いているものだけを取る。
+- Hierarchy・Inspector のように「いま編集しているもの」を出す所は、`useEditTarget()`（`workspace/hooks.ts`）を読む。アウトプットか、開いているプレハブの並びが返る。`useExpanded()` は、いつもアウトプットの並び。プレハブを開いているときの Entity は、`project.entity()` では引けない（`project.findEntity()` か `project.prefabEntity()` を使う）。
+- 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
+- `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。
+- Hierarchy の行の操作（複製・削除・プレハブを開く）のボタンは、行を選ぶかマウスを載せるまで `display: none`。確認用のスクリプトで押すときは、先にその行を選ぶ（選んでいない行のボタンは、見つからない）。
+- Hierarchy の行で、押せるもの・マウスを載せて読むもの（プレハブからの変化の印 `△` など）は、名前の前に置く。名前のうしろは、マウスを載せるか行を選ぶと、行の操作のボタンが重なって、押せなくなる。名前のうしろの札（`元`・`追加`・`プレハブ`・問題の印）は、操作のボタンが出ている間はしまい、その幅を名前に回している。
+- Hierarchy の行の名前のボタンは、マウスを載せると、右側が行の操作のボタンに隠れる。Playwright はボタンの真ん中を押すので、幅の狭い Hierarchy では「ほかの要素がクリックを受け取る」で待ち続ける。確認用のスクリプトでは、左端を押す（`click({ position: { x: 8, y: 8 } })`）。
+- Entity からプレハブを作る処理（`planPrefabFromEntity()`）と展開は、参照を、フィールドの型（スキーマ）からたどる。Entity の参照の型の文は `EntityRef | undefined`（`FIELD_TYPE.entity`）。確認用のスクリプトやテストで `Entity` などと書くと、スキーマが作れず、参照として扱われない（書き換わらない）。入れ子の型（`EntityRef[]` など）は、TypeScript で作ったスキーマ（`FieldSchemas`）を渡したときだけたどる。
+- 確認用のスクリプトで、空間（3D）の所を `page.mouse.click()` で押すと、空間に入った状態になり、そのあとのパネルのクリックが届かない。窓の外を押して閉じる動きを確かめるときは、ほかのパネルの上を押す。
 
 ## 物理（Rapier）
 
@@ -66,8 +88,18 @@
 | Docker ビルドで pnpm install が失敗する | 新しいパッケージの package.json を COPY していない | Dockerfile に COPY を足す（`pnpm lint` が検査する） |
 | `CLIENT_DIR` を相対パスで渡すと起動しない | @fastify/static は絶対パスしか受け付けない | `config.ts` で絶対パスに直すようにした |
 | Coolify でイメージを取得できない | MinIO の公式イメージの配布が止まった・Docker Hub の取得制限 | 本番の compose には S3 互換ストレージを含めない（外部を使う）。ベースイメージは `NODE_IMAGE` で差し替えられる |
-| Windows で開発サーバーが白い画面になり、`DiffTree` が export されていないと出た（型・ビルドも同じ） | `DiffTree.tsx` と `diffTree.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`./DiffTree` が `.ts` の方に当たる | 片方を `diffTreeModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない。Linux では動いてしまうので、`pnpm lint`（`scripts/check-file-names.mjs`）が検査する。`ProjectHome.tsx` と `projectHome.ts`、`RingMenu.tsx` と `ringMenu.ts` でも同じことが起き、`projectList.ts`・`ringItems.ts` に変えた |
+| Windows で開発サーバーが白い画面になったり、型・ビルドで export がないと出たりする | `DiffTree.tsx` と `diffTree.ts`、`ProjectHome.tsx` と `projectHome.ts`、`RingMenu.tsx` と `ringMenu.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`.tsx` の import が `.ts` の方に当たる | ロジック側を `diffTreeModel.ts`・`projectHomeModel.ts`・`ringMenuModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない。Linux では動いてしまうため、`pnpm lint` の `scripts/check-file-names.mjs` で検査する。 |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
+
+### ログイン（ADR 0074）
+
+| 症状 | 原因 | 対策 |
+| --- | --- | --- |
+| 開発サーバー経由のログインの POST が 403 になる | Vite の中継を文字列（`"/api": server`）で書くと `changeOrigin` になり、サーバーには `Host: localhost:8787` が届く。ブラウザの `Origin`（`localhost:5173`）と合わず、ほかのサイトからの操作として断られる | `vite.config.ts` は `{ target: server }` で書き、`Host` を書き換えない |
+| 旧 m6（3 人で一周）で、3 人目が「接続しています…」や「セッション未参加」のまま、20 秒の待ちで落ちることがあった（2026-11-14。ログインを入れる前の `main` でも 2 回に 1 回起きた） | 3 人目のブラウザの処理が、開いてから 20 秒ほど詰まる（ソフトウェアの WebGL で 3 つの画面を描くため）。サーバーは `hello` や参加にすぐ返しているが、ブラウザが受け取って処理するのが遅れる | m6 を 2 人にし、m2・m3 と重なる前半を外して、保存・リリース・ライブラリから置く所だけにした（`e2e/m6-publish.spec.ts`）。E2E で 3 人目を開かない。調べるときは、サーバーの WebSocket の受け口とブラウザの送受信（Playwright の `websocket` イベント）の両方に時刻を出して比べる |
+| `welcome` より先に、セッション一覧などの一斉の知らせが届く | 接続した時点で本人を入れると、一斉の知らせの宛先になる | 本人は接続に覚えておき、`hello` を受けたときに入れる（`auth.test.ts` で確かめる） |
+| 手元で本物の Misskey にログインできない | Misskey はトップページ（`client_id`）を HTTPS で読みに来る。`localhost` は読めない | 手元とテストは開発用ログイン（`pnpm dev` は `apps/server/dev.env` で開く）。本番の動作確認は `CLIENT_DIR=… AUTH_DEV_LOGIN=1 node apps/server/dist/main.js` |
+| 開発用ログインの同じ名前が、テストをまたいで同じ人になる | 開発用ログインは名前でアカウントを引く（`dev:<名前>`）。以前のトークンのように毎回別人にはならない | 別人にしたいときは名前を変える。サーバーのテストは `app.test.ts` の `client()` か、Store に作った人に `sessionFor()` でセッションを付ける |
 
 ### AI エージェント（リモートの MCP）
 
@@ -83,6 +115,8 @@
 
 - 入れ子のドロップ先（フォルダのタイルと、その外側の中身の欄）では、`dragover` と `drop` で `stopPropagation()` する。しないと、外側が受け取り直して元に戻る。
 - パネルが重なると、後から触ったパネルが前に出る。コードを開いたときなどは `PanelSpec.focusKey` を変えて前に出す。
+
+- 画面いっぱいのページ（`/p/…` など）は、左の欄を `--app-content-left`、右の欄を `--app-content-right` で避ける（`layoutEdges.ts`）。ウィンドウは右の欄より上に重なるので避けない。右の欄を足したとき避けておらず、プロジェクトのページの右端のボタンが押せなかった。
 
 - フックを早期 return の後で呼ぶと、表示が切り替わったときに落ちる。Biome の `useHookAtTopLevel` で検出する。
 - パネルを重ねたとき、触ったパネルを前に出す（pointerdown で z-index を上げる）。

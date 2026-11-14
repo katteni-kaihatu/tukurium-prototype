@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { AvatarFace } from "../app/AvatarFace";
 import { useApp } from "../app/store";
 import styles from "./MainMenu.module.css";
 import { enterSession } from "./sessionActions";
@@ -128,7 +129,9 @@ export function SessionsPage() {
               <ul className={styles.people}>
                 {chosen.participants.map((p) => (
                   <li key={p.id}>
-                    <span className={styles.avatar}>{p.name.slice(0, 1)}</span>
+                    <span className={styles.avatar}>
+                      <AvatarFace user={p} />
+                    </span>
                     {p.name}
                     {p.id === chosen.owner.id && <small>持ち主</small>}
                   </li>

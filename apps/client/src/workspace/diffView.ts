@@ -1,8 +1,8 @@
 import {
   equalValues,
-  type FieldType,
-  isResourceFieldType,
   type KokoStateDef,
+  knownSchema,
+  refTargetOf,
   stringifyValue,
 } from "@tukurium/eks";
 import {
@@ -11,8 +11,10 @@ import {
   type EntityDef,
   type FolderDef,
   type OutputDef,
+  type PrefabDef,
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
+import { prefabChangeParts } from "./prefabChanges";
 
 /** 履歴と保存で出す、ひとつの変化。 */
 export type DiffKind = "added" | "removed" | "modified";
@@ -23,6 +25,7 @@ export type DiffGroup =
   | "code"
   | "koko"
   | "material"
+  | "prefab"
   | "model"
   | "image"
   | "audio"
@@ -84,6 +87,7 @@ const GROUP_LABEL: Record<DiffGroup, string> = {
   code: "コード",
   koko: "KokoState",
   material: "マテリアル",
+  prefab: "プレハブ",
   model: "モデル",
   image: "テクスチャ",
   audio: "音声",
@@ -96,6 +100,7 @@ const GROUP_ORDER: DiffGroup[] = [
   "code",
   "koko",
   "material",
+  "prefab",
   "model",
   "image",
   "audio",
@@ -116,6 +121,7 @@ export function describeDiff(before: ProjectSnapshot, after: ProjectSnapshot): D
     ...codeEntries(before, after),
     ...kokoEntries(before, after),
     ...materialEntries(before, after),
+    ...prefabEntries(before, after),
     ...assetEntries(before, after),
     ...otherEntries(before, after),
   ];
@@ -177,7 +183,37 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
         part: "place",
       });
     }
+    // プレハブのインスタンスにした・やめた・別のプレハブにした（ADR 0076）
+    const prefabOf = (snap: ProjectSnapshot, e: EntityDef | undefined) =>
+      e?.instanceOf ? prefabName(snap, e.instanceOf.prefab) : null;
+    if ((prev?.instanceOf?.prefab ?? null) !== (next?.instanceOf?.prefab ?? null)) {
+      lines.push({
+        label: "プレハブ",
+        before: prefabOf(before, prev),
+        after: prefabOf(after, next),
+      });
+    }
     lines.push(...stateLines(id, prev, next, before, after));
+    for (const change of prefabChangeParts(prev, next)) {
+      const names = {
+        name: "名前",
+        parent: "親",
+        order: "並び",
+        state: "追加した KokoState",
+        field: "フィールド",
+        system: "追加した System",
+      };
+      const target = change.path ? ` / ${change.path}` : "";
+      const field = change.koko
+        ? ` / ${change.koko}${change.field ? ` / ${change.field}` : ""}`
+        : "";
+      lines.push({
+        label: `インスタンス${target}：${names[change.kind]}${field}`,
+        before: change.beforePresent ? stringifyValue(change.before) : null,
+        after: change.afterPresent ? stringifyValue(change.after) : null,
+        part: change.part,
+      });
+    }
     const parentChanged = (prev?.parent ?? null) !== (next?.parent ?? null);
     // アウトプットの名前が変わっただけでは、中のエンティティは出さない
     if (lines.length === 0 && !parentChanged && !outputChanged) return [];
@@ -195,7 +231,9 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
 }
 
 function codeEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
-  return pairById(before.systems, after.systems).flatMap(({ id, prev, next, kind }) => {
+  // System のスクリプトと、型の定義（ADR 0065）。どちらもコードとして、行ごとの差を出す
+  const codes = (snap: ProjectSnapshot) => [...snap.systems, ...(snap.types ?? [])];
+  return pairById(codes(before), codes(after)).flatMap(({ id, prev, next, kind }) => {
     const lines: DiffLine[] = [];
     pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
     const beforeCode = prev?.code ?? "";
@@ -240,6 +278,16 @@ function kokoEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry
         });
       }
     }
+    // 使う型の定義（ADR 0065）。名前で出す
+    const uses = (def: KokoStateDef | undefined, snap: ProjectSnapshot) =>
+      def?.typeDefs?.length
+        ? def.typeDefs
+            .map((t) => resourceName(snap, t))
+            .sort()
+            .join("、")
+        : null;
+    if (prev && next)
+      pushIfChanged(lines, "使う型の定義", uses(prev, before), uses(next, after), "typeDefs");
     if (lines.length === 0) return [];
     return [entry("koko", id, next?.name ?? prev?.name ?? id, kind, lines)];
   });
@@ -321,6 +369,86 @@ function assetEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntr
   }
   for (const next of added) out.push(assetEntry(undefined, next, "added"));
   return out;
+}
+
+const prefabName = (snap: ProjectSnapshot, id: string) =>
+  snap.prefabs?.find((p) => p.id === id)?.name ?? "（消えたプレハブ）";
+
+/**
+ * プレハブ（ADR 0076）。中の Entity も合わせて、一つのリソースとして出す。
+ * 中の Entity は、足した・消した・変えた所（KokoState とフィールドの名前）を一行ずつ。
+ */
+function prefabEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
+  const kokoNames = (snap: ProjectSnapshot) =>
+    new Map([...BUILTIN_KOKOSTATES, ...snap.kokostates].map((k) => [k.id, k]));
+  const defs = new Map([...kokoNames(before), ...kokoNames(after)]);
+  const systemNames = (snap: ProjectSnapshot, p: PrefabDef | undefined) =>
+    p && p.systems.length > 0
+      ? p.systems.map((s) => `${resourceName(snap, s.id)}${s.enabled ? "" : "（切）"}`).join("、")
+      : null;
+  const editIn = (p: PrefabDef | undefined) =>
+    p ? (p.editIn === "isolated" ? "離れた空間" : "その場") : null;
+  return pairById(before.prefabs ?? [], after.prefabs ?? []).flatMap(({ id, prev, next, kind }) => {
+    const lines: DiffLine[] = [];
+    pushIfChanged(lines, "名前", prev?.name ?? null, next?.name ?? null, "name");
+    if (prev && next) {
+      pushIfChanged(lines, "System", systemNames(before, prev), systemNames(after, next));
+      pushIfChanged(lines, "編集する場所", editIn(prev), editIn(next));
+      if (stringifyValue(prev.keep) !== stringifyValue(next.keep))
+        lines.push({
+          label: "維持",
+          before: `${prev.keep.length} 個`,
+          after: `${next.keep.length} 個`,
+        });
+    }
+    const inside = (snap: ProjectSnapshot) =>
+      (snap.prefabEntities ?? []).filter((e) => e.prefab === id);
+    for (const e of pairById(inside(before), inside(after))) {
+      const name = e.next?.name ?? e.prev?.name ?? e.id;
+      if (!e.prev || !e.next) {
+        // プレハブごと足した・消したときは、中の Entity を一つずつは出さない
+        if (prev && next)
+          lines.push({
+            label: `中の「${name}」`,
+            before: e.prev ? "あった" : null,
+            after: e.next ? "足した" : null,
+          });
+        continue;
+      }
+      const changed: string[] = [];
+      // いちばん上の Entity の名前は、プレハブの名前に合わせて変わる（renamePrefab）。
+      // 合わせて変わった分は、上の「名前」の行に含め、別の行にしない
+      const followed =
+        e.id === next?.root && e.prev.name === prev?.name && e.next.name === next.name;
+      if (e.prev.name !== e.next.name && !followed) changed.push("名前");
+      if (e.prev.parent !== e.next.parent) changed.push("親");
+      if (e.prev.order !== e.next.order) changed.push("並び");
+      if ((e.prev.instanceOf?.prefab ?? null) !== (e.next.instanceOf?.prefab ?? null))
+        changed.push("プレハブ");
+      if (prefabChangeParts(e.prev, e.next).length > 0) changed.push("インスタンスの変更");
+      for (const koko of new Set([...Object.keys(e.prev.states), ...Object.keys(e.next.states)])) {
+        const def = defs.get(koko);
+        const [a, b] = [e.prev.states[koko], e.next.states[koko]];
+        if (!a || !b) {
+          changed.push(`${def?.name ?? koko}（${a ? "外した" : "付けた"}）`);
+          continue;
+        }
+        for (const field of new Set([...Object.keys(a), ...Object.keys(b)]))
+          if (!equalValues(a[field], b[field]))
+            changed.push(
+              `${def?.name ?? koko}.${def?.fields.find((f) => f.id === field)?.name ?? field}`,
+            );
+      }
+      if (changed.length > 0)
+        lines.push({
+          label: `中の「${name}」`,
+          before: "変える前",
+          after: `変えた所：${changed.join("、")}`,
+        });
+    }
+    if (lines.length === 0) return [];
+    return [entry("prefab", id, next?.name ?? prev?.name ?? id, kind, lines)];
+  });
 }
 
 function otherEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEntry[] {
@@ -682,6 +810,8 @@ function resourceName(snap: ProjectSnapshot, id: string): string {
     snap.entities.find((e) => e.id === id)?.name ??
     snap.kokostates.find((k) => k.id === id)?.name ??
     snap.systems.find((s) => s.id === id)?.name ??
+    snap.types?.find((t) => t.id === id)?.name ??
+    snap.prefabs?.find((p) => p.id === id)?.name ??
     id
   );
 }
@@ -764,14 +894,16 @@ function guestLabel(value: string): string {
   return GUEST[value] ?? value;
 }
 
-function show(value: unknown, type: FieldType | undefined, snap: ProjectSnapshot): string {
+/** type：フィールドの型の文（参照か、ただの文字かを見分ける） */
+function show(value: unknown, type: string | undefined, snap: ProjectSnapshot): string {
+  const schema = type ? knownSchema(type) : undefined;
   if (value === null || value === undefined) return "（なし）";
   if (typeof value === "boolean") return value ? "はい" : "いいえ";
   if (typeof value === "number") return String(value);
   if (typeof value === "string") {
     if (value === "") return "（空）";
-    if (type === "entity" || (type && isResourceFieldType(type))) return resourceName(snap, value);
-    if (type === "string" && SHAPE[value]) return SHAPE[value];
+    if (schema && refTargetOf(schema)) return resourceName(snap, value);
+    if (schema?.kind === "string" && SHAPE[value]) return SHAPE[value];
     return value;
   }
   if (Array.isArray(value) && value.every((v) => typeof v === "number")) return value.join(", ");

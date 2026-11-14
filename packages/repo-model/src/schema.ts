@@ -57,6 +57,15 @@ export interface SystemDef {
   name: string;
 }
 
+/**
+ * 型の定義（ADR 0065）。名前を付けた型（`Card` など）を、`.d.ts` の形（`type` と `interface`）で書くリソース。
+ * KokoState のフィールドの型から使う。中身（コード）は、System のスクリプトと同じく別に持つ。
+ */
+export interface TypeDef {
+  id: string;
+  name: string;
+}
+
 export interface MaterialDef {
   id: string;
   name: string;
@@ -77,14 +86,78 @@ export interface AssetDef {
   contentType: string;
 }
 
-export interface EntityDef {
+/** プレハブを編集する場所（ADR 0076）。here：その場、isolated：離れた空間 */
+export type PrefabEditPlace = "here" | "isolated";
+
+/**
+ * プレハブ（ADR 0076）。Entity・KokoState・System のまとまりを、部品として登録したリソース。
+ * 中の Entity は、アウトプットの Entity とは別に持つ（`ProjectSnapshot.prefabEntities`）。
+ * アウトプットの中に、インスタンスとして置いて使う。プレハブだけをセッションに出すことはない。
+ */
+export interface PrefabDef {
+  id: string;
+  name: string;
+  /**
+   * いちばん上の Entity（プレハブの中の Entity の ID）。プレハブの中の Entity は、すべてこの下に入る。
+   * インスタンスの Entity が、この Entity に当たる。
+   */
+  root: EntityId;
+  /** プレハブの System。インスタンスを置いたアウトプットで動く。並び順が実行順 */
+  systems: OutputSystem[];
+  /** プレハブの中で付けた「維持」の印（Entity は、プレハブの中の ID） */
+  keep: KeepMark[];
+  /** 編集する場所。ないときは「その場」 */
+  editIn?: PrefabEditPlace;
+  /** 消した Entity の元の親。インスタンスの親が消えたとき、残っている祖先へたどる */
+  deletedParents?: Record<EntityId, EntityId | null>;
+}
+
+/** インスタンスで変えた所。キーはルートからの ID（ルート自身は空文字） */
+export interface PrefabEntityOverride {
+  name?: string;
+  /** 既存 KokoState のフィールドごとの上書き */
+  states?: Record<KokoStateId, KokoStateValues>;
+  /** インスタンスで付けた KokoState */
+  addedStates?: Record<KokoStateId, KokoStateValues>;
+  /** 展開した Entity の ID。null はインスタンスのルート */
+  parent?: EntityId | null;
+  order?: number;
+}
+
+/** インスタンスが持つ、プレハブとのつながり（ADR 0076） */
+export interface PrefabInstanceLink {
+  /** プレハブのリソース ID。名前を変えても動かしても切れない */
+  prefab: string;
+}
+
+/** アウトプットの Entity と、プレハブの中の Entity に共通の形 */
+export interface EntityBase {
   id: EntityId;
   name: string;
   parent: EntityId | null;
-  output: string;
   /** 兄弟の中での並び順 */
   order: number;
   states: Record<KokoStateId, KokoStateValues>;
+  /**
+   * プレハブのインスタンスなら、そのプレハブ（ADR 0076）。使う所の手前で、プレハブの中身に展開する
+   * （`expandPrefabs`）。場所・向き・大きさ（Transform）は、インスタンスそのものが持つ。
+   */
+  instanceOf?: PrefabInstanceLink;
+  prefabOverrides?: Record<string, PrefabEntityOverride>;
+  /** インスタンスで足した System */
+  instanceSystems?: OutputSystem[];
+  /** プレハブとのつながりを切ったときに残す、そのプレハブ本体の System。子の System より先に動く */
+  unpackedSystems?: OutputSystem[];
+}
+
+export interface EntityDef extends EntityBase {
+  output: string;
+}
+
+/** プレハブの中の Entity。アウトプットではなく、プレハブに属する */
+export interface PrefabEntityDef extends EntityBase {
+  /** 属するプレハブの ID */
+  prefab: string;
 }
 
 /** リポジトリ（制作データ）の中身をそのまま JSON にしたもの。 */
@@ -101,6 +174,8 @@ export interface ProjectSnapshot {
   name: string;
   kokostates: KokoStateDef[];
   systems: (SystemDef & { code: string })[];
+  /** 型の定義（古いデータにはない） */
+  types?: (TypeDef & { code: string })[];
   materials: MaterialDef[];
   /** 古いデータにはない */
   assets?: AssetDef[];
@@ -110,10 +185,14 @@ export interface ProjectSnapshot {
   provenance?: Provenance[];
   /** Resources のフォルダ（古いデータにはない） */
   folders?: FolderDef[];
-  /** リソース（KokoState・System・マテリアル・素材）の ID → 入っているフォルダの ID。ないものはいちばん上 */
+  /** リソース（KokoState・System・マテリアル・素材・プレハブ）の ID → 入っているフォルダの ID。ないものはいちばん上 */
   placement?: Record<string, string>;
   /** 使うライブラリ（別名の順。古いデータにはない。ADR 0015） */
   dependencies?: PackageDependency[];
+  /** プレハブ（古いデータにはない。ADR 0076） */
+  prefabs?: PrefabDef[];
+  /** プレハブの中の Entity（古いデータにはない。ADR 0076） */
+  prefabEntities?: PrefabEntityDef[];
 }
 
 /**

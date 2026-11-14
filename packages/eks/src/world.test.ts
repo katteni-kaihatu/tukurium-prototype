@@ -9,7 +9,7 @@ const Gun: KokoStateDef = {
   name: "Gun",
   fields: [
     { id: "f_ammo", name: "ammo", type: "number", default: 12 },
-    { id: "f_muzzle", name: "muzzle", type: "vec3", default: [0, 0, 1] },
+    { id: "f_muzzle", name: "muzzle", type: "Vec3", default: [0, 0, 1] },
   ],
 };
 const Disabled: KokoStateDef = { id: "ks_disabled", name: "Disabled", fields: [] };

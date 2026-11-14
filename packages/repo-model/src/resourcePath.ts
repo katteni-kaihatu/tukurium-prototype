@@ -7,7 +7,14 @@ import type { AssetKind, ProjectSnapshot } from "./schema";
  */
 
 /** 論理パスを持つリソースの種類 */
-export type PathKind = "folder" | "kokostate" | "system" | "material" | "asset";
+export type PathKind =
+  | "folder"
+  | "kokostate"
+  | "system"
+  | "typedef"
+  | "material"
+  | "asset"
+  | "prefab";
 
 /** Built-in の KokoState を指すパスの頭 */
 export const BUILTIN_PREFIX = "@builtin/";
@@ -15,7 +22,9 @@ export const BUILTIN_PREFIX = "@builtin/";
 const KIND_EXT: Record<Exclude<PathKind, "folder" | "asset">, string> = {
   kokostate: ".koko",
   system: ".system",
+  typedef: ".types",
   material: ".material",
+  prefab: ".prefab",
 };
 
 const ASSET_EXT: Record<AssetKind, string> = {
@@ -128,10 +137,14 @@ export class ResourcePathIndex {
         add({ id: k.id, kind: "kokostate", name: k.name, parent: placed(k.id), ext: ".koko" });
     for (const s of snap.systems)
       add({ id: s.id, kind: "system", name: s.name, parent: placed(s.id), ext: ".system" });
+    for (const t of snap.types ?? [])
+      add({ id: t.id, kind: "typedef", name: t.name, parent: placed(t.id), ext: ".types" });
     for (const m of snap.materials)
       add({ id: m.id, kind: "material", name: m.name, parent: placed(m.id), ext: ".material" });
     for (const a of snap.assets ?? [])
       add({ id: a.id, kind: "asset", name: a.name, parent: placed(a.id), ext: ASSET_EXT[a.kind] });
+    for (const p of snap.prefabs ?? [])
+      add({ id: p.id, kind: "prefab", name: p.name, parent: placed(p.id), ext: ".prefab" });
     this.findCycles(folders.map((f) => f.id));
   }
 

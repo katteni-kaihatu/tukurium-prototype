@@ -1,10 +1,11 @@
 /// <reference lib="webworker" />
-import type { PackageResolution, ProjectSnapshot } from "@tukurium/repo-model";
 import { TypeChecker } from "@tukurium/typecheck";
 import messages from "typescript6/lib/ja/diagnosticMessages.generated.json";
+import type { TypecheckRequest } from "./typecheckProtocol";
+import { TypecheckQueue } from "./typecheckQueue";
 
 /**
- * スクリプトの型を確かめる Worker（ADR 0058）。TypeScript の本体は大きいので、画面とは別に、
+ * スクリプトとフィールドの型を確かめ、フィールドのスキーマを作る Worker（ADR 0058・0065）。TypeScript の本体は大きいので、画面とは別に、
  * ワークスペースで型を確かめるときにだけ読み込む。同じ TypeChecker を使い回し、変わっていない
  * ファイルの解析を使い回す。
  */
@@ -24,19 +25,5 @@ const checker = new TypeChecker({
   messages: messages as Record<string, string>,
 });
 
-export interface TypeCheckRequest {
-  id: number;
-  snapshot: ProjectSnapshot;
-  packages: [string, PackageResolution][];
-  hostDeclarations: string;
-}
-
-self.onmessage = (event: MessageEvent<TypeCheckRequest>) => {
-  const { id, snapshot, packages, hostDeclarations } = event.data;
-  try {
-    const diagnostics = checker.check({ snapshot, packages: new Map(packages), hostDeclarations });
-    self.postMessage({ id, diagnostics });
-  } catch (e) {
-    self.postMessage({ id, diagnostics: [], error: e instanceof Error ? e.message : String(e) });
-  }
-};
+const queue = new TypecheckQueue(checker, (response) => self.postMessage(response));
+self.onmessage = (event: MessageEvent<TypecheckRequest>) => queue.receive(event.data);

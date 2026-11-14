@@ -10,11 +10,13 @@ import {
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
 import { PROTOCOL_VERSION, type ServerMessage } from "@tukurium/shared";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { buildApp } from "./app";
 import { type AssetStore, assetId } from "./assets/assetStore";
+import { hashToken } from "./auth/auth";
 import { MemoryStore } from "./store/store";
 
 let close: (() => Promise<void>) | undefined;
@@ -47,6 +49,8 @@ async function start(opts: { ownerGraceMs?: number; worldChangeMs?: number } = {
       s3: undefined,
       assetDir: "",
       gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
+      misskeyUrl: "https://misskey.example",
+      devLogin: true,
     },
     {
       store,
@@ -67,8 +71,23 @@ async function start(opts: { ownerGraceMs?: number; worldChangeMs?: number } = {
 
 type Msg<T extends ServerMessage["t"]> = Extract<ServerMessage, { t: T }>;
 
+/** 開発用ログインで入り、ログインのセッションのトークン（Cookie の値）を返す */
+async function devLogin(url: string, name: string): Promise<string> {
+  const base = url.replace(/^ws/, "http").replace(/\/ws$/, "");
+  const res = await fetch(`${base}/api/auth/dev`, {
+    method: "POST",
+    headers: { origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const token = /tukurium_session=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1];
+  if (!token) throw new Error(`ログインできません: ${res.status}`);
+  return token;
+}
+
+/** ログインした人の接続。token を渡すと、そのログインのセッションでつなぐ（同じ人の別のタブ） */
 async function client(url: string, name: string, token?: string) {
-  const ws = new WebSocket(url);
+  token ??= await devLogin(url, name);
+  const ws = new WebSocket(url, { headers: { cookie: `tukurium_session=${token}` } });
   const inbox: ServerMessage[] = [];
   const waiters: (() => void)[] = [];
   ws.on("message", (d) => {
@@ -93,9 +112,9 @@ async function client(url: string, name: string, token?: string) {
       });
     }
   };
-  send({ t: "hello", protocol: PROTOCOL_VERSION, name, token });
+  send({ t: "hello", protocol: PROTOCOL_VERSION });
   const welcome = await next("welcome");
-  return { ws, inbox, send, next, me: welcome.you, token: welcome.token };
+  return { ws, inbox, send, next, me: welcome.you, token };
 }
 
 const docUpdate = (fn: (d: Y.Doc) => void) => {
@@ -121,17 +140,29 @@ async function sessionWithWorkspace(url: string) {
   return { a, b, sessionId: s.id, workspaceId };
 }
 
-const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
-  get: (url: string) => app.inject({ method: "GET", url, headers: { "x-tukurium-token": token } }),
-  post: (url: string, payload: object = {}) =>
-    app.inject({ method: "POST", url, payload, headers: { "x-tukurium-token": token } }),
-  patch: (url: string, payload: object) =>
-    app.inject({ method: "PATCH", url, payload, headers: { "x-tukurium-token": token } }),
-  put: (url: string, payload: object) =>
-    app.inject({ method: "PUT", url, payload, headers: { "x-tukurium-token": token } }),
-  delete: (url: string) =>
-    app.inject({ method: "DELETE", url, headers: { "x-tukurium-token": token } }),
+/** ログインの Cookie と、同じオリジンの Origin を付けた HTTP の呼び出し（app.inject の Host は localhost:80） */
+const authHeaders = (token: string) => ({
+  cookie: `tukurium_session=${token}`,
+  origin: "http://localhost:80",
 });
+
+const api = (app: Awaited<ReturnType<typeof start>>["app"], token: string) => ({
+  get: (url: string) => app.inject({ method: "GET", url, headers: authHeaders(token) }),
+  post: (url: string, payload: object = {}) =>
+    app.inject({ method: "POST", url, payload, headers: authHeaders(token) }),
+  patch: (url: string, payload: object) =>
+    app.inject({ method: "PATCH", url, payload, headers: authHeaders(token) }),
+  put: (url: string, payload: object) =>
+    app.inject({ method: "PUT", url, payload, headers: authHeaders(token) }),
+  delete: (url: string) => app.inject({ method: "DELETE", url, headers: authHeaders(token) }),
+});
+
+/** Store に作った利用者に、ログインのセッションを付ける */
+async function sessionFor(store: MemoryStore, userId: string): Promise<string> {
+  const token = `t_${Math.random().toString(36).slice(2)}`;
+  await store.createAuthSession(hashToken(token), userId, Date.now() + 60_000);
+  return token;
+}
 
 describe("本人識別とセッション", () => {
   it("取り込み元の中身は、フォークできる人にだけ渡す", async () => {
@@ -150,6 +181,73 @@ describe("本人識別とセッション", () => {
     expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(403);
     await A.patch(`/api/repos/${source.id}`, { visibility: "public" });
     expect((await B.get(`/api/repos/${source.id}/import-source`)).statusCode).toBe(200);
+  });
+  it("プロジェクトを Zip にエクスポートし、素材ごと新しいプロジェクトへインポートする", async () => {
+    const { app, url, assets } = await start();
+    const owner = await client(url, "作者");
+    const other = await client(url, "ほかの人");
+    const A = api(app, owner.token);
+    const B = api(app, other.token);
+    const source = (
+      await A.post("/api/repos", { name: "森", template: "forest", visibility: "private" })
+    ).json();
+    // 非公開なら、フォークできない人はエクスポートできない
+    expect((await B.get(`/api/repos/${source.id}/export`)).statusCode).toBe(403);
+    const exported = await A.get(`/api/repos/${source.id}/export`);
+    expect(exported.statusCode).toBe(200);
+    expect(exported.headers["content-type"]).toBe("application/zip");
+    expect(String(exported.headers["content-disposition"])).toContain(
+      `filename*=UTF-8''${encodeURIComponent("森.zip")}`,
+    );
+    const zip = new Uint8Array(exported.rawPayload);
+    const entries = unzipSync(zip);
+    const original = (await A.get(`/api/repos/${source.id}/snapshot`)).json() as ProjectSnapshot;
+    expect(entries["project/tukurium.json"]).toBeDefined();
+    const ids = (original.assets ?? []).map((a) => a.id);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(entries[`asset-files/${id}`]).toBeDefined();
+
+    // 別の人が、素材のない置き場へ取り込む
+    assets.items.clear();
+    const upload = (body: Uint8Array, query = "") =>
+      app.inject({
+        method: "POST",
+        url: `/api/repos/import${query}`,
+        payload: Buffer.from(body),
+        headers: { ...authHeaders(other.token), "content-type": "application/zip" },
+      });
+    const imported = await upload(zip, "?visibility=public");
+    expect(imported.statusCode).toBe(200);
+    const repo = imported.json();
+    expect(repo).toMatchObject({ name: "森", owner: other.me.id, kind: "world" });
+    expect(repo.id).not.toBe(source.id);
+    expect(repo.visibility).toBe("public");
+    const copy = (await B.get(`/api/repos/${repo.id}/snapshot`)).json() as ProjectSnapshot;
+    expect(copy.entities).toEqual(original.entities);
+    expect(copy.assets).toEqual(original.assets);
+    for (const id of ids) expect(assets.items.has(id)).toBe(true);
+    // 取り込んだ人は、素材を見られる
+    const first = ids[0] as string;
+    expect((await B.get(`/api/assets/${first}`)).statusCode).toBe(200);
+    // 名前を変えて取り込める
+    const renamed = await upload(zip, `?name=${encodeURIComponent("森のコピー")}`);
+    expect(renamed.json()).toMatchObject({ name: "森のコピー", visibility: "private" });
+
+    // 壊れた Zip・Tukurium のものでない Zip・中身の違う素材は拒む
+    expect((await upload(strToU8("zip ではない"))).statusCode).toBe(400);
+    expect((await upload(zipSync({ "readme.txt": strToU8("hi") }))).statusCode).toBe(400);
+    const tampered = { ...entries, [`asset-files/${first}`]: strToU8("glTF だけど違う中身") };
+    expect((await upload(zipSync(tampered))).statusCode).toBe(400);
+    const escaping = { ...entries, "project/../evil.json": strToU8("{}") };
+    expect((await upload(zipSync(escaping))).statusCode).toBe(400);
+    // 本人確認ができなければ受け付けない
+    const anonymous = await app.inject({
+      method: "POST",
+      url: "/api/repos/import",
+      payload: Buffer.from(zip),
+      headers: { "content-type": "application/zip", origin: "http://localhost:80" },
+    });
+    expect(anonymous.statusCode).toBe(401);
   });
   it("未編集の既存先へ同時に抽出しても、両方の取り込みを残す (#62)", async () => {
     const { app, url } = await start();
@@ -354,7 +452,7 @@ describe("本人識別とセッション", () => {
     await app.inject({
       method: "DELETE",
       url: `/api/me/friends/${b.me.id}`,
-      headers: { "x-tukurium-token": a.token },
+      headers: { ...authHeaders(a.token) },
     });
     expect((await A.get("/api/me/social")).json().friends).toEqual([]);
     expect((await api(app, tab.token).get("/api/me/social")).json().friends).toEqual([]);
@@ -386,6 +484,15 @@ describe("本人識別とセッション", () => {
       await A.post("/api/works", { repoId: worldRepo.id, outputId: "out_main" })
     ).json();
     const worldRelease = (await A.post(`/api/works/${worldWork.id}/releases`)).json();
+    // マーケットに登録したものだけが出る。work は v1 を手動で公開する
+    expect((await B.get("/api/market")).json().total).toBe(0);
+    await A.post("/api/market/listings", {
+      workId: work.id,
+      price: 0,
+      autoPublish: false,
+      releaseId: r1.id,
+    });
+    await A.post("/api/market/listings", { workId: secondWork.id, price: 0, autoPublish: true });
     const detail = (await B.get(`/api/works/${work.id}`)).json();
     expect(detail.project).toEqual({ id: repo.id, name: "検索用の銃" });
     expect(detail.releases.map((release: { version: number }) => release.version)).toEqual([2, 1]);
@@ -412,22 +519,18 @@ describe("本人識別とセッション", () => {
     expect((await B.get("/api/market?q=nonexistent")).json().items).toEqual([]);
     expect((await B.get("/api/market?limit=49")).statusCode).toBe(400);
     expect((await app.inject({ method: "GET", url: "/api/me/items" })).statusCode).toBe(401);
-    const item = (await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).json();
+    const item = (await B.post(`/api/me/items/${work.id}`, {})).json();
     expect(item).toMatchObject({ userId: buyer.me.id, releaseId: r1.id, available: true });
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r2.id })).json().releaseId).toBe(
-      r1.id,
-    );
+    expect((await B.post(`/api/me/items/${work.id}`, {})).json().releaseId).toBe(r1.id);
     expect((await B.get("/api/me/items")).json()).toHaveLength(1);
     expect((await A.get("/api/me/items")).json()).toEqual([]);
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: "missing" })).statusCode).toBe(
-      404,
-    );
-    expect(
-      (await B.post(`/api/me/items/${work.id}`, { releaseId: secondRelease.id })).statusCode,
-    ).toBe(404);
-    expect(
-      (await B.post(`/api/me/items/${worldWork.id}`, { releaseId: worldRelease.id })).statusCode,
-    ).toBe(400);
+    expect((await B.post("/api/me/items/missing", {})).statusCode).toBe(404);
+    // 登録していない作品は、ほかの人は入手できない（作者は自分の作品を持てる）
+    expect((await B.post(`/api/me/items/${worldWork.id}`, {})).statusCode).toBe(404);
+    expect(worldRelease.version).toBe(1);
+    // 公開していない版（v2）へはアップデートできない。公開すればできる
+    expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(403);
+    await A.patch(`/api/market/listings/${work.id}`, { releaseId: r2.id });
     // 新しい版へのアップデートは、所持している人だけ。入手日は保つ
     const acquiredAt = item.acquiredAt;
     expect((await A.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(404);
@@ -443,13 +546,19 @@ describe("本人識別とセッション", () => {
       releaseId: r1.id,
     });
     expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).statusCode).toBe(403);
-    expect((await B.post(`/api/me/items/${work.id}`, { releaseId: r1.id })).statusCode).toBe(403);
+    expect((await B.post(`/api/me/items/${work.id}`, {})).statusCode).toBe(403);
     // 利用できなくなったアイテムも、一覧から消せる
     expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
     expect((await B.get("/api/me/items")).json()).toEqual([]);
     expect((await B.delete(`/api/me/items/${work.id}`)).statusCode).toBe(200);
     expect(
-      (await app.inject({ method: "DELETE", url: `/api/me/items/${work.id}` })).statusCode,
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/api/me/items/${work.id}`,
+          headers: { origin: "http://localhost:80" },
+        })
+      ).statusCode,
     ).toBe(401);
     await A.patch(`/api/works/${work.id}`, { perms: { use: false, view: false, fork: false } });
     expect((await B.get(`/api/works/${work.id}`)).statusCode).toBe(404);
@@ -550,13 +659,14 @@ describe("本人識別とセッション", () => {
     expect(res.json()).toMatchObject({ ok: true, protocol: PROTOCOL_VERSION });
   });
 
-  it("トークンで同じ人として再接続できる", async () => {
+  it("ログインのセッションで同じ人として再接続できる。名前は名乗りでは変わらない", async () => {
     const { url } = await start();
     const a = await client(url, "れにうむ");
     a.ws.close();
     const again = await client(url, "れにうむ2", a.token);
     expect(again.me.id).toBe(a.me.id);
-    expect(again.me.name).toBe("れにうむ2");
+    expect(again.me.name).toBe("れにうむ");
+    expect(again.me.account).toBe("@れにうむ@dev");
     const other = await client(url, "ここあ");
     expect(other.me.id).not.toBe(a.me.id);
   });
@@ -895,11 +1005,16 @@ describe("セッションの世界（配置・適用）", () => {
       workspaceId,
       outputId: "out",
       snapshot: snap("v1"),
+      // 出した人の画面が作ったフィールドのスキーマ（ADR 0065）。ホストへそのまま渡る
+      schemas: { ks_hand: { f_cards: { kind: "list", item: { kind: "string" } } } },
       position: [1, 0, 2],
       yaw: 0,
     });
     const add = await a.next("host.addPart");
     expect(add.part).toMatchObject({ realm: workspaceId, outputId: "out", position: [1, 0, 2] });
+    expect(add.part.schemas).toEqual({
+      ks_hand: { f_cards: { kind: "list", item: { kind: "string" } } },
+    });
     const info = await b.next("session", (m) => m.session.placements.length === 1);
     expect(info.session.placements[0]).toMatchObject({
       workspaceName: "銃",
@@ -912,6 +1027,8 @@ describe("セッションの世界（配置・適用）", () => {
     const applied = await a.next("host.apply");
     expect(applied).toMatchObject({ realm: workspaceId, outputId: "out", by: "ここあ" });
     expect((applied.snapshot as { marker: string }).marker).toBe("v2");
+    // スキーマを付けずに適用したら、前のスキーマは使わない（型の文から分かる分だけで確かめる）
+    expect(applied.schemas).toBeUndefined();
 
     b.send({
       t: "session.input",
@@ -1047,14 +1164,15 @@ describe("素材", () => {
     const up = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      headers: { "content-type": "image/png", ...authHeaders(a.token) },
       payload: png,
     });
     expect(up.statusCode).toBe(200);
     expect(up.json()).toMatchObject({ id: assetId(png), kind: "image", size: png.length });
     const get = await app.inject({
       method: "GET",
-      url: `/api/assets/${assetId(png)}?t=${a.token}`,
+      url: `/api/assets/${assetId(png)}`,
+      headers: authHeaders(a.token),
     });
     expect(get.statusCode).toBe(200);
     expect(get.headers["content-type"]).toBe("image/png");
@@ -1067,14 +1185,26 @@ describe("素材", () => {
     const noAuth = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png" },
+      headers: { "content-type": "image/png", origin: "http://localhost:80" },
       payload: Buffer.from([1]),
     });
     expect(noAuth.statusCode).toBe(401);
+    // ほかのサイトからの書き込みは、ログインしていても断る
+    const foreign = await app.inject({
+      method: "POST",
+      url: "/api/assets",
+      headers: {
+        "content-type": "image/png",
+        ...authHeaders(a.token),
+        origin: "https://evil.example",
+      },
+      payload: Buffer.from([1]),
+    });
+    expect(foreign.statusCode).toBe(403);
     const bad = await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "application/x-sh", "x-tukurium-token": a.token },
+      headers: { "content-type": "application/x-sh", ...authHeaders(a.token) },
       payload: Buffer.from("echo hi"),
     });
     expect(bad.statusCode).toBe(415);
@@ -1144,11 +1274,15 @@ describe("権限・プライベートな作業", () => {
     await app.inject({
       method: "POST",
       url: "/api/assets",
-      headers: { "content-type": "image/png", "x-tukurium-token": a.token },
+      headers: { "content-type": "image/png", ...authHeaders(a.token) },
       payload: png,
     });
     const get = (token?: string) =>
-      app.inject({ method: "GET", url: `/api/assets/${id}${token ? `?t=${token}` : ""}` });
+      app.inject({
+        method: "GET",
+        url: `/api/assets/${id}`,
+        headers: token ? authHeaders(token) : {},
+      });
     expect((await get()).statusCode).toBe(404);
     expect((await get(a.token)).statusCode).toBe(200);
     expect((await get(b.token)).statusCode).toBe(404);
@@ -1398,7 +1532,11 @@ describe("リポジトリ・コミット・作品", () => {
     for (const id of ["w_official_combat", "w_official_interaction", "w_official_items"]) {
       const thumb = works.find((w) => w.id === id)?.thumbnail;
       expect(thumb).toMatch(/^[0-9a-f]{64}$/);
-      const got = await app.inject({ method: "GET", url: `/api/assets/${thumb}?t=${a.token}` });
+      const got = await app.inject({
+        method: "GET",
+        url: `/api/assets/${thumb}`,
+        headers: authHeaders(a.token),
+      });
       expect(got.statusCode).toBe(200);
       expect(got.headers["content-type"]).toBe("image/png");
     }
@@ -1422,6 +1560,10 @@ describe("リポジトリ・コミット・作品", () => {
     const add = await a.next("host.addPart");
     expect(add.part.realm).toBe(`rel_${rel.id}`);
     expect((add.part.snapshot as { name: string }).name).toBe("射撃場");
+    // リリースのフィールドのスキーマは、サーバーが作って付ける（ホストは TypeScript を読み込まない。ADR 0065）
+    const schemas = add.part.schemas as Record<string, Record<string, { kind: string }>>;
+    expect(schemas["builtin.Transform"]?.position?.kind).toBe("tuple");
+    expect(Object.keys(schemas).some((k) => k.startsWith("ks_"))).toBe(true);
     const info = await a.next("session", (m) => m.session.placements.length === 1);
     expect(info.session.placements[0]).toMatchObject({
       workspaceId: null,
@@ -1633,8 +1775,8 @@ describe("公開タグ", () => {
     const { app, store } = await start();
     const author = await store.createUser("作者");
     const reader = await store.createUser("利用者");
-    const A = api(app, author.token),
-      B = api(app, reader.token);
+    const A = api(app, await sessionFor(store, author.id)),
+      B = api(app, await sessionFor(store, reader.id));
     const repo = (
       await A.post("/api/repos", { name: "タグ付きの銃", kind: "item", template: "gun" })
     ).json();
@@ -1648,7 +1790,8 @@ describe("公開タグ", () => {
     const work = published.json();
     expect(work.tags).toEqual(["ゲーム", "複数人"]);
     const release = (await A.post(`/api/works/${work.id}/releases`)).json();
-    await B.post(`/api/me/items/${work.id}`, { releaseId: release.id });
+    await A.post("/api/market/listings", { workId: work.id, price: 0, autoPublish: true });
+    await B.post(`/api/me/items/${work.id}`, {});
     const search = (await B.get("/api/market?q=複数人&tag=ゲーム&tag=複数人&limit=1")).json();
     expect(search.total).toBe(1);
     expect(search.items[0].tags).toEqual(["ゲーム", "複数人"]);
@@ -1680,5 +1823,136 @@ describe("公開タグ", () => {
     const { tags: _tags, ...legacy } = saved;
     await store.saveWork(legacy);
     expect((await B.get("/api/market")).json().items[0].tags).toEqual([]);
+  });
+});
+
+describe("マーケット", () => {
+  it("登録した作品を買うと所持金が減り、作者に 9 割が入る。誰が買ったかは作者に見せない", async () => {
+    const { app, store } = await start();
+    const author = await store.createUser("売る人");
+    const buyer = await store.createUser("買う人");
+    const poor = await store.createUser("お金のない人");
+    const A = api(app, await sessionFor(store, author.id));
+    const B = api(app, await sessionFor(store, buyer.id));
+    const C = api(app, await sessionFor(store, poor.id));
+    expect((await B.get("/api/me/wallet")).json()).toEqual({ balance: 1000 });
+    const repo = (
+      await A.post("/api/repos", { name: "売る銃", kind: "item", template: "gun" })
+    ).json();
+    const work = (await A.post("/api/works", { repoId: repo.id, outputId: "out_gun" })).json();
+    // リリースがないと登録できない
+    expect(
+      (await A.post("/api/market/listings", { workId: work.id, price: 300, autoPublish: true }))
+        .statusCode,
+    ).toBe(409);
+    const r1 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    expect(
+      (await B.post("/api/market/listings", { workId: work.id, price: 300, autoPublish: true }))
+        .statusCode,
+    ).toBe(403);
+    const listed = await A.post("/api/market/listings", {
+      workId: work.id,
+      price: 300,
+      autoPublish: true,
+      tags: ["射撃"],
+    });
+    expect(listed.json()).toMatchObject({
+      tags: ["射撃"],
+      market: { price: 300, autoPublish: true, release: { id: r1.id }, acquisitions: 0 },
+    });
+    expect(
+      (await A.post("/api/market/listings", { workId: work.id, price: 1, autoPublish: true }))
+        .statusCode,
+    ).toBe(409);
+
+    const bought = (await B.post(`/api/me/items/${work.id}`, {})).json();
+    expect(bought).toMatchObject({ releaseId: r1.id, balance: 700 });
+    // 二度目は払わない
+    expect((await B.post(`/api/me/items/${work.id}`, {})).json().balance).toBe(700);
+    expect((await A.get("/api/me/wallet")).json()).toEqual({ balance: 1270 });
+
+    // 足りなければ断り、所持金も変えない
+    await A.patch(`/api/market/listings/${work.id}`, { price: 5000 });
+    const refused = await C.post(`/api/me/items/${work.id}`, {});
+    expect(refused.statusCode).toBe(402);
+    expect((await C.get("/api/me/wallet")).json()).toEqual({ balance: 1000 });
+    expect((await C.get("/api/me/items")).json()).toEqual([]);
+
+    // 自動公開：新しい版を出すと、マーケットでも公開される
+    const r2 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    const detail = (await B.get(`/api/works/${work.id}`)).json();
+    expect(detail.market).toMatchObject({ price: 5000, release: { id: r2.id }, acquisitions: 1 });
+    expect(detail.history.map((h: { kind: string }) => h.kind)).toEqual([
+      "published",
+      "price",
+      "listed",
+    ]);
+    // アップデートは無料
+    expect((await B.put(`/api/me/items/${work.id}`, { releaseId: r2.id })).json()).toMatchObject({
+      releaseId: r2.id,
+    });
+    expect((await B.get("/api/me/wallet")).json()).toEqual({ balance: 700 });
+
+    // 自動公開を切って、公開する版を選ぶ
+    const r3 = (await A.post(`/api/works/${work.id}/releases`)).json();
+    await A.patch(`/api/market/listings/${work.id}`, { autoPublish: false, releaseId: r2.id });
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r2.id);
+    await A.post(`/api/works/${work.id}/releases`);
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r2.id);
+    await A.patch(`/api/market/listings/${work.id}`, { releaseId: r3.id });
+    expect((await B.get(`/api/works/${work.id}`)).json().market.release.id).toBe(r3.id);
+
+    // マイページ：登録したもの・入手の記録（買った人は出さない）
+    const mine = (await A.get("/api/me/market")).json();
+    expect(mine.balance).toBe(1270);
+    expect(mine.listed.map((w: { id: string }) => w.id)).toEqual([work.id]);
+    expect(mine.sales).toEqual([
+      expect.objectContaining({ workId: work.id, workName: "銃", price: 300, earned: 270 }),
+    ]);
+    expect(JSON.stringify(mine)).not.toContain(buyer.id);
+
+    // 取り消すとマーケットから消えるが、持っている人はそのまま
+    expect((await A.delete(`/api/market/listings/${work.id}`)).statusCode).toBe(200);
+    expect((await B.get("/api/market")).json().total).toBe(0);
+    expect((await B.get("/api/me/items")).json()[0]).toMatchObject({ available: true });
+    expect((await C.post(`/api/me/items/${work.id}`, {})).statusCode).toBe(404);
+  });
+
+  it("並べ替えと種類で絞り込む。有料のワールドは入手した人だけが開ける", async () => {
+    const { app, store, url } = await start();
+    const author = await client(url, "ワールド作者");
+    const visitor = await client(url, "見る人");
+    const A = api(app, author.token);
+    const B = api(app, visitor.token);
+    const make = async (name: string, kind: string, template: string, outputId: string) => {
+      const repo = (await A.post("/api/repos", { name, kind, template })).json();
+      const work = (await A.post("/api/works", { repoId: repo.id, outputId })).json();
+      const release = (await A.post(`/api/works/${work.id}/releases`)).json();
+      return { work, release };
+    };
+    const gun = await make("安い銃", "item", "gun", "out_gun");
+    const world = await make("高いワールド", "world", "empty", "out_main");
+    await A.post("/api/market/listings", { workId: gun.work.id, price: 10, autoPublish: true });
+    await A.post("/api/market/listings", {
+      workId: world.work.id,
+      price: 500,
+      autoPublish: true,
+    });
+    const ids = async (query: string) =>
+      (await B.get(`/api/market?${query}`)).json().items.map((w: { id: string }) => w.id);
+    expect(await ids("sort=new")).toEqual([world.work.id, gun.work.id]);
+    expect(await ids("sort=cheap")).toEqual([gun.work.id, world.work.id]);
+    expect(await ids("kind=world")).toEqual([world.work.id]);
+    expect(await ids("kind=item")).toEqual([gun.work.id]);
+    await B.post(`/api/me/items/${gun.work.id}`, {});
+    expect(await ids("sort=popular")).toEqual([gun.work.id, world.work.id]);
+
+    // 有料のワールドは、入手するまで開けない
+    visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
+    expect((await visitor.next("session.rejected")).message).toContain("有料");
+    expect((await B.post(`/api/me/items/${world.work.id}`, {})).json().balance).toBe(490);
+    visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
+    expect((await visitor.next("session")).session.placements).toHaveLength(1);
+    expect(await store.balance(author.me.id)).toBe(1000 + 9 + 450);
   });
 });

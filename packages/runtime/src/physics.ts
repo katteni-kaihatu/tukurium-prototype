@@ -19,6 +19,17 @@ interface BodyRecord {
   /** 形や質量が変わったら作り直すための鍵 */
   shapeKey: string;
   type: "fixed" | "dynamic" | "kinematic";
+  /** 動かさない軸（ワールドの x・y・z）。dynamic のときだけ使う */
+  lockMove: AxisLock;
+  lockRotate: AxisLock;
+}
+
+/** x・y・z の軸ごとに、固定するか */
+type AxisLock = readonly [boolean, boolean, boolean];
+
+/** 固定した軸の成分を 0 にした速度。固定した軸へは、スクリプトが書いた速度でも動かさない */
+function freeOnly(v: Vec3, lock: AxisLock): Vec3 {
+  return [lock[0] ? 0 : v[0], lock[1] ? 0 : v[1], lock[2] ? 0 : v[2]];
 }
 
 export interface RayHit {
@@ -40,6 +51,7 @@ export interface CollisionEvent {
  * - 高さ 0 に、Entity ではない地面を置く。動く剛体はここで止まる。
  * - 動く剛体（dynamic）の位置・回転・速度は、計算後に Transform / RigidBody へ書き戻す。
  * - スクリプトが書いた速度は、次の計算の前に剛体へ戻す。
+ * - RigidBody の lockMove* / lockRotate* が true の軸には動かさない（ワールドの軸。ADR 0078）。
  */
 export class Physics {
   readonly rapier: RAPIER.World;
@@ -77,6 +89,16 @@ export class Physics {
       const linearDamping = Math.max(finiteNumber(rb?.linearDamping, 0.05), 0);
       const angularDamping = Math.max(finiteNumber(rb?.angularDamping, 0.1), 0);
       const ccd = rb?.ccd !== false;
+      const lockMove: AxisLock = [
+        rb?.lockMoveX === true,
+        rb?.lockMoveY === true,
+        rb?.lockMoveZ === true,
+      ];
+      const lockRotate: AxisLock = [
+        rb?.lockRotateX === true,
+        rb?.lockRotateY === true,
+        rb?.lockRotateZ === true,
+      ];
       const shapeKey = [
         shapePart,
         type,
@@ -85,6 +107,8 @@ export class Physics {
         linearDamping,
         angularDamping,
         ccd,
+        lockMove.map(Number).join(""),
+        lockRotate.map(Number).join(""),
       ].join("|");
 
       let rec = this.bodies.get(id);
@@ -101,19 +125,21 @@ export class Physics {
               : RAPIER.RigidBodyDesc.fixed();
         desc.setTranslation(wt.position.x, wt.position.y, wt.position.z).setRotation(wt.quaternion);
         if (type === "dynamic" && rb) {
-          const v = vec3Of(rb.linvel);
-          const w = vec3Of(rb.angvel);
+          const v = freeOnly(vec3Of(rb.linvel), lockMove);
+          const w = freeOnly(vec3Of(rb.angvel), lockRotate);
           desc.setLinvel(v[0], v[1], v[2]).setAngvel({ x: w[0], y: w[1], z: w[2] });
           desc
             .setAdditionalMass(mass)
             .setGravityScale(gravityScale)
             .setLinearDamping(linearDamping)
             .setAngularDamping(angularDamping)
-            .setCcdEnabled(ccd);
+            .setCcdEnabled(ccd)
+            .enabledTranslations(!lockMove[0], !lockMove[1], !lockMove[2])
+            .enabledRotations(!lockRotate[0], !lockRotate[1], !lockRotate[2]);
         }
         const body = this.rapier.createRigidBody(desc);
         const col = this.rapier.createCollider(cdesc, body);
-        rec = { body, collider: col, shapeKey, type };
+        rec = { body, collider: col, shapeKey, type, lockMove, lockRotate };
         this.bodies.set(id, rec);
         this.byCollider.set(col.handle, id);
       } else if (type !== "dynamic") {
@@ -131,8 +157,8 @@ export class Physics {
       if (rec.type !== "dynamic" || !world.has(id)) continue;
       const rb = world.get(id, BUILTIN.RigidBody);
       if (!rb) continue;
-      const v = vec3Of(rb.linvel);
-      const w = vec3Of(rb.angvel);
+      const v = freeOnly(vec3Of(rb.linvel), rec.lockMove);
+      const w = freeOnly(vec3Of(rb.angvel), rec.lockRotate);
       rec.body.setLinvel({ x: v[0], y: v[1], z: v[2] }, true);
       rec.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
     }

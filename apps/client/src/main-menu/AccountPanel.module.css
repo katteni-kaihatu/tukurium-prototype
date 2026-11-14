@@ -1,0 +1,97 @@
+.panel {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+  background: var(--c-paper);
+  color: var(--c-ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.who > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.who strong {
+  font-size: 16px;
+}
+.account {
+  color: var(--c-ink-3);
+  font-size: 12px;
+}
+.avatar {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--c-brand);
+  color: var(--c-paper);
+  font-weight: 700;
+  font-size: 22px;
+}
+.rename {
+  display: grid;
+  gap: 8px;
+}
+.rename label {
+  font-weight: 700;
+  color: var(--c-ink-3);
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.row input {
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--c-line);
+  border-radius: 9px;
+  background: var(--c-paper);
+  font: inherit;
+}
+.hint {
+  margin: 0;
+  color: var(--c-ink-3);
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--c-line-2);
+}
+.actions button,
+.submit {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid var(--c-line);
+  border-radius: 9px;
+  background: var(--c-paper);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.submit {
+  border-color: var(--c-brand);
+  background: var(--c-brand);
+  color: var(--c-paper);
+  font-weight: 700;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.error {
+  margin: 0;
+  color: #962f3b;
+}

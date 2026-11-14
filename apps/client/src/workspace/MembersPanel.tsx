@@ -29,7 +29,7 @@ export function MembersPanel() {
         <p className={ui.muted}>
           権限はワークスペースに付きます。ホストは固定の役割ではなく、その回の当番です（管理権限を持つ人が引き継ぎます）。
         </p>
-        <div className={ui.row}>
+        <div className={ui.field}>
           <label className={ui.label} htmlFor="default-role">
             参加者の初期値
           </label>
