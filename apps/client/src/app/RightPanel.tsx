@@ -3,6 +3,7 @@ import { acceptInvitation } from "../main-menu/Invitations";
 import { useSocial } from "../main-menu/socialStore";
 import { useMainMenu } from "../main-menu/store";
 import { useWorkspace } from "../workspace/store";
+import { AvatarFace } from "./AvatarFace";
 import { updateLayoutEdges, useLayoutEdge } from "./layoutEdges";
 import styles from "./RightPanel.module.css";
 import { useApp } from "./store";
@@ -182,7 +183,9 @@ function Notices() {
     <ul className={styles.notices} aria-label="通知">
       {invites.map((invite) => (
         <li key={invite.id} className={styles.notice}>
-          <span className={styles.avatar}>{invite.from?.name.slice(0, 1) ?? "?"}</span>
+          <span className={styles.avatar}>
+            <AvatarFace user={invite.from} />
+          </span>
           <span className={styles.noticeText}>
             <b>{invite.from?.name ?? "相手"}</b> が「{invite.session?.name ?? "終了したセッション"}
             」に誘っています
@@ -199,7 +202,9 @@ function Notices() {
       ))}
       {requests.map(({ user }) => (
         <li key={user.id} className={styles.notice}>
-          <span className={styles.avatar}>{user.name.slice(0, 1)}</span>
+          <span className={styles.avatar}>
+            <AvatarFace user={user} />
+          </span>
           <span className={styles.noticeText}>
             <b>{user.name}</b> からフレンド申請が届いています
           </span>

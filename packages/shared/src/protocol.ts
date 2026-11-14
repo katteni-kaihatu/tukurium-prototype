@@ -11,7 +11,7 @@ import { z } from "zod";
  * 11：制作データに、型の定義（types）と、KokoState が使う型の定義の一覧（typeDefs）が入った。
  * 12：参照から読み書きする Host API（world.getState など）と、参照の値（KokoState・フィールドの参照）が入った。
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;
@@ -32,7 +32,14 @@ export type PlayMode = z.infer<typeof PlayMode>;
 // ---------------------------------------------------------------------------
 // 共有する状態
 
-export const UserInfo = z.object({ id, name: z.string() });
+export const UserInfo = z.object({
+  id,
+  name: z.string(),
+  /** ログインに使ったアカウント（例：`@rhenium@misskey.resonite.love`）。エージェントは持たない */
+  account: z.string().optional(),
+  /** アイコンの画像の URL（ADR 0074） */
+  avatarUrl: z.string().optional(),
+});
 export type UserInfo = z.infer<typeof UserInfo>;
 
 export const SocialProfile = z.object({
@@ -288,9 +295,11 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({
     t: z.literal("hello"),
     protocol: z.number(),
-    name: z.string().min(1).max(32),
-    /** 前回もらったトークン（本人識別）。なければ新しく発行する */
-    token: z.string().max(128).optional(),
+    /**
+     * 本人は接続したときのログインの Cookie で決まる（ADR 0074）。名前は AI エージェントの
+     * 内部の接続だけが使う（人の接続では無視する）
+     */
+    name: z.string().min(1).max(40).optional(),
   }),
   z.object({ t: z.literal("rename"), name: z.string().min(1).max(32) }),
   z.object({ t: z.literal("sessions.list") }),
@@ -426,7 +435,9 @@ export const ServerMessage = z.discriminatedUnion("t", [
     placementId: id.nullable(),
     error: z.string().nullable(),
   }),
-  z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo, token: z.string() }),
+  z.object({ t: z.literal("welcome"), protocol: z.number(), you: UserInfo }),
+  /** ログインしていない（期限切れ・ログアウトを含む）。このあと接続は閉じられる */
+  z.object({ t: z.literal("auth.required") }),
   z.object({ t: z.literal("sessions"), sessions: z.array(SessionSummary) }),
   z.object({ t: z.literal("session.entered"), sessionId: id, requestId: id.optional() }),
   z.object({

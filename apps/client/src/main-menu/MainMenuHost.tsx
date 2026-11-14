@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { useApp } from "../app/store";
 import { PanelLayer, type PanelSpec, panelViewportInsets } from "../panels/PanelLayer";
 import { LibraryPanel } from "../workspace/LibraryPanel";
+import { AccountPanel } from "./AccountPanel";
 import { CatalogPage } from "./CatalogPage";
 import { useCatalogConnection } from "./catalogStore";
 import { FriendsPage } from "./FriendsPage";
@@ -56,7 +57,7 @@ export function MainMenuHost() {
       x: insets.left + index * 20,
       y: insets.top + index * 10,
       width:
-        id === "status"
+        id === "status" || id === "account"
           ? 600
           : id === "friends"
             ? 720
@@ -64,7 +65,7 @@ export function MainMenuHost() {
               ? 1080
               : 920,
       height:
-        id === "status"
+        id === "status" || id === "account"
           ? undefined
           : id === "items"
             ? 740
@@ -96,6 +97,12 @@ function ToolContent({ id }: { id: ToolWindow }) {
     return (
       <div className={styles.menu} data-tool-window={id}>
         <StatusPanel key={owner} active={visible} />
+      </div>
+    );
+  if (id === "account")
+    return (
+      <div className={styles.menu} data-tool-window={id}>
+        <AccountPanel key={owner} />
       </div>
     );
   return (

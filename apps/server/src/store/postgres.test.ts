@@ -9,11 +9,28 @@ describe.skipIf(!url)("PostgresStore", () => {
     const store = new PostgresStore(url as string);
     await store.init();
     await store.init(); // 2 回呼んでも壊れない
-    const { user, token } = await store.createUser("れにうむ");
-    expect(await store.userByToken(token)).toEqual(user);
-    expect(await store.userByToken("nope")).toBeNull();
+    const key = `misskey:test_${Date.now()}`;
+    const user = await store.loginUser({
+      key,
+      name: "れにうむ",
+      account: "@rhenium@misskey.example",
+      avatarUrl: null,
+    });
+    const tokenHash = `h_${Date.now()}`;
+    await store.createAuthSession(tokenHash, user.id, Date.now() + 60_000);
+    expect((await store.authSession(tokenHash))?.user).toEqual(user);
+    expect(await store.authSession("nope")).toBeNull();
     await store.renameUser(user.id, "rhenium");
-    expect((await store.userByToken(token))?.name).toBe("rhenium");
+    // 2 回目のログインでは表示名を変えず、アイコンだけ合わせる
+    const again = await store.loginUser({
+      key,
+      name: "れにうむ",
+      account: "@rhenium@misskey.example",
+      avatarUrl: "https://misskey.example/a.png",
+    });
+    expect(again).toMatchObject({ id: user.id, name: "rhenium" });
+    await store.deleteAuthSession(tokenHash);
+    expect(await store.authSession(tokenHash)).toBeNull();
 
     const meta = {
       id: `ws_test_${Date.now()}`,

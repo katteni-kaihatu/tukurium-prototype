@@ -2,12 +2,24 @@ import { type Browser, type BrowserContext, test as base, type Page } from "@pla
 
 const extraContexts: BrowserContext[] = [];
 
+/** playwright.config.ts の baseURL。ログインの POST は同じオリジンの Origin が要る（ADR 0074） */
+const BASE_URL = "http://localhost:5173";
+
+/** 開発用ログインで、そのブラウザコンテキストを name の人にする（Cookie はコンテキストの中で共有される） */
+export async function login(page: Page, name: string): Promise<void> {
+  const res = await page.request.post("/api/auth/dev", {
+    data: { name },
+    headers: { origin: BASE_URL },
+  });
+  if (!res.ok()) throw new Error(`開発用ログインに失敗しました（${res.status()}）`);
+}
+
 /** 2 人目以降の参加者（別のブラウザコンテキスト）。テストの終わりに closePeople で閉じる */
 export async function newPerson(browser: Browser, name: string): Promise<Page> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   extraContexts.push(ctx);
   const page = await ctx.newPage();
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  await login(page, name);
   return page;
 }
 
@@ -182,7 +194,7 @@ export async function createSessionAndWorkspace(
   name: string,
   kind: "sample" | "empty",
 ): Promise<string> {
-  await page.addInitScript((n) => localStorage.setItem("tukurium.name", n), name);
+  await login(page, name);
   await page.goto("/");
   await page.getByRole("button", { name: "セッションを作って入る" }).click();
   await page.waitForURL(/\/s\/s_/);

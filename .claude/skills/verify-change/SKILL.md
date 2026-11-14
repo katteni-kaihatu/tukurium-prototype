@@ -38,7 +38,11 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on("pageerror", (e) => console.log("ERR", e.message));
-await page.addInitScript(() => localStorage.setItem("tukurium.name", "t"));
+// 開発用ログインで入る（ADR 0074）。Cookie はこのページのコンテキストに残る
+await page.request.post("http://localhost:5173/api/auth/dev", {
+  data: { name: "t" },
+  headers: { origin: "http://localhost:5173" },
+});
 await page.goto("http://localhost:5173/");
 await page.getByRole("button", { name: "セッションを作って入る" }).click();
 await page.waitForURL(/\/s\/s_/);
@@ -60,7 +64,7 @@ pnpm build
 ```
 
 ```bash
-CLIENT_DIR=apps/client/dist PORT=8799 GIT_DATA_DIR=$(mktemp -d) ASSET_DIR=$(mktemp -d) node apps/server/dist/main.js
+AUTH_DEV_LOGIN=1 CLIENT_DIR=apps/client/dist PORT=8799 GIT_DATA_DIR=$(mktemp -d) ASSET_DIR=$(mktemp -d) node apps/server/dist/main.js
 ```
 
 別のシェルで：

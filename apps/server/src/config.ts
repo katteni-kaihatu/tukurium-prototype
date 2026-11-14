@@ -20,6 +20,12 @@ export interface Config {
   assetDir: string;
   /** Git リポジトリの置き場 */
   gitDir: string;
+  /** ログインに使う Misskey（ADR 0074） */
+  misskeyUrl: string;
+  /**
+   * 開発用ログイン（名前だけで入れる）。AUTH_DEV_LOGIN=1 で、かつ NODE_ENV が production でないときだけ開く
+   */
+  devLogin: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -40,5 +46,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       : undefined,
     assetDir: env.ASSET_DIR || "./data/assets",
     gitDir: env.GIT_DATA_DIR || "./data/git",
+    misskeyUrl: env.MISSKEY_URL || "https://misskey.resonite.love",
+    devLogin: env.AUTH_DEV_LOGIN === "1" && env.NODE_ENV !== "production",
   };
 }

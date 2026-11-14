@@ -1,5 +1,5 @@
 // サーバーの中継の重さを、参加人数を変えて測る（サーバーを別に起動しておく）。
-//   PORT=8799 node dist/main.js &
+//   AUTH_DEV_LOGIN=1 PORT=8799 node dist/main.js &   （参加者は開発用ログインで入る。ADR 0074）
 //   pnpm bench:server ws://localhost:8799/ws
 // 全員が位置を 10Hz で送り、持ち主（セッションのホスト）が世界の状態（約 40KB ≒ 100 Entity）を 15Hz で配る。
 // 位置が他の全員に届くまでの時間（中央値・95 パーセンタイル）を出す。
@@ -17,8 +17,22 @@ interface Client {
   send(m: object): void;
 }
 
+/** 開発用ログインで入り、ログインの Cookie を返す */
+async function login(name: string): Promise<string> {
+  const base = url.replace(/^ws/, "http").replace(/\/ws$/, "");
+  const res = await fetch(`${base}/api/auth/dev`, {
+    method: "POST",
+    headers: { origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  const cookie = /tukurium_session=[^;]+/.exec(res.headers.get("set-cookie") ?? "")?.[0];
+  if (!cookie)
+    throw new Error(`開発用ログインに失敗しました（${res.status}）。AUTH_DEV_LOGIN=1 で起動する`);
+  return cookie;
+}
+
 async function connect(name: string): Promise<Client> {
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url, { headers: { cookie: await login(name) } });
   const listeners: ((m: { t: string }) => void)[] = [];
   ws.on("message", (d) => {
     const m = JSON.parse(d.toString());
@@ -29,7 +43,7 @@ async function connect(name: string): Promise<Client> {
   const welcome = new Promise<string>((r) =>
     listeners.push((m) => m.t === "welcome" && r((m as unknown as { you: { id: string } }).you.id)),
   );
-  send({ t: "hello", protocol: PROTOCOL_VERSION, name });
+  send({ t: "hello", protocol: PROTOCOL_VERSION });
   return { ws, id: await welcome, on: (fn) => listeners.push(fn as never), send };
 }
 

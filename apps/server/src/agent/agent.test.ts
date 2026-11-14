@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { buildApp } from "../app";
 import { Hub } from "../hub";
-import { MemoryStore } from "../store/store";
+import { MemoryStore, newUserId } from "../store/store";
 import { AgentClient } from "./AgentClient";
 import * as Tools from "./tools";
 
@@ -18,15 +18,19 @@ import * as Tools from "./tools";
 function human(hub: Hub, name: string) {
   const inbox: ServerMessage[] = [];
   const doc = new Y.Doc();
-  const conn = hub.connect({
-    send: (raw) => {
-      const m = JSON.parse(raw) as ServerMessage;
-      inbox.push(m);
-      if (m.t === "ws.doc" || m.t === "ws.update")
-        Y.applyUpdate(doc, Buffer.from(m.update, "base64"), "remote");
+  const conn = hub.connect(
+    {
+      send: (raw) => {
+        const m = JSON.parse(raw) as ServerMessage;
+        inbox.push(m);
+        if (m.t === "ws.doc" || m.t === "ws.update")
+          Y.applyUpdate(doc, Buffer.from(m.update, "base64"), "remote");
+      },
+      close: () => {},
     },
-    close: () => {},
-  });
+    // 人の接続は、つなぐ時点でログインの本人が決まっている（ADR 0074）
+    { user: { id: newUserId(), name } },
+  );
   const send = (m: object) => conn.onMessage(JSON.stringify(m));
   const next = async <T extends ServerMessage["t"]>(t: T) => {
     for (let i = 0; i < 200; i++) {
@@ -36,7 +40,7 @@ function human(hub: Hub, name: string) {
     }
     throw new Error(`timeout ${t}`);
   };
-  send({ t: "hello", protocol: PROTOCOL_VERSION, name });
+  send({ t: "hello", protocol: PROTOCOL_VERSION });
   return { send, next, inbox, doc, project: new ProjectDoc(doc), close: () => conn.onClose() };
 }
 
@@ -118,6 +122,8 @@ describe("リモートの MCP（/mcp）", () => {
         databaseUrl: undefined,
         s3: undefined,
         assetDir: await mkdtemp(join(tmpdir(), "tk-assets-")),
+        misskeyUrl: "https://misskey.example",
+        devLogin: false,
         gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
       },
       { store: new MemoryStore(), hub: { saveDelayMs: 10 } },
@@ -315,6 +321,8 @@ export default system({
         databaseUrl: undefined,
         s3: undefined,
         assetDir: await mkdtemp(join(tmpdir(), "tk-assets-")),
+        misskeyUrl: "https://misskey.example",
+        devLogin: false,
         gitDir: await mkdtemp(join(tmpdir(), "tk-git-")),
       },
       { store: new MemoryStore(), hub: { saveDelayMs: 10 } },

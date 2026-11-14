@@ -12,7 +12,8 @@ import { workTagsSchema } from "@tukurium/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AssetStore } from "../assets/assetStore";
-import type { Store, User } from "../store/store";
+import type { Auth } from "../auth/auth";
+import { type Store, type User, userInfo } from "../store/store";
 import { ItemCatalog } from "./catalog";
 import {
   archiveDisposition,
@@ -51,15 +52,13 @@ export function registerRepoRoutes(
   store: Store,
   repos: RepoService,
   assets: AssetStore,
+  auth: Auth,
   hooks: RepoRouteHooks = {},
 ) {
-  const userOf = async (req: FastifyRequest): Promise<User | null> => {
-    const token = req.headers["x-tukurium-token"];
-    return typeof token === "string" ? store.userByToken(token) : null;
-  };
+  const userOf = (req: FastifyRequest): Promise<User | null> => auth.userOf(req.raw);
   const needUser = async (req: FastifyRequest) => {
     const u = await userOf(req);
-    if (!u) throw new HttpError(401, "本人確認ができません（接続し直してください）");
+    if (!u) throw new HttpError(401, "ログインしてください");
     return u;
   };
   const handle =
@@ -478,7 +477,7 @@ export function registerRepoRoutes(
       const list = [];
       for (const r of await store.repos({ owner: u.id }))
         if (await repos.canRead(viewer, r)) list.push(r);
-      return { ...u, repos: list, works: await store.works({ owner: u.id }) };
+      return { ...userInfo(u), repos: list, works: await store.works({ owner: u.id }) };
     }),
   );
 }

@@ -10,19 +10,12 @@ export type ConnectionStatus = "connecting" | "online" | "offline";
 
 type Listener = (msg: ServerMessage) => void;
 
-const TOKEN_KEY = "tukurium.token";
-
-function storage(): Storage | null {
-  try {
-    return localStorage;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * サーバーとの接続（アプリ全体で 1 つ）。
- * - 切れたら少しずつ間隔を空けて再接続し、トークンで同じ人として名乗り直す。
+ * - 本人はログインの Cookie で決まる（ADR 0074）。接続は読み込んだらすぐ始める（store.ts）。
+ *   ログインしていなければサーバーが auth.required を返して閉じるので、つなぎ直さない。
+ *   画面の準備（3D）が重いと、あとから接続を始めても、つながった知らせを処理するのが遅れる
+ * - 切れたら少しずつ間隔を空けて再接続する。
  * - 受け取ったメッセージは購読者に配る。接続し直したときは onReconnect で状態を取り直す。
  */
 export class ServerClient {
@@ -36,11 +29,20 @@ export class ServerClient {
   private readonly listeners = new Set<Listener>();
   private readonly statusListeners = new Set<(s: ConnectionStatus) => void>();
   private readonly welcomeListeners = new Set<() => void>();
+  private started = false;
+  private welcomedOnce = false;
+  /**
+   * 入っていたのにログインが切れたとき（ほかのタブでログアウトした・期限が切れた）。
+   * 最初からログインしていないときは呼ばない（ログインの画面が出ている）
+   */
+  onLoggedOut: () => void = () => location.reload();
 
-  constructor(
-    private name: string,
-    private readonly url = defaultUrl(),
-  ) {
+  constructor(private readonly url = defaultUrl()) {}
+
+  /** 接続を始める（ログインを確かめたあと、一度だけ） */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
     this.open();
   }
 
@@ -51,7 +53,6 @@ export class ServerClient {
   }
 
   rename(name: string): void {
-    this.name = name;
     this.send({ t: "rename", name });
   }
 
@@ -89,8 +90,7 @@ export class ServerClient {
     this.ws = ws;
     ws.onopen = () => {
       this.retry = 0;
-      const token = storage()?.getItem(TOKEN_KEY) ?? undefined;
-      ws.send(JSON.stringify({ t: "hello", protocol: PROTOCOL_VERSION, name: this.name, token }));
+      ws.send(JSON.stringify({ t: "hello", protocol: PROTOCOL_VERSION }));
     };
     ws.onmessage = (ev) => {
       let data: unknown;
@@ -104,9 +104,14 @@ export class ServerClient {
       const msg = parsed.data;
       if (msg.t === "session.entered") this.joinedSessionId = msg.sessionId;
       if (msg.t === "session.closed") this.joinedSessionId = null;
+      if (msg.t === "auth.required") {
+        this.close();
+        if (this.welcomedOnce) this.onLoggedOut();
+        return;
+      }
       if (msg.t === "welcome") {
+        this.welcomedOnce = true;
         this.me = msg.you;
-        storage()?.setItem(TOKEN_KEY, msg.token);
         this.setStatus("online");
         for (const fn of this.welcomeListeners) fn();
       }

@@ -23,7 +23,9 @@ pnpm install
 pnpm dev
 ```
 
-クライアント（http://localhost:5173 ）とサーバー（http://localhost:8787 ）が起動する。クライアントの `/api` と `/ws` はサーバーへ中継される。複数のブラウザ（またはシークレットウィンドウ）で開くと、互いの位置が見える。
+クライアント（http://localhost:5173 ）とサーバー（http://localhost:8787 ）が起動する。クライアントの `/api` と `/ws` はサーバーへ中継される。
+
+ログインは Misskey（misskey.resonite.love）でするが、手元では Misskey から戻れないので、ログインの画面の「開発用ログイン」に名前を入れて入る（`apps/server/dev.env` の `AUTH_DEV_LOGIN=1` で開く。本番では開かない。ADR 0074）。複数のブラウザ（またはシークレットウィンドウ）で別の名前で入ると、互いの位置が見える。
 
 | コマンド | 内容 |
 | --- | --- |

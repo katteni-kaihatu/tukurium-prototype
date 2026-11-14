@@ -25,29 +25,17 @@ interface AppState {
   closedReason: string | null;
   /** セッションの世界のログ（適用の結果など） */
   sessionLogs: { message: string; level: "log" | "error" }[];
+  /** 表示名を変える（ログインしたアカウントの名前は変わらない） */
   setName(name: string): void;
 }
 
-const NAME_KEY = "tukurium.name";
-
-function loadName(): string {
-  const fallback = `ゲスト${Math.floor(1000 + Math.random() * 9000)}`;
-  try {
-    const saved = localStorage.getItem(NAME_KEY);
-    if (saved) return saved;
-    localStorage.setItem(NAME_KEY, fallback);
-  } catch {
-    // 保存できなくても使える
-  }
-  return fallback;
-}
-
-const initialName = loadName();
-const client = new ServerClient(initialName);
+// 接続は読み込んだらすぐ始める。ログインしていなければサーバーが断る（ADR 0074）
+const client = new ServerClient();
+client.start();
 
 export const useApp = create<AppState>((set) => ({
   client,
-  myName: initialName,
+  myName: "",
   me: null,
   status: client.status,
   sessions: [],
@@ -58,13 +46,8 @@ export const useApp = create<AppState>((set) => ({
   closedReason: null,
   sessionLogs: [],
   setName: (name) => {
-    try {
-      localStorage.setItem(NAME_KEY, name);
-    } catch {
-      // 保存できなくても使える
-    }
     client.rename(name);
-    set({ myName: name });
+    set((s) => ({ myName: name, me: s.me ? { ...s.me, name } : s.me }));
   },
 }));
 
