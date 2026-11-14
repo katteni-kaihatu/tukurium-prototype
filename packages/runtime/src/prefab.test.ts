@@ -151,3 +151,100 @@ describe("プレハブのインスタンスの再生（ADR 0076）", () => {
     expect(sim.systemStatus().every((s) => s.enabled && s.error === null)).toBe(true);
   });
 });
+
+describe("アウトプットの Entity からプレハブを作る（ADR 0076）", () => {
+  /** 的（芯つき）と、芯を指す「ほか」。数える System は、アウトプットで動かす */
+  function scene() {
+    const doc = new ProjectDoc();
+    doc.load(emptyProject("的当て"));
+    const counter = doc.addKokoState("Counter");
+    doc.updateKokoState({
+      id: counter,
+      name: "Counter",
+      fields: [
+        { id: "n", name: "n", type: FIELD_TYPE.number, default: 0 },
+        { id: "to", name: "to", type: FIELD_TYPE.entity, default: undefined },
+      ],
+    });
+    const step = doc.addSystem("Step", STEP);
+    const target = doc.addEntity({
+      output: OUT,
+      name: "的",
+      id: "ent_mato",
+      states: {
+        [BUILTIN.Transform]: { position: [4, 0, 0], scale: [2, 2, 2] },
+        [counter]: { n: 0, to: "ent_shin" },
+      },
+    });
+    const core = doc.addEntity({
+      output: OUT,
+      name: "芯",
+      id: "ent_shin",
+      parent: target,
+      states: { [BUILTIN.Transform]: { position: [0, 1, 0] }, [counter]: { n: 100, to: target } },
+    });
+    const other = doc.addEntity({
+      output: OUT,
+      name: "ほか",
+      id: "ent_hoka",
+      states: { [counter]: { n: 1000, to: core } },
+    });
+    const output = doc.output(OUT);
+    if (!output) throw new Error("アウトプットがありません");
+    doc.updateOutput({ ...output, systems: [{ id: step, enabled: true }] });
+    return { doc, counter, step, target, core, other };
+  }
+
+  /** 2 回進めたあとの、Entity ごとの値・親・場所 */
+  async function played(doc: ProjectDoc, counter: string, ids: readonly string[]) {
+    const run = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    try {
+      run.step(1 / 60);
+      run.step(1 / 60);
+      return {
+        systems: run.systemStatus().map((s) => [s.id, s.enabled, s.error]),
+        count: run.world.entityIds().length,
+        entities: ids.map((id) => ({
+          name: run.nameOf(id),
+          state: run.world.get(id, counter),
+          parent: run.world.parentOf(id),
+          position: worldTransform(run.world, id).position.toArray(),
+        })),
+      };
+    } finally {
+      run.dispose();
+    }
+  }
+
+  it("変換の前とあとで、再生すると同じように動く（ID の対応を通して比べる）", async () => {
+    const { doc, counter, step, target, core, other } = scene();
+    const before = await played(doc, counter, [target, core, other]);
+    const plan = doc.makePrefabFromEntity(target, { systems: [step] });
+    const at = new Map(plan.moved.map((m) => [m.from, m.expanded]));
+    const coreNow = at.get(core) ?? "";
+    expect(coreNow).toBe(expandedEntityId(target, plan.moved[1]?.to ?? ""));
+    const after = await played(doc, counter, [target, coreNow, other]);
+    // 芯の ID だけが変わる。値・親・場所・動く System は同じ
+    const renamed = JSON.parse(JSON.stringify(before).replaceAll(`"${core}"`, `"${coreNow}"`));
+    expect(after).toEqual(renamed);
+    expect(after.entities.map((e) => e.state?.n)).toEqual([2, 102, 1002]);
+    expect(after.entities[2]?.state?.to).toBe(coreNow);
+    expect(after.entities[1]?.position).toEqual([4, 2, 0]);
+  });
+
+  it("変換したプレハブのインスタンスをもう一つ置くと、同じ中身が、プレハブの System で動く", async () => {
+    const { doc, counter, step, target } = scene();
+    const plan = doc.makePrefabFromEntity(target, { systems: [step] });
+    // 別のアウトプットに置く：System は、プレハブが持っていく
+    const second = doc.addOutput("別の作品", "item");
+    const inst = doc.addInstance({ output: second, prefab: plan.prefab.id, position: [0, 0, 5] });
+    sim = await Simulation.create(doc.snapshot(), second, { realm: "ws" });
+    expect(sim.systemStatus().map((s) => [s.id, s.enabled, s.error])).toEqual([[step, true, null]]);
+    sim.step(1 / 60);
+    const coreId = expandedEntityId(inst, plan.moved[1]?.to ?? "");
+    expect(sim.world.get(inst, counter)).toMatchObject({ n: 1, to: coreId });
+    expect(sim.world.get(coreId, counter)).toMatchObject({ n: 101, to: inst });
+    // 大きさは写る（芯は、的の大きさ 2 倍の中の 1 m 上）
+    expect(worldTransform(sim.world, coreId).position.toArray()).toEqual([0, 2, 5]);
+  });
+});

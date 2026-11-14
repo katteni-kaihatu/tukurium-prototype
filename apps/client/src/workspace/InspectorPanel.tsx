@@ -47,6 +47,7 @@ import {
 } from "./inspectorLayout";
 import { KokoRoleIcon } from "./KokoRoleIcon";
 import { LibraryContents } from "./LibraryContents";
+import { MakePrefabIcon, PrefabFromEntityAsk } from "./PrefabFromEntityAsk";
 import { BadgeDot, badgeFor } from "./ProblemBadge";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -1019,6 +1020,8 @@ function EntityProperties({ id }: { id: EntityId }) {
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
   const [dupAnchor, setDupAnchor] = useState<HTMLElement | null>(null);
   const [systemAnchor, setSystemAnchor] = useState<HTMLElement | null>(null);
+  /** 「プレハブにする」の確認を出している Entity と、そのボタン（ほかの Entity を選んだら、出さない） */
+  const [ask, setAsk] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const registry = project.registry();
   // 開いているプレハブ（ADR 0076）。開いている間は、プレハブの中の Entity を直す
   const prefab = target.prefabId ? project.prefab(target.prefabId) : undefined;
@@ -1090,6 +1093,8 @@ function EntityProperties({ id }: { id: EntityId }) {
   // 同じ持ち主（アウトプットか、開いているプレハブ）の、制作データにある Entity
   const peers = prefab ? project.prefabEntities(prefab.id) : project.entities(outputId);
   const kids = peers.filter((e) => e.parent === id);
+  /** この Entity からプレハブを作れるか（アウトプットのふつうの Entity だけ） */
+  const canMakePrefab = editing && !prefab && !origin && projectEntity !== undefined;
   const kokoKey = (koko: string) => `${id}:${koko}`;
   const allOpen = attached.length === 0 || attached.every((koko) => !closedKoko[kokoKey(koko)]);
   const keep: { saved: KeepMark[]; current: KeepMark[] } = prefab
@@ -1182,6 +1187,30 @@ function EntityProperties({ id }: { id: EntityId }) {
           >
             <ChildIcon />
           </button>
+          {/* アウトプットの Entity（中の Entity を含む）から、プレハブを作る。先に、確認を出す */}
+          <button
+            type="button"
+            className={ui.iconBtn}
+            aria-label={`${entity.name} をプレハブにする`}
+            aria-haspopup="dialog"
+            aria-expanded={ask?.id === id}
+            title={
+              origin
+                ? "プレハブにする（プレハブのインスタンスと、その中の Entity は、プレハブにできません）"
+                : prefab
+                  ? "プレハブにする（プレハブの中の Entity からは、作れません）"
+                  : "プレハブにする"
+            }
+            disabled={!canMakePrefab}
+            onClick={(event) => {
+              const anchor = event.currentTarget;
+              setDupAnchor(null);
+              setSystemAnchor(null);
+              setAsk((cur) => (cur?.id === id ? null : { id, anchor }));
+            }}
+          >
+            <MakePrefabIcon />
+          </button>
           <button
             type="button"
             className={ui.iconBtn}
@@ -1238,6 +1267,14 @@ function EntityProperties({ id }: { id: EntityId }) {
           </div>
         </MarkedLine>
         {error && <p className={ui.error}>{error}</p>}
+        {ask?.id === id && canMakePrefab && (
+          <PrefabFromEntityAsk
+            entityId={id}
+            anchor={ask.anchor}
+            onClose={() => setAsk(null)}
+            onDone={() => setAsk(null)}
+          />
+        )}
       </div>
       <div className={styles.entityBody}>
         {origin && (

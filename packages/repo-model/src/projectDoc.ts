@@ -15,6 +15,12 @@ import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
 import { assignOrderKeys } from "./orderKey";
 import { validateAlias } from "./packageDependency";
 import { EXPANDED_ID_SEPARATOR } from "./prefab";
+import {
+  type PrefabFromEntityOptions,
+  type PrefabFromEntityPlan,
+  type PrefabFromEntityResult,
+  planPrefabFromEntity,
+} from "./prefabFromEntity";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -863,6 +869,58 @@ export class ProjectDoc {
     return [...this.entities(), ...this.prefabEntities()].filter(
       (e) => e.instanceOf?.prefab === prefab,
     );
+  }
+  /**
+   * アウトプットの Entity からプレハブを作る計画（何を移し、何を書き換えるか）を作る。制作データは変えない。
+   * 確認の画面は、これを見せる。プレハブの名前は、省くと、Entity の名前から（いちばん上で空いている名前）。
+   */
+  planPrefabFromEntity(
+    id: EntityId,
+    options: Omit<PrefabFromEntityOptions, "kokostates"> = {},
+  ): PrefabFromEntityResult {
+    const base = this.entityMap.get(id)?.get("name");
+    const usable = typeof base === "string" && validateName(base) === null ? base : "プレハブ";
+    return planPrefabFromEntity(this.snapshot(), id, {
+      ...options,
+      name: options.name ?? this.freeName(usable, null),
+      kokostates: this.packageDefs,
+    });
+  }
+  /**
+   * アウトプットの Entity（中の Entity を含む）から、プレハブを作る（ADR 0076 の 10）。
+   * 選んだ Entity は、ID を引き継いで、そのプレハブのインスタンスになる。中身は、新しい ID でプレハブに移す。
+   * ほかの Entity から中の Entity への参照と「維持」の印は、切れないように書き換える。
+   * 一つの transaction で行う（共同編集の相手に、途中の形が見えない）。変換できないときは、わけを投げる。
+   */
+  makePrefabFromEntity(
+    id: EntityId,
+    options: Omit<PrefabFromEntityOptions, "kokostates"> = {},
+  ): PrefabFromEntityPlan {
+    const result = this.planPrefabFromEntity(id, options);
+    if (!result.ok) throw new Error(result.reason);
+    const plan = result.plan;
+    this.assertSiblingName(plan.prefab.name, plan.prefab.id);
+    this.transact(() => {
+      this.prefabMap.set(plan.prefab.id, clone(plan.prefab));
+      for (const e of plan.prefabEntities) this.prefabEntityMap.set(e.id, entityNode(e));
+      // 中の Entity は、プレハブへ移した。選んだ Entity は、Transform だけを持つインスタンスにする
+      for (const m of plan.moved) if (m.from !== plan.entity) this.entityMap.delete(m.from);
+      const self = this.entityMap.get(plan.entity);
+      if (self) {
+        const states = self.get("states") as Y.Map<ValueMap>;
+        for (const koko of [...states.keys()])
+          if (!Object.hasOwn(plan.instance.states, koko)) states.delete(koko);
+        self.set("instanceOf", clone(plan.instance.instanceOf));
+      }
+      for (const r of plan.rewrites)
+        (this.node(r.entity)?.get("states") as Y.Map<ValueMap> | undefined)
+          ?.get(r.koko)
+          ?.set(r.field, encodeValue(r.value));
+      const output = this.outputMap.get(plan.output);
+      if (output && plan.keepMoved.length > 0)
+        this.outputMap.set(output.id, { ...output, keep: clone(plan.outputKeep) });
+    });
+    return plan;
   }
 
   // ---------- 保存した形に戻す ----------

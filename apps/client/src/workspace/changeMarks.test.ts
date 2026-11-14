@@ -65,6 +65,10 @@ describe("保存との差", () => {
     const moved = entityChange(head, { ...before, parent: "ent_root" });
     expect(moved.parent).toBe("modified");
 
+    // プレハブのインスタンスになった（Entity からプレハブを作った）ら、変わった印を出す
+    const linked = entityChange(head, { ...before, instanceOf: { prefab: "pf_box" } });
+    expect(linked).toMatchObject({ kind: "modified", name: null, parent: null, states: {} });
+
     const valued = entityChange(head, {
       ...before,
       states: { "builtin.Transform": { position: [1, 1, 0] } },

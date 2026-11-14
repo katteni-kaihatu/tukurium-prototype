@@ -67,6 +67,9 @@
 - 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
 - `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。
 - Hierarchy の行の操作（複製・削除・プレハブを開く）のボタンは、行を選ぶかマウスを載せるまで `display: none`。確認用のスクリプトで押すときは、先にその行を選ぶ（選んでいない行のボタンは、見つからない）。
+- Hierarchy の行の名前のボタンは、マウスを載せると、右側が行の操作のボタンに隠れる。Playwright はボタンの真ん中を押すので、幅の狭い Hierarchy では「ほかの要素がクリックを受け取る」で待ち続ける。確認用のスクリプトでは、左端を押す（`click({ position: { x: 8, y: 8 } })`）。
+- Entity からプレハブを作る処理（`planPrefabFromEntity()`）と展開は、参照を、フィールドの型（スキーマ）からたどる。Entity の参照の型の文は `EntityRef | undefined`（`FIELD_TYPE.entity`）。確認用のスクリプトやテストで `Entity` などと書くと、スキーマが作れず、参照として扱われない（書き換わらない）。入れ子の型（`EntityRef[]` など）は、TypeScript で作ったスキーマ（`FieldSchemas`）を渡したときだけたどる。
+- 確認用のスクリプトで、空間（3D）の所を `page.mouse.click()` で押すと、空間に入った状態になり、そのあとのパネルのクリックが届かない。窓の外を押して閉じる動きを確かめるときは、ほかのパネルの上を押す。
 
 ## 物理（Rapier）
 

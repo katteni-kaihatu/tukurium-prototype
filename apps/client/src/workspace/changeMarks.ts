@@ -41,6 +41,7 @@ interface SavedEntity {
   name?: string;
   parent?: string | null;
   states?: Record<string, StoredValues>;
+  instanceOf?: { prefab: string };
 }
 
 function readJson<T>(files: FileMap, path: string): T | null {
@@ -131,7 +132,10 @@ export function entityChange(
   }
   const name = saved.name !== entity.name ? "modified" : null;
   const parent = (saved.parent ?? null) !== (entity.parent ?? null) ? "modified" : null;
-  const kind = name || parent || Object.keys(states).length > 0 ? "modified" : null;
+  // プレハブのインスタンスになった・ふつうの Entity に戻った・別のプレハブになった（ADR 0076）。
+  // Entity からプレハブを作ると、KokoState がプレハブへ移って減るだけなので、これで印を出す
+  const linked = (saved.instanceOf?.prefab ?? null) !== (entity.instanceOf?.prefab ?? null);
+  const kind = name || parent || linked || Object.keys(states).length > 0 ? "modified" : null;
   return { kind, name, parent, states };
 }
 
