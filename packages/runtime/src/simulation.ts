@@ -12,6 +12,8 @@ import {
   acceptsUndefined,
   cloneValue,
   conformValue,
+  decodeValue,
+  encodeValue,
   equalValues,
   type FieldSchemas,
   hasRefs,
@@ -52,6 +54,8 @@ import {
   withPackagePrefabs,
 } from "@tukurium/repo-model";
 import {
+  type DebugKokoState,
+  type DebugStateEdit,
   type HostCallContext,
   type ScriptEntity,
   ScriptError,
@@ -418,8 +422,12 @@ export class Simulation {
                   if (!sim) return () => {};
                   const runningWorld = sim.world.snapshot();
                   sim.activeDebugApply?.(entities);
-                  return () => {
-                    if (!sim.disposed) sim.world.restore(runningWorld);
+                  return (edits) => {
+                    if (!sim.disposed) {
+                      sim.world.restore(runningWorld);
+                      for (const edit of edits)
+                        if (edit.kind === "state") sim.writeDebugState(edit);
+                    }
                   };
                 }) ?? [],
             },
@@ -428,7 +436,11 @@ export class Simulation {
     });
     const sim = new Simulation(sandbox, new Physics(), multi, options);
     ref.sim = sim;
-    if (options.debug) sim.debug = new DebugRuntime(options.debug);
+    if (options.debug)
+      sim.debug = new DebugRuntime(options.debug, {
+        states: (entity) => sim.debugStates(entity),
+        writeState: (edit) => sim.writeDebugState(edit),
+      });
     return sim;
   }
 
@@ -1580,7 +1592,7 @@ export class Simulation {
             "load",
             first.location?.kind === "script" ? first.location.line : null,
           );
-        const instrumented = this.debug ? instrumentDebug(compiled.javascript) : null;
+        const instrumented = this.debug ? instrumentDebug(compiled.javascript, id) : null;
         if (instrumented) this.debug?.register(id, instrumented.lines);
         const meta = this.sandbox.loadSystem(
           id,
@@ -2012,6 +2024,38 @@ export class Simulation {
     } finally {
       this.activeDebugApply = null;
     }
+  }
+
+  private debugStates(entity: string | null): DebugKokoState[] {
+    if (!entity || !this.world.has(entity)) return [];
+    return this.registry.all().flatMap((koko) => {
+      const values = this.world.get(entity, koko.id);
+      return values
+        ? [
+            {
+              id: koko.id,
+              name: koko.name,
+              fields: koko.fields.map((field) => ({
+                id: field.id,
+                name: field.name,
+                value: encodeValue(values[field.id]),
+              })),
+            },
+          ]
+        : [];
+    });
+  }
+
+  private writeDebugState(edit: DebugStateEdit): boolean {
+    if (!this.world.has(edit.entity)) return false;
+    const values = this.world.get(edit.entity, edit.koko);
+    const field = this.registry.get(edit.koko)?.fields.find((f) => f.id === edit.field);
+    const value = decodeValue(edit.value) as Value;
+    if (!values || !field || !this.accepts(edit.koko, field, value)) return false;
+    values[field.id] = cloneValue(value) as FieldValue;
+    // VM はフィールド名で保持する。返り値用の操作も、その名前へそろえる。
+    edit.fieldName = field.name;
+    return true;
   }
 
   /**

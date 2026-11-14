@@ -735,6 +735,7 @@ describe("ワークスペース", () => {
       line: 4,
       frames: [],
       reason: "ブレイクポイント",
+      states: [],
     };
     a.send({
       t: "ws.frame",

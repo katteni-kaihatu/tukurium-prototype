@@ -5,6 +5,7 @@ describe("デバッグ用の書き換え", () => {
   it("引数の既定値にある関数にも外側の引数を渡す", () => {
     const samples: unknown[] = [];
     const bridge = {
+      scopeFor: () => 1,
       enter: () => ({}),
       leave: () => {},
       error: () => {},
@@ -20,12 +21,15 @@ describe("デバッグ用の書き換え", () => {
     };
     const compiled = instrumentDebug("function f(x=3,cb=()=>{return x}){return cb()} f()");
     Function("globalThis", compiled.javascript)({ __debugBridge: bridge });
-    expect(samples.at(-1)).toContainEqual(["x", 3, true]);
+    expect(
+      (samples.at(-1) as [string, unknown, boolean][]).find((v) => v[0] === "x")?.slice(0, 3),
+    ).toEqual(["x", 3, true]);
   });
 
   it("for の開始位置は、ループの外側の変数の書き込み可否を示す", () => {
     let variables: unknown;
     const bridge = {
+      scope: () => 1,
       enter: () => ({}),
       leave: () => {},
       error: () => {},
@@ -42,7 +46,9 @@ describe("デバッグ用の書き換え", () => {
     };
     const compiled = instrumentDebug("function f(){const x=3;for(let x=0;x<1;x++) {}} f()");
     Function("globalThis", compiled.javascript)({ __debugBridge: bridge });
-    expect(variables).toContainEqual(["x", 3, false]);
+    expect(
+      (variables as [string, unknown, boolean][]).find((v) => v[0] === "x")?.slice(0, 3),
+    ).toEqual(["x", 3, false]);
   });
   it.each([
     ["function f(){var g=1; function g(){} return g} f()", 1],

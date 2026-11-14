@@ -11,3 +11,9 @@
   align-items: center;
   gap: 6px;
 }
+.value {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}

@@ -366,9 +366,17 @@ export class WorkspaceController {
     }
 
     // 選択中の Entity の枠
-    const sel = ws.selection?.kind === "entity" ? target.objectOf(ws.selection.id) : undefined;
-    this.selectionBox.visible = Boolean(sel) && ws.mode === "edit";
-    if (sel && ws.mode === "edit") {
+    const debugging = ws.mode === "paused" && ws.debugStop?.entity;
+    const sel = debugging
+      ? this.view.objectOf(debugging)
+      : ws.selection?.kind === "entity"
+        ? target.objectOf(ws.selection.id)
+        : undefined;
+    (this.selectionBox.material as THREE.LineBasicMaterial).color.setHex(
+      debugging ? 0xffb42e : 0x603d56,
+    );
+    this.selectionBox.visible = Boolean(sel) && (ws.mode === "edit" || Boolean(debugging));
+    if (sel && (ws.mode === "edit" || debugging)) {
       this.selectionBox.setFromObject(sel);
     }
   }

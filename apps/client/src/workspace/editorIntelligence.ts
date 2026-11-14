@@ -7,6 +7,7 @@ import type {
   EditorQuery,
   EditorResults,
 } from "@tukurium/typecheck";
+import { debugHoverValue } from "./debugValues";
 import { type ImportCandidate, importCompletionSource } from "./importCompletion";
 import { useWorkspace } from "./store";
 import { editorTypecheck } from "./typecheckClient";
@@ -149,15 +150,39 @@ export function editorIntelligence(
             const dom = document.createElement("div");
             dom.className = "cm-tk-documentation";
             dom.textContent = "読み込み中…";
+            const state = useWorkspace.getState();
+            const node = syntaxTree(view.state).resolveInner(position, -1);
+            const before = view.state.sliceDoc(view.state.doc.lineAt(word.from).from, word.from);
+            const value =
+              !/String|Comment/.test(node.name) && !/\.\s*$/.test(before)
+                ? debugHoverValue(
+                    state.debugStop,
+                    state.debugFrameId,
+                    fileId,
+                    view.state.sliceDoc(word.from, word.to),
+                  )
+                : null;
+            const appendValue = () => {
+              if (value === null) return;
+              const current = document.createElement("pre");
+              current.textContent = `現在の値\n${value}`;
+              dom.append(current);
+            };
+            appendValue();
             let alive = true;
             void queryEditor(view, fileId, { kind: "hover", position }).then((info) => {
               if (!alive) return;
               dom.replaceChildren();
               if (!info) {
+                if (value !== null) {
+                  appendValue();
+                  return;
+                }
                 view.dispatch({ effects: closeHoverTooltips });
                 return;
               }
               renderDocumentation(dom, info);
+              appendValue();
               for (const message of info.diagnostics) {
                 const error = document.createElement("p");
                 error.className = "cm-tk-diagnostic";

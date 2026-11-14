@@ -11,6 +11,7 @@ import {
 } from "@tukurium/repo-model";
 import {
   type BagItem,
+  type DebugEdit,
   type EffectEvent,
   type InputEvent,
   type LogEntry,
@@ -70,6 +71,8 @@ interface WorkspaceState {
   debugRev: number;
   debugOpen: boolean;
   debugStop: DebugStop | null;
+  debugFrameId: number | null;
+  debugEdit(edit: DebugEdit): void;
   debugCommand(cmd: "continue" | "pause"): void;
   workspaceId: string | null;
   project: ProjectDoc | null;
@@ -277,6 +280,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     debugRev: 0,
     debugOpen: false,
     debugStop: null,
+    debugFrameId: null,
+    debugEdit: (edit) => {
+      const s = get();
+      if (s.workspaceId && s.debugStop)
+        client().send({
+          t: "ws.debugCommand",
+          workspaceId: s.workspaceId,
+          cmd: "edit",
+          stopId: s.debugStop.id,
+          edit,
+        });
+    },
     debugCommand: (cmd) => {
       const s = get();
       if (s.workspaceId)
@@ -398,6 +413,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugRev: 0,
         debugOpen: false,
         debugStop: null,
+        debugFrameId: null,
         project,
         awareness,
         role: null,
@@ -458,6 +474,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugRev: 0,
         debugOpen: false,
         debugStop: null,
+        debugFrameId: null,
         workspaceId: null,
         project: null,
         awareness: null,
@@ -606,7 +623,9 @@ client().on((msg) => {
     case "ws.debugCommand": {
       if (msg.workspaceId !== s.workspaceId || !s.isHost || !s.sim?.debug) return;
       if (msg.cmd === "pause") s.sim.debug.requestPause();
-      else if (msg.stopId && s.sim.debug.resume(msg.stopId)) {
+      else if (msg.cmd === "edit" && msg.stopId && msg.edit) {
+        s.sim.debug.edit(msg.stopId, msg.edit as DebugEdit);
+      } else if (msg.stopId && s.sim.debug.resume(msg.stopId)) {
         set({ mode: "play", debugStop: null });
         sendFrame();
       }

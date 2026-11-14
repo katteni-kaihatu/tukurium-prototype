@@ -204,6 +204,16 @@ const Bags = z.record(z.string(), z.array(BagItem).max(64));
 const PartEntities = z.record(z.string(), z.array(z.string()));
 
 export const DebugStop = z.object({
+  message: z.string().optional(),
+  states: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        fields: z.array(z.object({ id: z.string(), name: z.string(), value: z.unknown() })),
+      }),
+    )
+    .default([]),
   id: z.string(),
   systemId: z.string(),
   entity: z.string().nullable(),
@@ -220,13 +230,31 @@ export const DebugStop = z.object({
           value: z.unknown(),
           writable: z.boolean(),
           unavailable: z.boolean().optional(),
+          state: z.object({ entity: z.string(), koko: z.string() }).optional(),
+          binding: z.string().optional(),
         }),
       ),
+      systemId: z.string().optional(),
     }),
   ),
 });
 export type DebugStop = z.infer<typeof DebugStop>;
-export const DebugCommand = z.enum(["continue", "pause"]);
+export const DebugCommand = z.enum(["continue", "pause", "edit"]);
+export const DebugValueEdit = z.union([
+  z.object({
+    kind: z.literal("variable").optional(),
+    frameId: z.number(),
+    name: z.string(),
+    value: z.unknown(),
+  }),
+  z.object({
+    kind: z.literal("state"),
+    entity: z.string(),
+    koko: z.string(),
+    field: z.string(),
+    value: z.unknown(),
+  }),
+]);
 
 export const PlayFrame = z.object({
   debug: DebugStop.nullable().optional(),
@@ -365,6 +393,7 @@ export const ClientMessage = z.discriminatedUnion("t", [
     t: z.literal("ws.debugCommand"),
     workspaceId: id,
     cmd: DebugCommand,
+    edit: DebugValueEdit.optional(),
     stopId: z.string().optional(),
   }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
@@ -515,6 +544,7 @@ export const ServerMessage = z.discriminatedUnion("t", [
     t: z.literal("ws.debugCommand"),
     workspaceId: id,
     cmd: DebugCommand,
+    edit: DebugValueEdit.optional(),
     stopId: z.string().optional(),
     from: id,
   }),
