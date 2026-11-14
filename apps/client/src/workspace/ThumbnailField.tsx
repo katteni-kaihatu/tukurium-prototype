@@ -71,7 +71,7 @@ export function ThumbnailField(props: {
           <p className={ui.error}>指定した画像が Resources にありません。選び直してください。</p>
         )
       )}
-      <div className={ui.row}>
+      <div className={ui.field}>
         <label className={ui.label} htmlFor={`thumb-${props.output.id}`}>
           画像
         </label>

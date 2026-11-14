@@ -114,7 +114,7 @@ function NameRow(props: {
 }) {
   return (
     <MarkedLine kind={props.mark ?? null} target={props.target}>
-      <div className={ui.row}>
+      <div className={ui.field}>
         <label className={ui.label} htmlFor={`n-${props.id}`}>
           Name
         </label>
@@ -207,7 +207,7 @@ function OutputProperties({ id }: { id: string }) {
           onCommit={(name) => update({ name })}
         />
         <MarkedLine kind={changed.outputKind} target={{ entry: `output:${id}`, part: "kind" }}>
-          <div className={ui.row}>
+          <div className={ui.field}>
             <label className={ui.label} htmlFor={`kind-${id}`}>
               Kind
             </label>
@@ -228,7 +228,7 @@ function OutputProperties({ id }: { id: string }) {
             </select>
           </div>
         </MarkedLine>
-        <div className={ui.row}>
+        <div className={ui.field}>
           <span className={ui.label}>使う権限</span>
           <span
             className={ui.toolbar}
@@ -246,7 +246,7 @@ function OutputProperties({ id }: { id: string }) {
           </span>
         </div>
         <MarkedLine kind={changed.exposure} target={{ entry: `output:${id}`, part: "exposure" }}>
-          <div className={ui.row}>
+          <div className={ui.field}>
             <label className={ui.label} htmlFor={`exposure-${id}`}>
               外からの見え方
             </label>
@@ -266,7 +266,7 @@ function OutputProperties({ id }: { id: string }) {
         </MarkedLine>
         {output.kind === "world" && (
           <MarkedLine kind={changed.guestPolicy} target={{ entry: `output:${id}`, part: "guest" }}>
-            <div className={ui.row}>
+            <div className={ui.field}>
               <label className={ui.label} htmlFor={`guest-${id}`}>
                 外から来た Item
               </label>
@@ -428,7 +428,7 @@ function KokoDefProperties({ id }: { id: string }) {
           disabled={!editing}
           onCommit={(name) => save({ ...def, name })}
         />
-        <div className={ui.row}>
+        <div className={ui.field}>
           <label className={ui.label} htmlFor={`role-${id}`}>
             役割
           </label>
@@ -869,7 +869,7 @@ function SystemProperties({ id }: { id: string }) {
         <p className={ui.muted}>
           この System が処理する Entity の条件（コードの query から読み取り）
         </p>
-        <div className={ui.row}>
+        <div className={ui.field}>
           <span className={ui.label}>With</span>
           <span className={ui.toolbar}>
             {q.with.length === 0 ? (
@@ -887,7 +887,7 @@ function SystemProperties({ id }: { id: string }) {
             )}
           </span>
         </div>
-        <div className={ui.row}>
+        <div className={ui.field}>
           <span className={ui.label}>Without</span>
           <span className={ui.toolbar}>
             {q.without.length === 0 ? (
@@ -964,7 +964,7 @@ function MaterialProperties({ id }: { id: string }) {
   const users = project.entities().filter((e) => e.states["builtin.Mesh"]?.material === id);
   const changed = materialChange(saved, m);
   const slider = (key: "roughness" | "metalness", label: string) => (
-    <div className={ui.row}>
+    <div className={ui.field}>
       <label className={ui.label} htmlFor={`${key}-${id}`}>
         {label}
       </label>
@@ -1006,7 +1006,7 @@ function MaterialProperties({ id }: { id: string }) {
           onCommit={(name) => safely(() => project.updateMaterial({ ...m, name }))}
         />
         {error && <p className={ui.error}>{error}</p>}
-        <div className={ui.row}>
+        <div className={ui.field}>
           <span className={ui.label}>Shader</span>
           <span className={ui.toolbar}>
             <span className={ui.badge}>標準（固定）</span>
@@ -1043,7 +1043,7 @@ function MaterialProperties({ id }: { id: string }) {
           {slider("metalness", "金属感")}
         </MarkedLine>
         <MarkedLine kind={changed.map} target={{ entry: `material:${id}`, part: "map" }}>
-          <div className={ui.row}>
+          <div className={ui.field}>
             <label className={ui.label} htmlFor={`map-${id}`}>
               画像
             </label>
