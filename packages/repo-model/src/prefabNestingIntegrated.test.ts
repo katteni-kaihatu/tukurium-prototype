@@ -80,6 +80,27 @@ describe("入れ子の上書き・適用・解除", () => {
 });
 
 describe("プレハブの中の変換で追加情報を保つ", () => {
+  it("入れ子の子を移すまとまりの外へ付け替えているときは、変換を理由付きで断る", () => {
+    const { doc, board, slot, leaf, first } = setup();
+    const group = doc.addPrefabEntity({ prefab: board, name: "まとめる" });
+    const outside = doc.addPrefabEntity({ prefab: board, name: "外の兄弟" });
+    doc.setParent(slot, group);
+    doc.setParent(`${slot}/${leaf}`, outside);
+    const before = doc.snapshot();
+    expect(
+      expandPrefabs(before).entities.find((e) => e.id === `${first}/${slot}/${leaf}`)?.parent,
+    ).toBe(`${first}/${outside}`);
+    const result = doc.planPrefabFromEntity(group);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("駒の中");
+      expect(result.reason).toContain("外の兄弟");
+      expect(result.reason).toContain("まとまりの外");
+    }
+    expect(() => doc.makePrefabFromEntity(group)).toThrow(/まとまりの外/);
+    expect(doc.snapshot()).toEqual(before);
+  });
+
   it("入れ子の中に足した Entity も、親と参照を保って移す", () => {
     const { doc, state, board, slot, leaf, first } = setup();
     const group = doc.addPrefabEntity({ prefab: board, name: "まとめる" });

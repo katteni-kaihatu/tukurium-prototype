@@ -11,7 +11,12 @@ import {
   type ValueSchema,
 } from "@tukurium/eks";
 import { BUILTIN, BUILTIN_KOKOSTATES } from "./builtins";
-import { EXPANDED_ID_SEPARATOR, type PrefabOwner } from "./prefab";
+import {
+  EXPANDED_ID_SEPARATOR,
+  expandPrefabForEdit,
+  expandPrefabs,
+  type PrefabOwner,
+} from "./prefab";
 import { prefabUsePath } from "./prefabNesting";
 import {
   type EntityBase,
@@ -239,6 +244,28 @@ export function planPrefabFromEntity(
     const to = inside.get(headOf(id));
     return to === undefined ? undefined : to + restOf(id);
   };
+  if (
+    moving.some(({ def }) =>
+      Object.values(def.prefabOverrides ?? {}).some((p) => p.parent !== undefined),
+    )
+  ) {
+    const view =
+      owner.kind === "prefab"
+        ? expandPrefabForEdit(snap, owner.id, options)
+        : expandPrefabs(snap, options);
+    for (const { def } of moving) {
+      for (const [path, patch] of Object.entries(def.prefabOverrides ?? {})) {
+        if (patch.parent === undefined || path === "") continue;
+        const entity = view?.entities.find((e) => e.id === `${def.id}/${path}`);
+        const parent = entity?.parent ?? patch.parent;
+        if (parent === null || insideId(parent) !== undefined) continue;
+        const parentName = view?.entities.find((e) => e.id === parent)?.name ?? parent;
+        return refuse(
+          `「${entity?.name ?? path}」の親「${parentName}」がプレハブに移すまとまりの外にあります。中の Entity に付け替えてからプレハブにしてください`,
+        );
+      }
+    }
+  }
   /** 変換後の ID。ほかのプレハブやアウトプットにある、この持ち主のインスタンスの中も書き換える。 */
   const expandedId = (id: string): string | undefined => {
     const parts = id.split(EXPANDED_ID_SEPARATOR);
