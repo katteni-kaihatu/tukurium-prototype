@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN } from "./builtins";
 import { checkProjectStructure } from "./diagnostics/structure";
 import { collectSelection, extractInto } from "./extract";
-import { packageResourceId } from "./packageDependency";
+import { type PackageResolution, packageResourceId } from "./packageDependency";
+import { packageManifest } from "./packageManifest";
 import { expandPrefabs } from "./prefab";
 import { ProjectDoc } from "./projectDoc";
 import { ResourcePathIndex } from "./resourcePath";
@@ -313,6 +314,43 @@ function prefabSource(): ProjectSnapshot {
 }
 
 describe("プレハブを抽出する", () => {
+  it("間接ライブラリのプレハブを抽出しても、元の直接依存からの経路を残す", () => {
+    const b = new ProjectDoc();
+    const prefab = b.addPrefab("B の部品");
+    b.addPrefabEntity({ prefab, name: "B の中身", states: { [BUILTIN.Mesh]: {} } });
+    const libraryB = b.addOutput("B", "library");
+    b.setIncluded(libraryB, prefab, true);
+    const depB = { alias: "b", packageId: "B", version: 1, contentHash: "hashB" };
+    const depA = { alias: "a", packageId: "A", version: 1, contentHash: "hashA" };
+    const unused = { alias: "unused", packageId: "U", version: 1, contentHash: "hashU" };
+    const a = new ProjectDoc();
+    a.addDependency(depB);
+    const libraryA = a.addOutput("A", "library");
+    const pool: PackageResolution[] = [
+      { status: "ready", dependency: depA, manifest: packageManifest(a.snapshot(), libraryA) },
+      { status: "ready", dependency: depB, manifest: packageManifest(b.snapshot(), libraryB) },
+      { status: "ready", dependency: unused, manifest: { format: 1, exports: [] } },
+    ];
+    const p = new ProjectDoc();
+    const output = p.addOutput("作品", "item");
+    p.addDependency(depA);
+    p.addDependency(unused);
+    p.setPackagePrefabs(pool);
+    p.addInstance({ output, prefab: packageResourceId(depB, prefab) });
+    const selection = { ...none, outputs: [output] };
+    const extracted = extractInto(p.snapshot(), selection, src, null, undefined, undefined, pool);
+    expect(extracted.dependencies).toEqual([depA]);
+    expect(extracted.provenance?.[0]?.dependencies).toEqual([depA]);
+    const q = new ProjectDoc();
+    q.load(extracted);
+    q.setPackagePrefabs(pool);
+    expect(
+      expandPrefabs(q.snapshotWithPackages()).entities.some((e) => e.name === "B の中身"),
+    ).toBe(true);
+    // 古い呼び出し元に解決済み情報がなくても、宣言済みの経路を捨てない。
+    expect(extractInto(p.snapshot(), selection, src, null).dependencies).toEqual([depA, unused]);
+  });
+
   it("アウトプットが使う入れ子と System・素材・依存を持っていく", () => {
     const s = prefabSource();
     const selected = collectSelection(s, { ...none, outputs: ["out"] });

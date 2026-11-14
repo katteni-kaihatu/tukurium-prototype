@@ -335,6 +335,7 @@ describe("リモートの MCP（/mcp）", () => {
       imported.snapshot,
       "抽出後",
       imported.schemas,
+      imported.packages,
     );
     const roundtrip = new ProjectDoc();
     roundtrip.load(extracted);

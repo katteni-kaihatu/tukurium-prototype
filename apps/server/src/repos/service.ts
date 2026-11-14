@@ -214,6 +214,7 @@ export class RepoService {
     snapshot: ProjectSnapshot;
     /** 取り込み元のフィールドのスキーマ（入れ子の中の参照を、取り込み先の ID に付け替えるのに使う。ADR 0065） */
     schemas: FieldSchemas;
+    packages: PackageResolution[];
   }> {
     const src = await this.require(repoId);
     if (!(await this.canFork(user, src))) throw new HttpError(403, "取り込む権限がありません");
@@ -230,6 +231,7 @@ export class RepoService {
         packages,
         fieldSchemasOf(snapshot, resolutionMap(snapshot.dependencies, packages)),
       ),
+      packages,
     };
   }
 
@@ -270,12 +272,13 @@ export class RepoService {
           await this.snapshot(dst.id),
           undefined,
           schemas,
+          packages,
         );
         const oid = await this.commit(dst.id, merged, `${src.name} から抽出して取り込み`, user, []);
         return { repo: dst, commit: oid };
       });
     }
-    const extracted = extractInto(snap, selection, source, null, target.name, schemas);
+    const extracted = extractInto(snap, selection, source, null, target.name, schemas, packages);
     const repo = await this.create(user, { name: target.name, snapshot: extracted });
     return { repo, commit: (await this.git.head(repo.id)) as string };
   }

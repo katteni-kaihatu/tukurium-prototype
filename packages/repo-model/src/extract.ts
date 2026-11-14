@@ -9,7 +9,13 @@ import {
 } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
-import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
+import {
+  lockKey,
+  type PackageResolution,
+  parsePackageResourceId,
+  parsePackageSpelling,
+  reachablePackages,
+} from "./packageDependency";
 import { normalizeName, ResourcePathIndex } from "./resourcePath";
 import {
   type EntityBase,
@@ -166,6 +172,8 @@ export function extractInto(
   name?: string,
   /** 取り出し元のフィールドのスキーマ（あれば、入れ子の中の参照も新しい ID に付け替える） */
   schemas?: FieldSchemas,
+  /** 解決済みの依存。間接ライブラリへ届く、元の直接依存を引き継ぐために使う */
+  packages?: readonly PackageResolution[],
 ): ProjectSnapshot {
   const sel = collectSelection(src, selection, schemas);
   const srcDefs = new Map([...BUILTIN_KOKOSTATES, ...src.kokostates].map((k) => [k.id, k]));
@@ -267,7 +275,7 @@ export function extractInto(
     added.set(id, next.id);
   }
 
-  const aliases = carryDependencies(src, sel, dst);
+  const aliases = carryDependencies(src, sel, dst, packages);
   const r = (id: string) => remap.get(id) ?? id;
 
   // 出力とプレハブをまたぐ参照もあるので、写す前にすべての Entity の ID を決める。
@@ -471,22 +479,34 @@ export function extractInto(
 }
 
 /**
- * 取り出したもの（Entity の KokoState・アウトプットの System・System の `@別名` の import）が使う依存を、
- * 取り込み先へ持ってくる。返すのは、取り出し元の別名 → 取り込み先の別名と、新しく足した依存。
+ * 選んだものが使う、元の直接依存を返す。間接ライブラリを指す場合も、そこへ届く経路を残す。
  */
-function carryDependencies(
+export function collectSelectionDependencies(
   src: ProjectSnapshot,
   sel: ExtractSelection,
-  dst: ProjectSnapshot,
-): { map: Map<string, string>; carried: PackageDependency[] } {
+  packages?: readonly PackageResolution[],
+): PackageDependency[] {
   const srcDeps = src.dependencies ?? [];
   const needed = new Set<string>();
+  const routes = srcDeps.map((dependency) => ({
+    dependency,
+    reachable: [
+      dependency,
+      ...reachablePackages([dependency], packages).flatMap((r) => [
+        r.dependency,
+        ...(r.manifest.dependencies ?? []),
+      ]),
+    ],
+  }));
   const byId = (id: string) => {
     const ref = parsePackageResourceId(id);
-    const d = ref
-      ? srcDeps.find((x) => x.packageId === ref.packageId && x.version === ref.version)
-      : undefined;
-    if (d) needed.add(d.alias);
+    if (!ref) return;
+    const parents = routes.filter((route) =>
+      route.reachable.some((d) => d.packageId === ref.packageId && d.version === ref.version),
+    );
+    // 中身が届いていない場合も、元の経路を失わない。新しい依存は推測で作らない。
+    for (const { dependency } of parents.length > 0 ? parents : routes)
+      needed.add(dependency.alias);
   };
   for (const id of [
     ...(sel.prefabs ?? []),
@@ -515,12 +535,19 @@ function carryDependencies(
     index ??= ResourcePathIndex.fromSnapshot(src);
     for (const alias of compileSystem(s.id, s.code, index).packageImports) needed.add(alias);
   }
+  return srcDeps.filter((dep) => needed.has(dep.alias));
+}
 
+function carryDependencies(
+  src: ProjectSnapshot,
+  sel: ExtractSelection,
+  dst: ProjectSnapshot,
+  packages?: readonly PackageResolution[],
+): { map: Map<string, string>; carried: PackageDependency[] } {
   const map = new Map<string, string>();
   const carried: PackageDependency[] = [];
   dst.dependencies = [...(dst.dependencies ?? [])];
-  for (const dep of srcDeps) {
-    if (!needed.has(dep.alias)) continue;
+  for (const dep of collectSelectionDependencies(src, sel, packages)) {
     const same = dst.dependencies.find((d) => lockKey(d) === lockKey(dep));
     if (same) {
       map.set(dep.alias, same.alias);

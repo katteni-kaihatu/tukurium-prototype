@@ -1,11 +1,12 @@
 import type { FieldSchemas } from "@tukurium/eks";
 import {
   collectSelection,
+  collectSelectionDependencies,
   type ExtractSelection,
   extractInto,
   isBuiltin,
+  type PackageResolution,
   type ProjectSnapshot,
-  parsePackageResourceId,
   ResourcePathIndex,
 } from "@tukurium/repo-model";
 import { useEffect, useMemo, useState } from "react";
@@ -47,6 +48,7 @@ interface Source {
   snapshot: ProjectSnapshot;
   /** 取り出し元のフィールドのスキーマ（サーバーが作る。ADR 0065） */
   schemas?: FieldSchemas;
+  packages?: PackageResolution[];
 }
 
 interface Row {
@@ -119,7 +121,8 @@ export function ImportPanel() {
 
   const rows = useMemo(() => (source ? rowsOf(source.snapshot) : null), [source]);
   const together = useMemo(
-    () => (source ? withDependencies(source.snapshot, picked, source.schemas) : null),
+    () =>
+      source ? withDependencies(source.snapshot, picked, source.schemas, source.packages) : null,
     [source, picked],
   );
   const count = GROUPS.reduce((n, g) => n + picked[g.key].length, 0);
@@ -141,6 +144,7 @@ export function ImportPanel() {
         { ...project.snapshot(), name: project.name },
         undefined,
         source.schemas,
+        source.packages,
       );
       project.mergeAdditions(merged);
       setDone(`${source.repoName} から ${count} 件を取り込みました`);
@@ -285,6 +289,7 @@ function withDependencies(
   snap: ProjectSnapshot,
   picked: Picked,
   schemas: FieldSchemas | undefined,
+  packages?: readonly PackageResolution[],
 ): { rows: { id: string; name: string; kind: string }[]; libraries: string[] } {
   const all: Picked = { ...EMPTY, ...collectSelection(snap, picked, schemas) };
   const chosen = new Set(GROUPS.flatMap((g) => picked[g.key]));
@@ -323,26 +328,10 @@ function withDependencies(
       if (name) rows.push({ id, name, kind: label[g.key] });
     }
   }
-  // ライブラリ：依存から取り込んだ ID（pkg:…）か、`@別名/` の import を使っているもの
-  const deps = snap.dependencies ?? [];
-  const libraries = new Set<string>();
-  const ids = [...all.kokostates, ...all.systems, ...all.prefabs];
-  for (const e of snap.entities) {
-    if (!all.outputs.includes(e.output)) continue;
-    ids.push(...Object.keys(e.states));
-  }
-  for (const e of snap.prefabEntities ?? []) {
-    if (!all.prefabs.includes(e.prefab)) continue;
-    ids.push(...Object.keys(e.states));
-  }
-  for (const id of ids) {
-    const ref = parsePackageResourceId(id);
-    const dep = ref && deps.find((d) => d.packageId === ref.packageId && d.version === ref.version);
-    if (dep) libraries.add(dep.alias);
-  }
-  for (const s of snap.systems) {
-    if (!all.systems.includes(s.id)) continue;
-    for (const d of deps) if (s.code.includes(`"@${d.alias}/`)) libraries.add(d.alias);
-  }
-  return { rows, libraries: [...libraries].sort() };
+  return {
+    rows,
+    libraries: collectSelectionDependencies(snap, all, packages)
+      .map((dep) => dep.alias)
+      .sort(),
+  };
 }

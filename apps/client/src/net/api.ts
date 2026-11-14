@@ -344,6 +344,7 @@ export const api = {
       commit: string;
       snapshot: ProjectSnapshot;
       schemas?: FieldSchemas;
+      packages?: PackageResolution[];
     }>("GET", `/api/repos/${id}/import-source`),
   snapshot: (id: string, commit?: string) =>
     call<ProjectSnapshot>("GET", `/api/repos/${id}/snapshot${commit ? `?commit=${commit}` : ""}`),
