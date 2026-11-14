@@ -1057,6 +1057,49 @@ describe("ワークスペースのホストと共有再生", () => {
     expect(host.resume?.partEntities).toEqual(partEntities);
   });
 
+  it("停止中は部分的な世界と開始時点を分けたまま次のホストへ渡す", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("ws.host");
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "admin" });
+    await b.next("ws.role");
+    const debugStart = {
+      world: { entities: [] },
+      names: {},
+      time: 1,
+      bags: {},
+      partEntities: {},
+      queues: { inputs: [], pending: [] },
+      systems: [],
+    };
+    a.send({
+      t: "ws.frame",
+      workspaceId,
+      frame: {
+        ...frame("play", 1.1),
+        mode: "paused",
+        debug: {
+          id: "stopped",
+          systemId: "s",
+          line: 2,
+          entity: null,
+          frames: [],
+          states: [],
+          reason: "ブレイクポイント",
+        },
+        debugStart,
+      },
+    });
+    await b.next("ws.frame");
+    a.ws.close();
+    const host = await b.next("ws.host");
+    expect(host.resume?.debugStart).toEqual(debugStart);
+    expect(host.resume?.time).toBe(1.1);
+    expect(host.resume?.debug?.id).toBe("stopped");
+  });
+
   it("引き継げる人がいなければ再生を止める", async () => {
     const { url } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);

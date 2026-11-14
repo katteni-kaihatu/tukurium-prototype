@@ -67,7 +67,8 @@ export function DebugPanel() {
           {ws.debugStop && (
             <section aria-label="一時停止した場所">
               <p>
-                {ws.debugStop.reason}：
+                {ws.debugStop.reason}
+                {ws.debugStop.line > 0 && "："}
                 {ws.debugStop.line > 0 && (
                   <>
                     {ws.project?.system(ws.debugStop.systemId)?.name ?? ws.debugStop.systemId}{" "}

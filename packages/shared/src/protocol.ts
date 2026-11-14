@@ -267,6 +267,18 @@ export const DebugValueEdit = z.union([
 ]);
 
 export const PlayFrame = z.object({
+  debugStart: z
+    .object({
+      world: z.unknown(),
+      names: z.record(z.string(), z.string()),
+      time: z.number(),
+      bags: Bags,
+      partEntities: PartEntities,
+      queues: z.unknown(),
+      systems: z.array(SystemStatusInfo),
+    })
+    .nullable()
+    .optional(),
   debug: DebugStop.nullable().optional(),
   sounds: z.array(SoundEvent).max(32).optional(),
   effects: z.array(EffectEvent).max(32).optional(),

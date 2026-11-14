@@ -94,6 +94,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
   const problemsFocus = useWorkspace((s) => s.problemsFocus);
   const logOpen = useWorkspace((s) => s.logOpen);
   const debugOpen = useWorkspace((s) => s.debugOpen);
+  const debugFocus = useWorkspace((s) => s.debugStop?.id);
   const importOpen = useWorkspace((s) => s.importOpen);
   const detail = useWorkspace((s) => s.detail);
   const kokoPickerOpen = useWorkspace((s) => s.kokoPickerOpen);
@@ -108,6 +109,7 @@ export function WorkspacePanels({ engine }: { engine: SessionEngine }) {
       panels.push({
         id: "ws-debug",
         title: "デバッグ",
+        focusKey: debugFocus,
         initial: { right: 32, y: 150, width: 500, height: 600 },
         render: () => <DebugPanel />,
         onClose: () => useWorkspace.setState({ debugOpen: false }),

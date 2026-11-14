@@ -36,6 +36,55 @@ vi.mock("@tukurium/runtime", () => ({ Simulation: { create: vi.fn() } }));
 import { resolvePackagePool } from "./packages";
 import { useWorkspace } from "./store";
 
+it("デバッグ中の引き継ぎでは途中の世界より開始時点を使う", async () => {
+  const sim = simulation();
+  const restoreDebugCheckpoint = vi.fn();
+  const holdAfterHandoff = vi.fn();
+  Object.assign(sim, { restoreDebugCheckpoint, debug: { holdAfterHandoff } });
+  vi.mocked(Simulation.create).mockResolvedValueOnce(sim);
+  const project = useWorkspace.getState().project;
+  if (!project) throw Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, isHost: false });
+  const checkpoint = {
+    world: { entities: [] },
+    names: {},
+    time: 2,
+    bags: {},
+    partEntities: {},
+    queues: { inputs: [], pending: [] },
+    systems: [],
+  };
+  receive({
+    t: "ws.host",
+    workspaceId: "w_test",
+    resume: {
+      mode: "paused",
+      outputId: "out1",
+      world: { entities: [{ id: "partial" }] },
+      names: {},
+      time: 2.1,
+      partEntities: {},
+      status: [],
+      debug: {
+        id: "old",
+        systemId: "s",
+        entity: null,
+        line: 1,
+        frames: [],
+        states: [],
+        reason: "ブレイクポイント",
+      },
+      debugStart: checkpoint,
+    },
+  });
+  await flush();
+  expect(restoreDebugCheckpoint).toHaveBeenCalledWith(checkpoint);
+  expect(sim.restore).not.toHaveBeenCalled();
+  expect(holdAfterHandoff).toHaveBeenCalledOnce();
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {

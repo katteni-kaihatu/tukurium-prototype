@@ -62,6 +62,7 @@ export class DebugRuntime {
   private readonly watchValues = new Map<string, Json>();
   private readonly guestValues = new Map<string, Json>();
   private hostChanges: DebugChange[] = [];
+  private beforeFirstFrame = false;
   private step: {
     mode: Exclude<DebugStep, "continue">;
     frame: number;
@@ -125,6 +126,10 @@ export class DebugRuntime {
   }
   requestPause() {
     this.pauseRequested = true;
+  }
+  holdAfterHandoff() {
+    this.beforeFirstFrame = true;
+    void this.boundary("ホスト交代：フレームの開始からやり直します");
   }
   beginSystem(entities: ScriptEntity[], systemId: string) {
     this.guestValues.clear();
@@ -264,13 +269,14 @@ export class DebugRuntime {
         ? null
         : {
             mode,
-            frame: this.frameNumber,
+            frame: this.frameNumber + (this.beforeFirstFrame ? 1 : 0),
             depth: this.stop.frames.length,
             id: frame?.id ?? -1,
             line: this.stop.line,
             systemId: this.stop.systemId,
           };
     this.stop = null;
+    this.beforeFirstFrame = false;
     const resolve = this.resolve;
     this.resolve = null;
     resolve(this.edits);

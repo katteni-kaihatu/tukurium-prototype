@@ -18,6 +18,7 @@ import {
   type FieldSchemas,
   hasRefs,
   isJsonSafe,
+  type Json,
   mapRefs,
   schemaOfField,
   stringifyValue,
@@ -293,6 +294,15 @@ interface PendingEvent {
   name: string;
   data: Value;
 }
+export interface DebugCheckpoint {
+  world: WorldSnapshot;
+  names: Record<string, string>;
+  time: number;
+  bags: Record<string, BagItem[]>;
+  partEntities: Record<string, EntityId[]>;
+  queues: Json;
+  systems: SystemStatus[];
+}
 
 /** Raycast の結果の opaque handle（ADR 0012）。token は推測しにくい文字列で、表を引く鍵 */
 interface HitHandle {
@@ -363,6 +373,7 @@ export type HostName = (typeof HOST_API)[number];
  * スクリプトが動かした物体の当たり判定は、次のステップから反映される。
  */
 export class Simulation {
+  private debugStart: DebugCheckpoint | null = null;
   debug: DebugRuntime | null = null;
   private debugRunning = false;
   private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
@@ -619,6 +630,42 @@ export class Simulation {
   /** バッグの中身（フレームに入れて配る・ホストが替わったら引き継ぐ。ADR 0018） */
   bagsSnapshot(): Record<string, BagItem[]> {
     return Object.fromEntries([...this.bags].map(([p, items]) => [p, structuredClone(items)]));
+  }
+  private makeDebugCheckpoint(): DebugCheckpoint {
+    return {
+      world: this.world.snapshot(),
+      names: Object.fromEntries(this.world.entityIds().map((id) => [id, this.nameOf(id)])),
+      time: this.time,
+      bags: this.bagsSnapshot(),
+      partEntities: this.partEntitiesSnapshot(),
+      queues: encodeValue({ inputs: this.inputs, pending: this.pending }),
+      systems: structuredClone(this.systemStatus()),
+    };
+  }
+  debugCheckpoint(): DebugCheckpoint | null {
+    return this.debug ? (this.debugStart ?? this.makeDebugCheckpoint()) : null;
+  }
+  restoreDebugCheckpoint(checkpoint: DebugCheckpoint) {
+    this.restore(checkpoint.world, checkpoint.names, checkpoint.time, checkpoint.partEntities);
+    this.restoreBags(checkpoint.bags);
+    const queues = decodeValue(checkpoint.queues) as {
+      inputs: InputEvent[];
+      pending: PendingEvent[];
+    };
+    this.inputs = queues.inputs;
+    this.pending = queues.pending;
+    for (const status of checkpoint.systems) {
+      const system = this.systems.find((s) => s.id === status.id);
+      if (system) {
+        system.enabled = status.enabled;
+        system.error = status.error;
+        system.line = status.line;
+        system.warnings = new Map(
+          status.warnings.map((warning) => [warning.code, structuredClone(warning)]),
+        );
+      }
+    }
+    this.debugStart = checkpoint;
   }
 
   /** バッグの中身を戻す（ホストが替わったとき・再生を続けるとき） */
@@ -1005,6 +1052,7 @@ export class Simulation {
   async stepDebug(dt: number): Promise<void> {
     if (!this.debug || this.disposed || this.debugRunning) return;
     this.debugRunning = true;
+    this.debugStart = this.makeDebugCheckpoint();
     try {
       await this.debug.beginFrame();
       if (this.disposed) return;

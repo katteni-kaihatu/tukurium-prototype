@@ -735,7 +735,17 @@ client().onWelcome(() => {
   const id = ws().workspaceId;
   if (!id) return;
   ws().sim?.dispose();
-  set({ isHost: false, ready: false, sim: null, remote: null, mode: "edit" });
+  cancelPendingPlay();
+  set({
+    isHost: false,
+    ready: false,
+    sim: null,
+    remote: null,
+    mode: "edit",
+    debugReady: false,
+    debugStop: null,
+    debugFrameId: null,
+  });
   setTimeout(() => client().send({ t: "ws.open", workspaceId: id }), 0);
 });
 
@@ -821,7 +831,11 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     sim.dispose();
     return;
   }
-  if (resume?.world) {
+  if (resume?.debug && resume.debugStart && sim.debug) {
+    sim.restoreDebugCheckpoint(
+      resume.debugStart as Parameters<Simulation["restoreDebugCheckpoint"]>[0],
+    );
+  } else if (resume?.world) {
     sim.restore(
       resume.world as Parameters<Simulation["restore"]>[0],
       resume.names,
@@ -839,6 +853,7 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     debugStop: null,
   });
   log(resume ? "前のホストの状態から再生を続けます" : "Play を開始しました");
+  if (resume?.debug && sim.debug) sim.debug.holdAfterHandoff();
   sendFrame();
 }
 
@@ -875,6 +890,7 @@ export function sendFrame(): void {
         names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
         status: sim.systemStatus(),
         debug: s.debugStop,
+        debugStart: s.debugStop && sim.debug ? sim.debugCheckpoint() : null,
         bags: sim.bagsSnapshot(),
         partEntities: sim.partEntitiesSnapshot(),
       }
