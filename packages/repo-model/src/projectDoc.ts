@@ -188,12 +188,12 @@ function readOverrides(map: OverrideStore): Record<string, PrefabEntityOverride>
 }
 
 /** 定義の保存形はそのまま、共同編集では名前・System・維持などを別々のキーにする。 */
-class PrefabMap {
-  constructor(private readonly map: Y.Map<Y.Map<unknown> | PrefabDef>) {}
+class DefinitionMap<T extends { id: string }> {
+  constructor(private readonly map: Y.Map<Y.Map<unknown> | T>) {}
 
-  get(id: string): PrefabDef | undefined {
+  get(id: string): T | undefined {
     const value = this.map.get(id);
-    return value instanceof Y.Map ? clone(value.toJSON() as PrefabDef) : value && clone(value);
+    return value instanceof Y.Map ? clone(value.toJSON() as T) : value && clone(value);
   }
   has(id: string): boolean {
     return this.map.has(id);
@@ -204,13 +204,13 @@ class PrefabMap {
   clear(): void {
     this.map.clear();
   }
-  *values(): IterableIterator<PrefabDef> {
+  *values(): IterableIterator<T> {
     for (const id of this.map.keys()) {
       const value = this.get(id);
       if (value) yield value;
     }
   }
-  set(id: string, def: PrefabDef): void {
+  set(id: string, def: T): void {
     const write = () => {
       const stored = this.map.get(id);
       let node: Y.Map<unknown>;
@@ -298,13 +298,13 @@ export class ProjectDoc {
     return this.doc.getMap<PackageDependency>("dependencies");
   }
   private get outputMap() {
-    return this.doc.getMap<OutputDef>("outputs");
+    return new DefinitionMap(this.doc.getMap<Y.Map<unknown> | OutputDef>("outputs"));
   }
   private get entityMap() {
     return this.doc.getMap<Y.Map<unknown>>("entities");
   }
   private get prefabMap() {
-    return new PrefabMap(this.doc.getMap<Y.Map<unknown> | PrefabDef>("prefabs"));
+    return new DefinitionMap(this.doc.getMap<Y.Map<unknown> | PrefabDef>("prefabs"));
   }
   /** プレハブの中の Entity（ADR 0076）。アウトプットの Entity とは別に持つ */
   private get prefabEntityMap() {

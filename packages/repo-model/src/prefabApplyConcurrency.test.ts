@@ -88,3 +88,42 @@ it("System の適用とプレハブの名前変更が同時でも両方を保つ
   expect(doc.snapshot()).toEqual(remote.snapshot());
   expect(doc.prefab(inner)).toMatchObject({ name: "renamed", systems: [{ id: s, enabled: true }] });
 });
+
+it("維持の移動とアウトプット名の変更が同時でも両方を保つ", () => {
+  const { doc, koko, innerRoot, source } = setup();
+  doc.addState(innerRoot, koko);
+  const output = doc.output("out_main");
+  if (!output) throw new Error("output");
+  doc.updateOutput({ ...output, keep: [{ entity: source, koko, field: "x" }] });
+  const remote = new ProjectDoc();
+  Y.applyUpdate(remote.doc, Y.encodeStateAsUpdate(doc.doc));
+  const before = Y.encodeStateVector(doc.doc);
+  doc.applyPrefabInstance(source);
+  remote.updateOutput({ ...output, name: "renamed" });
+  const a = Y.encodeStateAsUpdate(doc.doc, before),
+    b = Y.encodeStateAsUpdate(remote.doc, before);
+  Y.applyUpdate(doc.doc, b);
+  Y.applyUpdate(remote.doc, a);
+  expect(doc.snapshot()).toEqual(remote.snapshot());
+  expect(doc.output("out_main")).toMatchObject({ name: "renamed", keep: [] });
+});
+
+it("アウトプットの System と維持の印を同時に変えても両方を保つ", () => {
+  const { doc, koko, source } = setup();
+  const output = doc.output("out_main");
+  if (!output) throw new Error("output");
+  const remote = new ProjectDoc();
+  Y.applyUpdate(remote.doc, Y.encodeStateAsUpdate(doc.doc));
+  const before = Y.encodeStateVector(doc.doc);
+  doc.updateOutput({ ...output, systems: [{ id: "system", enabled: true }] });
+  remote.updateOutput({ ...output, keep: [{ entity: source, koko, field: "x" }] });
+  const a = Y.encodeStateAsUpdate(doc.doc, before),
+    b = Y.encodeStateAsUpdate(remote.doc, before);
+  Y.applyUpdate(doc.doc, b);
+  Y.applyUpdate(remote.doc, a);
+  expect(doc.snapshot()).toEqual(remote.snapshot());
+  expect(doc.output("out_main")).toMatchObject({
+    systems: [{ id: "system", enabled: true }],
+    keep: [{ entity: source, koko, field: "x" }],
+  });
+});
