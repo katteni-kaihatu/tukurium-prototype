@@ -12,8 +12,10 @@ type Listener = (msg: ServerMessage) => void;
 
 /**
  * サーバーとの接続（アプリ全体で 1 つ）。
- * - 本人はログインの Cookie で決まる（ADR 0074）。ログインを確かめてから start で接続を始める。
- * - 切れたら少しずつ間隔を空けて再接続する。ログインが切れていたら（auth.required）つなぎ直さない。
+ * - 本人はログインの Cookie で決まる（ADR 0074）。接続は読み込んだらすぐ始める（store.ts）。
+ *   ログインしていなければサーバーが auth.required を返して閉じるので、つなぎ直さない。
+ *   画面の準備（3D）が重いと、あとから接続を始めても、つながった知らせを処理するのが遅れる
+ * - 切れたら少しずつ間隔を空けて再接続する。
  * - 受け取ったメッセージは購読者に配る。接続し直したときは onReconnect で状態を取り直す。
  */
 export class ServerClient {
@@ -28,7 +30,11 @@ export class ServerClient {
   private readonly statusListeners = new Set<(s: ConnectionStatus) => void>();
   private readonly welcomeListeners = new Set<() => void>();
   private started = false;
-  /** ログインが切れたとき（ほかのタブでログアウトした・期限が切れた） */
+  private welcomedOnce = false;
+  /**
+   * 入っていたのにログインが切れたとき（ほかのタブでログアウトした・期限が切れた）。
+   * 最初からログインしていないときは呼ばない（ログインの画面が出ている）
+   */
   onLoggedOut: () => void = () => location.reload();
 
   constructor(private readonly url = defaultUrl()) {}
@@ -100,10 +106,11 @@ export class ServerClient {
       if (msg.t === "session.closed") this.joinedSessionId = null;
       if (msg.t === "auth.required") {
         this.close();
-        this.onLoggedOut();
+        if (this.welcomedOnce) this.onLoggedOut();
         return;
       }
       if (msg.t === "welcome") {
+        this.welcomedOnce = true;
         this.me = msg.you;
         this.setStatus("online");
         for (const fn of this.welcomeListeners) fn();

@@ -1832,9 +1832,9 @@ describe("マーケット", () => {
     const author = await store.createUser("売る人");
     const buyer = await store.createUser("買う人");
     const poor = await store.createUser("お金のない人");
-    const A = api(app, author.token);
-    const B = api(app, buyer.token);
-    const C = api(app, poor.token);
+    const A = api(app, await sessionFor(store, author.id));
+    const B = api(app, await sessionFor(store, buyer.id));
+    const C = api(app, await sessionFor(store, poor.id));
     expect((await B.get("/api/me/wallet")).json()).toEqual({ balance: 1000 });
     const repo = (
       await A.post("/api/repos", { name: "売る銃", kind: "item", template: "gun" })
@@ -1909,7 +1909,7 @@ describe("マーケット", () => {
     expect(mine.sales).toEqual([
       expect.objectContaining({ workId: work.id, workName: "銃", price: 300, earned: 270 }),
     ]);
-    expect(JSON.stringify(mine)).not.toContain(buyer.user.id);
+    expect(JSON.stringify(mine)).not.toContain(buyer.id);
 
     // 取り消すとマーケットから消えるが、持っている人はそのまま
     expect((await A.delete(`/api/market/listings/${work.id}`)).statusCode).toBe(200);

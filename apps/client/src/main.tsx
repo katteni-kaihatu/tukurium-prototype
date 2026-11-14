@@ -16,7 +16,6 @@ function Root() {
         if (next.user) {
           // 名前は接続より先に入れておく（セッション名の初期値などに使う）
           useApp.setState({ me: next.user, myName: next.user.name });
-          useApp.getState().client.start();
         }
         setAuth(next);
       })
@@ -25,7 +24,8 @@ function Root() {
   useEffect(check, [check]);
   if (error) return <p style={{ padding: 24 }}>{error}</p>;
   if (!auth) return null;
-  if (!auth.user) return <LoginPage auth={auth} onLoggedIn={check} />;
+  // 入ったら読み込み直す（ログインしていない間の接続は、サーバーが閉じている）
+  if (!auth.user) return <LoginPage auth={auth} onLoggedIn={() => location.reload()} />;
   return <App />;
 }
 

@@ -56,7 +56,7 @@ export class PostgresStore implements Store {
     const [current] = await this.sql<{ version: number }[]>`select version from tukurium_schema`;
     if (current?.version !== SCHEMA_VERSION) {
       await this.sql.begin(async (tx) => {
-        for (const table of TABLES) await tx`drop table if exists ${tx(table)}`;
+        for (const table of TABLES) await tx`drop table if exists ${tx(table)} cascade`;
         await tx`delete from tukurium_schema`;
         await tx`insert into tukurium_schema (version) values (${SCHEMA_VERSION})`;
       });

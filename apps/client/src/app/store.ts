@@ -29,8 +29,9 @@ interface AppState {
   setName(name: string): void;
 }
 
-// 接続はログインを確かめてから始める（main.tsx。ADR 0074）
+// 接続は読み込んだらすぐ始める。ログインしていなければサーバーが断る（ADR 0074）
 const client = new ServerClient();
+client.start();
 
 export const useApp = create<AppState>((set) => ({
   client,

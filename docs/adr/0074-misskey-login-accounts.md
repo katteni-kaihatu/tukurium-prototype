@@ -39,7 +39,8 @@ Tonarium の `server/auth.ts` と同じ考え方で、確認コードとゲス�
 
 - Cookie は `tukurium_session`（HttpOnly・SameSite=Lax、HTTPS なら Secure）。中身は乱数で、DB（`auth_sessions`）にはハッシュだけを残す。期限は 90 日で、残りが 30 日を切ると使ったときに延ばす。Cookie 自体はブラウザの上限（400 日）まで持たせ、期限はサーバーで決める。期限切れは 1 時間ごとに消す。
 - 本人は、HTTP ではリクエストの Cookie、WebSocket（`/ws`）ではつないだときの Cookie で決める。画面から名乗った名前や ID は信じない。`hello` は版だけを送る（名前はエージェントの内部の接続だけが使う）。ログインしていない接続には `auth.required` を返して閉じ、画面は読み込み直してログインの画面に戻る。通信の版（`PROTOCOL_VERSION`）を 13 に上げた。
-- 本人の決まった接続でも、一斉の知らせ（セッション一覧など）は `hello` を受けて `welcome` を返したあとから送る。先に届くと、画面が「接続しています…」のまま止まることがあった。
+- 本人の決まった接続でも、一斉の知らせ（セッション一覧など）は `hello` を受けて `welcome` を返したあとから送る（`welcome` が最初に届くように）。
+- 画面は、読み込んだらすぐ接続を始め（これまでと同じ順序）、並行して `/api/auth/me` でログインを確かめる。ログインを確かめるのを待ってから接続すると、画面の準備（3D）と重なって `hello` を送るのが遅れやすい。ログインしていなければ、サーバーが `auth.required` で閉じ、ログインの画面を出す。入ったら読み込み直す。
 - ログアウトは、そのセッションを消し、そのセッションでつないでいた接続をすべて閉じる。
 - ほかのサイトに Cookie を使わせない：GET 以外の `/api` は、同じオリジンからの fetch（`Origin` が自分のオリジン）だけ受ける。WebSocket も、`Origin` が付いていて自分のオリジンと違えば、ログインしていないものとして扱う。素材の URL に付けていたトークン（`?t=`）はやめ、Cookie で見分ける。
 - 自分のオリジンは `X-Forwarded-Proto`・`X-Forwarded-Host`（前段のリバースプロキシが付ける）と `Host` から決める。開発サーバーの Vite の中継は、`Host` を書き換えないように設定する（`changeOrigin` にしない）。
@@ -58,7 +59,7 @@ Tonarium の `server/auth.ts` と同じ考え方で、確認コードとゲス�
 ## 結果
 
 - サーバー：`apps/server/src/auth/auth.ts`（ログイン・セッション・同じオリジンの確認）、Store に `loginUser`・`createAuthSession` などを足し、`users` に `login_key`・`account`・`avatar_url` を持たせた。`userByToken` はなくした。
-- 画面：`apps/client/src/main.tsx` がログインを確かめてから接続を始める。ログインの画面（`auth/LoginPage.tsx`）、アカウントのウィンドウ（`main-menu/AccountPanel.tsx`。グローバルメニューの歯車から開く）、顔の丸（`app/AvatarFace.tsx`）。
+- 画面：`apps/client/src/main.tsx` がログインを確かめ、ログインしていなければログインの画面だけを出す。ログインの画面（`auth/LoginPage.tsx`）、アカウントのウィンドウ（`main-menu/AccountPanel.tsx`。グローバルメニューの歯車から開く）、顔の丸（`app/AvatarFace.tsx`）。
 - 通信：`UserInfo` に `account`（`@ユーザー名@ホスト`）と `avatarUrl` を足した。
 - テスト：`apps/server/src/auth/auth.test.ts` が偽の Misskey を立てて、許可・別のブラウザ・一度だけ・ログアウト・ほかのサイトを確かめる。
 
