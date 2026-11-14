@@ -122,6 +122,11 @@ export interface ExpandOptions {
   kokostates?: readonly KokoStateDef[];
   /** 展開の結果を取っておく入れ物。同じものを渡すと、変わっていないプレハブは作り直さない */
   cache?: PrefabExpansionCache;
+  /**
+   * 確かめ用：近道をせず、展開した Entity をすべてたどって、親と System を決める。
+   * 結果は、近道をしたときと同じになる（テストが、二つを比べる）。
+   */
+  thorough?: boolean;
 }
 
 /** テンプレートの中の Entity の参照に付ける印（展開のときに、インスタンスの ID に付け替える） */
@@ -159,6 +164,42 @@ interface Template {
   keep: KeepMark[];
   /** 消えた親から、さらに親へたどるための道（ID は rel） */
   deletedParents: Record<string, string | null>;
+  /** rel → entities の中の場所 */
+  index: Map<string, number>;
+  /** 親の、entities の中の場所（いちばん上と、親が見つからないものは -1） */
+  up: number[];
+  /**
+   * どの Entity も、親をたどると、輪を作らずにいちばん上へ届く（rel も重ならない）。
+   * 届かないのは、壊れたデータ。そのときは、展開のたびにすべての Entity をたどって直す
+   */
+  sound: boolean;
+}
+
+/** プレハブを開いた形の、親子のつながり（展開のたびに、すべての Entity をたどらずに済ませるために覚えておく） */
+function templateShape(
+  entities: readonly TemplateEntity[],
+): Pick<Template, "index" | "up" | "sound"> {
+  const index = new Map<string, number>();
+  for (let i = 0; i < entities.length; i++) index.set(entities[i]?.rel ?? "", i);
+  const up = entities.map((t, i) =>
+    i === 0 || t.parent === null ? -1 : (index.get(t.parent) ?? -1),
+  );
+  let sound = index.size === entities.length && entities[0]?.rel === "";
+  // 0：まだ見ていない、1：たどっている途中、2：いちばん上へ届く
+  const state = new Uint8Array(entities.length);
+  state[0] = 2;
+  for (let i = 1; sound && i < entities.length; i++) {
+    const path: number[] = [];
+    let at = i;
+    while (at >= 0 && state[at] === 0) {
+      state[at] = 1;
+      path.push(at);
+      at = up[at] ?? -1;
+    }
+    if (at < 0 || state[at] === 1) sound = false;
+    for (const p of path) state[p] = 2;
+  }
+  return { index, up, sound };
 }
 
 function mergeStateFields(
@@ -198,7 +239,27 @@ interface Stamp {
   key: string;
   template: Template;
   entities: ExpandedEntity[];
+  /** 親を、インスタンスで付け替えた Entity（entities の中の場所。いちばん上は含めない） */
+  moved: ReadonlySet<number>;
 }
+
+/** 展開の途中で使う、アウトプットに置いたインスタンス */
+interface Placed {
+  instance: EntityDef;
+  template: Template;
+  moved: ReadonlySet<number>;
+  /** いちばん上の Entity の、展開した並びの中の場所（中の Entity は、プレハブを開いた形の順に続く） */
+  at: number;
+}
+
+/** System を足す Entity（アウトプットのふつうの Entity か、インスタンスのいちばん上） */
+interface SystemGiver {
+  at: number;
+  entity: EntityDef;
+  template: Template | null;
+}
+
+const NONE_MOVED: ReadonlySet<number> = new Set();
 
 /**
  * 展開の結果を取っておく入れ物。プレハブごとに、入れ子まで開いた形を覚えておき、
@@ -499,12 +560,19 @@ class Expander {
     }
 
     for (const t of entities) freeze(t.states);
-    return { template: { entities, systems, keep, deletedParents }, cyclic };
+    return {
+      template: { entities, systems, keep, deletedParents, ...templateShape(entities) },
+      cyclic,
+    };
   }
 
   /** インスタンスを、テンプレートから展開する */
-  private stamp(instance: EntityDef, template: Template): ExpandedEntity[] {
+  private stamp(
+    instance: EntityDef,
+    template: Template,
+  ): { entities: ExpandedEntity[]; moved: ReadonlySet<number> } {
     const out: ExpandedEntity[] = [];
+    let moved: Set<number> | undefined;
     const replace = (id: string) =>
       id.startsWith(MARK) ? join(instance.id, id.slice(MARK.length)) : undefined;
     for (const t of template.entities) {
@@ -525,6 +593,10 @@ class Expander {
         states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
         out.push({ ...rest, states, origin });
       } else {
+        if (patch?.parent !== undefined) {
+          moved ??= new Set();
+          moved.add(out.length);
+        }
         out.push({
           id: join(instance.id, t.rel),
           name: patch?.name ?? t.name,
@@ -539,10 +611,17 @@ class Expander {
         });
       }
     }
-    return out;
+    return { entities: out, moved: moved ?? NONE_MOVED };
   }
 
-  /** stack は、いま開いている途中のプレハブ（プレハブを編集用に開くときの、そのプレハブ） */
+  /**
+   * stack は、いま開いている途中のプレハブ（プレハブを編集用に開くときの、そのプレハブ）。
+   *
+   * 親の付け替え・親子の輪の確かめ・System を集める所は、展開した Entity すべてをたどらずに済ませる（近道）。
+   * インスタンスの中の Entity は、親を付け替えていなければ、プレハブを開いた形のとおりにいちばん上へ届く。
+   * だから、確かめるのは、制作データにある Entity（ふつうの Entity と、インスタンスのいちばん上）と、
+   * インスタンスで親を付け替えた Entity だけでよい。壊れたデータ（ID の重なり・親子の輪）のときだけ、すべてをたどる。
+   */
   run(
     stack: readonly string[] = [],
     ownerParents: Readonly<Record<string, string | null>> = {},
@@ -557,18 +636,49 @@ class Expander {
 
     const entities: ExpandedEntity[] = [];
     /** アウトプット → その中のインスタンス（制作データの並び） */
-    const used = new Map<string, { instance: EntityDef; template: Template }[]>();
+    const used = new Map<string, Placed[]>();
     // 取っておく入れ物を渡されたときだけ、インスタンスごとの結果も取っておく
     const stamps = this.options.cache ? new Map<EntityId, Stamp>() : null;
+    /** 制作データの Entity の ID → 展開した並びの中の場所（インスタンスは、いちばん上の Entity の場所） */
+    const own = new Map<EntityId, number>();
+    const placed = new Map<EntityId, Placed>();
+    /** 親を確かめる Entity の場所：親のある制作データの Entity と、インスタンスで親を付け替えた Entity */
+    const outer: number[] = [];
+    /** アウトプット → System を足す Entity */
+    const givers = new Map<string, SystemGiver[]>();
+    /** 展開した ID と重なるかもしれない ID（区切りを含む ID） */
+    const slashed: string[] = [];
+    /** 近道をしてよいか */
+    let sound = !this.options.thorough;
+    /** この展開で開いたプレハブ（同じプレハブを、インスタンスごとに調べ直さない） */
+    const templates = new Map<string, Template | null>();
     for (const e of snap.entities) {
       // 開いている途中のプレハブを含むインスタンス（輪）は、展開しない
-      const template =
-        e.instanceOf && !stack.includes(e.instanceOf.prefab)
-          ? this.template(e.instanceOf.prefab, stack, new Map()).template
-          : null;
+      let template: Template | null = null;
+      if (e.instanceOf && !stack.includes(e.instanceOf.prefab)) {
+        const had = templates.get(e.instanceOf.prefab);
+        if (had !== undefined) template = had;
+        else {
+          const got = this.template(e.instanceOf.prefab, stack, new Map());
+          template = got.template;
+          // 輪を避けて作ったものは、開くたびに作り直す（取っておかない）
+          if (!got.cyclic) templates.set(e.instanceOf.prefab, template);
+        }
+      }
+      const at = entities.length;
+      if (own.has(e.id) || e.id === "") sound = false;
+      own.set(e.id, at);
+      if (e.id.includes(EXPANDED_ID_SEPARATOR)) slashed.push(e.id);
+      if (e.parent !== null) outer.push(at);
+      if (e.unpackedSystems?.length || e.instanceSystems?.length || template?.systems.length) {
+        const giver = { at, entity: e, template };
+        const list = givers.get(e.output);
+        if (list) list.push(giver);
+        else givers.set(e.output, [giver]);
+      }
       if (!e.instanceOf || !template) {
         // プレハブがないインスタンスは、そのまま残す（問題として出す）
-        if (e.instanceOf) entities.push(e);
+        if (e.instanceOf || !("unpackedSystems" in e || "instanceSystems" in e)) entities.push(e);
         else {
           const { unpackedSystems: _unpacked, instanceSystems: _systems, ...rest } = e;
           entities.push(rest);
@@ -577,83 +687,227 @@ class Expander {
       }
       const key = stamps ? stringifyValue(e) : "";
       const had = stamps ? this.cache.stamps.get(e.id) : undefined;
-      let stamped = had?.entities;
-      if (!had || !stamped || had.key !== key || had.template !== template) {
+      let stamped: Pick<Stamp, "entities" | "moved">;
+      if (had && had.key === key && had.template === template) stamped = had;
+      else {
         stamped = this.stamp(e, template);
         this.cache.stamped++;
       }
-      stamps?.set(e.id, { key, template, entities: stamped });
-      for (const x of stamped) entities.push(x);
+      stamps?.set(e.id, { key, template, entities: stamped.entities, moved: stamped.moved });
+      for (const x of stamped.entities) entities.push(x);
+      for (const k of stamped.moved) outer.push(at + k);
+      if (!template.sound) sound = false;
+      const item: Placed = { instance: e, template, moved: stamped.moved, at };
+      placed.set(e.id, item);
       const list = used.get(e.output);
-      if (list) list.push({ instance: e, template });
-      else used.set(e.output, [{ instance: e, template }]);
+      if (list) list.push(item);
+      else used.set(e.output, [item]);
     }
 
-    // プレハブで消えた親を指す追加 Entity と、親の上書きは、残っている最も近い祖先へ付ける。
-    const parents = new Map<string, string | null>(Object.entries(ownerParents));
-    for (const list of used.values())
-      for (const { instance, template } of list) {
-        for (const [id, parent] of Object.entries(template.deletedParents))
-          parents.set(
-            join(instance.id, id),
-            parent === null ? instance.id : join(instance.id, parent),
-          );
+    /** 展開した ID を、インスタンスと、プレハブを開いた形の中の場所に分ける（いちばん上は、own で引く） */
+    const inside = (id: string): { item: Placed; k: number } | undefined => {
+      for (
+        let cut = id.indexOf(EXPANDED_ID_SEPARATOR);
+        cut >= 0;
+        cut = id.indexOf(EXPANDED_ID_SEPARATOR, cut + 1)
+      ) {
+        const item = placed.get(id.slice(0, cut));
+        const k = item?.template.index.get(id.slice(cut + 1));
+        if (item && k) return { item, k };
       }
-    const present = new Map(entities.map((e) => [e.id, e]));
-    for (let i = 0; i < entities.length; i++) {
+      return undefined;
+    };
+    /** その ID の Entity の、展開した並びの中の場所（なければ -1）。近道のときだけ使う */
+    const find = (id: string): number => {
+      const at = own.get(id);
+      if (at !== undefined) return at;
+      const hit = inside(id);
+      return hit ? hit.item.at + hit.k : -1;
+    };
+    // 制作データの Entity が、展開した Entity と同じ ID を持っていたら、近道をしない
+    if (sound) sound = !slashed.some((id) => inside(id));
+
+    // プレハブで消えた親を指す追加 Entity と、親の上書きは、残っている最も近い祖先へ付ける。
+    let parents: Map<string, string | null> | undefined;
+    /** 消えた親 → その親（要るときに、初めて作る） */
+    const deleted = (): Map<string, string | null> => {
+      if (parents) return parents;
+      parents = new Map<string, string | null>(Object.entries(ownerParents));
+      for (const list of used.values())
+        for (const { instance, template } of list) {
+          for (const [id, parent] of Object.entries(template.deletedParents))
+            parents.set(
+              join(instance.id, id),
+              parent === null ? instance.id : join(instance.id, parent),
+            );
+        }
+      return parents;
+    };
+    const reattach = (i: number, has: (id: string) => boolean): void => {
       const e = entities[i];
-      if (!e || e.parent === null) continue;
+      if (!e || e.parent === null || has(e.parent)) return;
       let parent = e.parent;
       const seen = new Set<string>([e.id]);
-      while (!present.has(parent) && !seen.has(parent)) {
-        const next = deletedParentOf(parent, parents);
+      while (!has(parent) && !seen.has(parent)) {
+        const next = deletedParentOf(parent, deleted());
         if (next === undefined) break;
         seen.add(parent);
         parent = next ?? "";
       }
-      if (parent && parent !== e.parent) {
-        const next = { ...e, parent };
-        entities[i] = next;
-        present.set(e.id, next);
-      }
-    }
-    // 壊れた・同時編集されたデータでも親子の輪を表示側へ渡さない。
-    for (let i = 0; i < entities.length; i++) {
-      const e = entities[i];
-      if (!e) continue;
-      const seen = new Set<string>([e.id]);
-      let parent = e.parent;
-      while (parent !== null) {
-        if (seen.has(parent)) {
-          const root = e.origin?.instance;
-          const next = { ...e, parent: root && root !== e.id && !seen.has(root) ? root : null };
-          entities[i] = next;
-          present.set(e.id, next);
-          break;
-        }
-        seen.add(parent);
-        parent = present.get(parent)?.parent ?? null;
+      if (parent && parent !== e.parent) entities[i] = { ...e, parent };
+    };
+    /** すべての Entity（すべてをたどるときだけ作る） */
+    let present: Map<string, ExpandedEntity> | undefined;
+    if (sound) for (const i of outer) reattach(i, (id) => find(id) >= 0);
+    else {
+      const all = new Map(entities.map((e) => [e.id, e]));
+      present = all;
+      for (let i = 0; i < entities.length; i++) {
+        const before = entities[i];
+        reattach(i, (id) => all.has(id));
+        const after = entities[i];
+        if (after && after !== before) all.set(after.id, after);
       }
     }
 
+    // 壊れた・同時編集されたデータでも親子の輪を表示側へ渡さない。
+    if (sound) {
+      /** 親をたどって、次に確かめる Entity の場所（なければ -1） */
+      const above = (i: number): number => {
+        const parent = entities[i]?.parent;
+        if (parent === null || parent === undefined) return -1;
+        const at = own.get(parent);
+        if (at !== undefined) return at;
+        const hit = inside(parent);
+        if (!hit) return -1;
+        // インスタンスの中は、親を付け替えた Entity か、いちばん上に着くまで、プレハブを開いた形をたどる
+        let k = hit.k;
+        while (k > 0 && !hit.item.moved.has(k)) k = hit.item.template.up[k] ?? 0;
+        return hit.item.at + k;
+      };
+      // 0：まだ見ていない、1：たどっている途中、2：輪に入らない
+      const state = new Uint8Array(entities.length);
+      for (const start of outer) {
+        const path: number[] = [];
+        let at = start;
+        while (at >= 0 && state[at] === 0) {
+          state[at] = 1;
+          path.push(at);
+          at = above(at);
+        }
+        if (at >= 0 && state[at] === 1) {
+          sound = false;
+          break;
+        }
+        for (const p of path) state[p] = 2;
+      }
+    }
+    if (!sound) {
+      const all = present ?? new Map(entities.map((e) => [e.id, e]));
+      for (let i = 0; i < entities.length; i++) {
+        const e = entities[i];
+        if (!e) continue;
+        const seen = new Set<string>([e.id]);
+        let parent = e.parent;
+        while (parent !== null) {
+          if (seen.has(parent)) {
+            const root = e.origin?.instance;
+            const next = { ...e, parent: root && root !== e.id && !seen.has(root) ? root : null };
+            entities[i] = next;
+            all.set(e.id, next);
+            break;
+          }
+          seen.add(parent);
+          parent = all.get(parent)?.parent ?? null;
+        }
+      }
+    }
+
+    /**
+     * プレハブと Entity から足す System を、Hierarchy の順に集める。解除したプレハブ本体は子より前、
+     * 元の追加分は子よりあとに置く。
+     */
+    const extraSystems = (output: string): OutputSystem[] => {
+      const extra: OutputSystem[] = [];
+      const list = givers.get(output);
+      if (!list) return extra;
+      if (!sound) {
+        const source = new Map(
+          snap.entities.filter((e) => e.output === output).map((e) => [e.id, e]),
+        );
+        const opened = new Map(
+          (used.get(output) ?? []).map(({ instance, template }) => [instance.id, template]),
+        );
+        walkHierarchy(
+          entities.filter((e) => e.output === output),
+          (id) => {
+            const e = source.get(id);
+            if (!e) return;
+            mergeSystems(extra, e.unpackedSystems ?? []);
+            mergeSystems(extra, opened.get(id)?.systems ?? []);
+          },
+          (id) => mergeSystems(extra, source.get(id)?.instanceSystems ?? []),
+        );
+        return extra;
+      }
+      // 近道：System を足す Entity と、その親たちだけの木を作って、Hierarchy の順にたどる
+      interface Node {
+        at: number;
+        giver?: SystemGiver;
+        kids: Node[];
+      }
+      const nodes = new Map<number, Node>();
+      const tops: Node[] = [];
+      for (const giver of list) {
+        const had = nodes.get(giver.at);
+        if (had) {
+          had.giver = giver;
+          continue;
+        }
+        let node: Node = { at: giver.at, giver, kids: [] };
+        nodes.set(node.at, node);
+        for (;;) {
+          const parent = entities[node.at]?.parent;
+          const up = parent === null || parent === undefined ? -1 : find(parent);
+          // 親が見つからない・別のアウトプットにあるものは、いちばん上に並ぶ
+          if (up < 0 || entities[up]?.output !== output) {
+            tops.push(node);
+            break;
+          }
+          const above = nodes.get(up);
+          if (above) {
+            above.kids.push(node);
+            break;
+          }
+          node = { at: up, kids: [node] };
+          nodes.set(up, node);
+        }
+      }
+      const orderOf = (n: Node) => entities[n.at]?.order ?? 0;
+      const idOf = (n: Node) => entities[n.at]?.id ?? "";
+      const walk = (kids: Node[]) => {
+        kids.sort(
+          (a, b) => orderOf(a) - orderOf(b) || (idOf(a) < idOf(b) ? -1 : idOf(a) > idOf(b) ? 1 : 0),
+        );
+        for (const n of kids) {
+          if (n.giver) {
+            mergeSystems(extra, n.giver.entity.unpackedSystems ?? []);
+            mergeSystems(extra, n.giver.template?.systems ?? []);
+          }
+          walk(n.kids);
+          if (n.giver) mergeSystems(extra, n.giver.entity.instanceSystems ?? []);
+        }
+      };
+      walk(tops);
+      return extra;
+    };
+
     const outputs = snap.outputs.map((o) => {
       const list = used.get(o.id) ?? [];
-      const source = new Map(snap.entities.filter((e) => e.output === o.id).map((e) => [e.id, e]));
-      const templates = new Map(list.map(({ instance, template }) => [instance.id, template]));
-      // アウトプットのものが先。解除したプレハブ本体は子より前、元の追加分は子よりあとに置く。
-      const extra: OutputSystem[] = [];
-      walkHierarchy(
-        entities.filter((e) => e.output === o.id),
-        (id) => {
-          const e = source.get(id);
-          if (!e) return;
-          mergeSystems(extra, e.unpackedSystems ?? []);
-          mergeSystems(extra, templates.get(id)?.systems ?? []);
-        },
-        (id) => mergeSystems(extra, source.get(id)?.instanceSystems ?? []),
-      );
-      const own = new Set(o.systems.map((s) => s.id));
-      const systems = [...o.systems, ...extra.filter((s) => !own.has(s.id))];
+      // アウトプットのものが先
+      const extra = extraSystems(o.id);
+      const mine = new Set(o.systems.map((s) => s.id));
+      const systems = [...o.systems, ...extra.filter((s) => !mine.has(s.id))];
       // 「維持」の印：プレハブの中で付けたものを、展開した Entity の ID にして足す
       const keep = [...o.keep];
       const seen = new Set(keep.map(keepKey));
