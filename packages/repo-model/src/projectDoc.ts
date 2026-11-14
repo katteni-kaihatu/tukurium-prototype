@@ -1056,6 +1056,8 @@ export class ProjectDoc {
     const target = this.overrideTarget(id);
     if (target) {
       if (Object.hasOwn(target.entity.states, koko)) return;
+      // プレハブ側で外した KokoState への上書きが残っていたら、消す（足した KokoState に、古い値を重ねない）
+      this.deleteOverrides(target, (parts) => parts[1] === "states" && parts[2] === koko);
       const value = this.registry().createValues(koko, values);
       if (target.path === "") this.statesOf(id).set(koko, valueMap(value));
       else {
@@ -1243,13 +1245,22 @@ export class ProjectDoc {
     });
     return id;
   }
-  /** 名前を変える。インスタンスは ID で結び付いているので、切れない */
+  /**
+   * 名前を変える。インスタンスは ID で結び付いているので、切れない。
+   * いちばん上の Entity の名前が、変える前のプレハブの名前と同じなら、新しい名前に合わせる
+   * （作ってすぐ名前を付けたプレハブを開いたとき、Hierarchy に、作ったときの名前が残らないように）。
+   * いちばん上の Entity に別の名前を付けていたら、そのままにする。インスタンスの名前は、変えない。
+   */
   renamePrefab(id: string, name: string): void {
     const p = this.prefabMap.get(id);
     const next = name.trim();
     if (!p || !next || p.name === next) return;
     this.assertSiblingName(next, id);
-    this.prefabMap.set(id, { ...p, name: next });
+    this.transact(() => {
+      this.prefabMap.set(id, { ...p, name: next });
+      const root = this.prefabEntityMap.get(p.root);
+      if (root?.get("name") === p.name) root.set("name", next);
+    });
   }
   /** System の並び・「維持」の印・編集する場所を変える（ID と、いちばん上の Entity は変えられない） */
   updatePrefab(def: PrefabDef): void {

@@ -3,6 +3,7 @@
 // 3 段の入れ子（盤 → 列 → 駒）のプレハブを作り、盤のインスタンスを N 個置く。
 // 駒は、いちばん上の Entity と子が 3 つ（子の一つは、いちばん上を指す参照を持つ）。
 // 列は駒を 4 つ、盤は列を 4 つ持つので、インスタンス 1 個が 69 個の Entity になる。
+// rich で始まる値は、インスタンスごとに上書き・足した Entity があり、プレハブが System を持つ形のもの。
 import { FIELD_TYPE } from "@tukurium/eks";
 import {
   BUILTIN,
@@ -83,6 +84,34 @@ for (const n of [1, 10, 100, 300]) {
   const moved = structuredClone(snap);
   const first = moved.entities[0]?.states[BUILTIN.Transform];
   if (first) first.position = [1, 2, 3];
+  // 上書き・親の付け替え・足した Entity・プレハブの System のある形。
+  // インスタンスごとに、値を一つ変え、Entity を一つ足す。二つに一つは、中の Entity の親を付け替える
+  const rich = structuredClone(snap);
+  const head = rich.entities[0]?.id ?? "";
+  const inner = expandPrefabs(snap)
+    .entities.filter((e) => e.id.startsWith(`${head}/`))
+    .map((e) => e.id.slice(head.length + 1));
+  const deep = inner.filter((rel) => rel.split("/").length === 3);
+  for (const p of rich.prefabs ?? []) p.systems = [{ id: `sys_${p.name}`, enabled: true }];
+  for (const [i, e] of [...rich.entities].entries()) {
+    e.prefabOverrides = {
+      [deep[0] ?? ""]: { states: { [BUILTIN.Transform]: { position: [0, 9, 0] } } },
+      ...(i % 2 ? { [deep[1] ?? ""]: { parent: `${e.id}/${inner[0]}` } } : {}),
+    };
+    rich.entities.push({
+      id: `added${i}`,
+      output: OUT,
+      parent: `${e.id}/${deep[2]}`,
+      name: `足した${i}`,
+      order: 0,
+      states: { [BUILTIN.Transform]: { position: [0, 1, 0] } },
+    });
+  }
+  const richMoved = structuredClone(rich);
+  const richFirst = richMoved.entities[0]?.states[BUILTIN.Transform];
+  if (richFirst) richFirst.position = [1, 2, 3];
+  const richCache = new PrefabExpansionCache();
+  expandPrefabs(rich, { cache: richCache });
   let flip = false;
   console.log({
     instances: n,
@@ -102,6 +131,13 @@ for (const n of [1, 10, 100, 300]) {
     expandAfterEditMs: time(() => {
       flip = !flip;
       expandPrefabs(flip ? changed : snap, { cache });
+    }),
+    // 上書き・足した Entity のある形：初めの展開・何も変わっていない・インスタンスを一つ動かす
+    richColdMs: time(() => void expandPrefabs(rich)),
+    richCachedMs: time(() => void expandPrefabs(rich, { cache: richCache })),
+    richAfterMoveMs: time(() => {
+      flip = !flip;
+      expandPrefabs(flip ? richMoved : rich, { cache: richCache });
     }),
     // 展開して、表示用の World を組み立てる
     buildWorldMs: time(() => void buildWorld(snap, OUT, undefined, { cache }), 5),

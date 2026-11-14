@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { BUILTIN } from "./builtins";
 import { fromFiles, toFiles } from "./files";
-import { expandPrefabs, prefabProblems } from "./prefab";
+import {
+  expandPrefabs,
+  getPrefabOverride,
+  hasEffectivePrefabOverrides,
+  PrefabExpansionCache,
+  prefabProblems,
+} from "./prefab";
 import { ProjectDoc } from "./projectDoc";
 import { emptyProject } from "./samples";
 
@@ -689,5 +695,142 @@ describe("別のプレハブから使われている中身の ID を変える", 
       (e) => e.id === outputPath,
     );
     expect(shown?.states[koko]).toMatchObject({ hp: 80, max: 90 });
+  });
+});
+
+describe("プレハブ側で外した KokoState への上書き（ADR 0076 の 8）", () => {
+  it("外すと、そのインスタンスにも出ない。上書きは残り、付け直すと、変えた値がまた効く", () => {
+    const { doc, koko, schemas, root, a, instance, other, child, at } = setup();
+    doc.setField(child, koko, "hp", 8);
+    doc.setField(instance, koko, "hp", 7);
+    const cache = new PrefabExpansionCache();
+    expandPrefabs(doc.snapshot(), { schemas, cache });
+    doc.removeState(a, koko);
+    doc.removeState(root, koko);
+    // 変えたフィールドだけを持つ KokoState が、そのインスタンスにだけ残ったりしない
+    for (const id of [child, instance, `${other}/${a}`, other])
+      expect(at(id).states[koko], id).toBeUndefined();
+    expect(expandPrefabs(doc.snapshot(), { schemas, cache })).toStrictEqual(
+      expandPrefabs(doc.snapshot(), { schemas }),
+    );
+    // 上書きのデータは、消さずに残す
+    expect(doc.entity(instance)?.prefabOverrides).toEqual({
+      [a]: { states: { [koko]: { hp: 8 } } },
+      "": { states: { [koko]: { hp: 7 } } },
+    });
+    // 効いていない上書きは、変えた所に数えない
+    const snap = doc.snapshot();
+    const shown = new Map(expandPrefabs(snap, { schemas }).entities.map((e) => [e.id, e]));
+    expect(getPrefabOverride(snap, child, shown.get(child))).toBeUndefined();
+    expect(getPrefabOverride(snap, instance, shown.get(instance))).toBeUndefined();
+    const raw = doc.entity(instance);
+    if (!raw) throw new Error("インスタンスがありません");
+    expect(hasEffectivePrefabOverrides(raw, (id) => shown.get(id))).toBe(false);
+    // 効いていない上書きがあっても、その Entity には値を入れられない（KokoState を持っていない）
+    expect(() => doc.setField(child, koko, "max", 1)).toThrow();
+
+    // プレハブ側で付け直すと、変えた値がまた効く（ほかのインスタンスは、プレハブの値）
+    doc.addState(a, koko);
+    doc.addState(root, koko);
+    expect(at(child).states[koko]).toMatchObject({ hp: 8, max: 10 });
+    expect(at(instance).states[koko]).toMatchObject({ hp: 7, max: 10 });
+    expect(at(`${other}/${a}`).states[koko]).toMatchObject({ hp: 3, max: 10 });
+    const again = doc.snapshot();
+    const shownAgain = expandPrefabs(again, { schemas }).entities.find((e) => e.id === child);
+    expect(getPrefabOverride(again, child, shownAgain)?.states).toEqual({ [koko]: { hp: 8 } });
+    expect(expandPrefabs(again, { schemas, cache })).toStrictEqual(
+      expandPrefabs(again, { schemas }),
+    );
+  });
+
+  it("インスタンスで足した KokoState は、出たまま", () => {
+    const { doc, koko, a, instance, child, at } = setup();
+    // 中の Entity に足したもの・いちばん上に足したもの
+    doc.addState(child, BUILTIN.Mesh, { shape: "sphere" });
+    doc.addState(instance, BUILTIN.Collider, { shape: "box" });
+    doc.setField(child, koko, "hp", 8);
+    doc.removeState(a, koko);
+    expect(at(child).states[koko]).toBeUndefined();
+    expect(at(child).states[BUILTIN.Mesh]?.shape).toBe("sphere");
+    expect(at(instance).states[BUILTIN.Collider]?.shape).toBe("box");
+    // 足したあとでプレハブにも付き、値を変えてから、プレハブ側だけ外したもの：
+    // 手元の KokoState は残り、変えた値も効く
+    doc.addState(a, BUILTIN.Mesh, { shape: "box" });
+    doc.setField(child, BUILTIN.Mesh, "shape", "cylinder");
+    expect(doc.entity(instance)?.prefabOverrides?.[a]?.states?.[BUILTIN.Mesh]).toEqual({
+      shape: "cylinder",
+    });
+    doc.removeState(a, BUILTIN.Mesh);
+    expect(at(child).states[BUILTIN.Mesh]?.shape).toBe("cylinder");
+    const snap = doc.snapshot();
+    const shown = expandPrefabs(snap).entities.find((e) => e.id === child);
+    expect(getPrefabOverride(snap, child, shown)?.addedStates?.[BUILTIN.Mesh]).toBeDefined();
+  });
+
+  it("適用しても、外した KokoState はプレハブに書き戻らない。効いていない上書きは、インスタンスに残る", () => {
+    const { doc, koko, schemas, root, a, instance, child, at } = setup();
+    doc.setField(child, koko, "hp", 8);
+    doc.setField(instance, koko, "hp", 7);
+    doc.renameEntity(child, "変えた A");
+    doc.removeState(a, koko);
+    doc.removeState(root, koko);
+    // 効いていない上書きは、変更に数えない
+    const planned = doc.planApplyPrefabInstance(instance, { schemas });
+    if (!planned.ok) throw new Error(planned.reason);
+    expect(planned.plan.changes.map((c) => c.kind)).toEqual(["name"]);
+    doc.applyPrefabInstance(instance, { schemas });
+    expect(doc.prefabEntity(a)?.name).toBe("変えた A");
+    expect(doc.prefabEntity(a)?.states[koko]).toBeUndefined();
+    expect(doc.prefabEntity(root)?.states[koko]).toBeUndefined();
+    expect(at(child).states[koko]).toBeUndefined();
+    // 適用した分（名前）だけが消え、効いていない上書きは残る
+    expect(doc.entity(instance)?.prefabOverrides).toEqual({
+      [a]: { states: { [koko]: { hp: 8 } } },
+      "": { states: { [koko]: { hp: 7 } } },
+    });
+    expect(doc.planApplyPrefabInstance(instance, { schemas })).toMatchObject({
+      ok: true,
+      plan: { changes: [] },
+    });
+    // 付け直すと、残した値がまた効く
+    doc.addState(a, koko);
+    expect(at(child).states[koko]?.hp).toBe(8);
+  });
+
+  it("ふつうの Entity に戻すとき、効いていない上書きを実体にしない", () => {
+    const { doc, koko, schemas, a, instance, child } = setup();
+    doc.setField(child, koko, "hp", 8);
+    doc.renameEntity(child, "変えた A");
+    doc.removeState(a, koko);
+    const plan = doc.unpackPrefabInstance(instance, { schemas });
+    const made = doc.entity(plan.ids[a] as string);
+    expect(made?.name).toBe("変えた A");
+    expect(made?.states[koko]).toBeUndefined();
+  });
+
+  it("インスタンスで同じ KokoState を足し直すと、古い上書きを重ねない", () => {
+    const { doc, koko, a, instance, child, at } = setup();
+    doc.setField(child, koko, "hp", 8);
+    doc.removeState(a, koko);
+    doc.addState(child, koko);
+    expect(at(child).states[koko]).toMatchObject({ hp: 3, max: 10 });
+    expect(doc.entity(instance)?.prefabOverrides?.[a]?.states).toBeUndefined();
+    expect(doc.entity(instance)?.prefabOverrides?.[a]?.addedStates?.[koko]).toBeDefined();
+  });
+
+  it("プレハブの中に置いたインスタンス（入れ子）への上書きも、同じ扱い", () => {
+    const { doc, koko, schemas, prefab: inner, a: leaf } = setup();
+    const outer = doc.addPrefab("外側");
+    const nested = doc.addInstance({ ownerPrefab: outer, prefab: inner });
+    const placed = doc.addInstance({ output: OUT, prefab: outer, id: "placed" });
+    // 外側のプレハブが、中のインスタンスの値を変えている
+    doc.setField(`${nested}/${leaf}`, koko, "hp", 21);
+    const id = `${placed}/${nested}/${leaf}`;
+    const find = () => expandPrefabs(doc.snapshot(), { schemas }).entities.find((e) => e.id === id);
+    expect(find()?.states[koko]?.hp).toBe(21);
+    doc.removeState(leaf, koko);
+    expect(find()?.states[koko]).toBeUndefined();
+    doc.addState(leaf, koko);
+    expect(find()?.states[koko]).toMatchObject({ hp: 21, max: 10 });
   });
 });

@@ -213,6 +213,38 @@ describe("プレハブの差分と戻す（ADR 0076）", () => {
     expect(project.prefab(prefab)?.name).toBe("的");
   });
 
+  it("プレハブの名前を変えると、いちばん上の Entity の名前も合わせて変わり、差分は一行。戻すと、どちらも戻る", () => {
+    const { project, prefab, root, instance, diff, revert } = setup();
+    const placed = project.entity(instance)?.name;
+    project.renamePrefab(prefab, "まと");
+    expect(project.prefabEntity(root)?.name).toBe("まと");
+    // インスタンスの名前は、インスタンスのものなので、差分にも出ない
+    expect(project.entity(instance)?.name).toBe(placed);
+    expect(diff().map((e) => [e.id, e.name, e.kind, e.lines])).toEqual([
+      [
+        `prefab:${prefab}`,
+        "まと",
+        "modified",
+        [{ label: "名前", before: "的", after: "まと", part: "name" }],
+      ],
+    ]);
+    revert(`prefab:${prefab}`);
+    expect(project.prefab(prefab)?.name).toBe("的");
+    expect(project.prefabEntity(root)?.name).toBe("的");
+    expect(diff()).toEqual([]);
+    // いちばん上の Entity の名前だけを変えたときは、中の変化として出る。プレハブの名前を変えても、付いてこない
+    project.renameEntity(root, "台");
+    project.renamePrefab(prefab, "まと");
+    expect(project.prefabEntity(root)?.name).toBe("台");
+    expect(diff()[0]?.lines).toEqual([
+      { label: "名前", before: "的", after: "まと", part: "name" },
+      { label: "中の「台」", before: "変える前", after: "変えた所：名前" },
+    ]);
+    revert(`prefab:${prefab}`);
+    expect(project.prefabEntity(root)?.name).toBe("的");
+    expect(diff()).toEqual([]);
+  });
+
   it("消したプレハブは戻せる。足したプレハブは、戻すと消える", () => {
     const { project, prefab, root, core, instance, diff, revert } = setup();
     project.removePrefab(prefab);

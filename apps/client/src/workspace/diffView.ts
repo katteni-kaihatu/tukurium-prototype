@@ -416,7 +416,11 @@ function prefabEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
         continue;
       }
       const changed: string[] = [];
-      if (e.prev.name !== e.next.name) changed.push("名前");
+      // いちばん上の Entity の名前は、プレハブの名前に合わせて変わる（renamePrefab）。
+      // 合わせて変わった分は、上の「名前」の行に含め、別の行にしない
+      const followed =
+        e.id === next?.root && e.prev.name === prev?.name && e.next.name === next.name;
+      if (e.prev.name !== e.next.name && !followed) changed.push("名前");
       if (e.prev.parent !== e.next.parent) changed.push("親");
       if (e.prev.order !== e.next.order) changed.push("並び");
       if ((e.prev.instanceOf?.prefab ?? null) !== (e.next.instanceOf?.prefab ?? null))

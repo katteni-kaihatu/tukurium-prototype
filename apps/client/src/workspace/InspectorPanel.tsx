@@ -5,6 +5,7 @@ import {
   expandPrefabs,
   fromFiles,
   getPrefabOverride,
+  hasEffectivePrefabOverrides,
   isBuiltin,
   isInstanceRoot,
   type KeepMark,
@@ -364,6 +365,8 @@ function Hierarchy() {
     }
     return false;
   };
+  /** 展開した Entity（プレハブ側で外した KokoState への上書きを、変えた所に数えないために引く） */
+  const shownById = new Map(target.snapshot.entities.map((e) => [e.id, e]));
   // Edit：プレハブのインスタンスを、中身に展開した並び（ADR 0076）
   const nodes: TreeNode[] = rt
     ? rt.world.entityIds().map((id) => ({ id, name: rt.nameOf(id), parent: rt.world.parentOf(id) }))
@@ -378,7 +381,7 @@ function Hierarchy() {
           fromPrefab: e.origin !== undefined && !isInstanceRoot(e),
           added: !e.origin && addedToInstance(e.id),
           changed:
-            Object.keys(getPrefabOverride(snapshot, e.id) ?? {}).length > 0 ||
+            Object.keys(getPrefabOverride(snapshot, e.id, e) ?? {}).length > 0 ||
             (isInstanceRoot(e) &&
               (() => {
                 const raw = prefabInstanceAddress(snapshot, e.id)?.instance;
@@ -388,7 +391,8 @@ function Hierarchy() {
                     (p) => p.prefab === e.origin?.prefab && p.id === e.origin?.entity,
                   );
                 return (
-                  Object.keys(raw?.prefabOverrides ?? {}).length > 0 ||
+                  (raw !== undefined &&
+                    hasEffectivePrefabOverrides(raw, (id) => shownById.get(id))) ||
                   (raw?.instanceSystems?.length ?? 0) > 0 ||
                   Object.keys(raw?.states ?? {}).some(
                     (k) => k !== BUILTIN.Transform && !source?.states[k],
@@ -592,6 +596,9 @@ function Hierarchy() {
       const kids = children(n.id);
       const open = !closed[n.id];
       const savedEntityId = prefabInstanceAddress(snapshot, n.id)?.instance.id ?? n.id;
+      const problem = badgeFor(problems.get(n.id), "中");
+      const tagged =
+        n.added || n.fromPrefab || problem !== null || n.instance !== undefined || n.root;
       const mark = treeMark(
         kindOf.get(n.id) ?? null,
         !open && kids.length > 0,
@@ -631,6 +638,25 @@ function Hierarchy() {
               nested={mark.nested}
               {...(prefab ? {} : { target: { entry: `entity:${savedEntityId}` } })}
             />
+            {/* プレハブからの変化の印は、名前の前に置く。うしろに置くと、マウスを載せたときに出る
+                行の操作のボタン（複製・削除など）の下に隠れて、押せない */}
+            {n.changed && (
+              <span
+                className={styles.prefabMark}
+                role="img"
+                title="プレハブから変えた所があります。詳細で一つずつ戻せます"
+                aria-label="プレハブから変更"
+              >
+                △
+              </span>
+            )}
+            {n.added && (
+              <PrefabMark
+                label={`${n.name} の追加`}
+                disabled={!editing}
+                onRevert={() => askRemove(n.id, n.name)}
+              />
+            )}
             <button
               type="button"
               className={styles.nodeName}
@@ -665,42 +691,30 @@ function Hierarchy() {
             >
               {n.name}
             </button>
-            {n.changed && (
-              <span
-                className={styles.prefabMark}
-                role="img"
-                title="プレハブから変えた所があります。詳細で一つずつ戻せます"
-                aria-label="プレハブから変更"
-              >
-                △
-              </span>
-            )}
-            {n.added && (
-              <>
-                <span className={ui.badge} title="インスタンスで足した Entity">
-                  追加
-                </span>
-                <PrefabMark
-                  label={`${n.name} の追加`}
-                  disabled={!editing}
-                  onRevert={() => askRemove(n.id, n.name)}
-                />
-              </>
-            )}
-            {n.fromPrefab && (
-              <span className={ui.badge} title="プレハブから来た Entity">
-                元
-              </span>
-            )}
-            <BadgeDot badge={badgeFor(problems.get(n.id), "中")} inline />
-            {n.instance !== undefined && (
-              <span className={ui.badge} title="プレハブのインスタンス">
-                プレハブ
-              </span>
-            )}
-            {n.root && (
-              <span className={ui.badge} title="プレハブのいちばん上の Entity">
-                いちばん上
+            {/* 名前のうしろの札。行の操作のボタンが出ている間は、しまう（CSS） */}
+            {tagged && (
+              <span className={styles.tags}>
+                {n.added && (
+                  <span className={ui.badge} title="インスタンスで足した Entity">
+                    追加
+                  </span>
+                )}
+                {n.fromPrefab && (
+                  <span className={ui.badge} title="プレハブから来た Entity">
+                    元
+                  </span>
+                )}
+                <BadgeDot badge={problem} inline />
+                {n.instance !== undefined && (
+                  <span className={ui.badge} title="プレハブのインスタンス">
+                    プレハブ
+                  </span>
+                )}
+                {n.root && (
+                  <span className={ui.badge} title="プレハブのいちばん上の Entity">
+                    いちばん上
+                  </span>
+                )}
               </span>
             )}
             {editing && !n.root && (
@@ -1122,7 +1136,7 @@ function EntityProperties({ id }: { id: EntityId }) {
   const editing = canEdit;
   const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
   const address = prefabInstanceAddress(snapshot, id);
-  const override = getPrefabOverride(snapshot, id);
+  const override = getPrefabOverride(snapshot, id, shown);
   const savedSnapshot = saved ? fromFiles(saved) : undefined;
   const wasAddress = savedSnapshot ? prefabInstanceAddress(savedSnapshot, id) : undefined;
   const savedParts = address
