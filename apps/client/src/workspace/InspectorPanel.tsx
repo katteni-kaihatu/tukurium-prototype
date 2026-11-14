@@ -596,6 +596,9 @@ function Hierarchy() {
       const kids = children(n.id);
       const open = !closed[n.id];
       const savedEntityId = prefabInstanceAddress(snapshot, n.id)?.instance.id ?? n.id;
+      const problem = badgeFor(problems.get(n.id), "中");
+      const tagged =
+        n.added || n.fromPrefab || problem !== null || n.instance !== undefined || n.root;
       const mark = treeMark(
         kindOf.get(n.id) ?? null,
         !open && kids.length > 0,
@@ -635,6 +638,25 @@ function Hierarchy() {
               nested={mark.nested}
               {...(prefab ? {} : { target: { entry: `entity:${savedEntityId}` } })}
             />
+            {/* プレハブからの変化の印は、名前の前に置く。うしろに置くと、マウスを載せたときに出る
+                行の操作のボタン（複製・削除など）の下に隠れて、押せない */}
+            {n.changed && (
+              <span
+                className={styles.prefabMark}
+                role="img"
+                title="プレハブから変えた所があります。詳細で一つずつ戻せます"
+                aria-label="プレハブから変更"
+              >
+                △
+              </span>
+            )}
+            {n.added && (
+              <PrefabMark
+                label={`${n.name} の追加`}
+                disabled={!editing}
+                onRevert={() => askRemove(n.id, n.name)}
+              />
+            )}
             <button
               type="button"
               className={styles.nodeName}
@@ -669,42 +691,30 @@ function Hierarchy() {
             >
               {n.name}
             </button>
-            {n.changed && (
-              <span
-                className={styles.prefabMark}
-                role="img"
-                title="プレハブから変えた所があります。詳細で一つずつ戻せます"
-                aria-label="プレハブから変更"
-              >
-                △
-              </span>
-            )}
-            {n.added && (
-              <>
-                <span className={ui.badge} title="インスタンスで足した Entity">
-                  追加
-                </span>
-                <PrefabMark
-                  label={`${n.name} の追加`}
-                  disabled={!editing}
-                  onRevert={() => askRemove(n.id, n.name)}
-                />
-              </>
-            )}
-            {n.fromPrefab && (
-              <span className={ui.badge} title="プレハブから来た Entity">
-                元
-              </span>
-            )}
-            <BadgeDot badge={badgeFor(problems.get(n.id), "中")} inline />
-            {n.instance !== undefined && (
-              <span className={ui.badge} title="プレハブのインスタンス">
-                プレハブ
-              </span>
-            )}
-            {n.root && (
-              <span className={ui.badge} title="プレハブのいちばん上の Entity">
-                いちばん上
+            {/* 名前のうしろの札。行の操作のボタンが出ている間は、しまう（CSS） */}
+            {tagged && (
+              <span className={styles.tags}>
+                {n.added && (
+                  <span className={ui.badge} title="インスタンスで足した Entity">
+                    追加
+                  </span>
+                )}
+                {n.fromPrefab && (
+                  <span className={ui.badge} title="プレハブから来た Entity">
+                    元
+                  </span>
+                )}
+                <BadgeDot badge={problem} inline />
+                {n.instance !== undefined && (
+                  <span className={ui.badge} title="プレハブのインスタンス">
+                    プレハブ
+                  </span>
+                )}
+                {n.root && (
+                  <span className={ui.badge} title="プレハブのいちばん上の Entity">
+                    いちばん上
+                  </span>
+                )}
               </span>
             )}
             {editing && !n.root && (
