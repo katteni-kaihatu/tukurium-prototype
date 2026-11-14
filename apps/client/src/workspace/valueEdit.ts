@@ -111,7 +111,8 @@ export function schemaLabel(schema: ValueSchema): string {
     case "undefined":
       return "（なし）";
     case "literal":
-      return typeof schema.value === "string" ? schema.value : String(schema.value);
+      // 空の文字は、選択肢の中で見えるように引用符で出す
+      return schema.value === "" ? '""' : String(schema.value);
     case "color":
       return "Color";
     case "ref":
