@@ -885,7 +885,10 @@ function EntityProperties({ id }: { id: EntityId }) {
 
   const choices = {
     materials: project.materials().map((m) => ({ id: m.id, name: m.name })),
-    entities: project.entities(outputId).map((e) => ({ id: e.id, name: e.name })),
+    // states：KokoState の参照・フィールドの参照で、指せる Entity を絞るのに使う
+    entities: project
+      .entities(outputId)
+      .map((e) => ({ id: e.id, name: e.name, states: Object.keys(e.states) })),
     assets: project.assets(),
   };
   const attached = Object.keys(entity.states);
