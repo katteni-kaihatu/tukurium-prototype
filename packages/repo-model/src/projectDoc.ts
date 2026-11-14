@@ -840,7 +840,10 @@ export class ProjectDoc {
     const target = this.overrideTarget(id);
     const e = this.node(id);
     if (!e && !target) return;
-    const to = e ? this.parentIn(e, parent) : parent;
+    // プレハブから来た Entity の「親なし」は、そのインスタンスのいちばん上の下。兄弟も、そこで数える
+    const to = e
+      ? this.parentIn(e, parent)
+      : (parent ?? (target?.owner.get("id") as EntityId | undefined) ?? null);
     this.assertExpandedParent(id, to);
     const all = this.expandedPeers(id);
     const self = all.find((p) => p.id === id);
@@ -2028,7 +2031,12 @@ export class ProjectDoc {
     value: string | number | null,
   ): void {
     const store = this.overrideStore(target);
-    if (equalValues(value, target.base[key])) store.delete(overrideKey(target.path, key));
+    // 親なし（null）は「そのインスタンスのいちばん上の下」。もともとそこにあるなら、変えた所に数えない
+    const same =
+      key === "parent" && value === null
+        ? target.base.parent === target.owner.get("id")
+        : equalValues(value, target.base[key]);
+    if (same) store.delete(overrideKey(target.path, key));
     else store.set(overrideKey(target.path, key), encodeValue(value));
   }
 

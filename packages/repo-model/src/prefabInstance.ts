@@ -384,6 +384,11 @@ export function planApplyPrefabInstance(
         if (from === to && !inside.has(from)) outside.add(from);
       });
     const targets = after.prefabEntities?.filter((e) => e.prefab === prefab.id) ?? [];
+    // 確認の画面には、ID ではなく名前で出す（名前が分からないときだけ ID）
+    const kokoDefs = [...BUILTIN_KOKOSTATES, ...snap.kokostates, ...(options.kokostates ?? [])];
+    const kokoName = (koko: string) => kokoDefs.find((k) => k.id === koko)?.name ?? koko;
+    const systemName = (system: string) =>
+      snap.systems.find((s) => s.id === system)?.name ?? system;
     const changed = Object.entries(source.prefabOverrides ?? {});
     for (const [path, patch] of changed) {
       const eid = join(id, path);
@@ -413,15 +418,22 @@ export function planApplyPrefabInstance(
         if (mapped.addedStates) delete mapped.addedStates[BUILTIN.Transform];
       }
       patchAt(targets, prefab.root, path, mapped);
-      const name = view.entities.find((e) => e.id === eid)?.name ?? path;
+      const shown = view.entities.find((e) => e.id === eid);
+      const name = shown?.name ?? path;
       for (const key of ["name", "parent", "order"] as const)
         if (mapped[key] !== undefined) {
           const label = { name: "名前", parent: "親", order: "並び順" }[key];
+          // 親は、付け替えた先の Entity の名前で出す
+          const parentName =
+            key === "parent" ? view.entities.find((e) => e.id === shown?.parent)?.name : undefined;
           plan.changes.push({
             entity: eid,
             name,
             kind: key,
-            detail: `${label}: ${stringifyValue(mapped[key])}`,
+            detail:
+              parentName !== undefined
+                ? `${label}: 「${parentName}」`
+                : `${label}: ${stringifyValue(mapped[key])}`,
           });
         }
       for (const group of ["states", "addedStates"] as const)
@@ -464,7 +476,7 @@ export function planApplyPrefabInstance(
         entity: id,
         name: source.name,
         kind: "state",
-        detail: `追加した KokoState: ${koko}`,
+        detail: `追加した KokoState: ${kokoName(koko)}`,
       });
     for (const e of added) {
       const next = copy(e) as EntityDef & PrefabEntityDef;
@@ -488,7 +500,7 @@ export function planApplyPrefabInstance(
         entity: id,
         name: source.name,
         kind: "system",
-        detail: `追加した System: ${s.id}`,
+        detail: `追加した System: ${systemName(s.id)}`,
       });
     const own =
       owner.kind === "output"

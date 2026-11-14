@@ -150,6 +150,52 @@ describe("プレハブのインスタンスの再生（ADR 0076）", () => {
     expect(sim.world.get(eid(instances[0] ?? ""), koko)?.n).toBe(3);
     expect(sim.systemStatus().every((s) => s.enabled && s.error === null)).toBe(true);
   });
+
+  it("インスタンスで変えた所・足したものも再生に届く。適用するとほかのインスタンスも同じに動き、ふつうの Entity に戻したものは追わない", async () => {
+    const { doc, core, counter, step, instances } = project();
+    const [a, b, c] = instances as [string, string, string];
+    const coreOf = (id: string) => expandedEntityId(id, core);
+    // a だけ：芯の値を変え、子の Entity と System を足す
+    doc.setField(coreOf(a), counter, "n", 500);
+    const added = doc.addEntity({
+      output: OUT,
+      name: "足した子",
+      parent: coreOf(a),
+      states: { [counter]: { n: 1000 } },
+    });
+    const more = doc.addSystem("More", STEP.replace("+= 1", "+= 10"));
+    doc.setInstanceSystems(a, [{ id: more, enabled: true }]);
+    sim = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    // 足した System は、プレハブの System のあとに、アウトプットの System として動く
+    expect(sim.systemStatus().map((s) => s.id)).toEqual([step, more]);
+    sim.step(1 / 60);
+    expect(sim.world.get(coreOf(a), counter)?.n).toBe(511);
+    expect(sim.world.get(coreOf(b), counter)?.n).toBe(111);
+    expect(sim.world.get(added, counter)?.n).toBe(1011);
+    expect(sim.world.parentOf(added)).toBe(coreOf(a));
+    sim.dispose();
+
+    // プレハブに適用する：b と c も、a と同じ値・同じ子で動く
+    const plan = doc.applyPrefabInstance(a);
+    const child = plan.ids[added] ?? "";
+    sim = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    sim.step(1 / 60);
+    for (const id of [a, b, c]) {
+      expect(sim.world.get(coreOf(id), counter)?.n).toBe(511);
+      expect(sim.world.get(expandedEntityId(id, child), counter)?.n).toBe(1011);
+      expect(sim.world.parentOf(expandedEntityId(id, child))).toBe(coreOf(id));
+    }
+    sim.dispose();
+
+    // c をふつうの Entity に戻す：そのあとプレハブを直しても、c には届かない
+    const unpacked = doc.unpackPrefabInstance(c);
+    doc.setField(core, counter, "n", 7);
+    sim = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    sim.step(1 / 60);
+    expect(sim.world.get(coreOf(b), counter)?.n).toBe(18);
+    expect(sim.world.get(unpacked.ids[core] ?? "", counter)?.n).toBe(511);
+    expect(sim.systemStatus().every((s) => s.enabled && s.error === null)).toBe(true);
+  });
 });
 
 describe("アウトプットの Entity からプレハブを作る（ADR 0076）", () => {
