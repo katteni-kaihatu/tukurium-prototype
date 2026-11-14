@@ -1,8 +1,9 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import { type Diagnostic, makeDiagnostic, PROJECT_REF } from "./diagnostics/types";
 import type { PackageExport, PackageManifest } from "./packageManifest";
+import { readPackageSnapshot } from "./packagePrefabs";
 import { BUILTIN_PREFIX, normalizeName, validateName } from "./resourcePath";
-import type { FolderDef, PackageDependency, ProjectSnapshot } from "./schema";
+import type { PackageDependency, ProjectSnapshot } from "./schema";
 
 /**
  * プロジェクトの依存と `@別名/...` の import（ADR 0015）。
@@ -73,29 +74,9 @@ export function belongsToDependency(id: string, dep: PackageDependency): boolean
  * 同じ Package・同じ版なら、どのプロジェクトから使っても同じ ID になる（置いた物どうしで共有する）。
  */
 export function packageKokoStates(resolutions: Iterable<PackageResolution>): KokoStateDef[] {
-  const out: KokoStateDef[] = [];
-  for (const r of resolutions) {
-    if (r.status !== "ready") continue;
-    for (const e of r.manifest.exports) {
-      const def = e.definition as Partial<KokoStateDef> | null;
-      if (e.kind !== "kokostate" || typeof def?.name !== "string" || !Array.isArray(def.fields))
-        continue;
-      out.push({
-        id: packageResourceId(r.dependency, e.id),
-        name: def.name,
-        fields: structuredClone(def.fields),
-        ...packageTypeDefIds(r.dependency, def.typeDefs),
-      });
-    }
-  }
-  return out;
-}
-
-/** ライブラリの KokoState が使う型の定義の ID を、Package と版で区切った ID にする */
-function packageTypeDefIds(dep: PackageDependency, typeDefs: unknown): { typeDefs?: string[] } {
-  return Array.isArray(typeDefs) && typeDefs.length > 0
-    ? { typeDefs: typeDefs.map((id) => packageResourceId(dep, String(id))) }
-    : {};
+  return [...resolutions].flatMap((r) =>
+    r.status === "ready" ? readPackageSnapshot(r).kokostates : [],
+  );
 }
 
 /** 依存から取り込んだ型の定義（ADR 0065）。使う側は、KokoState の「使う型の定義」に足して使う */
@@ -248,50 +229,7 @@ export function packageSystems(resolutions: Iterable<PackageResolution>): Packag
 export function librarySnapshot(
   r: Extract<PackageResolution, { status: "ready" }>,
 ): ProjectSnapshot {
-  const dep = r.dependency;
-  const snap: ProjectSnapshot = {
-    version: 1,
-    name: dep.alias,
-    kokostates: [],
-    systems: [],
-    materials: [],
-    outputs: [],
-    entities: [],
-    folders: [],
-    placement: {},
-  };
-  const folderId = (path: string) => `pkgdir:${dep.packageId}@${dep.version}:${path}`;
-  const folders = new Map<string, FolderDef>();
-  for (const e of r.manifest.exports) {
-    const segments = e.path.split("/").filter((s) => s !== "");
-    let parent: string | null = null;
-    let prefix = "";
-    for (const seg of segments.slice(0, -1)) {
-      prefix += `/${seg}`;
-      const id = folderId(prefix);
-      if (!folders.has(id)) folders.set(id, { id, name: seg, parent });
-      parent = id;
-    }
-    const id = packageResourceId(dep, e.id);
-    const def = e.definition as Record<string, unknown> | null;
-    if (typeof def?.name !== "string") continue;
-    if (e.kind === "kokostate" && Array.isArray(def.fields))
-      snap.kokostates.push({
-        id,
-        name: def.name,
-        fields: structuredClone(def.fields),
-        ...packageTypeDefIds(dep, def.typeDefs),
-      });
-    else if (e.kind === "system" && typeof def.code === "string")
-      snap.systems.push({ id, name: def.name, code: def.code });
-    else if (e.kind === "typedef" && typeof def.code === "string") {
-      snap.types ??= [];
-      snap.types.push({ id, name: def.name, code: def.code });
-    } else continue;
-    if (parent && snap.placement) snap.placement[id] = parent;
-  }
-  snap.folders = [...folders.values()];
-  return snap;
+  return readPackageSnapshot(r);
 }
 
 /** 依存をたどると同じライブラリの別の版が混ざっている、の注意（共存はする。ADR 0015） */

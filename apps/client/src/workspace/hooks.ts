@@ -3,6 +3,7 @@ import {
   type ExpandedSnapshot,
   expandPrefabForEdit,
   expandPrefabs,
+  isPackageResourceId,
   PrefabExpansionCache,
   type ProjectDoc,
 } from "@tukurium/repo-model";
@@ -17,7 +18,12 @@ export function useProject(): ProjectDoc {
 
 /** 制作データを編集できるか（Edit mode で、共同編集以上の権限がある） */
 export function useCanEdit(): boolean {
-  return useWorkspace((s) => s.mode === "edit" && (s.role === "editor" || s.role === "admin"));
+  return useWorkspace(
+    (s) =>
+      s.mode === "edit" &&
+      (s.role === "editor" || s.role === "admin") &&
+      !isPackageResourceId(s.editingPrefab?.id ?? ""),
+  );
 }
 
 interface Expanded {
@@ -41,8 +47,8 @@ export function expandedSnapshot(
   const had = expandedOf.get(project);
   if (had && had.rev === rev && had.schemas === schemas) return had.snapshot;
   const cache = had?.cache ?? new PrefabExpansionCache();
-  const snapshot = expandPrefabs(project.snapshot(), {
-    schemas,
+  const snapshot = expandPrefabs(project.snapshotWithPackages(schemas), {
+    schemas: project.prefabFieldSchemas(schemas),
     kokostates: project.packageKokoStates(),
     cache,
   });
@@ -84,7 +90,7 @@ export function prefabEditSnapshot(
   // 取っておく入れ物は、アウトプットの展開のものとは分ける（開くプレハブを変えたら、作り直す）
   const cache = had?.prefab === prefab ? had.cache : new PrefabExpansionCache();
   const snapshot = expandPrefabForEdit(expandedSnapshot(project, rev, schemas), prefab, {
-    schemas,
+    schemas: project.prefabFieldSchemas(schemas),
     kokostates: project.packageKokoStates(),
     cache,
   });

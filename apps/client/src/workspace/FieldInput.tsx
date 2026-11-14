@@ -66,8 +66,9 @@ export function FieldInput(props: {
   const enumValues = ENUMS[`${props.koko}/${field.id}`];
 
   const schemas = useWorkspace((st) => st.fieldSchemas);
+  const project = useWorkspace((st) => st.project);
   // 型の文から決まる入力。TypeScript で作ったスキーマがあればそれ、なければ型の文から分かるもの
-  const schema = schemaOfField(schemas, props.koko, field);
+  const schema = schemaOfField(project?.prefabFieldSchemas(schemas) ?? schemas, props.koko, field);
   // 型の定義を変えたあとの値は、足りないフィールドを埋めた形で見せる（値の確かめ・実行と同じ形）
   const value = (schema ? conformValue(schema, props.value) : props.value) as FieldValue;
 

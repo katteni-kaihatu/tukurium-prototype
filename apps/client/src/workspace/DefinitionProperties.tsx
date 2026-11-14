@@ -2,6 +2,7 @@ import type { FieldDef, KokoStateDef } from "@tukurium/eks";
 import {
   type GuestPolicy,
   inferCapabilities,
+  isPackageResourceId,
   KOKO_ROLES,
   newId,
   type OutputDef,
@@ -10,6 +11,7 @@ import {
   type PrefabEditPlace,
   packageSystems,
   packageTypeDefs,
+  parsePackageResourceId,
   ResourcePathIndex,
   usersOf,
 } from "@tukurium/repo-model";
@@ -1228,6 +1230,9 @@ function PrefabProperties({ id }: { id: string }) {
   const closeDetail = useCloseDetail();
   const project = useProject();
   const canEdit = useCanEdit();
+  const readOnly = isPackageResourceId(id);
+  const canChange = canEdit && !readOnly;
+  const role = useWorkspace((st) => st.role);
   const saved = useSavedFiles();
   const { error, safely } = useSafe();
   const { select, outputId, setOutput, viewPoint, openPrefab, closePrefab } = useWorkspace();
@@ -1237,10 +1242,27 @@ function PrefabProperties({ id }: { id: string }) {
   const prefab = project.prefab(id);
   if (!prefab) return <p className={ui.empty}>プレハブが見つかりません</p>;
   const index = ResourcePathIndex.fromSnapshot(project.snapshot());
+  const ref = parsePackageResourceId(id);
+  const library = ref
+    ? [...packages.values()].find(
+        (r) =>
+          r.status === "ready" &&
+          r.dependency.packageId === ref.packageId &&
+          r.dependency.version === ref.version,
+      )
+    : undefined;
+  const libraryPath =
+    library?.status === "ready" && ref
+      ? library.manifest.exports.find((e) => e.id === ref.resourceId)?.path
+      : undefined;
   const entities = project.prefabEntities(id);
   const instances = project.instancesOf(id);
   const output = project.output(outputId);
-  const canPlace = canEdit && output !== undefined && output.kind !== "library";
+  const canPlace =
+    editMode &&
+    (role === "editor" || role === "admin") &&
+    output !== undefined &&
+    output.kind !== "library";
   // このプロジェクトの System と、依存のライブラリの System（アウトプットと同じ。ADR 0015）
   const systems = [
     ...project.systems().map((s) => ({ id: s.id, name: s.name })),
@@ -1259,6 +1281,7 @@ function PrefabProperties({ id }: { id: string }) {
         prefab: id,
         position: viewPoint?.() ?? [0, 1, 0],
       });
+      closePrefab();
       select({ kind: "entity", id: made });
     });
   const remove = () => {
@@ -1274,18 +1297,25 @@ function PrefabProperties({ id }: { id: string }) {
     <>
       <div className={ui.section}>
         <div className={ui.sectionHead}>
-          <ChangeMark
-            kind={prefabChange(saved, prefab, entities)}
-            target={{ entry: `prefab:${id}` }}
-          />
+          {!readOnly && (
+            <ChangeMark
+              kind={prefabChange(saved, prefab, entities)}
+              target={{ entry: `prefab:${id}` }}
+            />
+          )}
           <h3 className={ui.sectionTitle}>プレハブ</h3>
         </div>
         <NameRow
           id={id}
           value={prefab.name}
-          disabled={!canEdit}
+          disabled={!canChange}
           onCommit={(name) => safely(() => project.renamePrefab(id, name))}
         />
+        {readOnly && (
+          <p className={ui.muted}>
+            ライブラリのプレハブは読むだけです。置いたインスタンスは変更できます。
+          </p>
+        )}
         {error && <p className={ui.error}>{error}</p>}
         <div className={ui.field}>
           <label className={ui.label} htmlFor={`edit-in-${id}`}>
@@ -1295,7 +1325,7 @@ function PrefabProperties({ id }: { id: string }) {
             id={`edit-in-${id}`}
             className={ui.select}
             value={prefab.editIn ?? "here"}
-            disabled={!canEdit}
+            disabled={!canChange}
             title="プレハブを開いたときに、中身を出す場所。その場：いまいるワークスペースの空間に出す（小さなプレハブ向け）／離れた空間：セッションから離した空間に、ポータルで入って直す（大きなプレハブ向け）"
             onChange={(e) => setEditIn(e.target.value as PrefabEditPlace)}
           >
@@ -1306,7 +1336,12 @@ function PrefabProperties({ id }: { id: string }) {
         <InfoList
           label="プレハブの情報"
           rows={[
-            ["場所", index.pathOf(id) ?? "（フォルダが輪になっています）"],
+            [
+              "場所",
+              ref
+                ? `@${library?.dependency.alias ?? ref.packageId}${libraryPath ?? ""} · v${ref.version}`
+                : (index.pathOf(id) ?? "（フォルダが輪になっています）"),
+            ],
             ["中の Entity", `${entities.length} 個`],
             ["インスタンス", `${instances.length} 個`],
           ]}
@@ -1323,7 +1358,9 @@ function PrefabProperties({ id }: { id: string }) {
               disabled={!editMode}
               title={
                 editMode
-                  ? "Hierarchy と Inspector で、プレハブの中身を直す"
+                  ? readOnly
+                    ? "Hierarchy と Inspector で、プレハブの中身を見る"
+                    : "Hierarchy と Inspector で、プレハブの中身を直す"
                   : "Play mode 中は開けません"
               }
               onClick={() => openPrefab(id)}
@@ -1344,7 +1381,7 @@ function PrefabProperties({ id }: { id: string }) {
           >
             アウトプットに置く
           </button>
-          <button type="button" className={ui.btn} disabled={!canEdit} onClick={remove}>
+          <button type="button" className={ui.btn} disabled={!canChange} onClick={remove}>
             プレハブを消す
           </button>
         </div>
@@ -1361,11 +1398,11 @@ function PrefabProperties({ id }: { id: string }) {
         <SystemRows
           systems={prefab.systems}
           nameOf={(sid) => systems.find((s) => s.id === sid)?.name}
-          editing={canEdit}
+          editing={canChange}
           onChange={setSystems}
         />
         {prefab.systems.length === 0 && <p className={ui.empty}>System がありません</p>}
-        {canEdit && (
+        {canChange && (
           <SystemAdder systems={prefab.systems} choices={systems} onChange={setSystems} />
         )}
       </div>

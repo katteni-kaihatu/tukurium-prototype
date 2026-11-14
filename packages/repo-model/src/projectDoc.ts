@@ -17,7 +17,8 @@ import {
 import * as Y from "yjs";
 import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
 import { assignOrderKeys } from "./orderKey";
-import { validateAlias } from "./packageDependency";
+import { isPackageResourceId, type PackageResolution, validateAlias } from "./packageDependency";
+import { packageFieldSchemas, withPackagePrefabs } from "./packagePrefabs";
 import {
   EXPANDED_ID_SEPARATOR,
   type ExpandedEntity,
@@ -260,6 +261,27 @@ export class ProjectDoc {
    * Y.Doc には入れない（同期も保存もしない）。Entity に付けたり、Inspector で値を入れたりするために使う。
    */
   private packageDefs: KokoStateDef[] = [];
+  /** 選んだ版のライブラリ。Y.Doc に入れず、参照するときだけ合わせる。 */
+  private packageResolutions: PackageResolution[] = [];
+  private packageSchemaCache: { source: FieldSchemas | undefined; result: FieldSchemas } | null =
+    null;
+
+  setPackagePrefabs(resolutions: readonly PackageResolution[]): void {
+    this.packageResolutions = clone([...resolutions]);
+    this.packageSchemaCache = null;
+  }
+
+  snapshotWithPackages(schemas?: FieldSchemas): ProjectSnapshot {
+    return withPackagePrefabs(this.snapshot(), this.packageResolutions, schemas, true);
+  }
+
+  prefabFieldSchemas(schemas?: FieldSchemas): FieldSchemas {
+    if (this.packageSchemaCache && this.packageSchemaCache.source === schemas)
+      return this.packageSchemaCache.result;
+    const result = packageFieldSchemas(this.packageResolutions, schemas);
+    this.packageSchemaCache = { source: schemas, result };
+    return result;
+  }
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
@@ -908,6 +930,7 @@ export class ProjectDoc {
     withChildren: boolean,
     schemas?: FieldSchemas,
   ): EntityId | undefined {
+    schemas = this.prefabFieldSchemas(schemas);
     const e = this.node(id);
     const inherited = this.overrideTarget(id);
     if (!e && !inherited) return undefined;
@@ -1175,7 +1198,11 @@ export class ProjectDoc {
   }
   prefab(id: string): PrefabDef | undefined {
     const p = this.prefabMap.get(id);
-    return p ? clone(p) : undefined;
+    return p
+      ? clone(p)
+      : isPackageResourceId(id)
+        ? this.snapshotWithPackages().prefabs?.find((p) => p.id === id)
+        : undefined;
   }
   /** 空のプレハブを作る。いちばん上の Entity を一つだけ持つ（インスタンスの Entity が、これに当たる） */
   addPrefab(name: string): string {
@@ -1213,6 +1240,7 @@ export class ProjectDoc {
   }
   /** プレハブを、中の Entity ごと、渡した形に置き直す（なければ作る）。値は、そのまま入れる */
   restorePrefab(def: PrefabDef, entities: readonly PrefabEntityDef[]): void {
+    if (isPackageResourceId(def.id)) throw new Error("ライブラリのプレハブは変更できません");
     this.transact(() => {
       this.prefabMap.set(def.id, clone(def));
       const keep = new Set(entities.map((e) => e.id));
@@ -1232,6 +1260,8 @@ export class ProjectDoc {
   }
   /** プレハブの中の Entity（並び順）。prefab を省くと、すべてのプレハブのもの */
   prefabEntities(prefab?: string): PrefabEntityDef[] {
+    if (prefab && isPackageResourceId(prefab))
+      return (this.snapshotWithPackages().prefabEntities ?? []).filter((e) => e.prefab === prefab);
     const out: PrefabEntityDef[] = [];
     for (const e of this.prefabEntityMap.values()) {
       const def = this.toPrefabEntityDef(e);
@@ -1241,7 +1271,11 @@ export class ProjectDoc {
   }
   prefabEntity(id: EntityId): PrefabEntityDef | undefined {
     const e = this.prefabEntityMap.get(id);
-    return e ? this.toPrefabEntityDef(e) : undefined;
+    return e
+      ? this.toPrefabEntityDef(e)
+      : id.startsWith("pkgent:")
+        ? this.snapshotWithPackages().prefabEntities?.find((e) => e.id === id)
+        : undefined;
   }
   /** プレハブの中に Entity を作る。親を省くと、いちばん上の Entity の下に入る */
   addPrefabEntity(init: {
@@ -1297,7 +1331,7 @@ export class ProjectDoc {
       id?: EntityId;
     },
   ): EntityId {
-    const prefab = this.prefabMap.get(init.prefab);
+    const prefab = this.prefab(init.prefab);
     if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
     const root = this.prefabEntity(prefab.root);
     const transform: KokoStateValues = { ...root?.states[TRANSFORM] };
@@ -1335,6 +1369,7 @@ export class ProjectDoc {
     const usable = typeof base === "string" && validateName(base) === null ? base : "プレハブ";
     return planPrefabFromEntity(this.snapshot(), id, {
       ...options,
+      schemas: this.prefabFieldSchemas(options.schemas),
       name: options.name ?? this.freeName(usable, null),
       kokostates: this.packageDefs,
     });
@@ -1359,8 +1394,9 @@ export class ProjectDoc {
 
   /** 変更した分をプレハブに適用する前に、何が変わるかを確かめる。 */
   planApplyPrefabInstance(id: EntityId, options: PrefabInstanceOptions = {}): PrefabInstanceResult {
-    return planApplyPrefabInstance(this.snapshot(), id, {
+    return planApplyPrefabInstance(this.snapshotWithPackages(options.schemas), id, {
       ...options,
+      schemas: this.prefabFieldSchemas(options.schemas),
       kokostates: options.kokostates ?? this.packageDefs,
     });
   }
@@ -1377,8 +1413,9 @@ export class ProjectDoc {
     id: EntityId,
     options: PrefabInstanceOptions = {},
   ): PrefabInstanceResult {
-    return planUnpackPrefabInstance(this.snapshot(), id, {
+    return planUnpackPrefabInstance(this.snapshotWithPackages(options.schemas), id, {
       ...options,
+      schemas: this.prefabFieldSchemas(options.schemas),
       kokostates: options.kokostates ?? this.packageDefs,
     });
   }
@@ -1405,6 +1442,7 @@ export class ProjectDoc {
           this.prefabEntityMap.delete(id);
         }
       for (const [id, next] of after) {
+        if ("prefab" in next && isPackageResourceId(next.prefab)) continue;
         const prev = before.get(id);
         if (prev && equalValues(prev, next)) continue;
         const map = "output" in next ? this.entityMap : this.prefabEntityMap;
@@ -1464,6 +1502,7 @@ export class ProjectDoc {
         }
       }
       for (const next of plan.after.prefabs ?? []) {
+        if (isPackageResourceId(next.id)) continue;
         const prev = plan.before.prefabs?.find((p) => p.id === next.id);
         if (!equalValues(prev, next)) this.prefabMap.set(next.id, clone(next));
       }
@@ -1891,12 +1930,18 @@ export class ProjectDoc {
   }
 
   /** いま見えている Entity。プレハブの編集中なら、そのプレハブの中で展開する。 */
-  private expandedPeers(id: EntityId, snapshot = this.snapshot()): ExpandedEntity[] {
+  private expandedPeers(id: EntityId, snapshot = this.snapshotWithPackages()): ExpandedEntity[] {
     const head = id.split(EXPANDED_ID_SEPARATOR)[0] ?? id;
     const owner = this.prefabEntityMap.get(head)?.get("prefab") as string | undefined;
     return owner
-      ? (expandPrefabForEdit(snapshot, owner, { kokostates: this.packageDefs })?.entities ?? [])
-      : expandPrefabs(snapshot, { kokostates: this.packageDefs }).entities;
+      ? (expandPrefabForEdit(snapshot, owner, {
+          kokostates: this.packageDefs,
+          schemas: this.prefabFieldSchemas(),
+        })?.entities ?? [])
+      : expandPrefabs(snapshot, {
+          kokostates: this.packageDefs,
+          schemas: this.prefabFieldSchemas(),
+        }).entities;
   }
 
   /** 展開した ID を、上書きを持つ実体のインスタンスと、中の道に分ける。 */
@@ -1904,7 +1949,7 @@ export class ProjectDoc {
     const head = id.split(EXPANDED_ID_SEPARATOR)[0] ?? id;
     const owner = this.node(head);
     if (!owner?.get("instanceOf")) return undefined;
-    const snapshot = this.snapshot();
+    const snapshot = this.snapshotWithPackages();
     const entity = this.expandedPeers(id, snapshot).find((e) => e.id === id);
     if (!entity?.origin) return undefined;
     const clear = <T extends EntityBase>(e: T): T => {

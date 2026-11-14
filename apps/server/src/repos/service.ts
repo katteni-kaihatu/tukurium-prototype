@@ -11,7 +11,11 @@ import {
   type PackageManifest,
   type PackageResolution,
   type ProjectSnapshot,
+  packageFieldSchemas,
+  packageKokoStates,
   packageManifest,
+  reachablePackages,
+  resolutionMap,
   stableStringify,
   toFiles,
 } from "@tukurium/repo-model";
@@ -23,6 +27,22 @@ import { type Author, GitStore } from "./gitStore";
 /** 公開したものの content hash。並べ方を決めた JSON の sha256（ADR 0013 §2） */
 export const contentHashOf = (manifest: PackageManifest) =>
   createHash("sha256").update(stableStringify(manifest)).digest("hex");
+
+/** KokoState だけのライブラリでも、公開元で解決した参照の型をバージョンに含める。 */
+const releaseManifest = (
+  snapshot: ProjectSnapshot,
+  outputId: string,
+  packages: readonly PackageResolution[] = [],
+) =>
+  packageManifest(
+    snapshot,
+    outputId,
+    packageFieldSchemas(
+      packages,
+      fieldSchemasOf(snapshot, resolutionMap(snapshot.dependencies, packages)),
+    ),
+    packageKokoStates(reachablePackages(snapshot.dependencies, packages)),
+  );
 
 const shortId = (p: string) => `${p}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
 
@@ -294,16 +314,19 @@ export class RepoService {
       throw new HttpError(409, "このコミットには、リリースのアウトプットがありません");
     }
     const output = snap.outputs.find((o) => o.id === work.outputId);
+    let pool: PackageResolution[] = [];
     // ライブラリが（依存の依存を通してでも）自分自身に依存していたら、輪になるので出さない
     if (output?.kind === "library") {
-      const pool = await this.resolveDependencies(snap, user, [workId]);
+      pool = await this.resolveDependencies(snap, user, [workId]);
       if (pool.some((r) => r.status === "unavailable" && r.message === CYCLE))
         throw new HttpError(409, `このライブラリは自分自身に依存しています（${CYCLE}）`);
     }
     const prev = await this.store.releases(workId);
     const version = (prev[0]?.version ?? 0) + 1;
     const contentHash =
-      output?.kind === "library" ? contentHashOf(packageManifest(snap, work.outputId)) : undefined;
+      output?.kind === "library"
+        ? contentHashOf(releaseManifest(snap, work.outputId, pool))
+        : undefined;
     // 版は書き換えない：同じ版がもう違う中身で出ていたら拒む（同時に出したとき）
     const same = prev.find((p) => p.version === version);
     if (same && same.contentHash !== contentHash)
@@ -357,7 +380,7 @@ export class RepoService {
         ? await this.snapshot(lib.repoId, latest.commit).catch(() => null)
         : null;
       if (
-        latest?.contentHash === contentHashOf(packageManifest(lib.snapshot, lib.outputId)) &&
+        latest?.contentHash === contentHashOf(releaseManifest(lib.snapshot, lib.outputId)) &&
         thumbnail(released) === thumbnail(lib.snapshot)
       )
         continue;
@@ -403,6 +426,7 @@ export class RepoService {
     user: Pick<User, "id"> | null,
     workId: string,
     version: number,
+    path: string[] = [],
   ): Promise<{ owner: string; contentHash: string; manifest: PackageManifest }> {
     const work = await this.store.work(workId);
     if (!work) throw new HttpError(404, "リリースが見つかりません");
@@ -412,7 +436,11 @@ export class RepoService {
     if (!rel?.contentHash) throw new HttpError(404, "ライブラリの版が見つかりません");
     let manifest = this.manifests.get(rel.id);
     if (!manifest) {
-      manifest = packageManifest(await this.snapshot(work.repoId, rel.commit), work.outputId);
+      const snapshot = await this.snapshot(work.repoId, rel.commit);
+      const pool = snapshot.dependencies?.length
+        ? await this.resolveDependencies(snapshot, { id: work.owner }, [...path, workId])
+        : [];
+      manifest = releaseManifest(snapshot, work.outputId, pool);
       if (contentHashOf(manifest) !== rel.contentHash)
         throw new HttpError(500, "ライブラリの中身が、出したときと一致しません");
       this.manifests.set(rel.id, manifest);
@@ -438,7 +466,12 @@ export class RepoService {
         if (path.length >= MAX_DEPTH)
           return [{ status: "unavailable", dependency, message: "依存が深すぎます" }];
         try {
-          const got = await this.loadPackage(viewer, dependency.packageId, dependency.version);
+          const got = await this.loadPackage(
+            viewer,
+            dependency.packageId,
+            dependency.version,
+            path,
+          );
           if (got.contentHash !== dependency.contentHash)
             return [
               {

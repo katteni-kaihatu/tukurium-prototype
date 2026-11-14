@@ -2,10 +2,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  emptyProject,
+  expandPrefabs,
   gunAndTargetSample,
   OFFICIAL_COMBAT,
   OFFICIAL_PUBLISHER,
+  ProjectDoc,
   type ProjectSnapshot,
+  packageFieldSchemas,
+  packageKokoStates,
+  packageResourceId,
+  withPackagePrefabs,
 } from "@tukurium/repo-model";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryStore } from "../store/store";
@@ -37,6 +44,198 @@ async function setup() {
 }
 
 describe("Library Package（ADR 0015）", () => {
+  it("KokoState だけを公開しても、その型を同名の型がある次のライブラリで保つ", async () => {
+    dir = await mkdtemp(join(tmpdir(), "tk-package-state-schema-"));
+    const store = new MemoryStore();
+    const repos = new RepoService(store, dir);
+    const first = new ProjectDoc();
+    first.load(emptyProject("型のライブラリ"));
+    const counter = first.addKokoState("Counter");
+    first.updateKokoState({
+      id: counter,
+      name: "Counter",
+      fields: [
+        { id: "ref", name: "ref", type: "KokoStateRef<Counter> | undefined", default: undefined },
+      ],
+    });
+    const firstOutput = first.addOutput("型", "library");
+    first.setIncluded(firstOutput, counter, true);
+    const firstRepo = await repos.create(alice, { name: "型", snapshot: first.snapshot() });
+    const firstWork = await repos.publish(alice, firstRepo.id, firstOutput);
+    const firstRelease = await repos.release(alice, firstWork.id);
+    const dependency = {
+      alias: "types",
+      packageId: firstWork.id,
+      version: 1,
+      contentHash: firstRelease.contentHash as string,
+    };
+    const firstPackage = await repos.packageVersion(bob, firstWork.id, 1);
+    expect(firstPackage.manifest.fieldSchemas?.[counter]?.ref).toMatchObject({
+      kind: "union",
+      options: [{ kind: "kokoRef", koko: counter }, { kind: "undefined" }],
+    });
+    const ready = { status: "ready" as const, dependency, manifest: firstPackage.manifest };
+    const second = new ProjectDoc();
+    second.load(emptyProject("プレハブのライブラリ"));
+    second.addDependency(dependency);
+    second.setPackageKokoStates(packageKokoStates([ready]));
+    second.addKokoState("Counter");
+    const prefab = second.addPrefab("的");
+    const root = second.prefab(prefab)?.root as string;
+    const koko = packageResourceId(dependency, counter);
+    second.addState(root, koko, { ref: { entity: root, koko } });
+    const secondOutput = second.addOutput("プレハブ", "library");
+    second.setIncluded(secondOutput, prefab, true);
+    const secondRepo = await repos.create(alice, { name: "プレハブ", snapshot: second.snapshot() });
+    const secondWork = await repos.publish(alice, secondRepo.id, secondOutput);
+    const secondRelease = await repos.release(alice, secondWork.id);
+    const published = await repos.packageVersion(bob, secondWork.id, 1);
+    const reopened = new RepoService(store, dir);
+    expect((await reopened.packageVersion(bob, secondWork.id, 1)).manifest).toEqual(
+      published.manifest,
+    );
+    const secondDependency = {
+      alias: "prefabs",
+      packageId: secondWork.id,
+      version: 1,
+      contentHash: secondRelease.contentHash as string,
+    };
+    const packages = [
+      ready,
+      { status: "ready" as const, dependency: secondDependency, manifest: published.manifest },
+    ];
+    const loaded = withPackagePrefabs(
+      {
+        ...emptyProject("利用側"),
+        dependencies: [secondDependency],
+        entities: [
+          {
+            id: "instance",
+            name: "instance",
+            output: "out_main",
+            parent: null,
+            order: 0,
+            states: {},
+            instanceOf: { prefab: packageResourceId(secondDependency, prefab) },
+          },
+        ],
+      },
+      packages,
+      undefined,
+      true,
+    );
+    const expanded = expandPrefabs(loaded, { schemas: packageFieldSchemas(packages) });
+    expect(expanded.entities[0]?.states[koko]?.ref).toEqual({ entity: "instance", koko });
+  });
+
+  it("外部 KokoState が指すローカルのマテリアルを公開し、再起動後も同じ中身を返す", async () => {
+    dir = await mkdtemp(join(tmpdir(), "tk-prefab-dependency-"));
+    const store = new MemoryStore();
+    const repos = new RepoService(store, dir);
+    const first = new ProjectDoc();
+    first.load(emptyProject("型のライブラリ"));
+    const look = first.addKokoState("Look");
+    first.updateKokoState({
+      id: look,
+      name: "Look",
+      fields: [{ id: "material", name: "material", type: "MaterialRef", default: "" }],
+    });
+    const firstOutput = first.addOutput("型", "library");
+    first.setIncluded(firstOutput, look, true);
+    const firstRepo = await repos.create(alice, { name: "型", snapshot: first.snapshot() });
+    const firstWork = await repos.publish(alice, firstRepo.id, firstOutput);
+    const firstRelease = await repos.release(alice, firstWork.id);
+    const dependency = {
+      alias: "types",
+      packageId: firstWork.id,
+      version: 1,
+      contentHash: firstRelease.contentHash as string,
+    };
+    const firstPackage = await repos.packageVersion(bob, firstWork.id, 1);
+    const ready = { status: "ready" as const, dependency, manifest: firstPackage.manifest };
+    const second = new ProjectDoc();
+    second.load(emptyProject("プレハブのライブラリ"));
+    second.addDependency(dependency);
+    second.setPackageKokoStates(packageKokoStates([ready]));
+    const prefab = second.addPrefab("的");
+    const material = second.addMaterial("赤");
+    second.addState(second.prefab(prefab)?.root as string, packageResourceId(dependency, look), {
+      material,
+    });
+    const secondOutput = second.addOutput("プレハブ", "library");
+    second.setIncluded(secondOutput, prefab, true);
+    const secondRepo = await repos.create(alice, { name: "プレハブ", snapshot: second.snapshot() });
+    const secondWork = await repos.publish(alice, secondRepo.id, secondOutput);
+    const secondRelease = await repos.release(alice, secondWork.id);
+    const published = await repos.packageVersion(bob, secondWork.id, 1);
+    expect(published.manifest.exports.map((e) => e.id)).toContain(material);
+    const reopened = new RepoService(store, dir);
+    expect((await reopened.packageVersion(bob, secondWork.id, 1)).manifest).toEqual(
+      published.manifest,
+    );
+    const secondDependency = {
+      alias: "prefabs",
+      packageId: secondWork.id,
+      version: 1,
+      contentHash: secondRelease.contentHash as string,
+    };
+    const loaded = withPackagePrefabs(
+      { ...emptyProject("利用側"), dependencies: [secondDependency] },
+      [ready, { status: "ready", dependency: secondDependency, manifest: published.manifest }],
+    );
+    expect(
+      loaded.materials.some((m) => m.id === packageResourceId(secondDependency, material)),
+    ).toBe(true);
+    expect(loaded.prefabEntities?.[0]?.states[packageResourceId(dependency, look)]?.material).toBe(
+      packageResourceId(secondDependency, material),
+    );
+  });
+
+  it("プレハブの中身と参照の型を公開し、古い版の中身を変えない", async () => {
+    dir = await mkdtemp(join(tmpdir(), "tk-prefab-pkg-"));
+    const store = new MemoryStore();
+    const repos = new RepoService(store, dir);
+    const p = new ProjectDoc();
+    p.load(emptyProject("部品"));
+    const koko = p.addKokoState("Target");
+    p.updateKokoState({
+      id: koko,
+      name: "Target",
+      fields: [{ id: "targets", name: "targets", type: "EntityRef[]", default: [] }],
+    });
+    const prefab = p.addPrefab("的");
+    const root = p.prefab(prefab)?.root as string;
+    p.addState(root, koko, { targets: [root] });
+    const output = p.addOutput("部品集", "library");
+    p.setIncluded(output, prefab, true);
+    const repo = await repos.create(alice, { name: "部品", snapshot: p.snapshot() });
+    const work = await repos.publish(alice, repo.id, output);
+    const first = await repos.release(alice, work.id);
+    const old = await repos.packageVersion(bob, work.id, 1);
+    expect(old.manifest.fieldSchemas?.[koko]?.targets).toEqual({
+      kind: "list",
+      item: { kind: "ref", target: "entity" },
+    });
+    expect(old.manifest.exports.find((e) => e.kind === "prefab")?.definition).toMatchObject({
+      entities: [
+        expect.objectContaining({
+          states: expect.objectContaining({ [koko]: { targets: [root] } }),
+        }),
+      ],
+    });
+    p.setField(root, koko, "targets", []);
+    await repos.commit(repo.id, p.snapshot(), "的の参照を変更", alice, []);
+    const second = await repos.release(alice, work.id);
+    expect(second.contentHash).not.toBe(first.contentHash);
+    expect((await repos.packageVersion(bob, work.id, 1)).manifest).toEqual(old.manifest);
+    const reopened = new RepoService(store, dir);
+    // メモリーのキャッシュだけでなく、保存したコミットからも同じ中身を作れる。
+    expect((await reopened.packageVersion(bob, work.id, 1)).manifest).toEqual(old.manifest);
+    expect((await reopened.packageVersion(bob, work.id, 2)).manifest.fieldSchemas).toEqual(
+      old.manifest.fieldSchemas,
+    );
+  });
+
   it("ライブラリの作品をリリースすると、公開分の content hash をサーバーが計算して残す", async () => {
     const { repos, repo, work } = await setup();
     const r1 = await repos.release(alice, work.id);

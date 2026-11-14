@@ -255,7 +255,7 @@ export class WorkspaceController {
     }
     // マテリアルの一覧は制作データが変わったときだけ取り直す
     if (this.materialsRev !== ws.rev || this.materialsDoc !== ws.project) {
-      this.materials = ws.project.materials();
+      this.materials = ws.project.snapshotWithPackages(ws.fieldSchemas).materials;
       this.materialsRev = ws.rev;
       this.materialsDoc = ws.project;
     }

@@ -352,7 +352,7 @@ function Hierarchy() {
   /** いま出している木の持ち主（アウトプットか、開いているプレハブ）の ID */
   const ownerId = prefab ? prefab.id : outputId;
 
-  const snapshot = project.snapshot();
+  const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
   const savedSnapshot = saved ? fromFiles(saved) : undefined;
   const addedToInstance = (id: string) => {
     const seen = new Set<string>();
@@ -1120,7 +1120,7 @@ function EntityProperties({ id }: { id: EntityId }) {
   /** 開いているプレハブの、いちばん上の Entity。消せず、複製できず、ほかの下に付けられない */
   const isRoot = prefab !== undefined && prefab.root === id;
   const editing = canEdit;
-  const snapshot = project.snapshot();
+  const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
   const address = prefabInstanceAddress(snapshot, id);
   const override = getPrefabOverride(snapshot, id);
   const savedSnapshot = saved ? fromFiles(saved) : undefined;
@@ -1154,13 +1154,13 @@ function EntityProperties({ id }: { id: EntityId }) {
   }
 
   const choices = {
-    materials: project.materials().map((m) => ({ id: m.id, name: m.name })),
+    materials: snapshot.materials.map((m) => ({ id: m.id, name: m.name })),
     // states：KokoState の参照・フィールドの参照で、指せる Entity を絞るのに使う
     // インスタンスの中の Entity も指せる（展開した Entity の ID は、開き直しても変わらない）
     entities: target.snapshot.entities
       .filter((e) => e.output === ownerId)
       .map((e) => ({ id: e.id, name: e.name, states: Object.keys(e.states) })),
-    assets: project.assets(),
+    assets: snapshot.assets ?? [],
   };
   const attached = Object.keys(entity.states);
   const order = (k: string) => (k === BUILTIN.Transform ? 0 : isBuiltin(k) ? 1 : 2);
@@ -1789,7 +1789,7 @@ function InstanceSystems({
   const packages = useWorkspace((s) => s.packages);
   const saved = useSavedFiles();
   const [error, setError] = useState<string | null>(null);
-  const snapshot = project.snapshot();
+  const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
   const inherited =
     expandPrefabs({
       ...snapshot,
