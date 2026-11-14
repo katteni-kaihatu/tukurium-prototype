@@ -5,15 +5,24 @@ import {
   type KokoStateDef,
   mapRefs,
   schemaOfField,
+  visitRefs,
 } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin } from "./builtins";
 import { ProjectDependencyGraph } from "./dependencyGraph";
-import { lockKey, parsePackageResourceId, parsePackageSpelling } from "./packageDependency";
-import { ResourcePathIndex } from "./resourcePath";
 import {
+  lockKey,
+  type PackageResolution,
+  parsePackageResourceId,
+  parsePackageSpelling,
+  reachablePackages,
+} from "./packageDependency";
+import { normalizeName, ResourcePathIndex } from "./resourcePath";
+import {
+  type EntityBase,
   type FolderDef,
   newId,
   type PackageDependency,
+  type PrefabDef,
   type ProjectSnapshot,
   type Provenance,
 } from "./schema";
@@ -27,6 +36,7 @@ export interface ExtractSelection {
   assets: string[];
   /** 型の定義（ADR 0065）。選んだ KokoState が使うものは、選ばなくても一緒に集まる */
   types?: string[];
+  prefabs?: string[];
 }
 
 export interface ExtractSource {
@@ -51,6 +61,7 @@ export function collectSelection(
     materials: new Set(sel.materials),
     assets: new Set(sel.assets),
     types: new Set(sel.types ?? []),
+    prefabs: new Set(sel.prefabs ?? []),
   };
   for (const o of src.outputs) {
     if (!out.outputs.has(o.id)) continue;
@@ -62,11 +73,35 @@ export function collectSelection(
       else if (src.materials.some((m) => m.id === id)) out.materials.add(id);
       else if ((src.assets ?? []).some((a) => a.id === id)) out.assets.add(id);
       else if ((src.types ?? []).some((t) => t.id === id)) out.types.add(id);
+      else if ((src.prefabs ?? []).some((p) => p.id === id)) out.prefabs.add(id);
     }
   }
   // Entity と System が使うものは、依存グラフから集める（計画 Phase 3）
   const graph = ProjectDependencyGraph.fromSnapshot(src, schemas);
   const assetIds = new Set((src.assets ?? []).map((a) => a.id));
+  // 依存の定義が制作データにないときも、渡されたスキーマで入れ子の参照まで集める。
+  const collectLibraryValues = (entity: EntityBase) => {
+    const states = [
+      entity.states,
+      ...Object.values(entity.prefabOverrides ?? {}).flatMap((override) => [
+        override.states ?? {},
+        override.addedStates ?? {},
+      ]),
+    ];
+    for (const state of states)
+      for (const [koko, values] of Object.entries(state)) {
+        if (src.kokostates.some((k) => k.id === koko) || isBuiltin(koko)) continue;
+        for (const [field, value] of Object.entries(values)) {
+          const schema = schemas?.[koko]?.[field];
+          if (schema)
+            visitRefs(schema, value, (target, id) => {
+              if (target === "material") out.materials.add(id);
+              else if (target !== "entity") out.assets.add(id);
+            });
+          else if (typeof value === "string" && assetIds.has(value)) out.assets.add(value);
+        }
+      }
+  };
   for (const e of src.entities) {
     if (!out.outputs.has(e.output)) continue;
     // 持っている KokoState と、欄で指しているマテリアル・素材（Built-in も自作の KokoState の欄も）
@@ -74,13 +109,23 @@ export function collectSelection(
       if (dep.kind === "kokostate" && !isBuiltin(dep.id)) out.kokostates.add(dep.id);
       else if (dep.kind === "material") out.materials.add(dep.id);
       else if (dep.kind === "asset") out.assets.add(dep.id);
+      else if (dep.kind === "prefab") out.prefabs.add(dep.id);
+      else if (dep.kind === "system") out.systems.add(dep.id);
     }
-    // 定義がこのプロジェクトにない KokoState（ライブラリのもの）の欄は、グラフでは読めないので、
-    // 素材の ID と同じ文字列を拾う
-    for (const [koko, values] of Object.entries(e.states)) {
-      if (src.kokostates.some((k) => k.id === koko) || isBuiltin(koko)) continue;
-      for (const v of Object.values(values))
-        if (typeof v === "string" && assetIds.has(v)) out.assets.add(v);
+    collectLibraryValues(e);
+  }
+  // 入れ子のプレハブも、中で使うリソースごとたどる。Set なので、輪でも止まる。
+  for (const id of out.prefabs) {
+    for (const dep of graph.dependenciesOf({ kind: "prefab", id })) {
+      if (dep.kind === "prefab") out.prefabs.add(dep.id);
+      else if (dep.kind === "system") out.systems.add(dep.id);
+      else if (dep.kind === "kokostate" && !isBuiltin(dep.id)) out.kokostates.add(dep.id);
+      else if (dep.kind === "material") out.materials.add(dep.id);
+      else if (dep.kind === "asset") out.assets.add(dep.id);
+    }
+    for (const e of src.prefabEntities ?? []) {
+      if (e.prefab !== id) continue;
+      collectLibraryValues(e);
     }
   }
   // System が使う KokoState（import したもの）
@@ -105,6 +150,7 @@ export function collectSelection(
     materials: [...out.materials],
     assets: [...out.assets],
     types: [...out.types],
+    prefabs: [...out.prefabs],
   };
 }
 
@@ -126,6 +172,8 @@ export function extractInto(
   name?: string,
   /** 取り出し元のフィールドのスキーマ（あれば、入れ子の中の参照も新しい ID に付け替える） */
   schemas?: FieldSchemas,
+  /** 解決済みの依存。間接ライブラリへ届く、元の直接依存を引き継ぐために使う */
+  packages?: readonly PackageResolution[],
 ): ProjectSnapshot {
   const sel = collectSelection(src, selection, schemas);
   const srcDefs = new Map([...BUILTIN_KOKOSTATES, ...src.kokostates].map((k) => [k.id, k]));
@@ -227,18 +275,155 @@ export function extractInto(
     added.set(id, next.id);
   }
 
-  const aliases = carryDependencies(src, sel, dst);
-  copyFolders(src, dst, added);
-
+  const aliases = carryDependencies(src, sel, dst, packages);
   const r = (id: string) => remap.get(id) ?? id;
+
+  // 出力とプレハブをまたぐ参照もあるので、写す前にすべての Entity の ID を決める。
+  const entityIds = new Map<string, string>();
+  const takenEntities = new Set([
+    ...dst.entities.map((e) => e.id),
+    ...(dst.prefabEntities ?? []).map((e) => e.id),
+  ]);
+  const assignEntity = (id: string) => {
+    const next = takenEntities.has(id) ? newId("ent") : id;
+    entityIds.set(id, next);
+    takenEntities.add(next);
+  };
+  for (const e of src.entities) if (sel.outputs.includes(e.output)) assignEntity(e.id);
+  dst.prefabs ??= [];
+  dst.prefabEntities ??= [];
+  const copiedPrefabs: string[] = [];
+  const entityId = (id: string) =>
+    id
+      .split("/")
+      .map((part) => entityIds.get(part) ?? part)
+      .join("/");
+  const copyStates = (states: EntityBase["states"]): EntityBase["states"] => {
+    const result: EntityBase["states"] = {};
+    for (const [koko, values] of Object.entries(states)) {
+      const v = structuredClone(values);
+      for (const fieldId of Object.keys(v)) {
+        const field = srcDefs.get(koko)?.fields.find((f) => f.id === fieldId);
+        const schema = field ? schemaOfField(schemas, koko, field) : schemas?.[koko]?.[fieldId];
+        if (!schema) continue;
+        v[fieldId] = mapRefs(schema, v[fieldId], (target, id) =>
+          target === "entity" ? entityId(id) : remap.get(id),
+        ) as FieldValue;
+      }
+      result[r(koko)] = v;
+    }
+    return result;
+  };
+  const copyEntity = <T extends EntityBase>(e: T): T => ({
+    ...structuredClone(e),
+    id: entityId(e.id),
+    parent: e.parent === null ? null : entityId(e.parent),
+    states: copyStates(e.states),
+    ...(e.instanceOf ? { instanceOf: { ...e.instanceOf, prefab: r(e.instanceOf.prefab) } } : {}),
+    ...(e.prefabOverrides
+      ? {
+          prefabOverrides: Object.fromEntries(
+            Object.entries(e.prefabOverrides).map(([path, override]) => [
+              entityId(path),
+              {
+                ...structuredClone(override),
+                ...(override.parent !== undefined
+                  ? { parent: override.parent === null ? null : entityId(override.parent) }
+                  : {}),
+                ...(override.states ? { states: copyStates(override.states) } : {}),
+                ...(override.addedStates ? { addedStates: copyStates(override.addedStates) } : {}),
+              },
+            ]),
+          ),
+        }
+      : {}),
+    ...(e.instanceSystems
+      ? { instanceSystems: e.instanceSystems.map((s) => ({ ...s, id: r(s.id) })) }
+      : {}),
+    ...(e.unpackedSystems
+      ? { unpackedSystems: e.unpackedSystems.map((s) => ({ ...s, id: r(s.id) })) }
+      : {}),
+  });
+  const copyPrefab = (p: PrefabDef): PrefabDef => ({
+    ...structuredClone(p),
+    id: r(p.id),
+    root: entityId(p.root),
+    systems: p.systems.map((s) => ({ ...s, id: r(s.id) })),
+    keep: p.keep.map((k) => ({ ...k, entity: entityId(k.entity), koko: r(k.koko) })),
+    ...(p.deletedParents
+      ? {
+          deletedParents: Object.fromEntries(
+            Object.entries(p.deletedParents).map(([id, parent]) => [
+              entityId(id),
+              parent === null ? null : entityId(parent),
+            ]),
+          ),
+        }
+      : {}),
+  });
+  // 一つずつ、実際に付け替わる内容で再利用を決める。ほかのプレハブが新規でも、同じものは増やさない。
+  // 内側の ID が変わったら、それを使うプレハブも調べ直す（循環があっても、各 ID は一度だけ作る）。
+  const pending = new Set(sel.prefabs ?? []);
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const id of pending) {
+      const item = src.prefabs?.find((p) => p.id === id);
+      if (!item) {
+        pending.delete(id); // ライブラリのものは依存の lock で持ってくる
+        continue;
+      }
+      const entities = (src.prefabEntities ?? []).filter((e) => e.prefab === id);
+      const existing = dst.prefabs.find((p) => p.id === id);
+      if (
+        existing &&
+        same(existing, copyPrefab(item)) &&
+        same(
+          dst.prefabEntities.filter((e) => e.prefab === id),
+          entities.map(copyEntity),
+        )
+      )
+        continue;
+      const next = existing ? newId("pf") : id;
+      remap.set(id, next);
+      added.set(id, next);
+      copiedPrefabs.push(id);
+      for (const e of entities) assignEntity(e.id);
+      pending.delete(id);
+      changed = true;
+    }
+  } while (changed);
+  for (const id of copiedPrefabs) {
+    const p = src.prefabs?.find((p) => p.id === id);
+    if (!p) continue;
+    dst.prefabs.push(copyPrefab(p));
+    for (const e of src.prefabEntities ?? [])
+      if (e.prefab === id) dst.prefabEntities.push({ ...copyEntity(e), prefab: r(id) });
+  }
+  // マテリアルに貼る画像も、同じ ID が別の素材に使われていたら付け替える。
+  for (const [from, to] of added) {
+    const material = dst.materials.find((m) => m.id === to);
+    if (material?.map && src.materials.some((m) => m.id === from)) material.map = r(material.map);
+  }
+  copyFolders(src, dst, added);
+  for (const id of copiedPrefabs) {
+    const p = dst.prefabs.find((p) => p.id === r(id));
+    if (!p) continue;
+    const index = ResourcePathIndex.fromSnapshot(dst);
+    const parent = index.entry(p.id)?.parent ?? null;
+    const taken = new Set(
+      index
+        .all()
+        .filter((entry) => entry.id !== p.id && entry.parent === parent)
+        .map((entry) => normalizeName(entry.name)),
+    );
+    const base = p.name;
+    for (let n = 2; taken.has(normalizeName(p.name)); n++) p.name = `${base}_${n}`;
+  }
   for (const oid of sel.outputs) {
     const o = src.outputs.find((x) => x.id === oid);
     if (!o) continue;
     const newOut = dst.outputs.some((x) => x.id === oid) ? newId("out") : oid;
-    const entityIds = new Map<string, string>();
-    for (const e of src.entities.filter((x) => x.output === oid)) {
-      entityIds.set(e.id, dst.entities.some((x) => x.id === e.id) ? newId("ent") : e.id);
-    }
     dst.outputs.push({
       ...structuredClone(o),
       id: newOut,
@@ -246,30 +431,14 @@ export function extractInto(
       ...(o.resources ? { resources: o.resources.map(r).sort() } : {}),
       keep: o.keep.map((k) => ({
         ...k,
-        entity: entityIds.get(k.entity) ?? k.entity,
+        entity: entityId(k.entity),
         koko: r(k.koko),
       })),
     });
     for (const e of src.entities.filter((x) => x.output === oid)) {
-      const states: typeof e.states = {};
-      for (const [koko, values] of Object.entries(e.states)) {
-        const v = structuredClone(values);
-        // 参照が指す ID を、取り込み先で振り直した ID に付け替える
-        for (const f of srcDefs.get(koko)?.fields ?? []) {
-          const schema = schemaOfField(schemas, koko, f);
-          if (!schema || !Object.hasOwn(v, f.id)) continue;
-          v[f.id] = mapRefs(schema, v[f.id], (refTarget, id) =>
-            refTarget === "entity" ? entityIds.get(id) : remap.get(id),
-          ) as FieldValue;
-        }
-        states[r(koko)] = v;
-      }
       dst.entities.push({
-        ...structuredClone(e),
-        id: entityIds.get(e.id) ?? e.id,
-        parent: e.parent ? (entityIds.get(e.parent) ?? e.parent) : null,
+        ...copyEntity(e),
         output: newOut,
-        states,
       });
     }
   }
@@ -281,6 +450,7 @@ export function extractInto(
     ...selection.materials.map((id) => src.materials.find((m) => m.id === id)?.name ?? id),
     ...selection.assets.map((id) => src.assets?.find((a) => a.id === id)?.name ?? id),
     ...(selection.types ?? []).map((id) => src.types?.find((t) => t.id === id)?.name ?? id),
+    ...(selection.prefabs ?? []).map((id) => src.prefabs?.find((p) => p.id === id)?.name ?? id),
   ];
   rebindImports(src, dst, added, aliases.map);
   const index = ResourcePathIndex.fromSnapshot(src);
@@ -290,6 +460,7 @@ export function extractInto(
     ...selection.materials,
     ...selection.assets,
     ...(selection.types ?? []),
+    ...(selection.prefabs ?? []),
   ]
     .map((id) => index.pathOf(id))
     .filter((p): p is string => p !== null);
@@ -308,28 +479,55 @@ export function extractInto(
 }
 
 /**
- * 取り出したもの（Entity の KokoState・アウトプットの System・System の `@別名` の import）が使う依存を、
- * 取り込み先へ持ってくる。返すのは、取り出し元の別名 → 取り込み先の別名と、新しく足した依存。
+ * 選んだものが使う、元の直接依存を返す。間接ライブラリを指す場合も、そこへ届く経路を残す。
  */
-function carryDependencies(
+export function collectSelectionDependencies(
   src: ProjectSnapshot,
   sel: ExtractSelection,
-  dst: ProjectSnapshot,
-): { map: Map<string, string>; carried: PackageDependency[] } {
+  packages?: readonly PackageResolution[],
+): PackageDependency[] {
   const srcDeps = src.dependencies ?? [];
   const needed = new Set<string>();
+  const routes = srcDeps.map((dependency) => ({
+    dependency,
+    reachable: [
+      dependency,
+      ...reachablePackages([dependency], packages).flatMap((r) => [
+        r.dependency,
+        ...(r.manifest.dependencies ?? []),
+      ]),
+    ],
+  }));
   const byId = (id: string) => {
     const ref = parsePackageResourceId(id);
-    const d = ref
-      ? srcDeps.find((x) => x.packageId === ref.packageId && x.version === ref.version)
-      : undefined;
-    if (d) needed.add(d.alias);
+    if (!ref) return;
+    const parents = routes.filter((route) =>
+      route.reachable.some((d) => d.packageId === ref.packageId && d.version === ref.version),
+    );
+    // 中身が届いていない場合も、元の経路を失わない。新しい依存は推測で作らない。
+    for (const { dependency } of parents.length > 0 ? parents : routes)
+      needed.add(dependency.alias);
   };
+  for (const id of [
+    ...(sel.prefabs ?? []),
+    ...sel.kokostates,
+    ...sel.systems,
+    ...sel.materials,
+    ...sel.assets,
+    ...(sel.types ?? []),
+  ])
+    byId(id);
   for (const o of src.outputs) {
     if (!sel.outputs.includes(o.id)) continue;
     for (const s of o.systems) byId(s.id);
     for (const e of src.entities)
       if (e.output === o.id) for (const k of Object.keys(e.states)) byId(k);
+  }
+  for (const p of src.prefabs ?? []) {
+    if (!sel.prefabs?.includes(p.id)) continue;
+    for (const s of p.systems) byId(s.id);
+    for (const e of src.prefabEntities ?? [])
+      if (e.prefab === p.id) for (const k of Object.keys(e.states)) byId(k);
   }
   let index: ResourcePathIndex | null = null;
   for (const s of src.systems) {
@@ -337,12 +535,19 @@ function carryDependencies(
     index ??= ResourcePathIndex.fromSnapshot(src);
     for (const alias of compileSystem(s.id, s.code, index).packageImports) needed.add(alias);
   }
+  return srcDeps.filter((dep) => needed.has(dep.alias));
+}
 
+function carryDependencies(
+  src: ProjectSnapshot,
+  sel: ExtractSelection,
+  dst: ProjectSnapshot,
+  packages?: readonly PackageResolution[],
+): { map: Map<string, string>; carried: PackageDependency[] } {
   const map = new Map<string, string>();
   const carried: PackageDependency[] = [];
   dst.dependencies = [...(dst.dependencies ?? [])];
-  for (const dep of srcDeps) {
-    if (!needed.has(dep.alias)) continue;
+  for (const dep of collectSelectionDependencies(src, sel, packages)) {
     const same = dst.dependencies.find((d) => lockKey(d) === lockKey(dep));
     if (same) {
       map.set(dep.alias, same.alias);

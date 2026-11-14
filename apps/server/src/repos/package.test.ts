@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   emptyProject,
   expandPrefabs,
+  extractInto,
   gunAndTargetSample,
   OFFICIAL_COMBAT,
   OFFICIAL_PUBLISHER,
@@ -356,6 +357,103 @@ describe("Library Package（ADR 0015）", () => {
     const forked = await repos.snapshot(fork.id);
     expect(forked.dependencies).toEqual([dep]);
     expect(forked.outputs[0]?.resources).toEqual(["ks_gun"]);
+  });
+
+  it("フォークしてもプレハブと中の Entity・参照・維持の印が残る", async () => {
+    const { repos, repo } = await setup();
+    const snap = await repos.snapshot(repo.id);
+    snap.prefabs = [
+      {
+        id: "pf",
+        name: "部品",
+        root: "root",
+        systems: [{ id: "sys_shoot", enabled: true }],
+        keep: [{ entity: "child", koko: "ks_gun", field: "f_ammo" }],
+      },
+    ];
+    snap.prefabEntities = [
+      { id: "root", name: "親", prefab: "pf", parent: null, order: 0, states: {} },
+      {
+        id: "child",
+        name: "子",
+        prefab: "pf",
+        parent: "root",
+        order: 0,
+        states: { ks_gun: { f_ammo: 3 } },
+      },
+    ];
+    snap.outputs = snap.outputs.map((o) => ({ ...o, resources: ["pf"] }));
+    await repos.commit(repo.id, snap, "プレハブ", alice, []);
+    const fork = await repos.fork(bob, repo.id);
+    const forked = await repos.snapshot(fork.id);
+    expect(forked.prefabs).toEqual(snap.prefabs);
+    expect(forked.prefabEntities).toEqual(expect.arrayContaining(snap.prefabEntities));
+    expect(forked.prefabEntities).toHaveLength(snap.prefabEntities.length);
+    expect(forked.outputs[0]?.resources).toEqual(["pf"]);
+  });
+
+  it("サーバーの抽出と画面への取り込みは、間接ライブラリへ届く直接依存を残す", async () => {
+    dir = await mkdtemp(join(tmpdir(), "tk-transitive-extract-"));
+    const repos = new RepoService(new MemoryStore(), dir);
+    const b = new ProjectDoc();
+    const prefab = b.addPrefab("B の部品");
+    const libraryB = b.addOutput("B", "library");
+    b.setIncluded(libraryB, prefab, true);
+    const repoB = await repos.create(alice, { name: "B", snapshot: b.snapshot() });
+    const workB = await repos.publish(alice, repoB.id, libraryB);
+    const releaseB = await repos.release(alice, workB.id);
+    const depB = {
+      alias: "b",
+      packageId: workB.id,
+      version: releaseB.version,
+      contentHash: releaseB.contentHash ?? "",
+    };
+    const a = new ProjectDoc();
+    a.addDependency(depB);
+    const libraryA = a.addOutput("A", "library");
+    const repoA = await repos.create(alice, { name: "A", snapshot: a.snapshot() });
+    const workA = await repos.publish(alice, repoA.id, libraryA);
+    const releaseA = await repos.release(alice, workA.id);
+    const depA = {
+      alias: "a",
+      packageId: workA.id,
+      version: releaseA.version,
+      contentHash: releaseA.contentHash ?? "",
+    };
+    const p = new ProjectDoc();
+    p.load({ ...emptyProject("利用側"), dependencies: [depA] });
+    p.setPackagePrefabs(await repos.resolveDependencies(p.snapshot(), alice));
+    const instance = p.addInstance({ output: "out_main", prefab: packageResourceId(depB, prefab) });
+    const sourceRepo = await repos.create(alice, { name: "利用側", snapshot: p.snapshot() });
+    const selection = {
+      outputs: ["out_main"],
+      kokostates: [],
+      systems: [],
+      materials: [],
+      assets: [],
+    };
+    const extracted = await repos.extract(alice, sourceRepo.id, selection, { name: "抽出後" });
+    const extractedSnapshot = await repos.snapshot(extracted.repo.id);
+    expect(extractedSnapshot.dependencies).toEqual([depA]);
+    const imported = await repos.importSource(alice, sourceRepo.id);
+    const merged = extractInto(
+      imported.snapshot,
+      selection,
+      imported,
+      null,
+      undefined,
+      imported.schemas,
+      imported.packages,
+    );
+    expect(merged.dependencies).toEqual([depA]);
+    const q = new ProjectDoc();
+    q.load(merged);
+    q.setPackagePrefabs(await repos.resolveDependencies(merged, alice));
+    expect(q.prefab(packageResourceId(depB, prefab))?.name).toBe("B の部品");
+    expect(
+      expandPrefabs(q.snapshotWithPackages()).entities.find((e) => e.id === instance)?.origin
+        ?.prefab,
+    ).toBe(packageResourceId(depB, prefab));
   });
 
   it("公式ライブラリを、決まった ID で用意する。何度呼んでも版は増えず、中身が違えば新しい版を出す", async () => {

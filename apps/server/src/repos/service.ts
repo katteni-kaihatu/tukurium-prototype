@@ -214,18 +214,24 @@ export class RepoService {
     snapshot: ProjectSnapshot;
     /** 取り込み元のフィールドのスキーマ（入れ子の中の参照を、取り込み先の ID に付け替えるのに使う。ADR 0065） */
     schemas: FieldSchemas;
+    packages: PackageResolution[];
   }> {
     const src = await this.require(repoId);
     if (!(await this.canFork(user, src))) throw new HttpError(403, "取り込む権限がありません");
     const commit = await this.git.head(repoId);
     if (!commit) throw new HttpError(409, "まだコミットがありません");
     const snapshot = await this.snapshot(repoId, commit);
+    const packages = await this.resolveDependencies(snapshot, user);
     return {
       repoId: src.id,
       repoName: src.name,
       commit,
       snapshot,
-      schemas: fieldSchemasOf(snapshot, new Map()),
+      schemas: packageFieldSchemas(
+        packages,
+        fieldSchemasOf(snapshot, resolutionMap(snapshot.dependencies, packages)),
+      ),
+      packages,
     };
   }
 
@@ -242,7 +248,11 @@ export class RepoService {
     const at = commit ?? (await this.git.head(repoId));
     if (!at) throw new HttpError(409, "まだコミットがありません");
     const snap = await this.snapshot(repoId, at);
-    const schemas = fieldSchemasOf(snap, new Map());
+    const packages = await this.resolveDependencies(snap, user);
+    const schemas = packageFieldSchemas(
+      packages,
+      fieldSchemasOf(snap, resolutionMap(snap.dependencies, packages)),
+    );
     const source = { repoId: src.id, repoName: src.name, commit: at };
     if ("repoId" in target) {
       return this.withRepoLock(target.repoId, async () => {
@@ -262,12 +272,13 @@ export class RepoService {
           await this.snapshot(dst.id),
           undefined,
           schemas,
+          packages,
         );
         const oid = await this.commit(dst.id, merged, `${src.name} から抽出して取り込み`, user, []);
         return { repo: dst, commit: oid };
       });
     }
-    const extracted = extractInto(snap, selection, source, null, target.name, schemas);
+    const extracted = extractInto(snap, selection, source, null, target.name, schemas, packages);
     const repo = await this.create(user, { name: target.name, snapshot: extracted });
     return { repo, commit: (await this.git.head(repo.id)) as string };
   }

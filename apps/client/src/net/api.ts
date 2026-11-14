@@ -192,6 +192,7 @@ export interface ExtractSelection {
   systems: string[];
   materials: string[];
   assets: string[];
+  prefabs: string[];
 }
 
 /** 素材の URL（素材にも権限がある。本人はログインの Cookie で決まる。ADR 0074） */
@@ -343,6 +344,7 @@ export const api = {
       commit: string;
       snapshot: ProjectSnapshot;
       schemas?: FieldSchemas;
+      packages?: PackageResolution[];
     }>("GET", `/api/repos/${id}/import-source`),
   snapshot: (id: string, commit?: string) =>
     call<ProjectSnapshot>("GET", `/api/repos/${id}/snapshot${commit ? `?commit=${commit}` : ""}`),

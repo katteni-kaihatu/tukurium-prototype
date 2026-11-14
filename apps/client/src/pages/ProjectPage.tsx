@@ -646,6 +646,7 @@ function ExtractDialog({ repo, onClose }: { repo: RepoDetail; onClose: () => voi
     systems: [],
     materials: [],
     assets: [],
+    prefabs: [],
   });
   const [target, setTarget] = useState<"new" | "existing">("new");
   const [name, setName] = useState(`${repo.name} から抽出`);
@@ -663,6 +664,7 @@ function ExtractDialog({ repo, onClose }: { repo: RepoDetail; onClose: () => voi
   }[] = snap
     ? [
         { key: "outputs", label: "アウトプット", items: snap.outputs },
+        { key: "prefabs", label: "プレハブ", items: snap.prefabs ?? [] },
         { key: "kokostates", label: "KokoState", items: snap.kokostates },
         { key: "systems", label: "System", items: snap.systems },
         { key: "materials", label: "マテリアル", items: snap.materials },
