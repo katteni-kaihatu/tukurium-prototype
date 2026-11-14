@@ -440,6 +440,7 @@ export class Simulation {
       sim.debug = new DebugRuntime(options.debug, {
         states: (entity) => sim.debugStates(entity),
         writeState: (edit) => sim.writeDebugState(edit),
+        log: (systemId, message) => sim.log(systemId, message, "log"),
       });
     return sim;
   }

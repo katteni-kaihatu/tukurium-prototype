@@ -1,4 +1,5 @@
 import { decodeValue, encodeValue, type Value } from "@tukurium/eks";
+import { compileDebugExpression } from "@tukurium/repo-model";
 import { useState } from "react";
 import styles from "./DebugPanel.module.css";
 import { useWorkspace } from "./store";
@@ -199,40 +200,85 @@ export function DebugPanel() {
             </section>
           )}
           {settings.breakpoints.map((point) => (
-            <div key={point.id} className={styles.row}>
-              <input
-                type="checkbox"
-                aria-label="条件を有効にする"
-                checked={point.enabled}
+            <fieldset
+              key={point.id}
+              onFocus={() => useWorkspace.setState({ debugPointId: point.id })}
+            >
+              <legend>{ws.debugPointId === point.id ? "選択中の条件" : "条件"}</legend>
+              <div className={styles.row}>
+                <input
+                  type="checkbox"
+                  aria-label="条件を有効にする"
+                  checked={point.enabled}
+                  disabled={!canWrite}
+                  onChange={(e) => debug.update(point.id, { enabled: e.target.checked })}
+                />
+                <button
+                  type="button"
+                  className={ui.btn}
+                  onClick={() => {
+                    useWorkspace.setState({ debugPointId: point.id });
+                    ws.openSystem(point.systemId);
+                    useWorkspace.setState({
+                      jumpTo: {
+                        systemId: point.systemId,
+                        line: point.line,
+                        seq: (ws.jumpTo?.seq ?? 0) + 1,
+                      },
+                    });
+                  }}
+                >
+                  {ws.project?.system(point.systemId)?.name ?? point.systemId} {point.line} 行目
+                  {point.kind === "logpoint" ? "（ログ）" : ""}
+                </button>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  disabled={!canWrite}
+                  onClick={() => debug.remove(point.id)}
+                >
+                  削除
+                </button>
+              </div>
+              <label>
+                動作{" "}
+                <select
+                  aria-label="条件の動作"
+                  disabled={!canWrite}
+                  value={point.kind}
+                  onChange={(e) =>
+                    debug.update(point.id, { kind: e.target.value as "breakpoint" | "logpoint" })
+                  }
+                >
+                  <option value="breakpoint">一時停止</option>
+                  <option value="logpoint">ログだけ出す</option>
+                </select>
+              </label>
+              <label>
+                Entity{" "}
+                <input
+                  aria-label="条件のEntity"
+                  disabled={!canWrite}
+                  placeholder="空欄ならすべて"
+                  value={point.entity}
+                  onChange={(e) => debug.update(point.id, { entity: e.target.value })}
+                />
+              </label>
+              <ExpressionInput
+                label="条件式"
+                value={point.condition}
                 disabled={!canWrite}
-                onChange={(e) => debug.update(point.id, { enabled: e.target.checked })}
+                onChange={(condition) => debug.update(point.id, { condition })}
               />
-              <button
-                type="button"
-                className={ui.btn}
-                onClick={() => {
-                  ws.openSystem(point.systemId);
-                  useWorkspace.setState({
-                    jumpTo: {
-                      systemId: point.systemId,
-                      line: point.line,
-                      seq: (ws.jumpTo?.seq ?? 0) + 1,
-                    },
-                  });
-                }}
-              >
-                {ws.project?.system(point.systemId)?.name ?? point.systemId} {point.line} 行目
-                {point.kind === "logpoint" ? "（ログ）" : ""}
-              </button>
-              <button
-                type="button"
-                className={ui.btn}
-                disabled={!canWrite}
-                onClick={() => debug.remove(point.id)}
-              >
-                削除
-              </button>
-            </div>
+              {point.kind === "logpoint" && (
+                <ExpressionInput
+                  label="ログに出す式"
+                  value={point.expression}
+                  disabled={!canWrite}
+                  onChange={(expression) => debug.update(point.id, { expression })}
+                />
+              )}
+            </fieldset>
           ))}
           <div className={styles.row}>
             <select
@@ -258,14 +304,49 @@ export function DebugPanel() {
               type="button"
               className={ui.btn}
               disabled={!canWrite || !chosen}
-              onClick={() => debug.add(chosen, line)}
+              onClick={() => useWorkspace.setState({ debugPointId: debug.add(chosen, line) })}
             >
               条件を足す
             </button>
           </div>
-          <p className={ui.muted}>エディタの行番号の横を押しても条件を付け外しできます。</p>
+          <p className={ui.muted}>
+            式では、代入・関数呼び出し・オブジェクト同士の同一性比較はできません。
+            行番号の横を左クリックで一時停止、右クリックでログを追加します。条件を選んでから Entity
+            を右クリックすると絞り込めます。設定の変更は次のフレームから反映します。
+          </p>
         </>
       )}
     </div>
+  );
+}
+
+function ExpressionInput({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  let error = "";
+  try {
+    if (value.trim()) compileDebugExpression(value);
+  } catch (e) {
+    error = String(e);
+  }
+  return (
+    <label>
+      {label}
+      <input
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error && <span role="alert">{error}</span>}
+    </label>
   );
 }

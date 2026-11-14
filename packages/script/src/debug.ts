@@ -1,5 +1,14 @@
 import type { Json } from "@tukurium/eks";
 
+export interface DebugRule {
+  id: string;
+  systemId: string;
+  line: number;
+  entity: string;
+  condition?: unknown[];
+  expression?: unknown[];
+}
+
 export interface DebugVariable {
   name: string;
   value: Json;
@@ -65,8 +74,8 @@ globalThis.__debugBridge = (() => {
       if(value instanceof Date) return new Date(Date.prototype.getTime.call(value));
       if(value instanceof Map) { const out=new Map(); Map.prototype.forEach.call(value,(v,k)=>out.set(copy(k,seen,depth+1),copy(v,seen,depth+1))); return out; }
       if(value instanceof Set) { const out=new Set(); Set.prototype.forEach.call(value,v=>out.add(copy(v,seen,depth+1))); return out; }
-      const out=Array.isArray(value)?[]:Object.create(null);
       const descriptors=Object.getOwnPropertyDescriptors(value);
+      const out=Array.isArray(value)?new Array(descriptors.length.value):Object.create(null);
       for(const key of Object.keys(descriptors)) {
         const field=descriptors[key];
         if(!field.enumerable)continue;

@@ -20,6 +20,7 @@ import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
 import { ARRIVAL_OFFSET, prefabAnchor, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
+import { offerDebugEntity } from "./debugActions";
 import { expandedSnapshot, prefabEditSnapshot } from "./hooks";
 import { type Box, prefabEditOrigin, type Vec3 } from "./prefabPlace";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
@@ -714,6 +715,11 @@ export class WorkspaceController {
 
   private onPointer(button: number, phase: "down" | "up"): void {
     const ws = useWorkspace.getState();
+    if (button === 2 && phase === "down" && ws.debug?.read().enabled && ws.debugPointId) {
+      this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
+      const id = this.view.pick(this.raycaster);
+      if (id && offerDebugEntity(id)) return;
+    }
     if (ws.mode === "play" && button === 0) {
       // 持っているときの左クリックは、撃たずに傾きを直す
       if (phase === "down" && this.holdingPlay()) {

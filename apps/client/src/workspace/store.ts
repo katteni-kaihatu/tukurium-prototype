@@ -72,6 +72,7 @@ interface WorkspaceState {
   debugOpen: boolean;
   debugStop: DebugStop | null;
   debugFrameId: number | null;
+  debugPointId: string | null;
   debugEdit(edit: DebugEdit): void;
   debugCommand(cmd: "continue" | "pause" | "into" | "over" | "out" | "frame"): void;
   workspaceId: string | null;
@@ -281,6 +282,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     debugOpen: false,
     debugStop: null,
     debugFrameId: null,
+    debugPointId: null,
     debugEdit: (edit) => {
       const s = get();
       if (s.workspaceId && s.debugStop)
@@ -414,6 +416,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugOpen: false,
         debugStop: null,
         debugFrameId: null,
+        debugPointId: null,
         project,
         awareness,
         role: null,
@@ -475,6 +478,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugOpen: false,
         debugStop: null,
         debugFrameId: null,
+        debugPointId: null,
         workspaceId: null,
         project: null,
         awareness: null,

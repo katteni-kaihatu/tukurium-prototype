@@ -46,7 +46,19 @@ export function debugGutter(systemId: string) {
         const s = useWorkspace.getState();
         if (!s.debugReady || (s.role !== "editor" && s.role !== "admin")) return false;
         event.preventDefault();
-        s.debug?.toggle(systemId, view.state.doc.lineAt(line.from).number);
+        const number = view.state.doc.lineAt(line.from).number;
+        if ((event as MouseEvent).button === 2) {
+          const previous = s.debug
+            ?.read()
+            .breakpoints.find((p) => p.systemId === systemId && p.line === number);
+          if (previous) s.debug?.update(previous.id, { kind: "logpoint" });
+          const id = previous?.id ?? s.debug?.add(systemId, number, "logpoint");
+          useWorkspace.setState({ debugOpen: true, debugPointId: id ?? null });
+        } else if ((event as MouseEvent).button === 0) s.debug?.toggle(systemId, number);
+        return true;
+      },
+      contextmenu: (_view, _line, event) => {
+        event.preventDefault();
         return true;
       },
     },

@@ -1,5 +1,5 @@
-import { decodeValue, encodeValue, type Value } from "@tukurium/eks";
-import type { DebugSettings } from "@tukurium/repo-model";
+import { decodeValue, encodeValue, stringifyValue, type Value } from "@tukurium/eks";
+import { compileDebugExpression, type DebugSettings } from "@tukurium/repo-model";
 
 export type { DebugEdit } from "@tukurium/script";
 
@@ -8,9 +8,11 @@ import type {
   DebugFrame,
   DebugKokoState,
   DebugPoint,
+  DebugRule,
   DebugStateEdit,
   ScriptEntity,
 } from "@tukurium/script";
+import { evaluateDebugExpression } from "@tukurium/script";
 
 export interface DebugStop {
   id: string;
@@ -39,6 +41,8 @@ export class DebugRuntime {
   private edits: DebugEdit[] = [];
   private frameNumber = 0;
   private pointsThisFrame = 0;
+  private rules: DebugRule[] = [];
+  private readonly warnings = new Set<string>();
   private step: {
     mode: Exclude<DebugStep, "continue">;
     frame: number;
@@ -52,6 +56,7 @@ export class DebugRuntime {
     private readonly host?: {
       states(entity: string | null): DebugKokoState[];
       writeState(edit: DebugStateEdit): boolean;
+      log?(systemId: string, message: string): void;
     },
   ) {
     this.settings = options.settings();
@@ -62,7 +67,24 @@ export class DebugRuntime {
   async beginFrame() {
     this.frameNumber++;
     this.pointsThisFrame = 0;
-    this.settings = this.options.settings();
+    this.settings = structuredClone(this.options.settings());
+    this.rules = [];
+    for (const p of this.settings.breakpoints.filter((p) => p.enabled)) {
+      try {
+        this.rules.push({
+          id: p.id,
+          systemId: p.systemId,
+          line: this.lines.get(p.systemId)?.find((line) => line >= p.line) ?? -1,
+          entity: p.entity,
+          ...(p.condition.trim() ? { condition: compileDebugExpression(p.condition) } : {}),
+          ...(p.kind === "logpoint"
+            ? { expression: compileDebugExpression(p.expression.trim() || '"ログポイント"') }
+            : {}),
+        });
+      } catch (error) {
+        this.warn(p.systemId, `${p.id}:${p.condition}:${p.expression}`, String(error));
+      }
+    }
     if (this.step?.mode === "frame" && this.frameNumber > this.step.frame)
       await this.boundary("次のフレーム");
   }
@@ -72,6 +94,11 @@ export class DebugRuntime {
   }
   requestPause() {
     this.pauseRequested = true;
+  }
+  private warn(systemId: string, key: string, error: string) {
+    if (this.warnings.has(key)) return;
+    this.warnings.add(key);
+    this.host?.log?.(systemId, `デバッグの式：${error}`);
   }
   resume(id: string, mode: DebugStep = "continue"): boolean {
     if (this.stop?.id !== id || !this.resolve) return false;
@@ -173,13 +200,31 @@ export class DebugRuntime {
   ): Promise<DebugEdit[]> {
     if (this.disposed || !this.settings.enabled) return [];
     this.pointsThisFrame++;
-    const hit = this.settings.breakpoints.find(
-      (p) =>
-        p.enabled &&
-        p.kind === "breakpoint" &&
-        p.systemId === point.systemId &&
-        (this.lines.get(p.systemId)?.find((line) => line >= p.line) ?? -1) === point.line,
+    let hit = false;
+    const values = Object.fromEntries(
+      (point.frames.at(-1)?.variables ?? [])
+        .filter((v) => !v.unavailable)
+        .map((v) => [v.name, decodeValue(v.value)]),
     );
+    for (const rule of this.rules) {
+      if (
+        rule.systemId !== point.systemId ||
+        rule.line !== point.line ||
+        (rule.entity && rule.entity !== point.entity)
+      )
+        continue;
+      try {
+        if (rule.condition && !evaluateDebugExpression(rule.condition, values)) continue;
+        if (rule.expression)
+          this.host?.log?.(
+            rule.systemId,
+            `${rule.line} 行目：${stringifyValue(evaluateDebugExpression(rule.expression, values) as Value)}`,
+          );
+        else hit = true;
+      } catch (error) {
+        this.warn(rule.systemId, `${rule.id}:${String(error)}`, String(error));
+      }
+    }
     const step = this.step;
     const stepping =
       step &&
