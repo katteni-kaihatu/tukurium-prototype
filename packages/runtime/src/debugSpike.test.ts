@@ -15,7 +15,8 @@ it("D0: 書き換えた内側の呼び出しで待ち、外側の変数を変更
   const events: string[] = [];
   const pause = vm.newAsyncifiedFunction("__debugPause", async (handle) => {
     const point = JSON.parse(vm.getString(handle)) as DebugPoint;
-    if (point.frames.length !== 2 || point.line !== 4) return vm.newString("[]");
+    if (point.frames.length !== 2 || point.line !== 4)
+      return vm.newString('{"edits":[],"stepping":true}');
     expect(point.frames[0]?.variables.find((v) => v.name === "outer")?.value).toBe(3);
     expect(point.frames[1]?.variables.find((v) => v.name === "inner")?.value).toBe(2);
     events.push("pause");
@@ -24,17 +25,20 @@ it("D0: 書き換えた内側の呼び出しで待ち、外側の変数を変更
       resume = resolve;
     }).then(() =>
       vm.newString(
-        JSON.stringify([
-          { frameId: point.frames[0]?.id, name: "outer", value: 10 },
-          { frameId: point.frames[1]?.id, name: "inner", value: 5 },
-        ]),
+        JSON.stringify({
+          stepping: true,
+          edits: [
+            { frameId: point.frames[0]?.id, name: "outer", value: 10 },
+            { frameId: point.frames[1]?.id, name: "inner", value: 5 },
+          ],
+        }),
       ),
     );
   });
   vm.setProp(vm.global, "__debugPause", pause);
   pause.dispose();
   const init = vm.evalCode(
-    `const __codec=(${VALUE_CODEC_SOURCE})();let __current='s',__entity='e';${DEBUG_PRELUDE}__debugActive=true;`,
+    `const __codec=(${VALUE_CODEC_SOURCE})();let __current='s',__entity='e';${DEBUG_PRELUDE}globalThis.__debugSeen=()=>{};globalThis.__debugClock=()=>{};__debugStepping=true;__debugActive=true;`,
   );
   init.unwrap().dispose();
   const source = instrumentDebug(`function outerFn() { let outer=3;

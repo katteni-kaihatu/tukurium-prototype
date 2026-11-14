@@ -294,6 +294,8 @@ interface PendingEvent {
   name: string;
   data: Value;
 }
+/** デバッグ実行のときに、スクリプトの実行時間の制限を延ばす倍率。 */
+const DEBUG_TIME_SCALE = 20;
 export interface DebugCheckpoint {
   world: WorldSnapshot;
   names: Record<string, string>;
@@ -416,7 +418,8 @@ export class Simulation {
     await initPhysics();
     const ref: { sim: Simulation | null } = { sim: null };
     const sandbox = await ScriptSandbox.create({
-      timeLimitMs: options.timeLimitMs ?? 20,
+      // 書き換えたスクリプトは 10 倍ほど遅い。ふつうの再生で動くものを、デバッグ実行で時間切れにしない。
+      timeLimitMs: (options.timeLimitMs ?? 20) * (options.debug ? DEBUG_TIME_SCALE : 1),
       hostFunctions: Object.fromEntries(
         HOST_API.map((name) => [
           name,
@@ -432,6 +435,11 @@ export class Simulation {
       ...(options.debug
         ? {
             debug: {
+              config: (systemId) =>
+                ref.sim?.debug?.runConfig(systemId) ?? { lines: {}, stepping: false, watch: [] },
+              stepping: () => ref.sim?.debug?.stepping() ?? false,
+              pending: () => ref.sim?.debug?.pendingHostChanges() ?? false,
+              seen: () => ref.sim?.debug?.seenPoint(),
               onPoint: async (point) =>
                 ref.sim?.debug?.point(point, (entities) => {
                   const sim = ref.sim;
@@ -458,6 +466,11 @@ export class Simulation {
         writeState: (edit) => sim.writeDebugState(edit),
         log: (systemId, message) => sim.log(systemId, message, "log"),
         watching: (enabled) => sim.sandbox.setDebugWatching(enabled),
+        guestKey: (watch, systemId) => {
+          const sys = sim.systems.find((s) => s.id === systemId);
+          const field = sim.registry.get(watch.koko)?.fields.find((f) => f.id === watch.field);
+          return sys && field ? [sim.localKey(watch.koko, sys.realm), field.name] : undefined;
+        },
         guestValue: (watch, entities, systemId) => {
           const sys = sim.systems.find((s) => s.id === systemId);
           const field = sim.registry.get(watch.koko)?.fields.find((f) => f.id === watch.field);

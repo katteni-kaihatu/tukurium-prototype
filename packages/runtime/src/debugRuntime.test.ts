@@ -53,6 +53,40 @@ export const settings = (line = 5): DebugSettings => ({
 });
 
 describe("待てるフレーム", () => {
+  it("停止条件に当たらない文では値を写さず、Entity が多くても時間切れにならない", async () => {
+    const project = debugProject();
+    const first = project.entities[0];
+    if (!first) throw new Error("Entity がありません");
+    project.entities = Array.from({ length: 50 }, (_, i) => ({
+      ...first,
+      id: `e${i}`,
+      name: `E${i}`,
+      order: i,
+    }));
+    const stops: DebugStop[] = [];
+    const sim = await Simulation.create(project, "out", {
+      realm: "r",
+      debug: {
+        settings: () => ({
+          ...settings(),
+          breakpoints: settings().breakpoints.map((p) => ({ ...p, entity: "e49" })),
+        }),
+        onPause: (stop) => stops.push(stop),
+      },
+    });
+    try {
+      const frame = sim.stepDebug(0.1);
+      await expect.poll(() => stops.length).toBe(1);
+      expect(stops[0]?.entity).toBe("e49");
+      expect(sim.debug?.resume(stops[0]?.id ?? "")).toBe(true);
+      await frame;
+      expect(sim.systemStatus()[0]?.error).toBeNull();
+      expect(sim.world.get("e0", "counter")?.n).toBe(3);
+      expect(sim.world.get("e49", "counter")?.n).toBe(3);
+    } finally {
+      sim.dispose();
+    }
+  });
   it("引数を初期化している途中に関数を呼んでも、デバッグ情報の取得で停止しない", async () => {
     const code = `import C from "./Counter.koko";\nexport default system({query:{with:[C]},onUpdate(e){\nconst c=e.get(C);const fn=(n=1,v=(()=>n)())=>{c.n=v;};fn();\n}});`;
     const sim = await Simulation.create(debugProject(code), "out", {

@@ -16,6 +16,7 @@ import type {
   DebugKokoState,
   DebugPoint,
   DebugRule,
+  DebugRunConfig,
   DebugStateEdit,
   ScriptEntity,
 } from "@tukurium/script";
@@ -78,6 +79,11 @@ export class DebugRuntime {
       writeState(edit: DebugStateEdit): boolean;
       log?(systemId: string, message: string): void;
       watching?(enabled: boolean): void;
+      /** 見張るフィールドの、その System の VM の中での置き場所（KokoState のキーとフィールド名）。 */
+      guestKey?(
+        w: DebugSettings["watches"][number],
+        systemId: string,
+      ): [string, string] | undefined;
       guestValue?(
         w: DebugSettings["watches"][number],
         entities: ScriptEntity[],
@@ -126,6 +132,32 @@ export class DebugRuntime {
   }
   requestPause() {
     this.pauseRequested = true;
+  }
+  /** VM の中で先に絞るための条件。ここに当てはまらない文は、ホストへ渡さない。 */
+  runConfig(systemId: string): DebugRunConfig {
+    const lines: DebugRunConfig["lines"] = {};
+    if (!this.settings.enabled) return { lines, stepping: false, watch: [] };
+    for (const rule of this.rules) {
+      lines[rule.systemId] ??= [];
+      lines[rule.systemId]?.push([rule.line, rule.entity]);
+    }
+    return {
+      lines,
+      stepping: this.stepping(),
+      watch: this.settings.watches.flatMap((w) => {
+        const key = w.enabled ? this.host?.guestKey?.(w, systemId) : undefined;
+        return key ? [[w.entity, ...key] as [string, string, string]] : [];
+      }),
+    };
+  }
+  stepping(): boolean {
+    return this.step !== null && this.step.mode !== "frame";
+  }
+  pendingHostChanges(): boolean {
+    return this.hostChanges.length > 0;
+  }
+  seenPoint() {
+    this.pointsThisFrame++;
   }
   holdAfterHandoff() {
     this.beforeFirstFrame = true;

@@ -16,7 +16,7 @@ import {
   type QuickJSHandle,
   type QuickJSRuntime,
 } from "quickjs-emscripten-core";
-import { DEBUG_PRELUDE, type DebugEdit, type DebugPoint } from "./debug";
+import { DEBUG_PRELUDE, type DebugEdit, type DebugPoint, type DebugRunConfig } from "./debug";
 
 /** スクリプトから見える Entity。KokoState の ID → フィールド名 → 値。 */
 export interface ScriptEntity {
@@ -43,7 +43,17 @@ export interface HostCallContext {
 export type HostFunction = (args: Value[], ctx: HostCallContext) => Value;
 
 export interface SandboxOptions {
-  debug?: { onPoint(point: DebugPoint): Promise<DebugEdit[]> };
+  debug?: {
+    onPoint(point: DebugPoint): Promise<DebugEdit[]>;
+    /** 呼び出しの前に VM へ渡す、止まるかもしれない所。 */
+    config?(systemId: string): DebugRunConfig;
+    /** ステップ実行の途中か。途中なら、すべての文をホストへ渡す。 */
+    stepping?(): boolean;
+    /** Host API が見張っているフィールドを変え、まだ確かめていないか。 */
+    pending?(): boolean;
+    /** この呼び出しで、一時停止できる所を通った。 */
+    seen?(): void;
+  };
   /** ハンドラ 1 回の呼び出しで使える時間。超えたら中断する。 */
   timeLimitMs?: number;
   /** 読み込み（領域の準備・スクリプトの評価）で使える時間。初回は VM の準備が入るので長めにする。 */
@@ -235,7 +245,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
   const entities = fields ? JSON.parse(entitiesJson) : __read(entitiesJson);
   if (fields) __eachField(entities, fields.read, false);
   const args = __read(argsJson);
-  ${debug ? "__debugBridge.reset(); __debugEntities = entities; __debugActive = true;" : ""}
+  ${debug ? "__debugBridge.reset(); __debugEntities = entities; __debugActive = true; __debugBridge.begin();" : ""}
   __current = id;
   try {
     for (const e of entities) {
@@ -295,6 +305,8 @@ export class ScriptSandbox {
   private disposeRequested = false;
   private cancelWait: (() => void) | null = null;
   private debugDeadline = Number.POSITIVE_INFINITY;
+  /** 時計を止めている間の、残りの実行時間。止めていなければ null。 */
+  private debugRemaining: number | null = null;
   setDebugWatching(enabled: boolean): void {
     if (!this.host.debug || this.busy || this.disposeRequested) return;
     for (const vm of this.realms.values())
@@ -452,7 +464,14 @@ export class ScriptSandbox {
   private disposeVm(vm: QuickJSContext): void {
     if (this.host.debug) {
       // asyncify 0.32 は Runtime の登録を先に外す。ホスト関数を先に解放しておく。
-      for (const name of ["__debugPause", "__hostCall", "__log"])
+      for (const name of [
+        "__debugPause",
+        "__debugPending",
+        "__debugClock",
+        "__debugSeen",
+        "__hostCall",
+        "__log",
+      ])
         vm.setProp(vm.global, name, vm.undefined);
     }
     vm.dispose();
@@ -475,6 +494,7 @@ export class ScriptSandbox {
     this.busy = true;
     this.currentLimit = this.options.timeLimitMs;
     this.debugDeadline = performance.now() + this.currentLimit;
+    this.debugRemaining = null;
     this.overMemory = false;
     this.runtime.setInterruptHandler(() => {
       if (this.memory.buffer.byteLength > this.heapLimit) {
@@ -484,11 +504,17 @@ export class ScriptSandbox {
       return this.disposeRequested || performance.now() > this.debugDeadline;
     });
     const values = [id, handler, stringifyValue(entities), "", stringifyValue(args)];
+    // 絞り込みを渡さない呼び出し元では、すべての文をホストへ渡す（遅いが、取りこぼさない）。
+    const config: DebugRunConfig = this.host.debug.config?.(id) ?? {
+      lines: {},
+      stepping: true,
+      watch: [],
+    };
     try {
       const result = this.unwrap(
         vm,
         await vm.evalCodeAsync(
-          `__run(${values.map((value) => JSON.stringify(value)).join(",")})`,
+          `__debugConfigure(${JSON.stringify(JSON.stringify(config))});__run(${values.map((value) => JSON.stringify(value)).join(",")})`,
           "debug-run.js",
         ),
         id,
@@ -540,8 +566,6 @@ export class ScriptSandbox {
         "__debugPause",
         async (text) => {
           const point = JSON.parse(vm.getString(text)) as DebugPoint;
-          const remaining = this.debugDeadline - performance.now();
-          this.debugDeadline = Number.POSITIVE_INFINITY;
           let cancel!: () => void;
           const cancelled = new Promise<null>((resolve) => {
             cancel = () => resolve(null);
@@ -550,16 +574,42 @@ export class ScriptSandbox {
           try {
             const result = await Promise.race([debug.onPoint(point), cancelled]);
             return vm.newString(
-              JSON.stringify(this.disposeRequested || result === null ? { abort: true } : result),
+              JSON.stringify(
+                this.disposeRequested || result === null
+                  ? { abort: true }
+                  : { edits: result, stepping: debug.stepping?.() ?? true },
+              ),
             );
           } finally {
             this.cancelWait = null;
-            this.debugDeadline = performance.now() + remaining;
           }
         },
       );
       vm.setProp(vm.global, "__debugPause", pause);
       pause.dispose();
+      const pending = vm.newFunction("__debugPending", () =>
+        debug.pending?.() ? vm.true : vm.false,
+      );
+      vm.setProp(vm.global, "__debugPending", pending);
+      pending.dispose();
+      // 値を写して待つ間は、実行時間の制限の時計を止める。
+      const clock = vm.newFunction("__debugClock", (runH) => {
+        if (vm.dump(runH)) {
+          if (this.debugRemaining !== null)
+            this.debugDeadline = performance.now() + this.debugRemaining;
+          this.debugRemaining = null;
+        } else if (this.debugRemaining === null) {
+          this.debugRemaining = this.debugDeadline - performance.now();
+          this.debugDeadline = Number.POSITIVE_INFINITY;
+        }
+      });
+      vm.setProp(vm.global, "__debugClock", clock);
+      clock.dispose();
+      const seen = vm.newFunction("__debugSeen", () => {
+        debug.seen?.();
+      });
+      vm.setProp(vm.global, "__debugSeen", seen);
+      seen.dispose();
     }
     const hostFns = this.host.hostFunctions ?? {};
     const ctxOf = (idH: QuickJSHandle): HostCallContext => ({
