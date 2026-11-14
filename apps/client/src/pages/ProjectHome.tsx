@@ -22,7 +22,7 @@ import {
   savedLabel,
   type VisibilityFilter,
   visibilityLabel,
-} from "./projectHome";
+} from "./projectHomeModel";
 
 type Tab = "overview" | "projects" | "releases";
 

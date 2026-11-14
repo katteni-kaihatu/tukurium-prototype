@@ -12,7 +12,7 @@ import {
   type ListedProject,
   type ListedRelease,
   type ProjectActivity,
-} from "./projectHome";
+} from "./projectHomeModel";
 
 /** プロフィール。プロジェクトウィンドウでは、一覧のホームとして開く。 */
 export function ProfilePage({
