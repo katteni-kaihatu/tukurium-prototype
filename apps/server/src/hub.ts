@@ -123,6 +123,12 @@ function looksLikeSnapshot(v: unknown, outputId: string): boolean {
 }
 
 /** セッションに置けるリリース（作品と、その時点の制作データ） */
+/** スナップショットから、アウトプットの名前を取り出す */
+function outputNameOf(snapshot: unknown, outputId: string): string | undefined {
+  const outputs = (snapshot as { outputs?: { id: string; name?: string }[] } | null)?.outputs;
+  return outputs?.find((o) => o.id === outputId)?.name;
+}
+
 interface LoadedRelease {
   release: { id: string; version: number };
   work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
@@ -1309,7 +1315,8 @@ export class Hub {
       workspaceId: null,
       releaseId: loaded.release.id,
       snapshot: loaded.snapshot,
-      label: `${loaded.work.name} v${loaded.release.version}`,
+      // 名前は、その版のアウトプットの名前（リリースしたときの名前は、見つからないときだけ）
+      label: `${outputNameOf(loaded.snapshot, loaded.work.outputId) || loaded.work.name} v${loaded.release.version}`,
       outputId: loaded.work.outputId,
       position,
       yaw,

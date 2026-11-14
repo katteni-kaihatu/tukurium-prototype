@@ -1947,19 +1947,10 @@ describe("マーケット", () => {
     await B.post(`/api/me/items/${gun.work.id}`, {});
     expect(await ids("sort=popular")).toEqual([gun.work.id, world.work.id]);
 
-    // ワールドの一覧には出るが、鍵がかかっている
-    const listed = (await B.get("/api/works")).json();
-    expect(listed.find((w: { id: string }) => w.id === world.work.id)).toMatchObject({
-      price: 500,
-      unlocked: false,
-    });
+    // 有料のワールドは、入手するまで開けない
     visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
     expect((await visitor.next("session.rejected")).message).toContain("有料");
     expect((await B.post(`/api/me/items/${world.work.id}`, {})).json().balance).toBe(490);
-    expect(
-      (await B.get("/api/works")).json().find((w: { id: string }) => w.id === world.work.id)
-        .unlocked,
-    ).toBe(true);
     visitor.send({ t: "session.create", name: "部屋", worldReleaseId: world.release.id });
     expect((await visitor.next("session")).session.placements).toHaveLength(1);
     expect(await store.balance(author.me.id)).toBe(1000 + 9 + 450);

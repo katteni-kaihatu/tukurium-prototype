@@ -392,7 +392,6 @@ export function registerRepoRoutes(
     handle(async (req) => {
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
       const works = await store.works(q);
-      const viewer = await userOf(req);
       return Promise.all(
         works.map(async (w) => {
           const latest = (await store.releases(w.id))[0] ?? null;
@@ -402,8 +401,12 @@ export function registerRepoRoutes(
             : null;
           const output = snap?.outputs.find((o) => o.id === w.outputId);
           const outputKind = output?.kind ?? null;
+          const listing = await store.listing(w.id);
+          const published = listing ? await store.release(listing.releaseId) : null;
           return {
             ...(await withOwner(w)),
+            // 名前は、マーケットで公開中の版（無ければ最新の版）のアウトプットの名前
+            name: await catalog.shownName(w, published, latest, output?.name),
             repoName: (await store.repo(w.repoId))?.name ?? "?",
             latest,
             outputKind,
@@ -411,9 +414,6 @@ export function registerRepoRoutes(
             thumbnail: output?.thumbnail ?? null,
             // 公式かどうかは発行者で決める（名前は見ない。ADR 0013 §1）
             official: isOfficial(w.owner),
-            // マーケットの価格（登録していなければ null）と、見ている人が使えるか
-            price: (await store.listing(w.id))?.price ?? null,
-            unlocked: viewer ? await catalog.canUse(viewer.id, w) : w.perms.use,
           };
         }),
       );

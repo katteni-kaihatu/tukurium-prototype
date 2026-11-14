@@ -67,6 +67,9 @@
 - 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
 - `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。
 - Hierarchy の行の操作（複製・削除・プレハブを開く）のボタンは、行を選ぶかマウスを載せるまで `display: none`。確認用のスクリプトで押すときは、先にその行を選ぶ（選んでいない行のボタンは、見つからない）。
+- Hierarchy の行の名前のボタンは、マウスを載せると、右側が行の操作のボタンに隠れる。Playwright はボタンの真ん中を押すので、幅の狭い Hierarchy では「ほかの要素がクリックを受け取る」で待ち続ける。確認用のスクリプトでは、左端を押す（`click({ position: { x: 8, y: 8 } })`）。
+- Entity からプレハブを作る処理（`planPrefabFromEntity()`）と展開は、参照を、フィールドの型（スキーマ）からたどる。Entity の参照の型の文は `EntityRef | undefined`（`FIELD_TYPE.entity`）。確認用のスクリプトやテストで `Entity` などと書くと、スキーマが作れず、参照として扱われない（書き換わらない）。入れ子の型（`EntityRef[]` など）は、TypeScript で作ったスキーマ（`FieldSchemas`）を渡したときだけたどる。
+- 確認用のスクリプトで、空間（3D）の所を `page.mouse.click()` で押すと、空間に入った状態になり、そのあとのパネルのクリックが届かない。窓の外を押して閉じる動きを確かめるときは、ほかのパネルの上を押す。
 
 ## 物理（Rapier）
 
@@ -82,7 +85,7 @@
 | Docker ビルドで pnpm install が失敗する | 新しいパッケージの package.json を COPY していない | Dockerfile に COPY を足す（`pnpm lint` が検査する） |
 | `CLIENT_DIR` を相対パスで渡すと起動しない | @fastify/static は絶対パスしか受け付けない | `config.ts` で絶対パスに直すようにした |
 | Coolify でイメージを取得できない | MinIO の公式イメージの配布が止まった・Docker Hub の取得制限 | 本番の compose には S3 互換ストレージを含めない（外部を使う）。ベースイメージは `NODE_IMAGE` で差し替えられる |
-| Windows で開発サーバーが白い画面になり、`DiffTree` が export されていないと出た（型・ビルドも同じ） | `DiffTree.tsx` と `diffTree.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`./DiffTree` が `.ts` の方に当たる | 片方を `diffTreeModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない（Linux の CI では気付けない） |
+| Windows で開発サーバーが白い画面になったり、型・ビルドで export がないと出たりする | `DiffTree.tsx` と `diffTree.ts`、`ProjectHome.tsx` と `projectHome.ts`、`RingMenu.tsx` と `ringMenu.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`.tsx` の import が `.ts` の方に当たる | ロジック側を `diffTreeModel.ts`・`projectHomeModel.ts`・`ringMenuModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない（Linux の CI では気付けない） |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
 ### ログイン（ADR 0074）

@@ -325,7 +325,7 @@ const KIND_ICON: Record<string, string> = {
 };
 
 /** カードの絵：サムネイルがあればそれ、なければ種類の絵 */
-function WorkArt({ work, size }: { work: Work; size: number }) {
+export function WorkArt({ work, size }: { work: Work; size: number }) {
   if (work.thumbnail) return <Thumbnail id={work.thumbnail} name={work.name} />;
   return (
     <svg
@@ -1131,7 +1131,7 @@ export function ItemDetailsPlaceholder({ className = styles.detail }: { classNam
 export function CatalogNotice() {
   const { message, actionError, retry, owned, busy, ownedError } = useCatalog();
   const status = useApp((s) => s.status);
-  const item = retry ? owned.find((i) => i.workId === retry.workId) : undefined;
+  const item = retry ? (owned.find((i) => i.workId === retry.workId) ?? retry.item) : undefined;
   return (
     <>
       {ownedError && (

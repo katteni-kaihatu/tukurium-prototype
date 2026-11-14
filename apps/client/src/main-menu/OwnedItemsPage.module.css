@@ -254,6 +254,13 @@
   color: #962f3b;
   font: 10px var(--font-body);
 }
+.privateBadge {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font: 600 10px var(--font-body);
+  color: #fff;
+  background: var(--c-ink-2);
+}
 .updateBadge {
   padding: 1px 5px;
   border-radius: 4px;

@@ -51,7 +51,7 @@ export interface CollisionEvent {
  * - 高さ 0 に、Entity ではない地面を置く。動く剛体はここで止まる。
  * - 動く剛体（dynamic）の位置・回転・速度は、計算後に Transform / RigidBody へ書き戻す。
  * - スクリプトが書いた速度は、次の計算の前に剛体へ戻す。
- * - RigidBody の lockMove* / lockRotate* が true の軸には動かさない（ワールドの軸。ADR 0077）。
+ * - RigidBody の lockMove* / lockRotate* が true の軸には動かさない（ワールドの軸。ADR 0078）。
  */
 export class Physics {
   readonly rapier: RAPIER.World;
