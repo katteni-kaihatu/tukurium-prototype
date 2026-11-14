@@ -10,7 +10,7 @@ import {
   stringifyValue,
   type ValueSchema,
 } from "@tukurium/eks";
-import { BUILTIN_KOKOSTATES } from "./builtins";
+import { BUILTIN, BUILTIN_KOKOSTATES } from "./builtins";
 import type {
   EntityBase,
   EntityDef,
@@ -19,6 +19,7 @@ import type {
   OutputSystem,
   PrefabDef,
   PrefabEntityDef,
+  PrefabEntityOverride,
   ProjectSnapshot,
 } from "./schema";
 
@@ -68,6 +69,52 @@ export function isInstanceRoot(e: ExpandedEntity): boolean {
   return e.origin?.instance === e.id;
 }
 
+/** 編集先の実体インスタンスと、その中の ID。展開した ID の区切りで対応を保つ。 */
+export function prefabInstanceAddress(
+  snap: ProjectSnapshot,
+  id: EntityId,
+): { instance: EntityDef | PrefabEntityDef; path: string } | undefined {
+  const own = [...snap.entities, ...(snap.prefabEntities ?? [])];
+  const exact = own.find((e) => e.id === id);
+  if (exact) return exact.instanceOf ? { instance: exact, path: "" } : undefined;
+  const instance = own.find((e) => e.instanceOf && id.startsWith(`${e.id}/`));
+  return instance ? { instance, path: id.slice(instance.id.length + 1) } : undefined;
+}
+
+export function getPrefabOverride(
+  snap: ProjectSnapshot,
+  id: EntityId,
+): PrefabEntityOverride | undefined {
+  const address = prefabInstanceAddress(snap, id);
+  if (!address) return undefined;
+  const explicit = address.instance.prefabOverrides?.[address.path];
+  const prefab = snap.prefabs?.find((p) => p.id === address.instance.instanceOf?.prefab);
+  const sourceId = address.path ? address.path.split("/").at(-1) : prefab?.root;
+  const source = snap.prefabEntities?.find((e) => e.id === sourceId);
+  const nested = snap.prefabs?.find((p) => p.id === source?.instanceOf?.prefab);
+  const nestedRoot = snap.prefabEntities?.find((e) => e.id === nested?.root);
+  const sourceStates = { ...nestedRoot?.states, ...source?.states };
+  const local = Object.fromEntries(
+    Object.entries(address.path === "" ? address.instance.states : {}).filter(
+      ([koko, values]) =>
+        koko !== BUILTIN.Transform && sourceStates[koko] && Object.keys(values).length > 0,
+    ),
+  );
+  const added = { ...explicit?.addedStates };
+  for (const [koko, values] of Object.entries(added)) {
+    if (!sourceStates[koko]) continue;
+    if (Object.keys(values).length > 0) local[koko] = { ...local[koko], ...values };
+    delete added[koko];
+  }
+  const states = mergeStateFields(local, explicit?.states);
+  for (const [koko, values] of Object.entries(states))
+    if (Object.keys(values).length === 0) delete states[koko];
+  const result: PrefabEntityOverride = { ...explicit, addedStates: added, states };
+  if (Object.keys(states).length === 0) delete result.states;
+  if (Object.keys(added).length === 0) delete result.addedStates;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export interface ExpandOptions {
   /** TypeScript で作ったフィールドのスキーマ（あれば、入れ子の値の中の参照も付け替える） */
   schemas?: FieldSchemas;
@@ -110,6 +157,33 @@ interface Template {
   systems: OutputSystem[];
   /** entity は rel */
   keep: KeepMark[];
+  /** 消えた親から、さらに親へたどるための道（ID は rel） */
+  deletedParents: Record<string, string | null>;
+}
+
+function mergeStateFields(
+  base: Record<KokoStateId, KokoStateValues>,
+  fields: Record<KokoStateId, KokoStateValues> | undefined,
+): Record<KokoStateId, KokoStateValues> {
+  const result = { ...base };
+  for (const [koko, values] of Object.entries(fields ?? {}))
+    result[koko] = { ...result[koko], ...values };
+  return result;
+}
+
+/** 入れ子のインスタンスごと消えたときは、その中の道から消えたインスタンスまで戻る。 */
+function deletedParentOf(
+  id: string,
+  parents: ReadonlyMap<string, string | null>,
+): string | null | undefined {
+  let path = id;
+  while (path) {
+    if (parents.has(path)) return parents.get(path);
+    const at = path.lastIndexOf(EXPANDED_ID_SEPARATOR);
+    if (at < 0) break;
+    path = path.slice(0, at);
+  }
+  return undefined;
 }
 
 interface CacheEntry {
@@ -314,6 +388,9 @@ class Expander {
     const entities: TemplateEntity[] = [];
     const systems: OutputSystem[] = def.systems.map((s) => ({ id: s.id, enabled: s.enabled }));
     const keep: KeepMark[] = [];
+    const deletedParents: Record<string, string | null> = {};
+    for (const [id, parent] of Object.entries(def.deletedParents ?? {}))
+      deletedParents[id] = parent === root.id ? "" : parent;
     for (const k of def.keep) {
       const rel = relOf(k.entity);
       if (rel !== undefined) keep.push({ ...k, entity: rel });
@@ -338,20 +415,28 @@ class Expander {
       }
       const nestedRoot = nested?.entities[0];
       if (!nested || !nestedRoot) {
-        entities.push({ rel, parent, name: e.name, order: e.order, ...own, origin });
+        entities.push({
+          rel,
+          parent: e.parent?.includes("/") ? (relOf(e.parent) ?? parent) : parent,
+          name: e.name,
+          order: e.order,
+          ...own,
+          origin,
+        });
       } else {
         // 入れ子のインスタンス：中のプレハブの Entity を、この Entity の下の ID に付け替えて足す
         const rebase = (t: TemplateEntity) =>
           this.mapEntityRefs(t.states, t.refs, (id) =>
             id.startsWith(MARK) ? MARK + join(rel, id.slice(MARK.length)) : undefined,
           );
+        const states = mergeStateFields(rebase(nestedRoot), own.states);
         entities.push({
           rel,
-          parent,
+          parent: e.parent?.includes("/") ? (relOf(e.parent) ?? parent) : parent,
           name: e.name,
           order: e.order,
-          states: { ...rebase(nestedRoot), ...own.states },
-          refs: [...nestedRoot.refs.filter((r) => !Object.hasOwn(own.states, r.koko)), ...own.refs],
+          states,
+          refs: this.refFields(states),
           origin: nestedRoot.origin,
         });
         for (const t of nested.entities.slice(1))
@@ -365,14 +450,51 @@ class Expander {
             origin: t.origin,
           });
         mergeSystems(systems, nested.systems);
+        mergeSystems(systems, e.instanceSystems ?? []);
         for (const k of nested.keep) keep.push({ ...k, entity: join(rel, k.entity) });
+        for (const [id, parent] of Object.entries(nested.deletedParents))
+          deletedParents[join(rel, id)] = parent === null ? rel : join(rel, parent);
       }
       for (const kid of kids.get(e.id) ?? []) visit(kid, rel);
     };
     visit(root, null);
 
+    // 内側の上書きは template の中で済んでいる。外側のインスタンスの分を最後に重ねる。
+    for (const e of all) {
+      if (!e.instanceOf || e.id === root.id) continue;
+      for (const [path, patch] of Object.entries(e.prefabOverrides ?? {})) {
+        const at = entities.findIndex((t) => t.rel === join(e.id, path));
+        const before = entities[at];
+        if (!before) continue;
+        const values = marked(
+          mergeStateFields(mergeStateFields(before.states, patch.addedStates), patch.states),
+        );
+        entities[at] = {
+          ...before,
+          ...values,
+          ...(patch.name === undefined ? {} : { name: patch.name }),
+          ...(patch.order === undefined ? {} : { order: patch.order }),
+          ...(patch.parent === undefined
+            ? {}
+            : { parent: patch.parent === null ? e.id : (relOf(patch.parent) ?? patch.parent) }),
+        };
+      }
+    }
+
+    const present = new Set(entities.map((e) => e.rel));
+    const removed = new Map(Object.entries(deletedParents));
+    for (const t of entities) {
+      let parent = t.parent;
+      const seen = new Set<string>();
+      while (parent !== null && !present.has(parent) && !seen.has(parent)) {
+        seen.add(parent);
+        parent = deletedParentOf(parent, removed) ?? "";
+      }
+      if (t.rel !== "") t.parent = parent;
+    }
+
     for (const t of entities) freeze(t.states);
-    return { template: { entities, systems, keep }, cyclic };
+    return { template: { entities, systems, keep, deletedParents }, cyclic };
   }
 
   /** インスタンスを、テンプレートから展開する */
@@ -381,19 +503,31 @@ class Expander {
     const replace = (id: string) =>
       id.startsWith(MARK) ? join(instance.id, id.slice(MARK.length)) : undefined;
     for (const t of template.entities) {
-      const states = this.mapEntityRefs(t.states, t.refs, replace);
+      let states = this.mapEntityRefs(t.states, t.refs, replace);
+      const patch = instance.prefabOverrides?.[t.rel];
+      states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
       const origin: PrefabOrigin = { instance: instance.id, ...t.origin };
       if (t.rel === "") {
-        const { instanceOf: _link, ...rest } = instance;
+        const {
+          instanceOf: _link,
+          prefabOverrides: _overrides,
+          instanceSystems: _systems,
+          ...rest
+        } = instance;
         // いちばん上の Entity：ID・名前・親・並び順と、場所・向き・大きさは、インスタンスのもの
-        out.push({ ...rest, states: { ...states, ...instance.states }, origin });
+        states = mergeStateFields(this.mapEntityRefs(t.states, t.refs, replace), instance.states);
+        states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
+        out.push({ ...rest, states, origin });
       } else {
         out.push({
           id: join(instance.id, t.rel),
-          name: t.name,
-          parent: join(instance.id, t.parent ?? ""),
+          name: patch?.name ?? t.name,
+          parent:
+            patch?.parent === undefined
+              ? join(instance.id, t.parent ?? "")
+              : (patch.parent ?? instance.id),
           output: instance.output,
-          order: t.order,
+          order: patch?.order ?? t.order,
           states,
           origin,
         });
@@ -437,6 +571,53 @@ class Expander {
       else used.set(e.output, [{ instance: e, template }]);
     }
 
+    // プレハブで消えた親を指す追加 Entity と、親の上書きは、残っている最も近い祖先へ付ける。
+    const parents = new Map<string, string | null>();
+    for (const list of used.values())
+      for (const { instance, template } of list) {
+        for (const [id, parent] of Object.entries(template.deletedParents))
+          parents.set(
+            join(instance.id, id),
+            parent === null ? instance.id : join(instance.id, parent),
+          );
+      }
+    const present = new Map(entities.map((e) => [e.id, e]));
+    for (let i = 0; i < entities.length; i++) {
+      const e = entities[i];
+      if (!e || e.parent === null) continue;
+      let parent = e.parent;
+      const seen = new Set<string>([e.id]);
+      while (!present.has(parent) && !seen.has(parent)) {
+        const next = deletedParentOf(parent, parents);
+        if (next === undefined) break;
+        seen.add(parent);
+        parent = next ?? "";
+      }
+      if (parent && parent !== e.parent) {
+        const next = { ...e, parent };
+        entities[i] = next;
+        present.set(e.id, next);
+      }
+    }
+    // 壊れた・同時編集されたデータでも親子の輪を表示側へ渡さない。
+    for (let i = 0; i < entities.length; i++) {
+      const e = entities[i];
+      if (!e) continue;
+      const seen = new Set<string>([e.id]);
+      let parent = e.parent;
+      while (parent !== null) {
+        if (seen.has(parent)) {
+          const root = e.origin?.instance;
+          const next = { ...e, parent: root && root !== e.id && !seen.has(root) ? root : null };
+          entities[i] = next;
+          present.set(e.id, next);
+          break;
+        }
+        seen.add(parent);
+        parent = present.get(parent)?.parent ?? null;
+      }
+    }
+
     const outputs = snap.outputs.map((o) => {
       const list = used.get(o.id);
       if (!list) return o;
@@ -445,7 +626,10 @@ class Expander {
       // System：アウトプットのものが先。プレハブのものは、Hierarchy の並びで先に出てくるインスタンスから足す。
       // アウトプットにも同じ System があれば、アウトプットの「入・切」が勝つ
       const extra: OutputSystem[] = [];
-      for (const { template } of list) mergeSystems(extra, template.systems);
+      for (const { template, instance } of list) {
+        mergeSystems(extra, template.systems);
+        mergeSystems(extra, instance.instanceSystems ?? []);
+      }
       const own = new Set(o.systems.map((s) => s.id));
       const systems = [...o.systems, ...extra.filter((s) => !own.has(s.id))];
       // 「維持」の印：プレハブの中で付けたものを、展開した Entity の ID にして足す
@@ -529,12 +713,19 @@ export function expandPrefabForEdit(
   if (!prefab || !own.some((e) => e.id === prefab.root)) return null;
   const ids = new Set(own.map((e) => e.id));
   const entities: EntityDef[] = own.map(({ prefab: _prefab, ...e }) => {
-    if (e.id !== prefab.root)
+    if (e.id !== prefab.root) {
+      let parent = e.parent;
+      const seen = new Set<string>();
+      while (parent !== null && !ids.has(parent) && !parent.includes("/") && !seen.has(parent)) {
+        seen.add(parent);
+        parent = prefab.deletedParents?.[parent] ?? prefab.root;
+      }
       return {
         ...e,
-        parent: e.parent !== null && ids.has(e.parent) ? e.parent : prefab.root,
+        parent: parent !== null && ids.has(parent.split("/")[0] ?? parent) ? parent : prefab.root,
         output: prefabId,
       };
+    }
     // いちばん上の Entity が持つインスタンスの印は、使わない（展開でも数えない）
     const { instanceOf: _link, ...root } = e;
     return { ...root, parent: null, output: prefabId };

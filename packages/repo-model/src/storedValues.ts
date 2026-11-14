@@ -8,6 +8,48 @@ import {
   type KokoStateId,
   type KokoStateValues,
 } from "@tukurium/eks";
+import type { PrefabEntityOverride } from "./schema";
+
+export type StoredPrefabOverrides = Record<
+  string,
+  Omit<PrefabEntityOverride, "states" | "addedStates"> & {
+    states?: Record<string, StoredValues>;
+    addedStates?: Record<string, StoredValues>;
+  }
+>;
+
+export function encodePrefabOverrides(
+  overrides: Record<string, PrefabEntityOverride>,
+): StoredPrefabOverrides {
+  return Object.fromEntries(
+    Object.entries(overrides).map(([path, value]) => {
+      const { states, addedStates, ...rest } = value;
+      return [
+        path,
+        {
+          ...rest,
+          ...(states ? { states: encodeStates(states) } : {}),
+          ...(addedStates ? { addedStates: encodeStates(addedStates) } : {}),
+        },
+      ];
+    }),
+  );
+}
+
+export function decodePrefabOverrides(
+  overrides: StoredPrefabOverrides,
+): Record<string, PrefabEntityOverride> {
+  return Object.fromEntries(
+    Object.entries(overrides).map(([path, value]) => [
+      path,
+      {
+        ...value,
+        ...(value.states ? { states: decodeStates(value.states) } : {}),
+        ...(value.addedStates ? { addedStates: decodeStates(value.addedStates) } : {}),
+      },
+    ]),
+  );
+}
 
 /**
  * 制作データの中の「値」（Entity のフィールドの値と、フィールドの初期値）を、保存する形

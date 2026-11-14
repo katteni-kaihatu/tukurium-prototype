@@ -77,10 +77,10 @@ export class ProjectDependencyGraph {
       for (const id of k.typeDefs ?? [])
         this.edge({ kind: "kokostate", id: k.id }, { kind: "typedef", id });
 
-    /** Entity が持っている KokoState と、値が指しているもの。inPrefab：プレハブの中の Entity（Entity どうしの辺は持たない） */
-    const uses = (from: GraphRef, e: EntityBase, inPrefab: boolean) => {
-      if (e.instanceOf) this.edge(from, { kind: "prefab", id: e.instanceOf.prefab });
-      for (const [kokoId, values] of Object.entries(e.states)) {
+    // 展開した Entity を指すときは、保存元のインスタンスに依存する。
+    const entityOwner = (id: string) => id.split("/")[0] ?? id;
+    const usesStates = (from: GraphRef, states: EntityBase["states"], inPrefab: boolean) => {
+      for (const [kokoId, values] of Object.entries(states)) {
         this.edge(from, { kind: "kokostate", id: kokoId });
         for (const f of defs.get(kokoId)?.fields ?? []) {
           const schema = schemaOfField(schemas, kokoId, f);
@@ -88,15 +88,28 @@ export class ProjectDependencyGraph {
           visitRefs(schema, values[f.id], (target, id) => {
             if (target === "entity" && inPrefab) return;
             const kind = target === "entity" || target === "material" ? target : "asset";
-            this.edge(from, { kind, id });
+            this.edge(from, { kind, id: target === "entity" ? entityOwner(id) : id });
           });
         }
       }
     };
+    /** Entity と、インスタンスで足した値や System が使うもの。プレハブの中では Entity どうしの辺は持たない */
+    const uses = (from: GraphRef, e: EntityBase, inPrefab: boolean) => {
+      if (e.instanceOf) this.edge(from, { kind: "prefab", id: e.instanceOf.prefab });
+      usesStates(from, e.states, inPrefab);
+      for (const override of Object.values(e.prefabOverrides ?? {})) {
+        usesStates(from, override.states ?? {}, inPrefab);
+        usesStates(from, override.addedStates ?? {}, inPrefab);
+        if (override.parent && !inPrefab)
+          this.edge(from, { kind: "entity", id: entityOwner(override.parent) });
+      }
+      for (const system of e.instanceSystems ?? [])
+        this.edge(from, { kind: "system", id: system.id });
+    };
 
     for (const e of snap.entities) {
       const from: GraphRef = { kind: "entity", id: e.id };
-      if (e.parent) this.edge(from, { kind: "entity", id: e.parent });
+      if (e.parent) this.edge(from, { kind: "entity", id: entityOwner(e.parent) });
       uses(from, e, false);
       this.edge({ kind: "output", id: e.output }, from);
     }

@@ -1,6 +1,7 @@
 import { equalValues, type KokoStateDef } from "@tukurium/eks";
 import {
   decodeKokoState,
+  decodePrefabOverrides,
   decodeStates,
   type EntityDef,
   entityFilePath,
@@ -10,18 +11,21 @@ import {
   type MaterialDef,
   materialFilePath,
   type OutputDef,
+  type OutputSystem,
   outputFilePath,
   type PrefabDef,
   type PrefabEntityDef,
   prefabEntityFilePath,
   prefabFilePath,
   type StoredKokoState,
+  type StoredPrefabOverrides,
   type StoredValues,
   systemCodePath,
   systemMetaPath,
   typeCodePath,
   typeMetaPath,
 } from "@tukurium/repo-model";
+import { prefabChangeParts } from "./prefabChanges";
 
 /** 最後に保存した内容との差。緑が新しい、黄色が変わった。 */
 export type ChangeKind = "added" | "modified";
@@ -42,6 +46,8 @@ interface SavedEntity {
   parent?: string | null;
   states?: Record<string, StoredValues>;
   instanceOf?: { prefab: string };
+  prefabOverrides?: StoredPrefabOverrides;
+  instanceSystems?: OutputSystem[];
 }
 
 function readJson<T>(files: FileMap, path: string): T | null {
@@ -135,7 +141,16 @@ export function entityChange(
   // プレハブのインスタンスになった・ふつうの Entity に戻った・別のプレハブになった（ADR 0076）。
   // Entity からプレハブを作ると、KokoState がプレハブへ移って減るだけなので、これで印を出す
   const linked = (saved.instanceOf?.prefab ?? null) !== (entity.instanceOf?.prefab ?? null);
-  const kind = name || parent || linked || Object.keys(states).length > 0 ? "modified" : null;
+  const overrides =
+    prefabChangeParts(
+      {
+        prefabOverrides: decoded(saved.prefabOverrides ?? {}, decodePrefabOverrides) ?? {},
+        instanceSystems: saved.instanceSystems,
+      },
+      entity,
+    ).length > 0;
+  const kind =
+    name || parent || linked || overrides || Object.keys(states).length > 0 ? "modified" : null;
   return { kind, name, parent, states };
 }
 

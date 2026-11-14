@@ -328,6 +328,27 @@
   gap: 6px;
 }
 
+.fieldRow:has(> .prefabMark) {
+  grid-template-columns: 8px 18px minmax(0, 1fr) auto;
+}
+
+.prefabMark {
+  flex: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  min-width: 18px;
+  background: transparent;
+  color: var(--c-brand);
+  font-size: 15px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.prefabMark:hover {
+  background: var(--c-brand-soft);
+}
+
 .keep,
 .keepOn {
   height: 22px;

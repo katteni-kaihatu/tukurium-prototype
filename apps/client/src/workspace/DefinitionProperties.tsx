@@ -13,7 +13,7 @@ import {
   ResourcePathIndex,
   usersOf,
 } from "@tukurium/repo-model";
-import { createContext, useContext, useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 import {
   formatBytes,
   type ImageInfo,
@@ -357,13 +357,15 @@ function OutputProperties({ id }: { id: string }) {
  * 動かす System の並びと「入・切」。アウトプットと、プレハブで同じ画面を使う（ADR 0076）。
  * 並び順が実行順。
  */
-function SystemRows(props: {
+export function SystemRows(props: {
   systems: OutputSystem[];
   nameOf: (id: string) => string | undefined;
   editing: boolean;
   /** 最後の保存からの変化の印（行ごと）。なければ出さない */
   rowMark?: (id: string) => ChangeKind | null;
   markTarget?: ChangeTarget;
+  markTargetFor?: (id: string) => ChangeTarget | undefined;
+  rowDecoration?: (id: string) => ReactNode;
   onChange: (systems: OutputSystem[]) => void;
 }) {
   const { systems, editing, onChange } = props;
@@ -383,9 +385,10 @@ function SystemRows(props: {
             {props.rowMark && (
               <ChangeMark
                 kind={props.rowMark(ref.id)}
-                {...(props.markTarget ? { target: props.markTarget } : {})}
+                target={props.markTargetFor?.(ref.id) ?? props.markTarget}
               />
             )}
+            {props.rowDecoration?.(ref.id)}
             <input
               type="checkbox"
               aria-label={`${name ?? ref.id} を有効にする`}
@@ -433,7 +436,7 @@ function SystemRows(props: {
 }
 
 /** まだ並びにない System を、並びの終わりに足す */
-function SystemAdder(props: {
+export function SystemAdder(props: {
   systems: OutputSystem[];
   choices: { id: string; name: string }[];
   onChange: (systems: OutputSystem[]) => void;

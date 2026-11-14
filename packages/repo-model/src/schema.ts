@@ -108,6 +108,20 @@ export interface PrefabDef {
   keep: KeepMark[];
   /** 編集する場所。ないときは「その場」 */
   editIn?: PrefabEditPlace;
+  /** 消した Entity の元の親。インスタンスの親が消えたとき、残っている祖先へたどる */
+  deletedParents?: Record<EntityId, EntityId | null>;
+}
+
+/** インスタンスで変えた所。キーはルートからの ID（ルート自身は空文字） */
+export interface PrefabEntityOverride {
+  name?: string;
+  /** 既存 KokoState のフィールドごとの上書き */
+  states?: Record<KokoStateId, KokoStateValues>;
+  /** インスタンスで付けた KokoState */
+  addedStates?: Record<KokoStateId, KokoStateValues>;
+  /** 展開した Entity の ID。null はインスタンスのルート */
+  parent?: EntityId | null;
+  order?: number;
 }
 
 /** インスタンスが持つ、プレハブとのつながり（ADR 0076） */
@@ -129,6 +143,9 @@ export interface EntityBase {
    * （`expandPrefabs`）。場所・向き・大きさ（Transform）は、インスタンスそのものが持つ。
    */
   instanceOf?: PrefabInstanceLink;
+  prefabOverrides?: Record<string, PrefabEntityOverride>;
+  /** インスタンスで足した System */
+  instanceSystems?: OutputSystem[];
 }
 
 export interface EntityDef extends EntityBase {

@@ -1,3 +1,4 @@
+import type { FieldSchemas } from "@tukurium/eks";
 import { describe, expect, it } from "vitest";
 import { BUILTIN } from "../builtins";
 import type { EntityDef, ProjectSnapshot } from "../schema";
@@ -198,5 +199,134 @@ describe("checkProjectReferences", () => {
       ["keep-invalid", "out", "warning"],
       ["output-system-missing", "out", "warning"],
     ]);
+  });
+});
+
+describe("インスタンスで変えた参照", () => {
+  const project = () =>
+    snap({
+      prefabs: [{ id: "prefab", name: "部品", root: "root", systems: [], keep: [] }],
+      prefabEntities: [
+        { id: "root", name: "根", prefab: "prefab", parent: null, order: 0, states: {} },
+        { id: "child", name: "子", prefab: "prefab", parent: "root", order: 0, states: {} },
+      ],
+      entities: [ent("instance", {}, { instanceOf: { prefab: "prefab" } })],
+    });
+
+  it("上書きと追加した KokoState の問題は、保存元のインスタンスを指す", () => {
+    const p = project();
+    const instance = p.entities[0];
+    if (!instance) throw new Error("インスタンスがありません");
+    instance.prefabOverrides = {
+      child: {
+        states: { [BUILTIN.Mesh]: { material: "gone_material" } },
+        addedStates: { ks_gone: {} },
+      },
+    };
+    instance.instanceSystems = [{ id: "gone_system", enabled: false }];
+    const diagnostics = checkProjectReferences(p);
+    expect(diagnostics.map((d) => [d.code, d.subject, d.location])).toEqual([
+      [
+        "missing-resource",
+        { kind: "entity", id: "instance" },
+        {
+          kind: "property",
+          path: ["prefabOverrides", "child", "states", BUILTIN.Mesh, "material"],
+        },
+      ],
+      [
+        "missing-kokostate",
+        { kind: "entity", id: "instance" },
+        { kind: "property", path: ["prefabOverrides", "child", "addedStates", "ks_gone"] },
+      ],
+      [
+        "instance-system-missing",
+        { kind: "entity", id: "instance" },
+        { kind: "property", path: ["instanceSystems", "gone_system"] },
+      ],
+    ]);
+  });
+
+  it("入れ子の値の参照も、展開した中身を指せるか確かめる", () => {
+    const p = project();
+    p.kokostates.push({
+      id: "links",
+      name: "Links",
+      fields: [{ id: "targets", name: "targets", type: "EntityRef[]", default: [] }],
+    });
+    const instance = p.entities[0];
+    if (!instance) throw new Error("インスタンスがありません");
+    instance.prefabOverrides = {
+      "": { addedStates: { links: { targets: ["instance/child", "gone_entity"] } } },
+    };
+    const schemas: FieldSchemas = {
+      links: { targets: { kind: "list", item: { kind: "ref", target: "entity" } } },
+    };
+    const diagnostics = checkProjectReferences(p, schemas);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      code: "missing-entity",
+      subject: { kind: "entity", id: "instance" },
+      detail: "ID: gone_entity",
+      location: {
+        kind: "property",
+        path: ["prefabOverrides", "", "addedStates", "links", "targets"],
+      },
+    });
+  });
+
+  it("プレハブの中にあるインスタンスの追加分は、そのプレハブで直せる場所に出す", () => {
+    const p = project();
+    p.prefabs?.push({ id: "outer", name: "外側", root: "outer_root", systems: [], keep: [] });
+    p.prefabEntities?.push(
+      { id: "outer_root", name: "根", prefab: "outer", parent: null, order: 0, states: {} },
+      {
+        id: "nested",
+        name: "中の部品",
+        prefab: "outer",
+        parent: "outer_root",
+        order: 0,
+        states: {},
+        instanceOf: { prefab: "prefab" },
+        prefabOverrides: {
+          child: { addedStates: { [BUILTIN.AudioSource]: { clip: "gone_audio" } } },
+        },
+        instanceSystems: [{ id: "gone_system", enabled: true }],
+      },
+    );
+    const diagnostics = checkProjectReferences(p);
+    expect(diagnostics.map((d) => [d.code, d.subject, d.location])).toEqual([
+      [
+        "missing-resource",
+        { kind: "prefab", id: "outer" },
+        {
+          kind: "property",
+          path: [
+            "entities",
+            "nested",
+            "prefabOverrides",
+            "child",
+            "addedStates",
+            BUILTIN.AudioSource,
+            "clip",
+          ],
+        },
+      ],
+      [
+        "instance-system-missing",
+        { kind: "prefab", id: "outer" },
+        { kind: "property", path: ["entities", "nested", "instanceSystems", "gone_system"] },
+      ],
+    ]);
+  });
+
+  it("消えた子への上書きは、使われていない参照として問題を増やさない", () => {
+    const p = project();
+    const instance = p.entities[0];
+    if (!instance) throw new Error("インスタンスがありません");
+    instance.prefabOverrides = {
+      gone_child: { addedStates: { [BUILTIN.Mesh]: { material: "gone_material" } } },
+    };
+    expect(checkProjectReferences(p)).toEqual([]);
   });
 });

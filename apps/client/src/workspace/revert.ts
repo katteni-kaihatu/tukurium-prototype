@@ -7,6 +7,7 @@ import type {
   ProjectSnapshot,
 } from "@tukurium/repo-model";
 import type { DiffEntry } from "./diffView";
+import { parsePrefabPart } from "./prefabChanges";
 
 /**
  * 差分（DiffEntry の id と、DiffLine の part）を、最後に保存した形に戻す手順にする。
@@ -105,6 +106,33 @@ function entityRevert(
       });
   }
   if (!saved || !cur) return null;
+  const prefabPart = parsePrefabPart(part);
+  if (prefabPart)
+    return () => {
+      const { path, kind, koko, field } = prefabPart;
+      if (kind === "system") {
+        const value = saved.instanceSystems?.find((s) => s.id === koko);
+        const list = (project.entity(id)?.instanceSystems ?? []).filter((s) => s.id !== koko);
+        if (value)
+          list.splice(
+            saved.instanceSystems?.findIndex((s) => s.id === koko) ?? list.length,
+            0,
+            value,
+          );
+        project.setInstanceSystems(id, list);
+      } else {
+        if (path === "" && kind === "field" && koko && field)
+          project.restoreEntityField(id, koko, field, saved);
+        else
+          project.restorePrefabOverridePart(
+            path ? `${id}/${path}` : id,
+            kind,
+            saved.prefabOverrides?.[path],
+            koko,
+            field,
+          );
+      }
+    };
   if (part === "name") return () => project.renameEntity(id, saved.name);
   if (part === "place") {
     if (!project.output(saved.output)) return null;
@@ -127,7 +155,8 @@ function entityRevert(
     const value = before[field] as FieldValue;
     return () =>
       project.transact(() => {
-        project.setField(id, koko, field, value);
+        if (cur.instanceOf) project.restoreEntityField(id, koko, field, saved);
+        else project.setField(id, koko, field, value);
         setKeep(
           project,
           head,

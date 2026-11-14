@@ -14,6 +14,7 @@ import {
   type PrefabDef,
   type ProjectSnapshot,
 } from "@tukurium/repo-model";
+import { prefabChangeParts } from "./prefabChanges";
 
 /** 履歴と保存で出す、ひとつの変化。 */
 export type DiffKind = "added" | "removed" | "modified";
@@ -193,6 +194,26 @@ function entityEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
       });
     }
     lines.push(...stateLines(id, prev, next, before, after));
+    for (const change of prefabChangeParts(prev, next)) {
+      const names = {
+        name: "名前",
+        parent: "親",
+        order: "並び",
+        state: "追加した KokoState",
+        field: "フィールド",
+        system: "追加した System",
+      };
+      const target = change.path ? ` / ${change.path}` : "";
+      const field = change.koko
+        ? ` / ${change.koko}${change.field ? ` / ${change.field}` : ""}`
+        : "";
+      lines.push({
+        label: `インスタンス${target}：${names[change.kind]}${field}`,
+        before: change.beforePresent ? stringifyValue(change.before) : null,
+        after: change.afterPresent ? stringifyValue(change.after) : null,
+        part: change.part,
+      });
+    }
     const parentChanged = (prev?.parent ?? null) !== (next?.parent ?? null);
     // アウトプットの名前が変わっただけでは、中のエンティティは出さない
     if (lines.length === 0 && !parentChanged && !outputChanged) return [];
@@ -400,6 +421,7 @@ function prefabEntries(before: ProjectSnapshot, after: ProjectSnapshot): DiffEnt
       if (e.prev.order !== e.next.order) changed.push("並び");
       if ((e.prev.instanceOf?.prefab ?? null) !== (e.next.instanceOf?.prefab ?? null))
         changed.push("プレハブ");
+      if (prefabChangeParts(e.prev, e.next).length > 0) changed.push("インスタンスの変更");
       for (const koko of new Set([...Object.keys(e.prev.states), ...Object.keys(e.next.states)])) {
         const def = defs.get(koko);
         const [a, b] = [e.prev.states[koko], e.next.states[koko]];
