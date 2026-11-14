@@ -14,10 +14,13 @@ import type {
 } from "./schema";
 import {
   decodeKokoState,
+  decodePrefabOverrides,
   decodeStates,
   encodeKokoState,
+  encodePrefabOverrides,
   encodeStates,
   type StoredKokoState,
+  type StoredPrefabOverrides,
   type StoredValues,
 } from "./storedValues";
 
@@ -61,8 +64,9 @@ export function prefabEntityFilePath(prefabId: string, entityId: string): string
 }
 
 /** ファイルに書く Entity（値は保存する形。アウトプット・プレハブはパスで分かるので書かない） */
-type StoredEntity = Omit<EntityDef, "output" | "states"> & {
+type StoredEntity = Omit<EntityDef, "output" | "states" | "prefabOverrides"> & {
   states: Record<string, StoredValues>;
+  prefabOverrides?: StoredPrefabOverrides;
 };
 
 /**
@@ -91,18 +95,20 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
   for (const a of snap.assets ?? []) files[`assets/${safe(a.id)}.json`] = json(a);
   for (const o of snap.outputs) files[outputFilePath(o.id)] = json(o);
   for (const e of snap.entities) {
-    const { output, states, ...rest } = e;
+    const { output, states, prefabOverrides, ...rest } = e;
     files[entityFilePath(output, e.id)] = json({
       ...rest,
+      ...(prefabOverrides ? { prefabOverrides: encodePrefabOverrides(prefabOverrides) } : {}),
       states: encodeStates(states),
     } satisfies StoredEntity);
   }
   // プレハブと、その中の Entity（ADR 0076）
   for (const p of snap.prefabs ?? []) files[prefabFilePath(p.id)] = json(p);
   for (const e of snap.prefabEntities ?? []) {
-    const { prefab, states, ...rest } = e;
+    const { prefab, states, prefabOverrides, ...rest } = e;
     files[prefabEntityFilePath(prefab, e.id)] = json({
       ...rest,
+      ...(prefabOverrides ? { prefabOverrides: encodePrefabOverrides(prefabOverrides) } : {}),
       states: encodeStates(states),
     } satisfies StoredEntity);
   }
@@ -156,6 +162,9 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
       snap.prefabEntities ??= [];
       snap.prefabEntities.push({
         ...stored,
+        ...(stored.prefabOverrides
+          ? { prefabOverrides: decodePrefabOverrides(stored.prefabOverrides) }
+          : {}),
         states: decodeStates(stored.states),
         prefab: pf.id,
       } satisfies PrefabEntityDef);
@@ -166,7 +175,14 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
     for (const p of paths) {
       if (!p.startsWith(prefix)) continue;
       const stored = parse<StoredEntity>(p);
-      snap.entities.push({ ...stored, states: decodeStates(stored.states), output: o.id });
+      snap.entities.push({
+        ...stored,
+        ...(stored.prefabOverrides
+          ? { prefabOverrides: decodePrefabOverrides(stored.prefabOverrides) }
+          : {}),
+        states: decodeStates(stored.states),
+        output: o.id,
+      });
     }
   }
   if (files["provenance.json"]) snap.provenance = parse<Provenance[]>("provenance.json");

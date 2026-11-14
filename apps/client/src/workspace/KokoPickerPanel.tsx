@@ -1,6 +1,6 @@
 import type { KokoStateDef } from "@tukurium/eks";
 import { useState } from "react";
-import { useProject } from "./hooks";
+import { useEditTarget, useProject } from "./hooks";
 import styles from "./KokoPickerPanel.module.css";
 import { catalogEntries, catalogTags, filterCatalog, roleLabel } from "./kokoCatalog";
 import { useWorkspace } from "./store";
@@ -30,6 +30,7 @@ const loadView = (): View => {
 export function KokoPickerPanel() {
   const entityId = useWorkspace((s) => (s.selection?.kind === "entity" ? s.selection.id : null));
   const project = useProject();
+  const target = useEditTarget();
   useWorkspace((s) => s.rev);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -44,7 +45,7 @@ export function KokoPickerPanel() {
     }
   };
   // アウトプットの Entity か、開いているプレハブの中の Entity
-  const entity = entityId ? project.findEntity(entityId) : undefined;
+  const entity = entityId ? target.snapshot.entities.find((e) => e.id === entityId) : undefined;
   if (!entityId || !entity)
     return (
       <p className={ui.empty}>Hierarchy で Entity を選ぶと、ここから KokoState を付けられます</p>

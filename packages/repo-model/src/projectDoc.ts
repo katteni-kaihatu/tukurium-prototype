@@ -4,17 +4,26 @@ import {
   encodeValue,
   equalValues,
   type FieldDef,
+  type FieldSchemas,
   type FieldValue,
+  hasRefs,
   type Json,
   type KokoStateDef,
   type KokoStateId,
   type KokoStateValues,
+  mapRefs,
+  schemaOfField,
 } from "@tukurium/eks";
 import * as Y from "yjs";
 import { BUILTIN_KOKOSTATES, buildRegistry, isBuiltin } from "./builtins";
 import { assignOrderKeys } from "./orderKey";
 import { validateAlias } from "./packageDependency";
-import { EXPANDED_ID_SEPARATOR } from "./prefab";
+import {
+  EXPANDED_ID_SEPARATOR,
+  type ExpandedEntity,
+  expandPrefabForEdit,
+  expandPrefabs,
+} from "./prefab";
 import {
   type PrefabFromEntityOptions,
   type PrefabFromEntityPlan,
@@ -31,9 +40,11 @@ import {
   newId,
   type OutputDef,
   type OutputKind,
+  type OutputSystem,
   type PackageDependency,
   type PrefabDef,
   type PrefabEntityDef,
+  type PrefabEntityOverride,
   type PrefabInstanceLink,
   type ProjectSnapshot,
   type SystemDef,
@@ -120,6 +131,51 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
   };
 }
 
+type OverrideStore = Y.Map<Json>;
+interface OverrideTarget {
+  owner: Y.Map<unknown>;
+  path: string;
+  entity: ExpandedEntity;
+  base: ExpandedEntity;
+}
+const overrideKey = (...parts: string[]): string => JSON.stringify(parts);
+
+/** 1 フィールドを 1 キーにする。最初の同時編集でも、途中の入れ物の作成が競合しない。 */
+function overridesMap(overrides: Record<string, PrefabEntityOverride>): OverrideStore {
+  const out = new Y.Map<Json>();
+  for (const [path, value] of Object.entries(overrides)) {
+    for (const key of ["name", "parent", "order"] as const)
+      if (Object.hasOwn(value, key)) out.set(overrideKey(path, key), encodeValue(value[key]));
+    for (const group of ["states", "addedStates"] as const)
+      for (const [koko, values] of Object.entries(value[group] ?? {})) {
+        if (group === "addedStates") out.set(overrideKey(path, group, koko), true);
+        for (const [field, v] of Object.entries(values))
+          out.set(overrideKey(path, group, koko, field), encodeValue(v));
+      }
+  }
+  return out;
+}
+
+function readOverrides(map: OverrideStore): Record<string, PrefabEntityOverride> {
+  const out: Record<string, PrefabEntityOverride> = {};
+  for (const [key, stored] of map) {
+    const [path, group, koko, field] = JSON.parse(key) as string[];
+    if (path === undefined || group === undefined) continue;
+    out[path] ??= {};
+    const value = out[path];
+    if (group === "name" || group === "parent" || group === "order") {
+      Object.assign(value, { [group]: decodeValue(stored) });
+    } else if ((group === "states" || group === "addedStates") && koko !== undefined) {
+      value[group] ??= {};
+      const states = value[group];
+      states[koko] ??= {};
+      const values = states[koko];
+      if (field !== undefined) values[field] = decodeValue(stored) as FieldValue;
+    }
+  }
+  return out;
+}
+
 /**
  * ワークスペースの制作データ（編集中）。Y.Doc の上に載せ、共同編集でそのまま同期できるようにする。
  *
@@ -132,7 +188,7 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
  * - materials   : Y.Map<MaterialDef>
  * - outputs     : Y.Map<OutputDef>
  * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<Y.Map<Json>>),
- *                                       instanceOf（プレハブのインスタンスのときだけ）
+ *                                       instanceOf, prefabOverrides（パス・KokoState・フィールドをキーにする Y.Map）
  * - prefabs     : Y.Map<PrefabDef>      プレハブ（ADR 0076）
  * - prefabEntities : Y.Map<Y.Map>       プレハブの中の Entity。entities と同じ形で、output の代わりに prefab
  *
@@ -326,6 +382,25 @@ export class ProjectDoc {
       // Entity が持っている値を新しい定義に合わせる：消えたフィールドは削除、足したフィールドと
       // 型が変わったフィールドは初期値。ほかのフィールドの値には触れない（同時に値を変えた人の変更を残す）
       for (const e of this.nodes()) {
+        const overrides = e.get("prefabOverrides") as OverrideStore | undefined;
+        for (const [key] of overrides ?? []) {
+          const [path, group, koko, field] = JSON.parse(key) as string[];
+          if (koko !== def.id || (group !== "states" && group !== "addedStates")) continue;
+          if (field === undefined && group === "addedStates" && path !== undefined) {
+            for (const f of def.fields) {
+              const old = prev.fields.find((p) => p.id === f.id);
+              const fieldKey = overrideKey(path, group, koko, f.id);
+              if (!old || renamed(old.type) !== f.type || !overrides?.has(fieldKey))
+                overrides?.set(fieldKey, encodeValue(f.default));
+            }
+          } else if (field !== undefined) {
+            const f = def.fields.find((f) => f.id === field);
+            const old = prev.fields.find((f) => f.id === field);
+            if (!f) overrides?.delete(key);
+            else if (!old || renamed(old.type) !== f.type)
+              overrides?.set(key, encodeValue(f.default));
+          }
+        }
         const states = e.get("states") as Y.Map<ValueMap>;
         const values = states.get(def.id);
         if (!values) continue;
@@ -342,7 +417,13 @@ export class ProjectDoc {
   removeKokoState(id: KokoStateId): void {
     this.transact(() => {
       this.kokoMap.delete(id);
-      for (const e of this.nodes()) (e.get("states") as Y.Map<unknown>).delete(id);
+      for (const e of this.nodes()) {
+        (e.get("states") as Y.Map<unknown>).delete(id);
+        this.deleteStoredOverrides(
+          e,
+          (parts) => (parts[1] === "states" || parts[1] === "addedStates") && parts[2] === id,
+        );
+      }
     });
   }
   private assertKokoName(name: string, self: KokoStateId | null): void {
@@ -387,6 +468,14 @@ export class ProjectDoc {
     this.transact(() => {
       this.systemMap.delete(id);
       this.codeMap.delete(id);
+      for (const e of this.nodes()) {
+        const systems = e.get("instanceSystems") as OutputSystem[] | undefined;
+        if (systems?.some((s) => s.id === id)) {
+          const left = systems.filter((s) => s.id !== id);
+          if (left.length > 0) e.set("instanceSystems", left);
+          else e.delete("instanceSystems");
+        }
+      }
       for (const o of this.outputMap.values()) {
         if (o.systems.some((s) => s.id === id)) {
           this.outputMap.set(o.id, { ...o, systems: o.systems.filter((s) => s.id !== id) });
@@ -485,6 +574,10 @@ export class ProjectDoc {
         const states = e.get("states") as Y.Map<ValueMap>;
         const mesh = states.get("builtin.Mesh");
         if (mesh?.get("material") === id) mesh.set("material", none());
+        this.replaceStoredOverrideValues(
+          e,
+          (parts, value) => parts[2] === "builtin.Mesh" && parts[3] === "material" && value === id,
+        );
       }
     });
   }
@@ -520,6 +613,7 @@ export class ProjectDoc {
         for (const values of states.values()) {
           for (const [field, value] of values) if (value === id) values.set(field, none());
         }
+        this.replaceStoredOverrideValues(e, (_parts, value) => value === id);
       }
     });
   }
@@ -575,9 +669,17 @@ export class ProjectDoc {
     const id = init.id ?? newId("ent");
     assertEntityId(id);
     const registry = this.registry();
+    const parent = init.parent ?? null;
+    if (parent !== null) {
+      const target = this.expandedPeers(parent).find((e) => e.id === parent);
+      if (!target || target.output !== init.output)
+        throw new Error("親は、同じアウトプットの中の Entity にしてください");
+    }
     this.transact(() => {
       const e = new Y.Map<unknown>();
-      const siblings = this.entities(init.output).filter((s) => s.parent === (init.parent ?? null));
+      const siblings = this.expandedPeers(parent ?? id).filter(
+        (s) => s.output === init.output && s.parent === parent,
+      );
       e.set("id", id);
       e.set("name", init.name);
       e.set("parent", init.parent ?? null);
@@ -588,7 +690,10 @@ export class ProjectDoc {
         states.set(koko, valueMap(registry.createValues(koko, values)));
       }
       e.set("states", states);
-      if (init.instanceOf) e.set("instanceOf", clone(init.instanceOf));
+      if (init.instanceOf) {
+        e.set("instanceOf", clone(init.instanceOf));
+        e.set("prefabOverrides", overridesMap({}));
+      }
       this.entityMap.set(id, e);
     });
     return id;
@@ -598,10 +703,21 @@ export class ProjectDoc {
     return this.entity(id) ?? this.prefabEntity(id);
   }
   renameEntity(id: EntityId, name: string): void {
+    const target = this.overrideTarget(id);
+    if (target && target.path !== "") {
+      this.writeOverride(target, "name", name);
+      return;
+    }
     this.node(id)?.set("name", name);
   }
   /** 親を変える。プレハブの中では、親なし（null）は「いちばん上の Entity の下」になる */
   setParent(id: EntityId, parent: EntityId | null): void {
+    const target = this.overrideTarget(id);
+    if (target && target.path !== "") {
+      this.assertExpandedParent(id, parent);
+      this.writeOverride(target, "parent", parent);
+      return;
+    }
     const e = this.node(id);
     if (!e) return;
     const to = this.parentIn(e, parent);
@@ -615,25 +731,39 @@ export class ProjectDoc {
    * 兄弟は、同じ持ち主（同じアウトプットか、同じプレハブ）の中で数える。
    */
   placeEntity(id: EntityId, parent: EntityId | null, index: number): void {
+    const target = this.overrideTarget(id);
     const e = this.node(id);
-    if (!e) return;
-    const to = this.parentIn(e, parent);
-    this.assertCanParent(id, to);
-    const peers = this.peersOf(e);
+    if (!e && !target) return;
+    const to = e ? this.parentIn(e, parent) : parent;
+    this.assertExpandedParent(id, to);
+    const peers = this.expandedPeers(id);
     const self = peers.find((p) => p.id === id);
     if (!self) return;
-    const siblings = peers.filter((p) => p.parent === to && p.id !== id);
+    const siblings = peers
+      .filter((p) => p.parent === to && p.id !== id)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     const at = Math.max(0, Math.min(index, siblings.length));
     const order = [
       ...siblings.slice(0, at).map((p) => p.id),
       id,
       ...siblings.slice(at).map((p) => p.id),
     ];
-    const current = peers.filter((p) => p.parent === to).map((p) => p.id);
+    const current = peers
+      .filter((p) => p.parent === to)
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
+      .map((p) => p.id);
     if (self.parent === to && current.join("\0") === order.join("\0")) return;
     this.transact(() => {
-      e.set("parent", to);
-      for (const [i, eid] of order.entries()) this.node(eid)?.set("order", i);
+      if (self.parent !== to) {
+        if (target && target.path !== "") this.writeOverride(target, "parent", to);
+        else e?.set("parent", to);
+      }
+      for (const [i, eid] of order.entries()) {
+        if (peers.find((p) => p.id === eid)?.order === i) continue;
+        const changed = this.overrideTarget(eid);
+        if (changed && changed.path !== "") this.writeOverride(changed, "order", i);
+        else this.node(eid)?.set("order", i);
+      }
     });
   }
   /**
@@ -642,8 +772,43 @@ export class ProjectDoc {
    */
   removeEntity(id: EntityId): void {
     if (this.isPrefabRoot(id)) throw new Error("プレハブのいちばん上の Entity は消せません");
+    const target = this.overrideTarget(id);
+    if (target && target.path !== "") throw new Error("プレハブから来た Entity は消せません");
+    const definition = this.prefabEntity(id);
     this.transact(() => {
+      const before = new Map(this.expandedPeers(id).map((e) => [e.id, e]));
       const ids = new Set(this.descendants(id));
+      // インスタンスを消すときは、外へ親を変えた中身も、その中で足した Entity も消す。
+      for (const e of before.values())
+        if (e.origin && ids.has(e.origin.instance))
+          for (const child of this.descendants(e.id)) ids.add(child);
+      // 消すのが追加 Entity なら、その下へ移したプレハブ由来の枝は残す。
+      const kept = [...before.values()].filter(
+        (e) => ids.has(e.id) && e.origin && !ids.has(e.origin.instance),
+      );
+      for (const e of kept) for (const child of this.descendants(e.id)) ids.delete(child);
+      for (const e of kept) {
+        if (e.parent === null || !ids.has(e.parent)) continue;
+        let parent: EntityId | null = e.parent;
+        const seen = new Set<EntityId>();
+        while (parent !== null && ids.has(parent) && !seen.has(parent)) {
+          seen.add(parent);
+          parent = before.get(parent)?.parent ?? null;
+        }
+        const inherited = this.overrideTarget(e.id);
+        if (inherited) this.writeOverride(inherited, "parent", parent);
+      }
+      if (definition) {
+        const prefab = this.prefabMap.get(definition.prefab);
+        if (prefab) {
+          const deletedParents = { ...prefab.deletedParents };
+          for (const eid of ids) {
+            const removed = this.prefabEntity(eid);
+            if (removed?.prefab === prefab.id) deletedParents[eid] = removed.parent;
+          }
+          this.prefabMap.set(prefab.id, { ...prefab, deletedParents });
+        }
+      }
       for (const eid of ids) {
         this.entityMap.delete(eid);
         this.prefabEntityMap.delete(eid);
@@ -669,40 +834,93 @@ export class ProjectDoc {
    * withChildren なら、中の Entity も写す。インスタンスを複製すると、同じプレハブのインスタンスが一つ増える。
    * プレハブのいちばん上の Entity は複製できない（いちばん上は一つだけ）。
    */
-  duplicateEntity(id: EntityId, withChildren: boolean): EntityId | undefined {
+  duplicateEntity(
+    id: EntityId,
+    withChildren: boolean,
+    schemas?: FieldSchemas,
+  ): EntityId | undefined {
     const e = this.node(id);
-    if (!e) return undefined;
+    const inherited = this.overrideTarget(id);
+    if (!e && !inherited) return undefined;
     if (this.isPrefabRoot(id)) throw new Error("プレハブのいちばん上の Entity は複製できません");
-    const prefab = e.get("prefab") as string | undefined;
-    const output = e.get("output") as string;
-    // 写す前の並び（作ったコピーを、もう一度写さない）
-    const peers = this.peersOf(e);
+    const root = inherited?.entity ?? (e ? readEntityBase(e) : undefined);
+    if (!root) return undefined;
+    const prefab = e?.get("prefab") as string | undefined;
+    const output = inherited?.entity.output ?? (e?.get("output") as string);
+    const peers = inherited ? this.expandedPeers(id) : e ? this.peersOf(e) : [];
     const created = new Map<EntityId, EntityId>();
+    const instanceRoot = Boolean(e?.get("instanceOf"));
+    const sourceRoot = e ? readEntityBase(e) : root;
     const copy = (src: EntityBase, parent: EntityId | null, rename: boolean) => {
-      const init = {
+      const next = newId("ent");
+      const rebase = (value: string | null) =>
+        value === null
+          ? null
+          : value === src.id
+            ? next
+            : value.startsWith(`${src.id}/`)
+              ? `${next}${value.slice(src.id.length)}`
+              : value;
+      const rebaseStates = (states: Record<KokoStateId, KokoStateValues> | undefined) => {
+        if (!states) return undefined;
+        const copy = clone(states);
+        for (const [koko, values] of Object.entries(copy)) {
+          const def = this.registry().get(koko);
+          for (const field of def?.fields ?? []) {
+            const schema = schemaOfField(schemas, koko, field);
+            if (!schema || !hasRefs(schema) || !Object.hasOwn(values, field.id)) continue;
+            values[field.id] = mapRefs(schema, values[field.id], (target, ref) =>
+              target === "entity" ? (rebase(ref) ?? undefined) : undefined,
+            ) as FieldValue;
+          }
+        }
+        return copy;
+      };
+      const copied = {
+        id: next,
         name: rename ? `${src.name} のコピー` : src.name,
-        states: src.states,
+        states: src.instanceOf ? rebaseStates(src.states) : src.states,
         ...(src.instanceOf ? { instanceOf: src.instanceOf } : {}),
       };
-      created.set(
-        src.id,
-        prefab !== undefined
-          ? this.addPrefabEntity({ ...init, prefab, ...(parent !== null ? { parent } : {}) })
-          : this.addEntity({ ...init, output, parent }),
-      );
+      if (prefab !== undefined)
+        this.addPrefabEntity({ ...copied, prefab, ...(parent !== null ? { parent } : {}) });
+      else this.addEntity({ ...copied, output, parent });
+      created.set(src.id, next);
+      const to = this.node(next);
+      if (to && src.prefabOverrides) {
+        const overrides = Object.fromEntries(
+          Object.entries(src.prefabOverrides).map(([path, v]) => [
+            path,
+            {
+              ...v,
+              ...(Object.hasOwn(v, "parent") ? { parent: rebase(v.parent ?? null) } : {}),
+              ...(v.states ? { states: rebaseStates(v.states) } : {}),
+              ...(v.addedStates ? { addedStates: rebaseStates(v.addedStates) } : {}),
+            },
+          ]),
+        );
+        to.set("prefabOverrides", overridesMap(overrides));
+      }
+      if (to && src.instanceSystems) to.set("instanceSystems", clone(src.instanceSystems));
     };
     this.transact(() => {
-      const root = peers.find((p) => p.id === id);
-      if (!root) return;
-      copy(root, root.parent, true);
+      copy(sourceRoot, root.parent, true);
       if (!withChildren) return;
+      // インスタンスの中身は参照から展開される。実体として足した Entity だけを複製する。
+      const source = instanceRoot && e ? this.peersOf(e) : peers;
       const pending = [id];
       for (let i = 0; i < pending.length; i++) {
-        const parent = created.get(pending[i] as EntityId);
+        const old = pending[i] as EntityId;
+        const parent = created.get(old);
         if (parent === undefined) continue;
-        for (const kid of peers) {
-          if (kid.parent !== pending[i] || created.has(kid.id)) continue;
-          copy(kid, parent, false);
+        for (const kid of source) {
+          const nestedParent =
+            instanceRoot && kid.parent?.startsWith(`${id}/`)
+              ? `${created.get(id)}${kid.parent.slice(id.length)}`
+              : null;
+          if ((kid.parent !== old && !(old === id && nestedParent)) || created.has(kid.id))
+            continue;
+          copy(kid, nestedParent ?? parent, false);
           pending.push(kid.id);
         }
       }
@@ -710,19 +928,109 @@ export class ProjectDoc {
     return created.get(id);
   }
   addState(id: EntityId, koko: KokoStateId, values?: KokoStateValues): void {
+    this.transact(() => this.addStateNow(id, koko, values));
+  }
+  private addStateNow(id: EntityId, koko: KokoStateId, values?: KokoStateValues): void {
+    const target = this.overrideTarget(id);
+    if (target) {
+      if (Object.hasOwn(target.entity.states, koko)) return;
+      const value = this.registry().createValues(koko, values);
+      if (target.path === "") this.statesOf(id).set(koko, valueMap(value));
+      else {
+        const store = this.overrideStore(target);
+        store.set(overrideKey(target.path, "addedStates", koko), true);
+        for (const [field, v] of Object.entries(value))
+          store.set(overrideKey(target.path, "addedStates", koko, field), encodeValue(v));
+      }
+      return;
+    }
     const states = this.statesOf(id);
-    if (states.has(koko)) return;
-    states.set(koko, valueMap(this.registry().createValues(koko, values)));
+    if (!states.has(koko)) states.set(koko, valueMap(this.registry().createValues(koko, values)));
   }
   removeState(id: EntityId, koko: KokoStateId): void {
+    this.transact(() => this.removeStateNow(id, koko));
+  }
+  private removeStateNow(id: EntityId, koko: KokoStateId): void {
+    const target = this.overrideTarget(id);
+    if (target) {
+      if (Object.hasOwn(target.base.states, koko))
+        throw new Error("プレハブから来た KokoState は外せません");
+      if (target.path === "") this.statesOf(id).delete(koko);
+      else {
+        this.deleteOverrides(target, (parts) => parts[1] === "addedStates" && parts[2] === koko);
+      }
+      return;
+    }
     this.statesOf(id).delete(koko);
   }
   /** フィールドの値を変える（他のフィールドはそのまま）。 */
   setField(id: EntityId, koko: KokoStateId, field: string, value: FieldValue): void {
-    const states = this.statesOf(id);
-    const values = states.get(koko);
+    this.transact(() => this.setFieldNow(id, koko, field, value));
+  }
+  private setFieldNow(id: EntityId, koko: KokoStateId, field: string, value: FieldValue): void {
+    const target = this.overrideTarget(id);
+    if (target && !(target.path === "" && koko === TRANSFORM)) {
+      if (!Object.hasOwn(target.entity.states, koko))
+        throw new Error(`Entity ${id} は ${koko} を持っていません`);
+      if (target.path === "" && !Object.hasOwn(target.base.states, koko)) {
+        this.statesOf(id).get(koko)?.set(field, encodeValue(value));
+        return;
+      }
+      const group = Object.hasOwn(target.base.states, koko) ? "states" : "addedStates";
+      const store = this.overrideStore(target);
+      const key = overrideKey(target.path, group, koko, field);
+      if (group === "states" && equalValues(value, target.base.states[koko]?.[field]))
+        store.delete(key);
+      else store.set(key, encodeValue(value));
+      return;
+    }
+    const values = this.statesOf(id).get(koko);
     if (!values) throw new Error(`Entity ${id} は ${koko} を持っていません`);
     values.set(field, encodeValue(value));
+  }
+
+  /** 一つのフィールドを、いまのプレハブの値に戻す。 */
+  revertPrefabField(id: EntityId, koko: KokoStateId, field: string): void {
+    const target = this.overrideTarget(id);
+    if (!target) return;
+    this.overrideStore(target).delete(overrideKey(target.path, "states", koko, field));
+  }
+
+  /** 名前・親・並び順・足した KokoState を、一つずつプレハブの形に戻す。 */
+  revertPrefabEntity(
+    id: EntityId,
+    kind: "name" | "parent" | "order" | "state",
+    koko?: KokoStateId,
+  ): void {
+    this.transact(() => this.revertPrefabEntityNow(id, kind, koko));
+  }
+  private revertPrefabEntityNow(
+    id: EntityId,
+    kind: "name" | "parent" | "order" | "state",
+    koko?: KokoStateId,
+  ): void {
+    const target = this.overrideTarget(id);
+    if (!target) return;
+    if (kind === "state" && koko) {
+      if (target.path === "" && !Object.hasOwn(target.base.states, koko))
+        this.statesOf(id).delete(koko);
+      else {
+        this.deleteOverrides(
+          target,
+          (parts) => (parts[1] === "states" || parts[1] === "addedStates") && parts[2] === koko,
+        );
+      }
+    } else this.overrideStore(target).delete(overrideKey(target.path, kind));
+  }
+
+  /** インスタンスで足す System の並び。プレハブから来たものは、この一覧では外さない。 */
+  setInstanceSystems(id: EntityId, systems: readonly OutputSystem[]): void {
+    const e = this.node(id);
+    if (!e?.get("instanceOf")) throw new Error("インスタンスを選んでください");
+    const unique = new Set<string>();
+    const added = systems.filter((s) => !unique.has(s.id) && Boolean(unique.add(s.id)));
+    if (added.length > 0) e.set("instanceSystems", clone(added));
+    else e.delete("instanceSystems");
   }
 
   // ---------- プレハブ（ADR 0076） ----------
@@ -812,14 +1120,14 @@ export class ProjectDoc {
     const prefab = this.prefabMap.get(init.prefab);
     if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
     const parent = init.parent ?? prefab.root;
-    if (this.prefabEntityMap.get(parent)?.get("prefab") !== init.prefab)
+    if (this.expandedPeers(parent).find((e) => e.id === parent)?.output !== init.prefab)
       throw new Error("親は、同じプレハブの中の Entity にしてください");
     const id = init.id ?? newId("ent");
     assertEntityId(id);
     if (this.node(id)) throw new Error(`Entity の ID が重複しています: ${id}`);
     const registry = this.registry();
     this.transact(() => {
-      const siblings = this.prefabEntities(init.prefab).filter((s) => s.parent === parent);
+      const siblings = this.expandedPeers(parent).filter((s) => s.parent === parent);
       const states: Record<KokoStateId, KokoStateValues> = {};
       for (const [koko, values] of Object.entries(init.states ?? {}))
         states[koko] = registry.createValues(koko, values);
@@ -911,6 +1219,7 @@ export class ProjectDoc {
         for (const koko of [...states.keys()])
           if (!Object.hasOwn(plan.instance.states, koko)) states.delete(koko);
         self.set("instanceOf", clone(plan.instance.instanceOf));
+        self.set("prefabOverrides", overridesMap({}));
       }
       for (const r of plan.rewrites)
         (this.node(r.entity)?.get("states") as Y.Map<ValueMap> | undefined)
@@ -940,11 +1249,38 @@ export class ProjectDoc {
       e.set("states", states);
       if (def.instanceOf) e.set("instanceOf", clone(def.instanceOf));
       else e.delete("instanceOf");
+      if (def.instanceOf) e.set("prefabOverrides", overridesMap(def.prefabOverrides ?? {}));
+      else e.delete("prefabOverrides");
+      if (def.instanceSystems) e.set("instanceSystems", clone(def.instanceSystems));
+      else e.delete("instanceSystems");
       this.makeRoomAfter(def.id);
     });
   }
   /** KokoState の値を丸ごと置き直す。null なら外す。 */
   restoreState(id: EntityId, koko: KokoStateId, values: KokoStateValues | null): void {
+    const target = this.overrideTarget(id);
+    if (target && !(target.path === "" && koko === TRANSFORM)) {
+      this.transact(() => {
+        if (values === null) {
+          this.removeState(id, koko);
+          return;
+        }
+        const inherited = Object.hasOwn(target.base.states, koko);
+        if (inherited) {
+          this.deleteOverrides(target, (parts) => parts[1] === "states" && parts[2] === koko);
+          for (const [field, value] of Object.entries(values))
+            this.setField(id, koko, field, value);
+        } else if (target.path === "") this.statesOf(id).set(koko, valueMap(values));
+        else {
+          this.deleteOverrides(target, (parts) => parts[1] === "addedStates" && parts[2] === koko);
+          const store = this.overrideStore(target);
+          store.set(overrideKey(target.path, "addedStates", koko), true);
+          for (const [field, value] of Object.entries(values))
+            store.set(overrideKey(target.path, "addedStates", koko, field), encodeValue(value));
+        }
+      });
+      return;
+    }
     const states = this.statesOf(id);
     this.transact(() => {
       if (values === null) {
@@ -956,6 +1292,16 @@ export class ProjectDoc {
   }
   /** 親・アウトプット・並び順を、渡した値にする。 */
   restorePlace(id: EntityId, place: { parent: EntityId | null; output: string; order: number }) {
+    const target = this.overrideTarget(id);
+    if (target && target.path !== "") {
+      if (place.output !== target.entity.output) throw new Error("別のアウトプットへは移せません");
+      this.assertExpandedParent(id, place.parent);
+      this.transact(() => {
+        this.writeOverride(target, "parent", place.parent);
+        this.writeOverride(target, "order", place.order);
+      });
+      return;
+    }
     const e = this.entityMap.get(id);
     if (!e) return;
     if (place.parent !== null) this.assertCanParent(id, place.parent);
@@ -1300,10 +1646,102 @@ export class ProjectDoc {
     });
   }
 
+  /** いま見えている Entity。プレハブの編集中なら、そのプレハブの中で展開する。 */
+  private expandedPeers(id: EntityId, snapshot = this.snapshot()): ExpandedEntity[] {
+    const head = id.split(EXPANDED_ID_SEPARATOR)[0] ?? id;
+    const owner = this.prefabEntityMap.get(head)?.get("prefab") as string | undefined;
+    return owner
+      ? (expandPrefabForEdit(snapshot, owner, { kokostates: this.packageDefs })?.entities ?? [])
+      : expandPrefabs(snapshot, { kokostates: this.packageDefs }).entities;
+  }
+
+  /** 展開した ID を、上書きを持つ実体のインスタンスと、中の道に分ける。 */
+  private overrideTarget(id: EntityId): OverrideTarget | undefined {
+    const head = id.split(EXPANDED_ID_SEPARATOR)[0] ?? id;
+    const owner = this.node(head);
+    if (!owner?.get("instanceOf")) return undefined;
+    const snapshot = this.snapshot();
+    const entity = this.expandedPeers(id, snapshot).find((e) => e.id === id);
+    if (!entity?.origin) return undefined;
+    const clear = <T extends EntityBase>(e: T): T => {
+      if (e.id !== head) return e;
+      const { prefabOverrides: _overrides, instanceSystems: _systems, ...rest } = e;
+      return {
+        ...rest,
+        states: e.states[TRANSFORM] ? { [TRANSFORM]: e.states[TRANSFORM] } : {},
+      } as T;
+    };
+    const base = this.expandedPeers(id, {
+      ...snapshot,
+      entities: snapshot.entities.map(clear),
+      prefabEntities: snapshot.prefabEntities?.map(clear),
+    }).find((e) => e.id === id);
+    if (!base) return undefined;
+    return { owner, path: id === head ? "" : id.slice(head.length + 1), entity, base };
+  }
+
+  private overrideStore(target: OverrideTarget): OverrideStore {
+    const store = target.owner.get("prefabOverrides") as OverrideStore | undefined;
+    if (store) return store;
+    // 前の保存形式からインスタンスにしたときも、次のフィールド変更より先に共有される。
+    const created = overridesMap({});
+    target.owner.set("prefabOverrides", created);
+    return created;
+  }
+
+  private deleteStoredOverrides(
+    owner: Y.Map<unknown>,
+    matches: (parts: string[]) => boolean,
+  ): void {
+    const store = owner.get("prefabOverrides") as OverrideStore | undefined;
+    for (const key of [...(store?.keys() ?? [])])
+      if (matches(JSON.parse(key) as string[])) store?.delete(key);
+  }
+
+  private replaceStoredOverrideValues(
+    owner: Y.Map<unknown>,
+    matches: (parts: string[], value: Json) => boolean,
+  ): void {
+    const store = owner.get("prefabOverrides") as OverrideStore | undefined;
+    for (const [key, value] of store ?? []) {
+      const parts = JSON.parse(key) as string[];
+      if (parts.length === 4 && matches(parts, value)) store?.set(key, none());
+    }
+  }
+
+  private deleteOverrides(target: OverrideTarget, matches: (parts: string[]) => boolean): void {
+    const store = this.overrideStore(target);
+    for (const key of [...store.keys()]) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === target.path && matches(parts)) store.delete(key);
+    }
+  }
+
+  private writeOverride(
+    target: OverrideTarget,
+    key: "name" | "parent" | "order",
+    value: string | number | null,
+  ): void {
+    const store = this.overrideStore(target);
+    if (equalValues(value, target.base[key])) store.delete(overrideKey(target.path, key));
+    else store.set(overrideKey(target.path, key), encodeValue(value));
+  }
+
+  private assertExpandedParent(id: EntityId, parent: EntityId | null): void {
+    const peers = this.expandedPeers(id);
+    const self = peers.find((e) => e.id === id);
+    const to = peers.find((e) => e.id === parent);
+    if (parent !== null && (!to || self?.output !== to.output))
+      throw new Error("親は、同じ持ち主の中の Entity にしてください");
+    this.assertCanParent(id, parent);
+  }
+
   /** 自分の子孫を親にはできない。親子が輪になっていても、ここで止まって落ちない。 */
   private assertCanParent(id: EntityId, parent: EntityId | null): void {
     const seen = new Set<EntityId>();
-    const parentOf = (p: EntityId) => (this.node(p)?.get("parent") as EntityId | null) ?? null;
+    const peers = new Map(this.expandedPeers(id).map((e) => [e.id, e]));
+    const parentOf = (p: EntityId) =>
+      peers.get(p)?.parent ?? (this.node(p)?.get("parent") as EntityId | null) ?? null;
     for (let p = parent; p !== null; p = parentOf(p)) {
       if (p === id) throw new Error("自分の子孫を親にはできません");
       if (seen.has(p)) return;
@@ -1324,8 +1762,11 @@ export class ProjectDoc {
   private parentIn(e: Y.Map<unknown>, parent: EntityId | null): EntityId | null {
     const prefab = e.get("prefab") as string | undefined;
     if (prefab === undefined) {
-      if (parent !== null && this.prefabEntityMap.has(parent))
-        throw new Error("親は、同じアウトプットの中の Entity にしてください");
+      if (parent !== null) {
+        const to = this.expandedPeers(parent).find((p) => p.id === parent);
+        if (!to || to.output !== e.get("output") || this.prefabEntityMap.has(parent))
+          throw new Error("親は、同じアウトプットの中の Entity にしてください");
+      }
       return parent;
     }
     const root = this.prefabMap.get(prefab)?.root;
@@ -1334,7 +1775,7 @@ export class ProjectDoc {
       throw new Error("プレハブのいちばん上の Entity は、ほかの Entity の下に付けられません");
     }
     const to = parent ?? root;
-    if (to === undefined || this.prefabEntityMap.get(to)?.get("prefab") !== prefab)
+    if (to === undefined || this.expandedPeers(to).find((p) => p.id === to)?.output !== prefab)
       throw new Error("親は、同じプレハブの中の Entity にしてください");
     return to;
   }
@@ -1349,10 +1790,13 @@ export class ProjectDoc {
 
   /** その Entity と、中の Entity の ID（アウトプットの Entity でも、プレハブの中の Entity でも） */
   private descendants(id: EntityId): EntityId[] {
-    const all = this.nodes().map((e) => ({
-      id: e.get("id") as EntityId,
-      parent: (e.get("parent") as EntityId | null) ?? null,
-    }));
+    const all = [
+      ...this.expandedPeers(id),
+      ...this.nodes().map((e) => ({
+        id: e.get("id") as EntityId,
+        parent: (e.get("parent") as EntityId | null) ?? null,
+      })),
+    ];
     const out = [id];
     const visited = new Set<EntityId>(out);
     for (let i = 0; i < out.length; i++) {
@@ -1399,6 +1843,8 @@ function entityNode(def: EntityDef | PrefabEntityDef): Y.Map<unknown> {
   for (const [k, v] of Object.entries(def.states)) states.set(k, valueMap(v));
   map.set("states", states);
   if (def.instanceOf) map.set("instanceOf", clone(def.instanceOf));
+  if (def.instanceOf) map.set("prefabOverrides", overridesMap(def.prefabOverrides ?? {}));
+  if (def.instanceSystems) map.set("instanceSystems", clone(def.instanceSystems));
   return map;
 }
 
@@ -1412,5 +1858,11 @@ function readEntityBase(e: Y.Map<unknown>): EntityBase {
     order: (e.get("order") as number) ?? 0,
     states: decodeStates(states.toJSON() as Record<KokoStateId, StoredValues>),
     ...(instanceOf ? { instanceOf: clone(instanceOf) } : {}),
+    ...((e.get("prefabOverrides") as OverrideStore | undefined)?.size
+      ? { prefabOverrides: readOverrides(e.get("prefabOverrides") as OverrideStore) }
+      : {}),
+    ...(e.get("instanceSystems")
+      ? { instanceSystems: clone(e.get("instanceSystems") as OutputSystem[]) }
+      : {}),
   };
 }

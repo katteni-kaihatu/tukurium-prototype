@@ -1,9 +1,25 @@
-import { BUILTIN, emptyProject, fromFiles, ProjectDoc, toFiles } from "@tukurium/repo-model";
+import {
+  BUILTIN,
+  emptyProject,
+  expandedEntityId,
+  fromFiles,
+  ProjectDoc,
+  toFiles,
+} from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
 import { describeDiff } from "./diffView";
+import { prefabChangeParts, prefabPart } from "./prefabChanges";
 import { planRevert } from "./revert";
 
 const OUT = "out_main";
+
+it("undefined にした上書きと、まだ上書きしていない欄を区別する", () => {
+  expect(
+    prefabChangeParts(undefined, {
+      prefabOverrides: { child: { states: { koko: { field: undefined } } } },
+    }),
+  ).toMatchObject([{ path: "child", kind: "field", beforePresent: false, afterPresent: true }]);
+});
 
 /** 的のプレハブ（芯つき）と、そのインスタンスを一つ置いて保存したところ */
 function setup() {
@@ -29,6 +45,42 @@ function setup() {
 }
 
 describe("プレハブの差分と戻す（ADR 0076）", () => {
+  it("子の値と名前の上書きは保存の差分に出て、一つずつ保存時の形へ戻せる", () => {
+    const { project, head, core, instance, diff } = setup();
+    const child = expandedEntityId(instance, core);
+    project.setField(child, BUILTIN.Transform, "position", [2, 3, 4]);
+    project.renameEntity(child, "変えた芯");
+    const entry = diff().find((e) => e.id === `entity:${instance}`);
+    const fieldPart = prefabPart(core, "field", BUILTIN.Transform, "position");
+    expect(entry?.lines.some((l) => l.part === fieldPart)).toBe(true);
+    const revert = planRevert(project, head, `entity:${instance}`, fieldPart);
+    expect(revert).not.toBeNull();
+    revert?.();
+    expect(project.entity(instance)?.prefabOverrides?.[core]?.states).toBeUndefined();
+    expect(project.entity(instance)?.prefabOverrides?.[core]?.name).toBe("変えた芯");
+    planRevert(project, head, `entity:${instance}`, prefabPart(core, "name"))?.();
+    expect(diff()).toEqual([]);
+  });
+
+  it("保存してある上書きと追加 System を個別に戻す", () => {
+    const { project, core, instance } = setup();
+    const child = expandedEntityId(instance, core);
+    project.setField(child, BUILTIN.Transform, "position", [1, 2, 3]);
+    const system = project.addSystem("動き", "");
+    project.setInstanceSystems(instance, [{ id: system, enabled: true }]);
+    const head = fromFiles(toFiles(project.snapshot()));
+    project.setField(child, BUILTIN.Transform, "position", [9, 9, 9]);
+    project.setInstanceSystems(instance, []);
+    planRevert(
+      project,
+      head,
+      `entity:${instance}`,
+      prefabPart(core, "field", BUILTIN.Transform, "position"),
+    )?.();
+    planRevert(project, head, `entity:${instance}`, prefabPart("", "system", system))?.();
+    expect(describeDiff(head, project.snapshot())).toEqual([]);
+  });
+
   it("保存したままなら、差分は出ない", () => {
     expect(setup().diff()).toEqual([]);
   });

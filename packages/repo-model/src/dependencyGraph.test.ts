@@ -1,3 +1,4 @@
+import type { FieldSchemas } from "@tukurium/eks";
 import { describe, expect, it } from "vitest";
 import { BUILTIN } from "./builtins";
 import {
@@ -96,6 +97,69 @@ describe("ProjectDependencyGraph", () => {
       "entity:e",
       "material:m",
       "output:out",
+    ]);
+  });
+
+  it("インスタンスの上書き・追加した KokoState と System も保存元の依存にする", () => {
+    const snap = base();
+    snap.kokostates.push({
+      id: "ks_links",
+      name: "Links",
+      fields: [{ id: "refs", name: "refs", type: "EntityRef[]", default: [] }],
+    });
+    const instance = snap.entities[0];
+    if (!instance) throw new Error("Entity がありません");
+    instance.instanceOf = { prefab: "prefab" };
+    instance.prefabOverrides = {
+      child: {
+        states: { [BUILTIN.Mesh]: { material: "override_material" } },
+        addedStates: { ks_links: { refs: ["other/child"] } },
+        parent: "other/parent",
+      },
+    };
+    instance.instanceSystems = [{ id: "instance_system", enabled: true }];
+    const schemas: FieldSchemas = {
+      ks_links: { refs: { kind: "list", item: { kind: "ref", target: "entity" } } },
+    };
+    const graph = ProjectDependencyGraph.fromSnapshot(snap, schemas);
+    expect(keys(graph.dependenciesOf({ kind: "entity", id: "e" }))).toEqual(
+      expect.arrayContaining([
+        "entity:other",
+        "kokostate:ks_links",
+        "material:override_material",
+        "prefab:prefab",
+        "system:instance_system",
+      ]),
+    );
+    expect(keys(graph.transitiveDependents([{ kind: "system", id: "instance_system" }]))).toContain(
+      "output:out",
+    );
+    expect(keys(graph.dependenciesOf({ kind: "entity", id: "e/child" }))).toEqual([]);
+  });
+
+  it("プレハブの中のインスタンスの追加分は、そのプレハブの依存になる", () => {
+    const snap = base();
+    snap.prefabEntities = [
+      {
+        id: "nested",
+        name: "中のインスタンス",
+        prefab: "outer",
+        parent: "root",
+        order: 0,
+        states: {},
+        instanceOf: { prefab: "inner" },
+        prefabOverrides: {
+          child: { addedStates: { [BUILTIN.Mesh]: { material: "nested_material" } } },
+        },
+        instanceSystems: [{ id: "nested_system", enabled: false }],
+      },
+    ];
+    const graph = ProjectDependencyGraph.fromSnapshot(snap);
+    expect(keys(graph.dependenciesOf({ kind: "prefab", id: "outer" }))).toEqual([
+      "kokostate:builtin.Mesh",
+      "material:nested_material",
+      "prefab:inner",
+      "system:nested_system",
     ]);
   });
 });

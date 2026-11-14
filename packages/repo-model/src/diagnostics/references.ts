@@ -251,6 +251,7 @@ export function checkProjectReferences(
     label: string,
     code: { notInDependencies: string; systemMissing: string; keepInvalid: string },
     holds: (id: string) => EntityBase | undefined,
+    systemPath: string[] = ["systems"],
   ) => {
     for (const s of owner.systems) {
       if (isPackageResourceId(s.id)) {
@@ -260,7 +261,7 @@ export function checkProjectReferences(
           code: code.notInDependencies,
           severity: "warning",
           subject,
-          location: { kind: "property", path: ["systems", s.id] },
+          location: { kind: "property", path: [...systemPath, s.id] },
           related: [],
           message: `${label}のライブラリの System は、今の依存にありません（版を変えたか、外しました）`,
           detail: `ID: ${s.id}`,
@@ -272,7 +273,7 @@ export function checkProjectReferences(
           code: code.systemMissing,
           severity: "warning",
           subject,
-          location: { kind: "property", path: ["systems", s.id] },
+          location: { kind: "property", path: [...systemPath, s.id] },
           related: [],
           message: `${label}の System の一つがありません`,
           detail: `ID: ${s.id}`,
@@ -293,6 +294,40 @@ export function checkProjectReferences(
     }
   };
 
+  const checkInstance = (
+    e: EntityBase,
+    subject: ResourceRef,
+    label: string,
+    at: string[],
+    targetOf: (id: string) => EntityBase | undefined,
+  ) => {
+    for (const [path, override] of Object.entries(e.prefabOverrides ?? {})) {
+      // 消えた中身への上書きは、展開にも使われない。
+      if (!targetOf(path === "" ? e.id : `${e.id}/${path}`)) continue;
+      for (const kind of ["states", "addedStates"] as const)
+        if (override[kind])
+          checkStates(
+            { ...e, states: override[kind] },
+            subject,
+            label,
+            [...at, "prefabOverrides", path, kind],
+            targetOf,
+          );
+    }
+    checkSystemsAndKeep(
+      { systems: e.instanceSystems ?? [], keep: [] },
+      subject,
+      label,
+      {
+        notInDependencies: "instance-system-not-in-dependencies",
+        systemMissing: "instance-system-missing",
+        keepInvalid: "keep-invalid",
+      },
+      targetOf,
+      [...at, "instanceSystems"],
+    );
+  };
+
   // プレハブ（ADR 0076）：中の Entity が指すもの・System・「維持」の印。問題は、プレハブを相手にして出す
   // （中の Entity は、プレハブを開いて直す）。参照は、そのプレハブの中の Entity（入れ子の中は展開した ID）と、
   // アウトプットの Entity を指せる
@@ -307,6 +342,13 @@ export function checkProjectReferences(
     for (const e of snap.prefabEntities ?? []) {
       if (e.prefab !== p.id) continue;
       checkStates(
+        e,
+        subject,
+        `プレハブ「${p.name}」の中の「${e.name}」`,
+        ["entities", e.id],
+        (id) => inside.get(id) ?? entities.get(id),
+      );
+      checkInstance(
         e,
         subject,
         `プレハブ「${p.name}」の中の「${e.name}」`,
@@ -330,6 +372,7 @@ export function checkProjectReferences(
   for (const e of snap.entities) {
     const subject: ResourceRef = { kind: "entity", id: e.id };
     checkStates(e, subject, `「${e.name}」`, [], (id) => entities.get(id));
+    checkInstance(e, subject, `「${e.name}」`, [], (id) => entities.get(id));
 
     if (!outputs.has(e.output))
       push({
@@ -340,8 +383,9 @@ export function checkProjectReferences(
         related: [],
         message: `「${e.name}」が入っているアウトプットがありません`,
       });
-    if (e.parent !== null) {
-      const parent = entities.get(e.parent);
+    const parentId = (entities.get(e.id) ?? e).parent;
+    if (parentId !== null) {
+      const parent = entities.get(parentId);
       if (!parent)
         push({
           code: "entity-parent-missing",
