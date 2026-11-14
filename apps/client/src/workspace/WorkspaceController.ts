@@ -20,6 +20,7 @@ import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
 import { ARRIVAL_OFFSET, prefabAnchor, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
+import { offerDebugEntity } from "./debugActions";
 import { expandedSnapshot, prefabEditSnapshot } from "./hooks";
 import { type Box, prefabEditOrigin, type Vec3 } from "./prefabPlace";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
@@ -85,6 +86,7 @@ const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF:
  * 編集空間はアウトプットの物体全体を囲む境界で示す（要件 §6「編集対象の表示」）。
  */
 export class WorkspaceController {
+  private pendingDebug: Simulation | null = null;
   private readonly view = new EntityView();
   private readonly bounds: THREE.LineSegments;
   private readonly selectionBox = new THREE.BoxHelper(new THREE.Object3D(), 0x603d56);
@@ -272,11 +274,30 @@ export class WorkspaceController {
       // ホスト：実行して、状態を配る
       if (ws.mode === "play") {
         this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS_PER_FRAME);
-        while (this.accumulator >= STEP) {
-          ws.sim.step(STEP);
-          this.accumulator -= STEP;
+        if (ws.sim.debug) {
+          const sim = ws.sim;
+          if (this.pendingDebug === sim) this.accumulator = 0;
+          else if (this.accumulator >= STEP) {
+            this.accumulator -= STEP;
+            this.pendingDebug = sim;
+            void sim
+              .stepDebug(STEP)
+              .catch((error) => {
+                if (useWorkspace.getState().sim === sim)
+                  useWorkspace.setState({ error: String(error), mode: "paused" });
+              })
+              .finally(() => {
+                if (this.pendingDebug === sim) this.pendingDebug = null;
+              });
+          }
+        } else {
+          while (this.accumulator >= STEP) {
+            ws.sim.step(STEP);
+            this.accumulator -= STEP;
+          }
         }
       }
+      if (ws.mode === "paused") this.accumulator = 0;
       this.view.sync(ws.sim.world, {
         materials,
         holdCamera: this.engine.camera,
@@ -346,9 +367,17 @@ export class WorkspaceController {
     }
 
     // 選択中の Entity の枠
-    const sel = ws.selection?.kind === "entity" ? target.objectOf(ws.selection.id) : undefined;
-    this.selectionBox.visible = Boolean(sel) && ws.mode === "edit";
-    if (sel && ws.mode === "edit") {
+    const debugging = ws.mode === "paused" && ws.debugStop?.entity;
+    const sel = debugging
+      ? this.view.objectOf(debugging)
+      : ws.selection?.kind === "entity"
+        ? target.objectOf(ws.selection.id)
+        : undefined;
+    (this.selectionBox.material as THREE.LineBasicMaterial).color.setHex(
+      debugging ? 0xffb42e : 0x603d56,
+    );
+    this.selectionBox.visible = Boolean(sel) && (ws.mode === "edit" || Boolean(debugging));
+    if (sel && (ws.mode === "edit" || debugging)) {
       this.selectionBox.setFromObject(sel);
     }
   }
@@ -686,6 +715,11 @@ export class WorkspaceController {
 
   private onPointer(button: number, phase: "down" | "up"): void {
     const ws = useWorkspace.getState();
+    if (button === 2 && phase === "down" && ws.debug?.read().enabled && ws.debugPointId) {
+      this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
+      const id = this.view.pick(this.raycaster);
+      if (id && offerDebugEntity(id)) return;
+    }
     if (ws.mode === "play" && button === 0) {
       // 持っているときの左クリックは、撃たずに傾きを直す
       if (phase === "down" && this.holdingPlay()) {

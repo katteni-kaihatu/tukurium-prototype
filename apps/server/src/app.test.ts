@@ -723,6 +723,88 @@ describe("本人識別とセッション", () => {
 });
 
 describe("ワークスペース", () => {
+  it("デバッグ停止を共有し、続ける操作は共同編集者だけがホストへ送れる", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    const debug = {
+      id: "stop-1",
+      systemId: "s",
+      entity: "e",
+      line: 4,
+      frames: [],
+      reason: "ブレイクポイント",
+      states: [],
+    };
+    a.send({
+      t: "ws.frame",
+      workspaceId,
+      frame: {
+        mode: "paused",
+        outputId: "out",
+        time: 1,
+        world: {},
+        names: {},
+        status: [],
+        partEntities: {},
+        debug,
+      },
+    });
+    expect((await b.next("ws.frame")).frame.debug).toEqual(debug);
+    b.send({ t: "ws.debugCommand", workspaceId, cmd: "continue", stopId: "stop-1" });
+    expect(await a.next("ws.debugCommand")).toMatchObject({
+      cmd: "continue",
+      stopId: "stop-1",
+      from: b.me.id,
+    });
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "viewer" });
+    await b.next("ws.role");
+    b.send({ t: "ws.debugCommand", workspaceId, cmd: "continue", stopId: "stop-1" });
+    expect((await b.next("error")).message).toContain("共同編集");
+  });
+
+  it("デバッグ設定を共有し、閲覧者の変更を拒み、制作データには保存しない", async () => {
+    const { url, store } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("ws.debugDoc", (m) => m.full);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    await b.next("ws.debugDoc", (m) => m.full);
+    a.send({
+      t: "ws.debugUpdate",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("settings").set("enabled", true)),
+    });
+    const shared = await b.next("ws.debugDoc", (m) => !m.full);
+    const debug = new Y.Doc();
+    Y.applyUpdate(debug, Buffer.from(shared.update, "base64"));
+    expect(debug.getMap("settings").get("enabled")).toBe(true);
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "viewer" });
+    await b.next("ws.role");
+    b.send({
+      t: "ws.debugUpdate",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("settings").set("enabled", false)),
+    });
+    expect((await b.next("error")).message).toContain("共同編集");
+    a.send({
+      t: "ws.update",
+      workspaceId,
+      update: docUpdate((d) => d.getMap("meta").set("name", "saved")),
+    });
+    await b.next("ws.update");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const saved = new Y.Doc();
+    const bytes = await store.loadDoc(workspaceId);
+    if (!bytes) throw new Error("保存されていません");
+    Y.applyUpdate(saved, bytes);
+    expect(saved.getMap("settings").size).toBe(0);
+    expect(saved.getMap("meta").get("name")).toBe("saved");
+    debug.destroy();
+    saved.destroy();
+  });
+
   it("既定の権限（共同編集）で参加し、互いの変更が届く", async () => {
     const { url } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);
@@ -973,6 +1055,49 @@ describe("ワークスペースのホストと共有再生", () => {
     const host = await b.next("ws.host");
     expect(host.resume?.time).toBe(3.5);
     expect(host.resume?.partEntities).toEqual(partEntities);
+  });
+
+  it("停止中は部分的な世界と開始時点を分けたまま次のホストへ渡す", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    await a.next("ws.host");
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "admin" });
+    await b.next("ws.role");
+    const debugStart = {
+      world: { entities: [] },
+      names: {},
+      time: 1,
+      bags: {},
+      partEntities: {},
+      queues: { inputs: [], pending: [] },
+      systems: [],
+    };
+    a.send({
+      t: "ws.frame",
+      workspaceId,
+      frame: {
+        ...frame("play", 1.1),
+        mode: "paused",
+        debug: {
+          id: "stopped",
+          systemId: "s",
+          line: 2,
+          entity: null,
+          frames: [],
+          states: [],
+          reason: "ブレイクポイント",
+        },
+        debugStart,
+      },
+    });
+    await b.next("ws.frame");
+    a.ws.close();
+    const host = await b.next("ws.host");
+    expect(host.resume?.debugStart).toEqual(debugStart);
+    expect(host.resume?.time).toBe(1.1);
+    expect(host.resume?.debug?.id).toBe("stopped");
   });
 
   it("引き継げる人がいなければ再生を止める", async () => {

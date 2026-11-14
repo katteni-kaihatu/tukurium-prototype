@@ -21,6 +21,7 @@ import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
+import { debugGutter } from "./debugGutter";
 import { type LineChanges, lineChanges } from "./diffView";
 import { editorIntelligence } from "./editorIntelligence";
 import { useProject } from "./hooks";
@@ -228,6 +229,11 @@ function CodeView({ systemId }: { systemId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const marks = useRef(new Compartment());
+  const debugMarks = useRef(new Compartment());
+  const debugRev = useWorkspace((s) => s.debugRev);
+  const debugStop = useWorkspace((s) => s.debugStop);
+  const debugFrameId = useWorkspace((s) => s.debugFrameId);
+  const projectRev = useWorkspace((s) => s.rev);
   const lines = useProblems()
     .map((p) => (p.subject.id === systemId ? scriptLine(p) : null))
     .filter((n): n is number => n !== null);
@@ -271,6 +277,7 @@ function CodeView({ systemId }: { systemId: string }) {
           text ? yCollab(text, awareness) : [],
           EditorState.readOnly.of(readOnly),
           marks.current.of([]),
+          debugMarks.current.of(debugGutter(systemId)),
           lineChangesField,
           lineChangeGutter,
           EditorView.updateListener.of((u) => {
@@ -307,7 +314,13 @@ function CodeView({ systemId }: { systemId: string }) {
     });
     viewRef.current = view;
     const unsubscribe = useWorkspace.subscribe((current, previous) => {
-      if (current.rev === previous.rev && current.project === previous.project) return;
+      if (
+        current.rev === previous.rev &&
+        current.project === previous.project &&
+        current.debugStop === previous.debugStop &&
+        current.debugFrameId === previous.debugFrameId
+      )
+        return;
       // 購読は Y.Text の変更中にも呼ばれるので、エディタの更新が終わってから閉じる。
       queueMicrotask(() => {
         if (viewRef.current !== view) return;
@@ -343,6 +356,30 @@ function CodeView({ systemId }: { systemId: string }) {
   }, [savedCode]);
 
   // 問題のある行の印
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 共有設定と本文の版が変わるたびに位置を読み直す
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const frame = debugStop?.frames.find((f) => f.id === debugFrameId) ?? debugStop?.frames.at(-1);
+    const stoppedLine = frame?.line ?? debugStop?.line ?? 0;
+    const line =
+      (frame?.systemId ?? debugStop?.systemId) === systemId &&
+      stoppedLine > 0 &&
+      stoppedLine <= view.state.doc.lines
+        ? stoppedLine
+        : null;
+    const mark = line
+      ? EditorView.decorations.of(
+          Decoration.set([
+            Decoration.line({
+              attributes: { style: "background:#fff1c4;box-shadow:inset 3px 0 #c98d1f" },
+            }).range(view.state.doc.line(line).from),
+          ]),
+        )
+      : [];
+    view.dispatch({ effects: debugMarks.current.reconfigure([debugGutter(systemId), mark]) });
+  }, [debugRev, projectRev, systemId, debugStop, debugFrameId]);
+
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;

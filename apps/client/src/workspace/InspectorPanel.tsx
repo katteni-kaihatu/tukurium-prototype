@@ -40,6 +40,7 @@ import {
   treeMark,
 } from "./changeMarks";
 import { DefinitionProperties, SystemAdder, SystemRows } from "./DefinitionProperties";
+import { offerDebugEntity } from "./debugActions";
 import { FieldInput } from "./FieldInput";
 import { fitLabelElement } from "./fitLabel";
 import { useCanEdit, useEditTarget, useProject } from "./hooks";
@@ -636,6 +637,12 @@ function Hierarchy() {
               className={styles.nodeName}
               draggable={editing && !n.root}
               aria-current={selectedEntity === n.id || undefined}
+              onContextMenu={(e) => {
+                if (offerDebugEntity(n.id)) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
               title={
                 n.fromPrefab
                   ? `${n.name}（プレハブから来た Entity）`

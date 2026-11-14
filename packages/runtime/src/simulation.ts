@@ -12,10 +12,13 @@ import {
   acceptsUndefined,
   cloneValue,
   conformValue,
+  decodeValue,
+  encodeValue,
   equalValues,
   type FieldSchemas,
   hasRefs,
   isJsonSafe,
+  type Json,
   mapRefs,
   schemaOfField,
   stringifyValue,
@@ -35,6 +38,7 @@ import {
   type GuestPolicy,
   HOST_CAPABILITIES,
   inferCapabilities,
+  instrumentDebug,
   isBuiltin,
   isPackageResourceId,
   librarySnapshot,
@@ -51,6 +55,8 @@ import {
   withPackagePrefabs,
 } from "@tukurium/repo-model";
 import {
+  type DebugKokoState,
+  type DebugStateEdit,
   type HostCallContext,
   type ScriptEntity,
   ScriptError,
@@ -60,6 +66,7 @@ import {
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { HOST_ONLY_CONTRACTS, isContractName, parseContractPayload } from "./contracts";
+import { DebugRuntime, type RuntimeDebugOptions } from "./debugRuntime";
 import {
   equippedBy,
   equipper,
@@ -142,6 +149,7 @@ export interface LogEntry {
 }
 
 export interface SimulationOptions {
+  debug?: RuntimeDebugOptions;
   /** スクリプトの領域（リポジトリ単位）。別リポジトリの System とは別の VM になる。 */
   realm: string;
   onLog?: (entry: LogEntry) => void;
@@ -286,6 +294,15 @@ interface PendingEvent {
   name: string;
   data: Value;
 }
+export interface DebugCheckpoint {
+  world: WorldSnapshot;
+  names: Record<string, string>;
+  time: number;
+  bags: Record<string, BagItem[]>;
+  partEntities: Record<string, EntityId[]>;
+  queues: Json;
+  systems: SystemStatus[];
+}
 
 /** Raycast の結果の opaque handle（ADR 0012）。token は推測しにくい文字列で、表を引く鍵 */
 interface HitHandle {
@@ -356,6 +373,10 @@ export type HostName = (typeof HOST_API)[number];
  * スクリプトが動かした物体の当たり判定は、次のステップから反映される。
  */
 export class Simulation {
+  private debugStart: DebugCheckpoint | null = null;
+  debug: DebugRuntime | null = null;
+  private debugRunning = false;
+  private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
   readonly world: World;
   readonly registry: KokoStateRegistry;
   time = 0;
@@ -399,13 +420,60 @@ export class Simulation {
       hostFunctions: Object.fromEntries(
         HOST_API.map((name) => [
           name,
-          (args: Value[], ctx: HostCallContext) => ref.sim?.callHost(name, args, ctx),
+          (args: Value[], ctx: HostCallContext) => {
+            const sim = ref.sim;
+            return sim?.debug
+              ? sim.debug.hostOperation(() => sim.callHost(name, args, ctx))
+              : sim?.callHost(name, args, ctx);
+          },
         ]),
       ),
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
+      ...(options.debug
+        ? {
+            debug: {
+              onPoint: async (point) =>
+                ref.sim?.debug?.point(point, (entities) => {
+                  const sim = ref.sim;
+                  if (!sim) return () => {};
+                  const runningWorld = sim.world.snapshot();
+                  sim.activeDebugApply?.(entities);
+                  return (edits) => {
+                    if (!sim.disposed) {
+                      sim.world.restore(runningWorld);
+                      for (const edit of edits)
+                        if (edit.kind === "state") sim.writeDebugState(edit);
+                    }
+                  };
+                }) ?? [],
+            },
+          }
+        : {}),
     });
     const sim = new Simulation(sandbox, new Physics(), multi, options);
     ref.sim = sim;
+    if (options.debug)
+      sim.debug = new DebugRuntime(options.debug, {
+        states: (entity) => sim.debugStates(entity),
+        writeState: (edit) => sim.writeDebugState(edit),
+        log: (systemId, message) => sim.log(systemId, message, "log"),
+        watching: (enabled) => sim.sandbox.setDebugWatching(enabled),
+        guestValue: (watch, entities, systemId) => {
+          const sys = sim.systems.find((s) => s.id === systemId);
+          const field = sim.registry.get(watch.koko)?.fields.find((f) => f.id === watch.field);
+          const states = sys
+            ? entities.find((e) => e.id === watch.entity)?.states[
+                sim.localKey(watch.koko, sys.realm)
+              ]
+            : undefined;
+          return states &&
+            field &&
+            Object.hasOwn(states, field.name) &&
+            sim.accepts(watch.koko, field, states[field.name])
+            ? encodeValue(states[field.name])
+            : undefined;
+        },
+      });
     return sim;
   }
 
@@ -562,6 +630,42 @@ export class Simulation {
   /** バッグの中身（フレームに入れて配る・ホストが替わったら引き継ぐ。ADR 0018） */
   bagsSnapshot(): Record<string, BagItem[]> {
     return Object.fromEntries([...this.bags].map(([p, items]) => [p, structuredClone(items)]));
+  }
+  private makeDebugCheckpoint(): DebugCheckpoint {
+    return {
+      world: this.world.snapshot(),
+      names: Object.fromEntries(this.world.entityIds().map((id) => [id, this.nameOf(id)])),
+      time: this.time,
+      bags: this.bagsSnapshot(),
+      partEntities: this.partEntitiesSnapshot(),
+      queues: encodeValue({ inputs: this.inputs, pending: this.pending }),
+      systems: structuredClone(this.systemStatus()),
+    };
+  }
+  debugCheckpoint(): DebugCheckpoint | null {
+    return this.debug ? (this.debugStart ?? this.makeDebugCheckpoint()) : null;
+  }
+  restoreDebugCheckpoint(checkpoint: DebugCheckpoint) {
+    this.restore(checkpoint.world, checkpoint.names, checkpoint.time, checkpoint.partEntities);
+    this.restoreBags(checkpoint.bags);
+    const queues = decodeValue(checkpoint.queues) as {
+      inputs: InputEvent[];
+      pending: PendingEvent[];
+    };
+    this.inputs = queues.inputs;
+    this.pending = queues.pending;
+    for (const status of checkpoint.systems) {
+      const system = this.systems.find((s) => s.id === status.id);
+      if (system) {
+        system.enabled = status.enabled;
+        system.error = status.error;
+        system.line = status.line;
+        system.warnings = new Map(
+          status.warnings.map((warning) => [warning.code, structuredClone(warning)]),
+        );
+      }
+    }
+    this.debugStart = checkpoint;
   }
 
   /** バッグの中身を戻す（ホストが替わったとき・再生を続けるとき） */
@@ -944,9 +1048,95 @@ export class Simulation {
     }
   }
 
+  /** デバッグだけはフレームの途中で待つ。通常の step の順序をそのまま保つ。 */
+  async stepDebug(dt: number): Promise<void> {
+    if (!this.debug || this.disposed || this.debugRunning) return;
+    this.debugRunning = true;
+    this.debugStart = this.makeDebugCheckpoint();
+    try {
+      await this.debug.beginFrame();
+      if (this.disposed) return;
+      this.time += dt;
+      this.physics.sync(this.world);
+      const collisions = this.physics.step(this.world, dt);
+      await this.debug.externalChanges("物理演算");
+      for (const c of collisions)
+        for (const [self, other] of [
+          [c.a, c.b],
+          [c.b, c.a],
+        ]) {
+          if (!self || !other || !this.world.has(self)) continue;
+          for (const sys of this.active("onCollision"))
+            if (this.entityMatches(sys, self))
+              await this.runSystemDebug(
+                sys,
+                "onCollision",
+                [self],
+                [{ other, started: c.started }],
+              );
+        }
+      const inputs = this.inputs;
+      this.inputs = [];
+      for (const ev of inputs) {
+        if (this.equipInput(ev)) {
+          await this.debug.externalChanges("組み込みの装備処理");
+          continue;
+        }
+        this.deliverInteract(ev);
+        const handled = this.builtinInput(ev);
+        await this.debug.externalChanges("組み込みの入力処理");
+        if (handled) continue;
+        for (const sys of this.active("onInput")) {
+          const targets = this.matches(sys).filter((id) => this.acceptsInput(id, ev.player));
+          await this.runSystemDebug(sys, "onInput", targets, [ev as unknown as Value]);
+        }
+      }
+      await this.debug.externalChanges("組み込みの入力処理");
+      for (const sys of this.active("onUpdate"))
+        await this.runSystemDebug(sys, "onUpdate", this.matches(sys), [dt]);
+      let budget = MAX_EVENTS_PER_STEP;
+      while (this.pending.length > 0 && budget-- > 0 && !this.disposed) {
+        const ev = this.pending.shift() as PendingEvent;
+        if (!this.world.has(ev.target)) continue;
+        if (ev.kind === "contract") {
+          const handler = `contract:${ev.name}`;
+          const player =
+            ev.name === "Interact"
+              ? ((ev.data as { player?: unknown } | null)?.player ?? null)
+              : null;
+          for (const sys of this.active(handler))
+            if (this.entityMatches(sys, ev.target)) {
+              this.interacting = typeof player === "string" ? { systemId: sys.id, player } : null;
+              try {
+                await this.runSystemDebug(sys, handler, [ev.target], [ev.data]);
+              } finally {
+                this.interacting = null;
+              }
+            }
+        } else
+          for (const sys of this.active("onEvent"))
+            if (this.entityMatches(sys, ev.target))
+              await this.runSystemDebug(
+                sys,
+                "onEvent",
+                [ev.target],
+                [{ name: ev.name, data: ev.data }],
+              );
+      }
+      if (this.pending.length > 0) {
+        this.log(null, `イベントが多すぎるため ${this.pending.length} 件を捨てました`, "error");
+        this.pending = [];
+      }
+      await this.debug.endFrame();
+    } finally {
+      this.debugRunning = false;
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.debug?.dispose();
     this.sandbox.dispose();
     this.physics.dispose();
   }
@@ -1481,7 +1671,13 @@ export class Simulation {
             "load",
             first.location?.kind === "script" ? first.location.line : null,
           );
-        const meta = this.sandbox.loadSystem(id, compiled.javascript, realm);
+        const instrumented = this.debug ? instrumentDebug(compiled.javascript, id) : null;
+        if (instrumented) this.debug?.register(id, instrumented.lines);
+        const meta = this.sandbox.loadSystem(
+          id,
+          instrumented?.javascript ?? compiled.javascript,
+          realm,
+        );
         const scope = this.scopeOfRealm(realm);
         const resolve = (refs: string[]) =>
           refs.map((n) => {
@@ -1876,6 +2072,71 @@ export class Simulation {
       this.fail(sys, e);
       if (this.sandbox.broken) this.dispose();
     }
+  }
+
+  private async runSystemDebug(
+    sys: LoadedSystem,
+    handler: string,
+    ids: EntityId[],
+    args: Value[],
+  ): Promise<void> {
+    if (ids.length === 0 || !sys.enabled || this.disposed) return;
+    const before = ids.map((id) => this.toScriptEntity(id, sys));
+    const apply = (after: ScriptEntity[]) => {
+      after.forEach((e, i) => {
+        const prev = before[i];
+        if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
+        for (const [key, values] of Object.entries(e.states)) {
+          const koko = isShared(key) ? key : this.kid(sys.realm, key);
+          if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
+          this.writeNamed(e.id, koko, values, prev.states[key] ?? null);
+        }
+      });
+    };
+    this.activeDebugApply = apply;
+    this.debug?.beginSystem(before, sys.id);
+    try {
+      const after = await this.sandbox.runAsync(sys.id, handler, before, args);
+      if (!this.disposed) apply(after);
+    } catch (e) {
+      if (!this.disposed) this.fail(sys, e);
+      if (this.sandbox.broken) this.dispose();
+    } finally {
+      this.activeDebugApply = null;
+      this.debug?.endSystem();
+    }
+  }
+
+  private debugStates(entity: string | null): DebugKokoState[] {
+    if (!entity || !this.world.has(entity)) return [];
+    return this.registry.all().flatMap((koko) => {
+      const values = this.world.get(entity, koko.id);
+      return values
+        ? [
+            {
+              id: koko.id,
+              name: koko.name,
+              fields: koko.fields.map((field) => ({
+                id: field.id,
+                name: field.name,
+                value: encodeValue(values[field.id]),
+              })),
+            },
+          ]
+        : [];
+    });
+  }
+
+  private writeDebugState(edit: DebugStateEdit): boolean {
+    if (!this.world.has(edit.entity)) return false;
+    const values = this.world.get(edit.entity, edit.koko);
+    const field = this.registry.get(edit.koko)?.fields.find((f) => f.id === edit.field);
+    const value = decodeValue(edit.value) as Value;
+    if (!values || !field || !this.accepts(edit.koko, field, value)) return false;
+    values[field.id] = cloneValue(value) as FieldValue;
+    // VM はフィールド名で保持する。返り値用の操作も、その名前へそろえる。
+    edit.fieldName = field.name;
+    return true;
   }
 
   /**

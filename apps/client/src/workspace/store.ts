@@ -1,6 +1,7 @@
 import { type EntityId, type FieldSchemas, World } from "@tukurium/eks";
 import {
   buildRegistry,
+  DebugSettingsDoc,
   type Diagnostic,
   EXPANDED_ID_SEPARATOR,
   type ObservedDiagnostics,
@@ -10,6 +11,7 @@ import {
 } from "@tukurium/repo-model";
 import {
   type BagItem,
+  type DebugEdit,
   type EffectEvent,
   type InputEvent,
   type LogEntry,
@@ -17,7 +19,7 @@ import {
   type SoundEvent,
   type SystemStatus,
 } from "@tukurium/runtime";
-import type { PlayFrame, PlayMode, WorkspaceRole } from "@tukurium/shared";
+import type { DebugStop, PlayFrame, PlayMode, WorkspaceRole } from "@tukurium/shared";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { create } from "zustand";
@@ -64,6 +66,15 @@ export interface RuntimeView {
 }
 
 interface WorkspaceState {
+  debug: DebugSettingsDoc | null;
+  debugReady: boolean;
+  debugRev: number;
+  debugOpen: boolean;
+  debugStop: DebugStop | null;
+  debugFrameId: number | null;
+  debugPointId: string | null;
+  debugEdit(edit: DebugEdit): void;
+  debugCommand(cmd: "continue" | "pause" | "into" | "over" | "out" | "frame"): void;
   workspaceId: string | null;
   project: ProjectDoc | null;
   awareness: Awareness | null;
@@ -216,6 +227,23 @@ interface WorkspaceState {
 const MAX_LOGS = 200;
 let seq = 0;
 let sync: WorkspaceSync | null = null;
+const DEBUG_REMOTE = Symbol("debug-remote");
+function newDebug(project: ProjectDoc): DebugSettingsDoc {
+  const debug = new DebugSettingsDoc(project);
+  debug.doc.on("update", (update: Uint8Array, origin: unknown) => {
+    const s = useWorkspace.getState();
+    if (s.debug !== debug) return;
+    useWorkspace.setState({ debugRev: s.debugRev + 1 });
+    if (
+      origin !== DEBUG_REMOTE &&
+      s.debugReady &&
+      s.workspaceId &&
+      (s.role === "editor" || s.role === "admin")
+    )
+      client().send({ t: "ws.debugUpdate", workspaceId: s.workspaceId, update: toB64(update) });
+  });
+  return debug;
+}
 let unobserve: (() => void) | null = null;
 // Stop や出力切替の後に、待機中だった Play が再生を戻さないようにする。
 let playGeneration = 0;
@@ -248,6 +276,34 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
   };
 
   return {
+    debug: null,
+    debugReady: false,
+    debugRev: 0,
+    debugOpen: false,
+    debugStop: null,
+    debugFrameId: null,
+    debugPointId: null,
+    debugEdit: (edit) => {
+      const s = get();
+      if (s.workspaceId && s.debugStop)
+        client().send({
+          t: "ws.debugCommand",
+          workspaceId: s.workspaceId,
+          cmd: "edit",
+          stopId: s.debugStop.id,
+          edit,
+        });
+    },
+    debugCommand: (cmd) => {
+      const s = get();
+      if (s.workspaceId)
+        client().send({
+          t: "ws.debugCommand",
+          workspaceId: s.workspaceId,
+          cmd,
+          stopId: s.debugStop?.id,
+        });
+    },
     workspaceId: null,
     project: null,
     awareness: null,
@@ -328,6 +384,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       if (get().workspaceId === workspaceId) return;
       get().leave();
       const project = new ProjectDoc(new Y.Doc());
+      const debug = newDebug(project);
       const awareness = new Awareness(project.doc);
       awareness.setLocalStateField("user", {
         name: useApp.getState().myName,
@@ -337,6 +394,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       sync = new WorkspaceSync(client(), workspaceId, project.doc, awareness);
       unobserve = project.observe(() => {
         const s = get();
+        if (s.role === "editor" || s.role === "admin") s.debug?.prune();
         // アウトプットが消えたら別のものに切り替える
         const outputs = s.project?.outputs() ?? [];
         const outputId = outputs.some((o) => o.id === s.outputId)
@@ -352,6 +410,13 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       });
       set({
         workspaceId,
+        debug,
+        debugReady: false,
+        debugRev: 0,
+        debugOpen: false,
+        debugStop: null,
+        debugFrameId: null,
+        debugPointId: null,
         project,
         awareness,
         role: null,
@@ -405,7 +470,15 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
       unobserve?.();
       unobserve = null;
       awareness?.destroy();
+      get().debug?.dispose();
       set({
+        debug: null,
+        debugReady: false,
+        debugRev: 0,
+        debugOpen: false,
+        debugStop: null,
+        debugFrameId: null,
+        debugPointId: null,
         workspaceId: null,
         project: null,
         awareness: null,
@@ -551,6 +624,44 @@ const log = (message: string, level: LogEntry["level"] = "log") =>
 client().on((msg) => {
   const s = ws();
   switch (msg.t) {
+    case "ws.debugCommand": {
+      if (msg.workspaceId !== s.workspaceId || !s.isHost || !s.sim?.debug) return;
+      if (msg.cmd === "pause") s.sim.debug.requestPause();
+      else if (msg.cmd === "edit") {
+        if (msg.stopId && msg.edit) s.sim.debug.edit(msg.stopId, msg.edit as DebugEdit);
+      } else if (msg.stopId && s.sim.debug.resume(msg.stopId, msg.cmd)) {
+        set({ mode: "play", debugStop: null });
+        sendFrame();
+      }
+      return;
+    }
+    case "ws.debugDoc": {
+      if (msg.workspaceId !== s.workspaceId || !s.project) return;
+      const canWrite = s.role === "editor" || s.role === "admin";
+      const debug = msg.full && (!s.debug || !canWrite) ? newDebug(s.project) : s.debug;
+      if (!debug) return;
+      if (msg.full) {
+        const server = new Y.Doc();
+        Y.applyUpdate(server, fromB64(msg.update));
+        const vector = Y.encodeStateVector(server);
+        server.destroy();
+        if (s.debug !== debug) s.debug?.dispose();
+        set({ debug, debugReady: true });
+        Y.applyUpdate(debug.doc, fromB64(msg.update), DEBUG_REMOTE);
+        if (canWrite) {
+          const missing = Y.encodeStateAsUpdate(debug.doc, vector);
+          if (missing.length > 2)
+            client().send({
+              t: "ws.debugUpdate",
+              workspaceId: msg.workspaceId,
+              update: toB64(missing),
+            });
+        }
+        return;
+      }
+      Y.applyUpdate(debug.doc, fromB64(msg.update), DEBUG_REMOTE);
+      return;
+    }
     case "ws.created":
       s.open(msg.workspaceId);
       return;
@@ -624,7 +735,17 @@ client().onWelcome(() => {
   const id = ws().workspaceId;
   if (!id) return;
   ws().sim?.dispose();
-  set({ isHost: false, ready: false, sim: null, remote: null, mode: "edit" });
+  cancelPendingPlay();
+  set({
+    isHost: false,
+    ready: false,
+    sim: null,
+    remote: null,
+    mode: "edit",
+    debugReady: false,
+    debugStop: null,
+    debugFrameId: null,
+  });
   setTimeout(() => client().send({ t: "ws.open", workspaceId: id }), 0);
 });
 
@@ -638,17 +759,23 @@ async function hostCommand(cmd: "play" | "pause" | "resume" | "stop", outputId?:
       if (s.mode === "edit") await startSim(outputId ?? s.outputId, null);
       return;
     case "pause":
+      if (s.sim?.debug) {
+        s.sim.debug.requestPause();
+        return;
+      }
       if (s.mode === "play") set({ mode: "paused" });
       sendFrame();
       return;
     case "resume":
+      if (s.sim?.debug?.stop) s.sim.debug.resume(s.sim.debug.stop.id);
+      set({ debugStop: null });
       if (s.mode === "paused") set({ mode: "play" });
       sendFrame();
       return;
     case "stop":
       cancelPendingPlay();
       s.sim?.dispose();
-      set({ sim: null, mode: "edit", systemStatus: [] });
+      set({ sim: null, mode: "edit", systemStatus: [], debugStop: null });
       sendFrame();
       return;
   }
@@ -676,6 +803,24 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     packages,
     // 型を確かめる Worker が作ったスキーマ（まだなければ、型の文から分かる分だけで確かめる）
     schemas: ws().fieldSchemas,
+    ...(s.debug?.read().enabled
+      ? {
+          debug: {
+            settings: () =>
+              s.debug?.read() ?? {
+                enabled: false,
+                breakOnError: false,
+                breakpoints: [],
+                watches: [],
+              },
+            onPause: (stop: DebugStop) => {
+              if (!current()) return;
+              set({ debugStop: stop, debugOpen: true, panelsHidden: false, mode: "paused" });
+              sendFrame();
+            },
+          },
+        }
+      : {}),
     onLog: (entry) => {
       if (!started && !current()) return;
       pushLog(entry);
@@ -686,7 +831,11 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     sim.dispose();
     return;
   }
-  if (resume?.world) {
+  if (resume?.debug && resume.debugStart && sim.debug) {
+    sim.restoreDebugCheckpoint(
+      resume.debugStart as Parameters<Simulation["restoreDebugCheckpoint"]>[0],
+    );
+  } else if (resume?.world) {
     sim.restore(
       resume.world as Parameters<Simulation["restore"]>[0],
       resume.names,
@@ -701,8 +850,10 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     outputId,
     mode: resume?.mode === "paused" ? "paused" : "play",
     systemStatus: sim.systemStatus(),
+    debugStop: null,
   });
   log(resume ? "前のホストの状態から再生を続けます" : "Play を開始しました");
+  if (resume?.debug && sim.debug) sim.debug.holdAfterHandoff();
   sendFrame();
 }
 
@@ -738,6 +889,8 @@ export function sendFrame(): void {
         world: sim.world.snapshot(),
         names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
         status: sim.systemStatus(),
+        debug: s.debugStop,
+        debugStart: s.debugStop && sim.debug ? sim.debugCheckpoint() : null,
         bags: sim.bagsSnapshot(),
         partEntities: sim.partEntitiesSnapshot(),
       }
@@ -756,7 +909,7 @@ export function sendFrame(): void {
 function applyFrame(frame: PlayFrame) {
   const s = ws();
   if (frame.mode === "edit" || !frame.world || !s.project) {
-    set({ mode: "edit", remote: null, systemStatus: [] });
+    set({ mode: "edit", remote: null, systemStatus: [], debugStop: null });
     return;
   }
   const world = s.remote?.world ?? new World(buildRegistry(s.project.kokostates()));
@@ -765,6 +918,8 @@ function applyFrame(frame: PlayFrame) {
     incomingSounds: [...st.incomingSounds, ...(frame.sounds ?? [])].slice(-32),
     incomingEffects: [...st.incomingEffects, ...(frame.effects ?? [])].slice(-32),
     mode: frame.mode,
+    debugStop: frame.debug ?? null,
+    ...(frame.debug ? { debugOpen: true, panelsHidden: false } : {}),
     outputId: frame.outputId || st.outputId,
     remote: { world, names: frame.names, bags: (frame.bags ?? {}) as Record<string, BagItem[]> },
     systemStatus: frame.status,

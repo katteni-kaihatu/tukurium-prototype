@@ -13,7 +13,7 @@ import { z } from "zod";
  * 14：制作データに、プレハブ（prefabs・prefabEntities）と、インスタンスの印（Entity の instanceOf）が入った
  * （ADR 0076）。
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;
@@ -203,7 +203,83 @@ const Bags = z.record(z.string(), z.array(BagItem).max(64));
 /** 配置 → Entity。実行中に作った物の処理・削除のため、ホスト交代時にも所属を戻す。 */
 const PartEntities = z.record(z.string(), z.array(z.string()));
 
+export const DebugStop = z.object({
+  change: z
+    .object({
+      entity: z.string(),
+      koko: z.string(),
+      field: z.string(),
+      oldValue: z.unknown(),
+      newValue: z.unknown(),
+      source: z.string(),
+    })
+    .optional(),
+  message: z.string().optional(),
+  states: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        fields: z.array(z.object({ id: z.string(), name: z.string(), value: z.unknown() })),
+      }),
+    )
+    .default([]),
+  id: z.string(),
+  systemId: z.string(),
+  entity: z.string().nullable(),
+  line: z.number(),
+  reason: z.string(),
+  frames: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      line: z.number(),
+      variables: z.array(
+        z.object({
+          name: z.string(),
+          value: z.unknown(),
+          writable: z.boolean(),
+          unavailable: z.boolean().optional(),
+          state: z.object({ entity: z.string(), koko: z.string() }).optional(),
+          binding: z.string().optional(),
+        }),
+      ),
+      systemId: z.string().optional(),
+    }),
+  ),
+});
+export type DebugStop = z.infer<typeof DebugStop>;
+export const DebugCommand = z.enum(["continue", "pause", "edit", "into", "over", "out", "frame"]);
+export const DebugValueEdit = z.union([
+  z.object({
+    kind: z.literal("variable").optional(),
+    frameId: z.number(),
+    name: z.string(),
+    value: z.unknown(),
+  }),
+  z.object({
+    kind: z.literal("state"),
+    entity: z.string(),
+    koko: z.string(),
+    field: z.string(),
+    value: z.unknown(),
+  }),
+]);
+
 export const PlayFrame = z.object({
+  debugStart: z
+    .object({
+      world: z.unknown(),
+      names: z.record(z.string(), z.string()),
+      time: z.number(),
+      bags: Bags,
+      partEntities: PartEntities,
+      queues: z.unknown(),
+      systems: z.array(SystemStatusInfo),
+    })
+    .nullable()
+    .optional(),
+  debug: DebugStop.nullable().optional(),
   sounds: z.array(SoundEvent).max(32).optional(),
   effects: z.array(EffectEvent).max(32).optional(),
   mode: PlayMode,
@@ -334,6 +410,14 @@ export const ClientMessage = z.discriminatedUnion("t", [
   /** ワークスペースを閉じる（管理権限）。一覧からなくなり、開いていた人も出る */
   z.object({ t: z.literal("ws.end"), workspaceId: id }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),
+  z.object({ t: z.literal("ws.debugUpdate"), workspaceId: id, update: b64 }),
+  z.object({
+    t: z.literal("ws.debugCommand"),
+    workspaceId: id,
+    cmd: DebugCommand,
+    edit: DebugValueEdit.optional(),
+    stopId: z.string().optional(),
+  }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
   z.object({
     t: z.literal("ws.setRole"),
@@ -477,6 +561,15 @@ export const ServerMessage = z.discriminatedUnion("t", [
     by: z.string(),
   }),
   z.object({ t: z.literal("ws.doc"), workspaceId: id, update: b64, role: WorkspaceRole }),
+  z.object({ t: z.literal("ws.debugDoc"), workspaceId: id, update: b64, full: z.boolean() }),
+  z.object({
+    t: z.literal("ws.debugCommand"),
+    workspaceId: id,
+    cmd: DebugCommand,
+    edit: DebugValueEdit.optional(),
+    stopId: z.string().optional(),
+    from: id,
+  }),
   z.object({ t: z.literal("ws.denied"), workspaceId: id, reason: z.string() }),
   /** ワークスペースが閉じられた。開いていた人に届く */
   z.object({ t: z.literal("ws.ended"), workspaceId: id, reason: z.string() }),
