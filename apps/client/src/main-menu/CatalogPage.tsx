@@ -1131,7 +1131,7 @@ export function ItemDetailsPlaceholder({ className = styles.detail }: { classNam
 export function CatalogNotice() {
   const { message, actionError, retry, owned, busy, ownedError } = useCatalog();
   const status = useApp((s) => s.status);
-  const item = retry ? owned.find((i) => i.workId === retry.workId) : undefined;
+  const item = retry ? (owned.find((i) => i.workId === retry.workId) ?? retry.item) : undefined;
   return (
     <>
       {ownedError && (

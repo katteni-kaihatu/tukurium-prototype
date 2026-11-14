@@ -28,7 +28,7 @@ export function WorldsPage() {
   const [nameEdited, setNameEdited] = useState(false);
   const waiting = useRef(false);
   /** マーケットにあるワールドの一覧か、自分のワールド（登録していない非公開のものも含む）の一覧か */
-  const [tab, setTab] = useState<"market" | "mine">("market");
+  const [view, setView] = useState<"market" | "mine">("market");
 
   const owned = useCatalog((c) => c.owned);
   const ownedReady = useCatalog((c) => c.ownedLoaded || c.ownedError !== null);
@@ -36,7 +36,7 @@ export function WorldsPage() {
   const reload = useCallback(() => {
     const seq = ++loadSeq.current;
     setLoadError(null);
-    (tab === "mine" ? myWorlds() : marketWorlds()).then(
+    (view === "mine" ? myWorlds() : marketWorlds()).then(
       (list) => {
         if (seq !== loadSeq.current) return;
         setWorks(list);
@@ -48,9 +48,10 @@ export function WorldsPage() {
         setLoaded(true);
       },
     );
-  }, [tab]);
+  }, [view]);
   useEffect(() => reload(), [reload]);
-  const ready = loaded && ownedReady;
+  // 所持一覧が読めるまで鍵の状態が決まらない。つながっていないときは、待たずに出す
+  const ready = loaded && (ownedReady || status !== "online");
   useEffect(
     () =>
       client.on((msg) => {
@@ -78,9 +79,14 @@ export function WorldsPage() {
   const chosen = list.find((w) => w.id === selected.worlds) ?? list[0];
   // マーケットから選ばれたワールドが自分のワールドに無ければ、マーケットの一覧へ戻す
   useEffect(() => {
-    if (tab === "mine" && loaded && selected.worlds && !works.some((w) => w.id === selected.worlds))
-      setTab("market");
-  }, [tab, loaded, selected.worlds, works]);
+    if (
+      view === "mine" &&
+      loaded &&
+      selected.worlds &&
+      !works.some((w) => w.id === selected.worlds)
+    )
+      setView("market");
+  }, [view, loaded, selected.worlds, works]);
   const open = currentWorld(session?.placements ?? []);
   useEffect(() => {
     if (!nameEdited) setName((chosen?.name ?? `${myName} のワールド`).slice(0, 64));
@@ -88,10 +94,10 @@ export function WorldsPage() {
 
   const shownError = session ? actionError : (actionError ?? sessionError);
   // 自分のワールドは最新のリリースを、マーケットのワールドは公開中の版を開く
-  const releaseOf = (w: Work) => (tab === "mine" ? w.latest : w.market?.release) ?? null;
+  const releaseOf = (w: Work) => (view === "mine" ? w.latest : w.market?.release) ?? null;
   const choose = (next: "market" | "mine") => {
-    if (next === tab) return;
-    setTab(next);
+    if (next === view) return;
+    setView(next);
     setLoaded(false);
     setWorks([]);
   };
@@ -103,16 +109,16 @@ export function WorldsPage() {
 
   return (
     <>
-      {tab === "mine" && (
+      {view === "mine" && (
         <button type="button" className={styles.backLink} onClick={() => choose("market")}>
           ← マーケットのワールドへ戻る
         </button>
       )}
       <div className={styles.pageHeader}>
         <div>
-          <h1>{tab === "mine" ? "自分のワールド" : "ワールド"}</h1>
+          <h1>{view === "mine" ? "自分のワールド" : "ワールド"}</h1>
           <p className={styles.muted}>
-            {tab === "mine"
+            {view === "mine"
               ? "自分が作ったワールドです。マーケットに出していない非公開のワールドは、ここだけに出て、自分だけが開けます。"
               : "マーケットにあるワールドです。無料のものと購入したものを開けます。有料のワールドは、マーケットで購入してから開けます。"}
             {session
@@ -120,7 +126,7 @@ export function WorldsPage() {
               : " 選んだワールドで、新しいセッションを開けます。"}
           </p>
         </div>
-        {tab === "market" && (
+        {view === "market" && (
           <div className={styles.headerActions}>
             <button className={styles.button} type="button" onClick={() => choose("mine")}>
               自分のワールド
@@ -180,7 +186,7 @@ export function WorldsPage() {
               <p className={styles.empty}>
                 {query
                   ? "検索に一致するワールドはありません。"
-                  : tab === "mine"
+                  : view === "mine"
                     ? "リリースした自分のワールドはまだありません。プロジェクトでワールドをリリースすると、ここに出ます。"
                     : "マーケットにワールドはまだありません。"}
               </p>
@@ -207,11 +213,11 @@ export function WorldsPage() {
                           ? "開いています"
                           : pending
                             ? "まもなく変わります"
-                            : tab === "mine" && !w.market
+                            : view === "mine" && !w.market
                               ? "非公開"
                               : "ワールド"}
                       </span>
-                      {tab === "market" && w.unlocked && price > 0 && w.owner !== me?.id && (
+                      {view === "market" && w.unlocked && price > 0 && w.owner !== me?.id && (
                         <span className={m.ownedTag}>✓ 入手済み</span>
                       )}
                     </span>
@@ -227,7 +233,7 @@ export function WorldsPage() {
                       >
                         {!w.unlocked && <LockIcon />}{" "}
                         {w.market
-                          ? tab === "mine"
+                          ? view === "mine"
                             ? `マーケット · ${priceLabel(price)}`
                             : priceLabel(price)
                           : "自分だけ"}
@@ -242,7 +248,7 @@ export function WorldsPage() {
             <WorldDetail
               work={chosen}
               release={releaseOf(chosen)}
-              mine={tab === "mine"}
+              mine={view === "mine"}
               inSession={!!session}
               opened={
                 releaseOf(chosen)?.id !== undefined && open?.releaseId === releaseOf(chosen)?.id

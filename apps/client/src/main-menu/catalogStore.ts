@@ -20,6 +20,8 @@ type PlacementRequest = Extract<ClientMessage, { t: "placeRelease" }>;
 interface Attempt {
   request: PlacementRequest;
   workId: string;
+  /** 取り出したもの。自分のアイテムは所持一覧に無いので、やり直しのためにここに持つ */
+  item: OwnedItem;
   name: string;
   started: number;
 }
@@ -325,6 +327,7 @@ export async function takeOut(item: OwnedItem, retryAttempt?: Attempt) {
   };
   const attempt = retryAttempt ?? {
     workId: item.workId,
+    item,
     name: item.work?.name ?? "アイテム",
     started: Date.now(),
     request: {
