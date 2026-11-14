@@ -3,6 +3,7 @@ import {
   isPackageResourceId,
   type ProjectDependencyGraph,
   type ProjectDoc,
+  packageResourceId,
   usersOf,
 } from "@tukurium/repo-model";
 
@@ -27,6 +28,8 @@ export interface ResItem {
   parent: string | null;
   /** マテリアルの色（見本の玉に使う） */
   color?: string;
+  /** ライブラリから来たものは、名前や置き場所を変えられない。 */
+  readOnly?: boolean;
 }
 
 /** Built-in の KokoState をまとめて見せる、読み取り専用のフォルダ */
@@ -71,6 +74,21 @@ export function resourceItems(project: ProjectDoc): ResItem[] {
     });
   for (const p of project.prefabs())
     items.push({ id: p.id, kind: "prefab", name: p.name, parent: project.folderOf(p.id) });
+  const available = project.snapshotWithPackages().prefabs ?? [];
+  for (const dep of project.dependencies()) {
+    const prefabs = available.filter((p) => p.id.startsWith(packageResourceId(dep, "")));
+    if (prefabs.length === 0) continue;
+    const parent = `__package:${dep.alias}`;
+    items.push({
+      id: parent,
+      kind: "folder",
+      name: `@${dep.alias} · v${dep.version}`,
+      parent: null,
+      readOnly: true,
+    });
+    for (const p of prefabs)
+      items.push({ id: p.id, kind: "prefab", name: p.name, parent, readOnly: true });
+  }
   for (const a of project.assets())
     items.push({ id: a.id, kind: a.kind, name: a.name, parent: project.folderOf(a.id) });
   return items;

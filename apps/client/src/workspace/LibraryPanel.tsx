@@ -31,7 +31,12 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
   const [works, setWorks] = useState<Work[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** 依存に足そうとしているリリースと、入力中の別名 */
-  const [adding, setAdding] = useState<{ work: Work; alias: string } | null>(null);
+  const [adding, setAdding] = useState<{
+    work: Work;
+    alias: string;
+    version: number;
+    versions: number[];
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const deps = project?.dependencies() ?? [];
   const packages = useWorkspace((s) => s.packages);
@@ -81,7 +86,7 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
   const addDependency = async () => {
     const latest = adding?.work.latest;
     if (!project || !adding || !latest) return;
-    const { work, alias } = adding;
+    const { work, alias, version } = adding;
     const problem = validateAlias(alias);
     if (problem) {
       setError(problem);
@@ -91,7 +96,7 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
     setError(null);
     try {
       // 版の content hash はサーバーが計算したものを固定する（取り出せることも確かめる）
-      const pkg = await api.packageVersion(work.id, latest.version);
+      const pkg = await api.packageVersion(work.id, version);
       project.addDependency({
         alias,
         packageId: pkg.packageId,
@@ -113,7 +118,8 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
           <h3 className={ui.sectionTitle}>このプロジェクトで使うライブラリ</h3>
           {deps.length === 0 ? (
             <p className={ui.muted}>
-              まだありません。下の一覧のライブラリを足すと、System から import できます。
+              まだありません。下の一覧のライブラリを足すと、System から import したり、Resources
+              からプレハブを置いたりできます。
             </p>
           ) : (
             <>
@@ -143,7 +149,8 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
               </ul>
               <p className={ui.muted}>
                 書き方：{example ?? `import 名前 from "@${deps[0]?.alias}/パス.koko";`}
-                （公開の印を付けた KokoState だけ。Inspector で Entity に付けられます）
+                （公開した KokoState は Inspector で付けられます。プレハブは Resources
+                から置けます）
               </p>
             </>
           )}
@@ -168,7 +175,6 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
             const isLibrary = w.outputKind === "library";
             const kind = w.outputKind ? KIND_LABEL[w.outputKind] : null;
             // 同じライブラリでも、別の版なら足せる（別の別名で共存する）
-            const used = deps.some((d) => d.packageId === w.id && d.version === w.latest?.version);
             const own = repoId !== null && w.repoId === repoId;
             return (
               <Fragment key={w.id}>
@@ -201,19 +207,33 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
                         type="button"
                         className={ui.btn}
                         style={{ height: 26 }}
-                        disabled={!w.latest || !canUse || used || own}
+                        disabled={!w.latest || !canUse || own}
                         title={
-                          used
-                            ? "この版はもう使っています"
-                            : own
-                              ? "このプロジェクト自身のライブラリは使えません（依存が輪になります）"
-                              : !canUse
-                                ? "利用の権限がありません"
-                                : "このプロジェクトの依存に足します（今の最新の版に固定します）"
+                          own
+                            ? "このプロジェクト自身のライブラリは使えません（依存が輪になります）"
+                            : !canUse
+                              ? "利用の権限がありません"
+                              : "使う版を選んで、このプロジェクトの依存に足します"
                         }
                         onClick={() => {
                           setError(null);
-                          setAdding({ work: w, alias: aliasFrom(w.name) });
+                          if (!w.latest) return;
+                          setAdding({
+                            work: w,
+                            alias: aliasFrom(w.name),
+                            version: w.latest.version,
+                            versions: [w.latest.version],
+                          });
+                          void api.work(w.id).then(
+                            (detail) => {
+                              setAdding((current) =>
+                                current?.work.id === w.id
+                                  ? { ...current, versions: detail.releases.map((r) => r.version) }
+                                  : current,
+                              );
+                            },
+                            (e: Error) => setError(e.message),
+                          );
                         }}
                       >
                         プロジェクトで使う
@@ -256,9 +276,29 @@ export function LibraryPanel({ active = true }: { active?: boolean }) {
                         value={adding.alias}
                         // biome-ignore lint/a11y/noAutofocus: 押した直後に別名を入れるため
                         autoFocus
-                        onChange={(e) => setAdding({ work: w, alias: e.target.value })}
+                        onChange={(e) => setAdding({ ...adding, alias: e.target.value })}
                       />
-                      <button type="submit" className={ui.btn} disabled={busy}>
+                      <select
+                        className={ui.select}
+                        style={{ width: 90, flex: "0 0 90px", padding: "0 8px" }}
+                        aria-label="使う版"
+                        value={adding.version}
+                        onChange={(e) => setAdding({ ...adding, version: Number(e.target.value) })}
+                      >
+                        {adding.versions.map((version) => (
+                          <option key={version} value={version}>
+                            v{version}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="submit"
+                        className={ui.btn}
+                        disabled={
+                          busy ||
+                          deps.some((d) => d.packageId === w.id && d.version === adding.version)
+                        }
+                      >
                         足す
                       </button>
                       <button type="button" className={ui.btn} onClick={() => setAdding(null)}>

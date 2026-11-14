@@ -42,6 +42,7 @@ export function LibraryContents() {
       rows: (snap.types ?? []).map((t) => row(t.id, t.name)),
     },
     { kind: "material", label: "マテリアル", rows: snap.materials.map((m) => row(m.id, m.name)) },
+    { kind: "prefab", label: "プレハブ", rows: (snap.prefabs ?? []).map((p) => row(p.id, p.name)) },
     { kind: "asset", label: "素材", rows: (snap.assets ?? []).map((a) => row(a.id, a.name)) },
   ];
   for (const g of groups) g.rows.sort((a, b) => a.path.localeCompare(b.path, "ja"));
@@ -97,7 +98,7 @@ export function LibraryContents() {
       </ul>
       <p className={ui.muted} style={{ padding: "4px 6px 8px" }}>
         ライブラリは Entity を持ちません。チェックを付けたものだけがライブラリに入り、使う側から
-        import できます。
+        import できます。プレハブを含めると、中の Entity と、使っているリソースも一緒に入ります。
       </p>
       {total === 0 && <p className={ui.empty}>Resources にまだ何もありません</p>}
       {groups.map((g) =>

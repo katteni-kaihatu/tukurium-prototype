@@ -14,6 +14,7 @@ import {
   packageKokoStates,
   type QueryItem,
   ResourcePathIndex,
+  reachablePackages,
   readSystemQuery,
   summarizeDiagnostics,
   summarizeHierarchy,
@@ -150,10 +151,20 @@ export function useProjectDiagnostics(): {
   return useMemo(() => {
     if (!project) return { diagnostics: [], index: null, summary: new Map() };
     const snap = project.snapshot();
+    const readable = project.snapshotWithPackages(schemas);
     const index = ResourcePathIndex.fromSnapshot(snap);
     const diagnostics = [
       ...checkProjectStructure(snap, index),
-      ...checkProjectReferences(snap, schemas),
+      ...checkProjectReferences(
+        {
+          ...readable,
+          dependencies: [
+            ...(snap.dependencies ?? []),
+            ...reachablePackages(snap.dependencies, pool).map((r) => r.dependency),
+          ],
+        },
+        project.prefabFieldSchemas(schemas),
+      ),
       // 値が型に合っているか（ADR 0065）
       ...checkFieldValues(snap, schemas),
       ...checkPackageVersions(snap.dependencies, pool),
@@ -169,7 +180,10 @@ export function useDependencyGraph(): ProjectDependencyGraph | null {
   const schemas = useWorkspace((s) => s.fieldSchemas);
   // biome-ignore lint/correctness/useExhaustiveDependencies: rev は制作データが変わった合図
   return useMemo(
-    () => (project ? ProjectDependencyGraph.fromSnapshot(project.snapshot(), schemas) : null),
+    () =>
+      project
+        ? ProjectDependencyGraph.fromSnapshot(project.snapshotWithPackages(schemas), schemas)
+        : null,
     [project, rev, schemas],
   );
 }
@@ -275,8 +289,9 @@ export function usePackageDefinitions(): void {
       last = key;
       void Promise.all([resolvePackages(deps), resolvePackagePool(deps)]).then(([map, pool]) => {
         if (cancelled || last !== key || useWorkspace.getState().project !== project) return;
-        // 使う側から見えるのは直接の依存だけ（依存の依存は、ライブラリの System のために読み込む）
-        project.setPackageKokoStates(packageKokoStates(map.values()));
+        // 入れ子のプレハブの表示には、依存先が使う KokoState の定義も要る。
+        project.setPackageKokoStates(packageKokoStates(pool));
+        project.setPackagePrefabs(pool);
         // 定義は Y.Doc の外なので、変わったことを rev で知らせる
         useWorkspace.setState((s) => ({ packages: map, packagePool: pool, rev: s.rev + 1 }));
       });

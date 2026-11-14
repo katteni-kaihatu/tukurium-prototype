@@ -69,7 +69,8 @@ export function ResourcesPanel() {
   const byId = new Map(all.map((x) => [x.id, x]));
   // 消えたフォルダにいたら、いちばん上へ
   const here = cwd && byId.get(cwd)?.kind === "folder" ? cwd : null;
-  const readOnlyHere = here === BUILTIN_FOLDER;
+  const readOnlyHere =
+    here === BUILTIN_FOLDER || (here !== null && byId.get(here)?.readOnly === true);
   const kids = (parent: string | null) => sortItems(all.filter((x) => x.parent === parent));
   const folderKids = (parent: string | null) => kids(parent).filter((x) => x.kind === "folder");
 
@@ -137,7 +138,8 @@ export function ResourcesPanel() {
     else if (it.kind === "prefab") showDetail("prefab", it.id);
     else if (it.kind === "image" || it.kind === "model" || it.kind === "audio")
       showDetail("asset", it.id);
-    else if (it.kind === "folder" && it.id !== BUILTIN_FOLDER) showDetail("folder", it.id);
+    else if (it.kind === "folder" && it.id !== BUILTIN_FOLDER && !it.readOnly)
+      showDetail("folder", it.id);
   };
   /** このパネルが 3D ならコードも 3D、2D なら 2D で開く */
   const openCode = (id: string) => {
@@ -229,7 +231,8 @@ export function ResourcesPanel() {
   };
 
   // ---- ドラッグしてフォルダへ移す ----
-  const canMove = (it: ResItem) => editing && it.kind !== "builtin" && it.id !== BUILTIN_FOLDER;
+  const canMove = (it: ResItem) =>
+    editing && !it.readOnly && it.kind !== "builtin" && it.id !== BUILTIN_FOLDER;
   const moveInto = (id: string, folder: string | null) => {
     const it = byId.get(id);
     if (!it || !canMove(it) || folder === BUILTIN_FOLDER || folder === id) return;
@@ -242,20 +245,20 @@ export function ResourcesPanel() {
     else project.moveResource(id, folder);
   };
   const dragProps = (it: ResItem) =>
-    canMove(it)
+    canMove(it) || (editing && it.kind === "prefab")
       ? {
           draggable: true,
           onDragStart: (e: React.DragEvent) => {
-            e.dataTransfer.setData("application/x-tukurium-resource", it.id);
+            if (canMove(it)) e.dataTransfer.setData("application/x-tukurium-resource", it.id);
             // プレハブは、Hierarchy に落とすとインスタンスを置ける
             if (it.kind === "prefab")
               e.dataTransfer.setData("application/x-tukurium-prefab", it.id);
-            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.effectAllowed = it.readOnly ? "copy" : "move";
           },
         }
       : {};
   const dropProps = (folder: string | null) =>
-    editing && folder !== BUILTIN_FOLDER
+    editing && folder !== BUILTIN_FOLDER && !byId.get(folder ?? "")?.readOnly
       ? {
           onDragOver: (e: React.DragEvent) => {
             if (!e.dataTransfer.types.includes("application/x-tukurium-resource")) return;

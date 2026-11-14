@@ -42,11 +42,13 @@ import {
   type OutputExposure,
   type PackageResolution,
   type ProjectSnapshot,
+  packageFieldSchemas,
   packageKokoStates,
   parsePackageResourceId,
   ResourcePathIndex,
   reachablePackages,
   resolutionMap,
+  withPackagePrefabs,
 } from "@tukurium/repo-model";
 import {
   type HostCallContext,
@@ -461,9 +463,13 @@ export class Simulation {
     packages?: PackageResolution[],
     schemas?: FieldSchemas,
   ): ProjectSnapshot {
-    return expandPrefabs(snapshot, {
+    const combinedSchemas = packageFieldSchemas(
+      reachablePackages(snapshot.dependencies, packages),
+      schemas,
+    );
+    return expandPrefabs(withPackagePrefabs(snapshot, packages, schemas), {
       kokostates: packageKokoStates(reachablePackages(snapshot.dependencies, packages)),
-      ...(schemas ? { schemas } : {}),
+      schemas: combinedSchemas,
     });
   }
 
@@ -992,6 +998,7 @@ export class Simulation {
     packages?: PackageResolution[],
     schemas?: FieldSchemas,
   ): void {
+    schemas = packageFieldSchemas(reachablePackages(snapshot.dependencies, packages), schemas);
     const scope = this.scopeOfRealm(realm);
     const next = new Set<KokoStateId>();
     for (const k of this.realmDefs.get(realm) ?? []) {
@@ -1297,7 +1304,7 @@ export class Simulation {
       part.outputId,
       buildRegistry([
         ...part.snapshot.kokostates,
-        ...packageKokoStates(resolutionMap(part.snapshot.dependencies, part.packages).values()),
+        ...packageKokoStates(reachablePackages(part.snapshot.dependencies, part.packages)),
       ]),
     );
     const snap = world.snapshot();
@@ -1386,9 +1393,10 @@ export class Simulation {
       const def = part.snapshot.systems.find((s) => s.id === refId);
       return def ? { ok: true, def, realm: part.realm, index: ownIndex, packages } : null;
     }
-    const resolution = [...packages.values()].find(
-      (r) => r.dependency.packageId === ref.packageId && r.dependency.version === ref.version,
-    );
+    const resolution = [
+      ...packages.values(),
+      ...reachablePackages(part.snapshot.dependencies, part.packages),
+    ].find((r) => r.dependency.packageId === ref.packageId && r.dependency.version === ref.version);
     if (!resolution)
       return { ok: false, name: refId, error: "このライブラリの版は、今の依存にありません" };
     const alias = resolution.dependency.alias;

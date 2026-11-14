@@ -60,14 +60,23 @@ export class ProjectDependencyGraph {
   /**
    * schemas：TypeScript で作ったフィールドのスキーマ（あれば、入れ子の中の参照までたどる）。
    * なくても、Tukurium が用意する型のフィールドはたどれる。
+   * kokostates：ライブラリから読み込んだ定義。制作データに複製せず、参照の型を読むために使う。
    */
-  static fromSnapshot(snap: ProjectSnapshot, schemas?: FieldSchemas): ProjectDependencyGraph {
-    return new ProjectDependencyGraph(snap, schemas);
+  static fromSnapshot(
+    snap: ProjectSnapshot,
+    schemas?: FieldSchemas,
+    kokostates: readonly KokoStateDef[] = [],
+  ): ProjectDependencyGraph {
+    return new ProjectDependencyGraph(snap, schemas, kokostates);
   }
 
-  private constructor(snap: ProjectSnapshot, schemas?: FieldSchemas) {
+  private constructor(
+    snap: ProjectSnapshot,
+    schemas?: FieldSchemas,
+    kokostates: readonly KokoStateDef[] = [],
+  ) {
     const defs = new Map<string, KokoStateDef>();
-    for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
+    for (const k of [...BUILTIN_KOKOSTATES, ...kokostates, ...snap.kokostates]) defs.set(k.id, k);
 
     for (const m of snap.materials)
       if (m.map) this.edge({ kind: "material", id: m.id }, { kind: "asset", id: m.map });
@@ -82,7 +91,11 @@ export class ProjectDependencyGraph {
     const usesStates = (from: GraphRef, states: EntityBase["states"], inPrefab: boolean) => {
       for (const [kokoId, values] of Object.entries(states)) {
         this.edge(from, { kind: "kokostate", id: kokoId });
-        for (const f of defs.get(kokoId)?.fields ?? []) {
+        // 依存の定義がなくても、渡された型情報があれば、そのフィールドの参照をたどる。
+        const fields =
+          defs.get(kokoId)?.fields ??
+          Object.keys(schemas?.[kokoId] ?? {}).map((id) => ({ id, type: "" }));
+        for (const f of fields) {
           const schema = schemaOfField(schemas, kokoId, f);
           if (!schema) continue;
           visitRefs(schema, values[f.id], (target, id) => {
