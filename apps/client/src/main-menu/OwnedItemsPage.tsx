@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
-import type { OwnedItem, Work } from "../net/api";
-import { CatalogNotice, ItemAction, ItemDetailsPlaceholder } from "./CatalogPage";
+import { api, type OwnedItem, type Work } from "../net/api";
+import { CatalogNotice, ItemAction, ItemDetailsPlaceholder, priceLabel } from "./CatalogPage";
 import { refreshOwned, removeOwned, updateOwned, useCatalog } from "./catalogStore";
 import { newerRelease, shelfItems, useItemShelf } from "./itemShelf";
 import common from "./MainMenu.module.css";
@@ -11,6 +11,13 @@ import { useMainMenu } from "./store";
 import { WorkTagsEditor } from "./WorkTags";
 
 export function OwnedItemsPage() {
+  /** 所持アイテムの一覧か、自分がリリースしたアイテム（非公開も含む）の一覧か */
+  const [view, setView] = useState<"owned" | "mine">("owned");
+  if (view === "mine") return <MyItems onBack={() => setView("owned")} />;
+  return <OwnedItems onMine={() => setView("mine")} />;
+}
+
+function OwnedItems({ onMine }: { onMine(): void }) {
   const catalog = useCatalog();
   const shelf = useItemShelf();
   const menu = useMainMenu();
@@ -44,9 +51,14 @@ export function OwnedItemsPage() {
         <h1>
           アイテム <span className={styles.total}>{catalog.owned.length}</span>
         </h1>
-        <button type="button" className={common.button} onClick={() => menu.selectPage("market")}>
-          マーケットを見る <span aria-hidden="true">↗</span>
-        </button>
+        <div className={common.headerActions}>
+          <button type="button" className={common.button} onClick={onMine}>
+            自分のアイテム
+          </button>
+          <button type="button" className={common.button} onClick={() => menu.selectPage("market")}>
+            マーケットを見る <span aria-hidden="true">↗</span>
+          </button>
+        </div>
       </div>
 
       <div className={styles.body} data-detail="true">
@@ -303,6 +315,207 @@ export function OwnedItemsPage() {
       )}
     </div>
   );
+}
+
+/**
+ * 自分がリリースしたアイテム。マーケットに出していない非公開のものも含み、ここにだけ出る。
+ * 作者は入手しなくても使えるので、所持アイテムには加えずに、最新の版をそのまま取り出す。
+ */
+function MyItems({ onBack }: { onBack(): void }) {
+  const status = useApp((s) => s.status);
+  const session = useApp((s) => s.session);
+  const [works, setWorks] = useState<Work[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const seq = useRef(0);
+  const reload = useCallback(() => {
+    const current = ++seq.current;
+    setError(null);
+    api.myMarket().then(
+      (mine) => {
+        if (current !== seq.current) return;
+        setWorks(
+          [...mine.listed, ...mine.unlisted].filter((w) => w.outputKind === "item" && w.latest),
+        );
+        setLoaded(true);
+      },
+      (e: Error) => {
+        if (current !== seq.current) return;
+        setError(e.message);
+        setLoaded(true);
+      },
+    );
+  }, []);
+  useEffect(() => reload(), [reload]);
+  const words = query.trim().toLocaleLowerCase();
+  const entries = works.filter((w) =>
+    `${w.name} ${w.repoName ?? ""} ${(w.tags ?? []).join(" ")}`.toLocaleLowerCase().includes(words),
+  );
+  const selected = works.find((w) => w.id === selectedId);
+  return (
+    <div className={styles.shelf}>
+      <button type="button" className={common.backLink} onClick={onBack}>
+        ← 所持アイテムへ戻る
+      </button>
+      <div className={common.pageHeader}>
+        <div>
+          <h1>
+            自分のアイテム <span className={styles.total}>{works.length}</span>
+          </h1>
+          <p className={common.muted}>
+            自分がリリースしたアイテムです。マーケットに出していない非公開のアイテムは、ここだけに出て、自分だけが取り出せます。
+          </p>
+        </div>
+      </div>
+      <div className={styles.body} data-detail="true">
+        <div className={styles.results}>
+          <div className={styles.tools}>
+            <label className={styles.search}>
+              <Glyph kind="search" />
+              <input
+                aria-label="自分のアイテムを検索"
+                placeholder="名前・プロジェクト・タグで検索"
+                maxLength={100}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className={styles.iconButton}
+              aria-label="自分のアイテムを更新"
+              title="自分のアイテムを更新"
+              disabled={status !== "online"}
+              onClick={reload}
+            >
+              <Glyph kind="refresh" />
+            </button>
+          </div>
+          {status !== "online" && (
+            <p className={common.notice} role="status">
+              接続を確認しています。取り出しは接続後に使えます。
+            </p>
+          )}
+          <CatalogNotice />
+          {error && (
+            <p className={common.error} role="alert">
+              {error}
+            </p>
+          )}
+          {!loaded && (
+            <p className={common.muted} role="status">
+              自分のアイテムを読み込んでいます…
+            </p>
+          )}
+          {loaded && !error && entries.length === 0 && (
+            <div className={styles.empty}>
+              <Glyph kind={words ? "search" : "box"} />
+              <h2>
+                {words ? "一致するアイテムがありません" : "リリースしたアイテムはまだありません"}
+              </h2>
+              <p>
+                {words
+                  ? "検索の言葉を変えてみてください。"
+                  : "プロジェクトでアイテムをリリースすると、ここに並びます。"}
+              </p>
+            </div>
+          )}
+          <div className={styles.items} data-layout="grid">
+            {entries.map((work) => (
+              <article
+                key={work.id}
+                className={styles.card}
+                data-selected={selected?.id === work.id}
+              >
+                <button
+                  type="button"
+                  className={styles.cardOpen}
+                  aria-label={`${work.name} の詳細`}
+                  aria-pressed={selected?.id === work.id}
+                  onClick={() => setSelectedId(work.id)}
+                >
+                  <ItemThumbnail work={work} />
+                  <span className={styles.cardInfo}>
+                    <strong>{work.name}</strong>
+                    <span className={common.caption}>{marketLabel(work)}</span>
+                    <span className={styles.version}>v{work.latest?.version ?? "?"}</span>
+                  </span>
+                </button>
+                <div className={styles.cardAction}>
+                  <ItemAction work={work} item={ownCopy(work)} />
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+        {selected ? (
+          <aside className={styles.detail} aria-label="アイテムの詳細">
+            <div className={styles.detailHeading}>
+              <span>アイテムの詳細</span>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label="アイテムの詳細を閉じる"
+                onClick={() => setSelectedId(null)}
+              >
+                <Glyph kind="close" />
+              </button>
+            </div>
+            <ItemThumbnail work={selected} />
+            <div className={styles.detailCopy}>
+              <span className={styles.typeBadge}>
+                {selected.market ? "3Dアイテム" : "非公開のアイテム"}
+              </span>
+              <h2>{selected.name}</h2>
+              <p className={common.muted}>プロジェクト: {selected.repoName ?? "?"}</p>
+              <dl className={styles.metadata}>
+                <dt>取り出す版</dt>
+                <dd>v{selected.latest?.version ?? "?"}（最新）</dd>
+                <dt>マーケット</dt>
+                <dd>
+                  {selected.market
+                    ? `${priceLabel(selected.market.price)}・v${selected.market.release?.version ?? "?"} を公開中`
+                    : "出していません"}
+                </dd>
+              </dl>
+              <div className={styles.detailAction}>
+                <ItemAction work={selected} item={ownCopy(selected)} />
+              </div>
+            </div>
+          </aside>
+        ) : (
+          <ItemDetailsPlaceholder className={styles.detail} />
+        )}
+      </div>
+      {session && (
+        <p className={styles.destination}>
+          <span className={styles.onlineDot} />
+          取り出し先: <strong>{session.name}</strong>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** カードに出す、マーケットでの状態 */
+function marketLabel(work: Work) {
+  return work.market ? `マーケット · ${priceLabel(work.market.price)}` : "非公開";
+}
+
+/** 自分の作品の最新の版を、所持アイテムと同じ形で扱う（所持一覧には加えない） */
+function ownCopy(work: Work): OwnedItem {
+  return {
+    userId: work.owner,
+    workId: work.id,
+    releaseId: work.latest?.id ?? "",
+    acquiredAt: work.createdAt,
+    work,
+    release: work.latest ?? null,
+    available: !!work.latest,
+    reason: work.latest ? null : "バージョンがありません",
+  };
 }
 
 function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {

@@ -70,10 +70,6 @@ export interface Work {
   official?: boolean;
   /** マーケットへの登録（登録していなければ null） */
   market?: MarketInfo | null;
-  /** ワールドの一覧だけ：マーケットの価格（登録していなければ null） */
-  price?: number | null;
-  /** ワールドの一覧だけ：見ている人が使えるか（有料で入手していなければ false） */
-  unlocked?: boolean;
   createdAt: string;
 }
 

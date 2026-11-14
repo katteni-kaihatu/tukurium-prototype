@@ -818,8 +818,12 @@
   outline: 2px solid var(--c-brand);
   outline-offset: 2px;
 }
-.card:hover {
+.card:hover,
+.card[aria-pressed="true"] {
   border-color: var(--c-brand);
+}
+.card[aria-pressed="true"] {
+  box-shadow: 0 0 0 1px var(--c-brand);
 }
 .buy .primary {
   height: 44px;
