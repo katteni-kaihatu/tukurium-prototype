@@ -1216,4 +1216,162 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
     expect(pos[0]).toBeGreaterThan(1);
     expect(pos[1]).toBeGreaterThan(0);
   });
+
+  describe("軸の固定（ADR 0078）", () => {
+    /** 球の下に、Z の向きへ下る坂を置く。固定しなければ、球は Z へ転がる */
+    const onSlope = (rigid: Record<string, unknown>) => {
+      const p = ball(rigid, {}, {}, 3);
+      p.entities.push({
+        id: "slope",
+        name: "坂",
+        parent: null,
+        output: "out_main",
+        order: 1,
+        states: {
+          [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [30, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: { shape: "box", size: [6, 0.2, 6], material: undefined, color: "#fff" },
+          [BUILTIN.Collider]: { sensor: false },
+        },
+      });
+      return p;
+    };
+
+    interface Result {
+      pos: Vec3;
+      rot: Vec3;
+      linvel: Vec3;
+      angvel: Vec3;
+    }
+
+    /** いまの球の位置・角度・速度 */
+    function read(s: Simulation, id = "ball"): Result {
+      const t = s.world.get(id, BUILTIN.Transform);
+      const rb = s.world.get(id, BUILTIN.RigidBody);
+      if (!t || !rb) throw new Error(`${id} がありません`);
+      return {
+        pos: t.position as Vec3,
+        rot: t.rotation as Vec3,
+        linvel: rb.linvel as Vec3,
+        angvel: rb.angvel as Vec3,
+      };
+    }
+
+    async function run(p: ProjectSnapshot, frames = 240, output = "out_main"): Promise<Result> {
+      const s = await Simulation.create(p, output, { realm: "r" });
+      sim = s;
+      for (let i = 0; i < frames; i++) s.step(1 / 60);
+      return read(s);
+    }
+
+    it("固定しなければ坂を Z へ転がり、lockMoveZ なら押されても Z は動かない", async () => {
+      const free = await run(onSlope({}));
+      expect(Math.abs(free.pos[2])).toBeGreaterThan(0.5);
+
+      const locked = await run(onSlope({ lockMoveZ: true }));
+      expect(locked.pos[2]).toBe(0);
+      expect(locked.pos[0]).toBeCloseTo(0, 3);
+      // 坂に押され続けても暴れず、坂の上で止まる
+      expect(locked.pos[1]).toBeGreaterThan(1);
+      expect(locked.pos[1]).toBeLessThan(1.8);
+      expect(locked.linvel[2]).toBe(0);
+      expect(Math.hypot(...locked.linvel)).toBeLessThan(0.05);
+    });
+
+    it("lockMoveY なら重力でも落ちず、ほかの軸へは動く", async () => {
+      const { pos } = await run(ball({ lockMoveY: true, linvel: [1, 0, 0], linearDamping: 0 }), 60);
+      expect(pos[1]).toBe(4);
+      expect(pos[0]).toBeCloseTo(1, 1);
+    });
+
+    it("固定した軸へは、スクリプトが書いた速度でも動かない", async () => {
+      const p = project(
+        `import RigidBody from "@builtin/RigidBody.koko";
+        export default system({
+          query: { with: [RigidBody] },
+          onUpdate(e) {
+            e.get(RigidBody).linvel = [2, 0, 5];
+          },
+        });`,
+      );
+      const [source] = ball({ lockMoveZ: true, gravityScale: 0 }, {}, {}, 3).entities;
+      if (!source) throw new Error("球がありません");
+      p.entities.push({ ...source, output: "out", order: 1 });
+      // 物理のあとに System が動くので、読める速度は書いた値のまま。位置だけを見る
+      const { pos } = await run(p, 60, "out");
+      expect(pos[2]).toBe(0);
+      expect(pos[0]).toBeGreaterThan(1);
+    });
+
+    it("lockRotate を 3 つとも付けると、転がっても向きが変わらない", async () => {
+      const rolling = { linvel: [3, 0, 0] as Vec3 };
+      const sphere = { shape: "sphere", size: [0.5, 0.5, 0.5] as Vec3 };
+      const free = await run(ball(rolling, { friction: 1 }, sphere, 0.25), 60);
+      expect(Math.hypot(...free.rot)).toBeGreaterThan(5);
+
+      const locked = await run(
+        ball(
+          { ...rolling, lockRotateX: true, lockRotateY: true, lockRotateZ: true },
+          { friction: 1 },
+          sphere,
+          0.25,
+        ),
+        60,
+      );
+      expect(Math.hypot(...locked.rot)).toBeCloseTo(0, 6);
+      expect(locked.angvel).toEqual([0, 0, 0]);
+    });
+
+    it("回転は軸ごとに止められる（Z まわりだけ回る）", async () => {
+      const { rot } = await run(
+        ball(
+          {
+            gravityScale: 0,
+            angularDamping: 0,
+            angvel: [2, 2, 2],
+            lockRotateX: true,
+            lockRotateY: true,
+          },
+          {},
+          {},
+          3,
+        ),
+        30,
+      );
+      expect(rot[0]).toBeCloseTo(0, 4);
+      expect(rot[1]).toBeCloseTo(0, 4);
+      expect(Math.abs(rot[2])).toBeGreaterThan(30);
+    });
+
+    it("dynamic でなければ効かない：kinematic は Transform に付いて動く", async () => {
+      const p = ball();
+      p.entities.push({
+        id: "deck",
+        name: "台",
+        parent: null,
+        output: "out_main",
+        order: 1,
+        states: {
+          [BUILTIN.Transform]: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          [BUILTIN.Mesh]: { shape: "box", size: [4, 0.2, 4], material: undefined, color: "#fff" },
+          [BUILTIN.Collider]: { sensor: false },
+          [BUILTIN.RigidBody]: {
+            type: "kinematic",
+            lockMoveX: true,
+            lockMoveY: true,
+            lockMoveZ: true,
+          },
+        },
+      });
+      const s = await Simulation.create(p, "out_main", { realm: "r" });
+      sim = s;
+      s.step(1 / 60);
+      const deck = s.world.get("deck", BUILTIN.Transform);
+      if (!deck) throw new Error("台がありません");
+      deck.position = [0, 2, 0];
+      for (let i = 0; i < 240; i++) s.step(1 / 60);
+      const y = read(s).pos[1];
+      expect(y).toBeGreaterThan(2.2);
+      expect(y).toBeLessThan(2.5);
+    });
+  });
 });

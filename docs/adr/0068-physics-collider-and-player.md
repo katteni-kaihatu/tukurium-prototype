@@ -14,7 +14,7 @@ Collider はホストの Rapier にだけ載り、レイと剛体どうしの衝
 
 1. **Collider が、プレイヤーと RigidBody の両方がぶつかる形**である。sensor のときは押し返さず、当たったことだけが届く（これまでどおり onCollision）。
 2. **形は Collider が持つ**。`shape` が `mesh`（初期値）のときは Mesh の形、`size` が `0,0,0`（初期値）のときは Mesh の大きさ。`box` / `sphere` / `cylinder` / `capsule` / `plane` と `size` で、見た目と別の当たり判定にできる。`offset` で Entity の中心からずらす。`friction` と `restitution` を持つ。
-3. **RigidBody が動き方**である。無い Collider は動かない（壁・床・坂）。`type` は `dynamic`（初期値。重力で動く）/ `kinematic`（Transform に付いて動く）/ `fixed`。`mass`・`gravityScale`（0 で落ちない）・減衰・`linvel`・`angvel`・`ccd` を持つ。スクリプトが書いた速度は、次の計算の前に剛体へ戻す。
+3. **RigidBody が動き方**である。無い Collider は動かない（壁・床・坂）。`type` は `dynamic`（初期値。重力で動く）/ `kinematic`（Transform に付いて動く）/ `fixed`。`mass`・`gravityScale`（0 で落ちない）・減衰・`linvel`・`angvel`・`ccd` を持つ。スクリプトが書いた速度は、次の計算の前に剛体へ戻す。軸ごとの固定は [ADR 0078](0078-rigidbody-axis-lock.md) で足した。
 4. **高さ 0 に、Entity ではない地面**を置く。上面が y = 0 の厚い板。剛体用は原点を中心に、およそ ±200m（それより大きい一枚の板は、Rapier では足元が沈む）。プレイヤー用は、いる場所へ同じ高さの板を追従させ、離れた編集空間でも立てる。Collider の床や段の上にも立てる。見た目のグリッドは ADR 0033 のまま、ルートワールドが開いているあいだは出さない。物理の地面は残す。
 5. **平面の Collider** は、上面を見た目の平面に合わせ、下へ厚みを持たせる。動く剛体は、速いときに薄い面をすり抜けにくい計算（ccd）を初期値で使う。
 6. **プレイヤーの移動**は、各クライアントが、見えている World（セッションに出ている物と、開いているワークスペースの編集・再生）の Collider にカプセルを滑らせて決める。段はおよそ 35cm まで上り、傾きはおよそ 50 度まで歩く。手に持っている物は、自分を押さないよう当たり判定から外す。準備ができるまでは、これまでどおり高さ 0 より下へ落ちない。

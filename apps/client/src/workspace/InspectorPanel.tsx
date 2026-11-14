@@ -68,7 +68,7 @@ const KOKO_HINT: Record<string, string> = {
   [BUILTIN.Collider]:
     "プレイヤーと、RigidBody の付いた物がぶつかる形です。形が「見た目に合わせる」のときと、大きさが 0 のときは、Mesh の形と大きさを使います。sensor にすると押し返しません。",
   [BUILTIN.RigidBody]:
-    "付けると重力で動きます。ぶつかるには Collider も要ります。高さ 0 の地面でも止まります。gravityScale を 0 にすると落ちません。",
+    "付けると重力で動きます。ぶつかるには Collider も要ります。高さ 0 の地面でも止まります。gravityScale を 0 にすると落ちません。lockMove / lockRotate をオンにした軸には動かず、回りません（横から見た 2D なら lockMoveZ・lockRotateX・lockRotateY）。",
 };
 
 /**

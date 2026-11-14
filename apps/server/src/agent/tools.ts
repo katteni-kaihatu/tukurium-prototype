@@ -1691,6 +1691,7 @@ export function guide(): string {
     "- Collider が、プレイヤーと RigidBody の両方がぶつかる形。Mesh だけではすり抜ける。sensor が true なら押し返さず、当たったことだけが onCollision に届く。",
     "- Collider の shape が mesh（初期値）のときは Mesh の形。size が 0,0,0（初期値）のときは Mesh の大きさ。box / sphere / cylinder / capsule / plane と size で、見た目と別の当たり判定にできる。offset で中心からずらす。",
     "- RigidBody が無い Collider は動かない（壁・床・坂）。type は dynamic（重力で落ちる。初期値）/ kinematic（Transform に付いて動く）/ fixed。gravityScale を 0 にすると落ちない。高さ 0 の地面でも dynamic は止まる（原点からおよそ 200m の範囲）。",
+    "- 物を 1 つの平面の中で動かす（スイカゲーム・ピンボールなど 2D 風の遊び）ときは、RigidBody の lockMoveX / lockMoveY / lockMoveZ（その軸へ動かさない）と lockRotateX / lockRotateY / lockRotateZ（その軸まわりに回さない）を true にする。XY 平面なら lockMoveZ・lockRotateX・lockRotateY。軸はワールドの軸で、dynamic のときだけ効く。System で毎フレーム位置を書き戻さない。",
     "- 街や地形では、歩かせたい床・止めたい壁・上れる坂に Collider を付ける。段差はおよそ 35cm までならプレイヤーが上れる。",
     "- 動きは System（TypeScript）で書く。System はアウトプットに入れて有効にすると動く。",
     '- KokoState は import して使う（例：import Gun from "./Gun.koko";、Built-in は @builtin/Transform.koko、ライブラリは @別名/...）。Query の with・without にも import した値を書く（"Gun" のような名前の文字列は使えない）。',
