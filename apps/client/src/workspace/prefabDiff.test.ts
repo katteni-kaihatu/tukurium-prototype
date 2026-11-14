@@ -83,4 +83,38 @@ describe("プレハブの差分と戻す（ADR 0076）", () => {
     expect(project.prefabEntities(box)).toEqual([]);
     expect(diff()).toEqual([]);
   });
+
+  it("Entity からプレハブを作ると、Entity の変化とプレハブの追加として出て、一つずつ戻せる", () => {
+    const project = new ProjectDoc();
+    project.load(emptyProject("的当て"));
+    const target = project.addEntity({
+      output: OUT,
+      name: "的",
+      id: "ent_mato",
+      states: { [BUILTIN.Transform]: { position: [1, 0, 0] }, [BUILTIN.Mesh]: { shape: "box" } },
+    });
+    const core = project.addEntity({ output: OUT, name: "芯", id: "ent_shin", parent: target });
+    const head = fromFiles(toFiles(project.snapshot()));
+    const plan = project.makePrefabFromEntity(target);
+    const entries = describeDiff(head, project.snapshot());
+    expect(entries.map((e) => [e.id, e.name, e.kind]).sort()).toEqual([
+      [`entity:${target}`, "的", "modified"],
+      [`entity:${core}`, "芯", "removed"],
+      [`prefab:${plan.prefab.id}`, "的", "added"],
+    ]);
+    expect(entries.find((e) => e.id === `entity:${target}`)?.lines).toContainEqual({
+      label: "プレハブ",
+      before: null,
+      after: "的",
+    });
+    // ひとまとまりで戻す操作はない。出た項目を一つずつ戻すと、作る前の形になる
+    for (const e of entries) {
+      const revert = planRevert(project, head, e.id);
+      if (!revert) throw new Error(`戻せない: ${e.id}`);
+      revert();
+    }
+    expect(describeDiff(head, project.snapshot())).toEqual([]);
+    expect(project.prefabs()).toEqual([]);
+    expect(project.entity(core)?.parent).toBe(target);
+  });
 });

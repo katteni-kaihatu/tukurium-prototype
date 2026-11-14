@@ -1,0 +1,91 @@
+/* 「プレハブにする」の確認。ボタンの下に重ねて出す窓（変化の丸の窓と同じ見た目で、少し大きい） */
+.ask {
+  position: fixed;
+  z-index: 10000;
+  width: min(400px, calc(100vw - 16px));
+  max-height: min(560px, calc(100vh - 16px));
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--c-line);
+  background: var(--c-paper);
+  box-shadow: 0 12px 32px rgba(15, 25, 40, 0.18);
+  font-size: 12px;
+}
+
+/* 3D に置いたパネルでは、パネルの中に収める（パネルの外は見えない） */
+[data-mode="3d"] > .ask {
+  max-width: calc(100% - 8px);
+  max-height: calc(100% - 8px);
+}
+
+.title {
+  font-size: 13px;
+  color: var(--c-ink);
+}
+
+.part {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--c-ink-2);
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow: auto;
+}
+
+.list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  line-height: 1.6;
+}
+
+.ids {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--c-ink-3);
+  word-break: break-all;
+}
+
+.to {
+  color: var(--c-ink-3);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+/* 中身が長くて送っても、進む・やめるのボタンは、いつも下に見える */
+.buttons {
+  position: sticky;
+  bottom: -12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0 -12px -12px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--c-line-2);
+  background: var(--c-paper);
+}
