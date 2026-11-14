@@ -220,12 +220,16 @@ export class RepoService {
     const commit = await this.git.head(repoId);
     if (!commit) throw new HttpError(409, "まだコミットがありません");
     const snapshot = await this.snapshot(repoId, commit);
+    const packages = await this.resolveDependencies(snapshot, user);
     return {
       repoId: src.id,
       repoName: src.name,
       commit,
       snapshot,
-      schemas: fieldSchemasOf(snapshot, new Map()),
+      schemas: packageFieldSchemas(
+        packages,
+        fieldSchemasOf(snapshot, resolutionMap(snapshot.dependencies, packages)),
+      ),
     };
   }
 
@@ -242,7 +246,11 @@ export class RepoService {
     const at = commit ?? (await this.git.head(repoId));
     if (!at) throw new HttpError(409, "まだコミットがありません");
     const snap = await this.snapshot(repoId, at);
-    const schemas = fieldSchemasOf(snap, new Map());
+    const packages = await this.resolveDependencies(snap, user);
+    const schemas = packageFieldSchemas(
+      packages,
+      fieldSchemasOf(snap, resolutionMap(snap.dependencies, packages)),
+    );
     const source = { repoId: src.id, repoName: src.name, commit: at };
     if ("repoId" in target) {
       return this.withRepoLock(target.repoId, async () => {

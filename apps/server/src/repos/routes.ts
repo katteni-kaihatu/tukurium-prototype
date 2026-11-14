@@ -39,6 +39,7 @@ const Selection = z.object({
   materials: z.array(z.string()).default([]),
   assets: z.array(z.string()).default([]),
   types: z.array(z.string()).default([]),
+  prefabs: z.array(z.string()).default([]),
 });
 
 /** リポジトリ・作品・プロフィールの API（ADR 0007） */

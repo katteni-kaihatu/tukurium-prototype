@@ -192,6 +192,7 @@ export interface ExtractSelection {
   systems: string[];
   materials: string[];
   assets: string[];
+  prefabs: string[];
 }
 
 /** 素材の URL（素材にも権限がある。本人はログインの Cookie で決まる。ADR 0074） */

@@ -358,6 +358,39 @@ describe("Library Package（ADR 0015）", () => {
     expect(forked.outputs[0]?.resources).toEqual(["ks_gun"]);
   });
 
+  it("フォークしてもプレハブと中の Entity・参照・維持の印が残る", async () => {
+    const { repos, repo } = await setup();
+    const snap = await repos.snapshot(repo.id);
+    snap.prefabs = [
+      {
+        id: "pf",
+        name: "部品",
+        root: "root",
+        systems: [{ id: "sys_shoot", enabled: true }],
+        keep: [{ entity: "child", koko: "ks_gun", field: "f_ammo" }],
+      },
+    ];
+    snap.prefabEntities = [
+      { id: "root", name: "親", prefab: "pf", parent: null, order: 0, states: {} },
+      {
+        id: "child",
+        name: "子",
+        prefab: "pf",
+        parent: "root",
+        order: 0,
+        states: { ks_gun: { f_ammo: 3 } },
+      },
+    ];
+    snap.outputs = snap.outputs.map((o) => ({ ...o, resources: ["pf"] }));
+    await repos.commit(repo.id, snap, "プレハブ", alice, []);
+    const fork = await repos.fork(bob, repo.id);
+    const forked = await repos.snapshot(fork.id);
+    expect(forked.prefabs).toEqual(snap.prefabs);
+    expect(forked.prefabEntities).toEqual(expect.arrayContaining(snap.prefabEntities));
+    expect(forked.prefabEntities).toHaveLength(snap.prefabEntities.length);
+    expect(forked.outputs[0]?.resources).toEqual(["pf"]);
+  });
+
   it("公式ライブラリを、決まった ID で用意する。何度呼んでも版は増えず、中身が違えば新しい版を出す", async () => {
     dir = await mkdtemp(join(tmpdir(), "tk-pkg-"));
     const store = new MemoryStore();

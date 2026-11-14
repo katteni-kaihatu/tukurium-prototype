@@ -22,16 +22,29 @@ import {
   checkProjectStructure,
   compileSystem,
   type Diagnostic,
+  type EntityDef,
+  expandPrefabForEdit,
+  expandPrefabs,
+  getPrefabOverride,
   gunAndTargetSample,
   isBuiltin,
+  isPackageResourceId,
   KOKO_ROLES,
   newId,
   type PackageDependency,
   type PackageResolution,
+  type PrefabEntityDef,
+  type PrefabInstancePlan,
+  type PrefabOrigin,
   type ProjectDoc,
+  packageKokoStates,
+  prefabInstanceAddress,
   REF_TARGET_LABEL,
   RESOURCE_FIELD_KIND,
   ResourcePathIndex,
+  reachablePackages,
+  resolutionMap,
+  validateName,
 } from "@tukurium/repo-model";
 import {
   buildWorld,
@@ -47,12 +60,7 @@ import {
   MAX_ASSET_BYTES,
 } from "../assets/assetStore";
 import type { RepoService } from "../repos/service";
-import {
-  fieldSchemasOf,
-  HOST_DECLARATIONS,
-  packagesByAlias,
-  sharedTypeChecker,
-} from "../typecheck";
+import { fieldSchemasOf, HOST_DECLARATIONS, sharedTypeChecker } from "../typecheck";
 import type { AgentClient } from "./AgentClient";
 
 /**
@@ -70,6 +78,29 @@ const MAX_ENTITY_OPS = 200;
 const MAX_NEW_ENTITIES = 400;
 
 export class AgentError extends Error {}
+
+const loadedPackages = new WeakMap<ProjectDoc, readonly PackageResolution[]>();
+
+/** ライブラリの定義は読み取り用にだけ持ち、共同編集中の保存データには加えない。 */
+export function setProjectPackages(project: ProjectDoc, pool: readonly PackageResolution[]): void {
+  const ready = reachablePackages(project.dependencies(), pool);
+  project.setPackageKokoStates(packageKokoStates(ready));
+  project.setPackagePrefabs(ready);
+  loadedPackages.set(project, pool);
+}
+
+function projectSchemas(project: ProjectDoc) {
+  return project.prefabFieldSchemas(
+    fieldSchemasOf(
+      project.snapshot(),
+      resolutionMap(project.dependencies(), loadedPackages.get(project)),
+    ),
+  );
+}
+
+function readableSnapshot(project: ProjectDoc) {
+  return project.snapshotWithPackages(projectSchemas(project));
+}
 
 export function projectOf(agent: AgentClient): { project: ProjectDoc; workspaceId: string } {
   const w = agent.workspace;
@@ -118,8 +149,42 @@ function outputOf(project: ProjectDoc, ref: string | undefined) {
   return pick(outputs, ref, "アウトプット");
 }
 
-function entityOf(project: ProjectDoc, ref: string) {
-  return pick(project.entities(), ref, "Entity");
+type ReadableEntity = (EntityDef | PrefabEntityDef) & { origin?: PrefabOrigin };
+
+/** 人の Hierarchy と同じ展開結果を読む。実体が持つリンクも残し、編集は ProjectDoc に渡す。 */
+function readableEntities(project: ProjectDoc): ReadableEntity[] {
+  const schemas = projectSchemas(project);
+  const snapshot = project.snapshotWithPackages(schemas);
+  const options = {
+    schemas,
+    kokostates: project.registry().all(),
+  };
+  const merge = (e: ReadableEntity): ReadableEntity => ({ ...project.findEntity(e.id), ...e });
+  const result = expandPrefabs(snapshot, options).entities.map(merge);
+  for (const prefab of snapshot.prefabs ?? []) {
+    for (const { output: _output, ...e } of expandPrefabForEdit(snapshot, prefab.id, options)
+      ?.entities ?? [])
+      result.push(merge({ ...e, prefab: prefab.id }));
+  }
+  return result;
+}
+
+function entityOf(project: ProjectDoc, ref: string): ReadableEntity {
+  const entities = readableEntities(project);
+  return (
+    entities.find((e) => e.id === ref) ?? project.findEntity(ref) ?? pick(entities, ref, "Entity")
+  );
+}
+
+function prefabOf(project: ProjectDoc, ref: string) {
+  return project.prefab(ref) ?? pick(readableSnapshot(project).prefabs ?? [], ref, "プレハブ");
+}
+
+function editableEntity(project: ProjectDoc, ref: string) {
+  const entity = entityOf(project, ref);
+  if ("prefab" in entity && isPackageResourceId(entity.prefab))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  return entity;
 }
 
 /** ID か、一意な名前でリソースを一つに決める */
@@ -135,7 +200,7 @@ function resolveNamed(list: { id: string; name: string }[], value: string, what:
 }
 
 function assetsOf(project: ProjectDoc, kind: AssetKind) {
-  return project.assets().filter((a) => a.kind === kind);
+  return (readableSnapshot(project).assets ?? []).filter((a) => a.kind === kind);
 }
 
 /** 画像の素材を、ID か一意な名前で決める */
@@ -148,9 +213,7 @@ function imageOf(project: ProjectDoc, value: string, what: string): string {
  * TypeScript で作る（初めて要るときだけ。ADR 0065）。型エラーで作れないフィールドは undefined。
  */
 function schemaFor(project: ProjectDoc, kokoId: string, field: FieldDef): ValueSchema | undefined {
-  return (
-    knownSchema(field.type) ?? fieldSchemasOf(project.snapshot(), new Map())[kokoId]?.[field.id]
-  );
+  return projectSchemas(project)[kokoId]?.[field.id] ?? knownSchema(field.type);
 }
 
 /**
@@ -172,7 +235,8 @@ function resolveNames(
       if (typeof value !== "string") return value;
       const label = `${what}の${REF_TARGET_LABEL[schema.target]}`;
       if (schema.target === "entity") return entityOf(project, value).id;
-      if (schema.target === "material") return resolveNamed(project.materials(), value, label);
+      if (schema.target === "material")
+        return resolveNamed(readableSnapshot(project).materials, value, label);
       const kind = RESOURCE_FIELD_KIND[schema.target] as AssetKind;
       return resolveNamed(assetsOf(project, kind), value, label);
     }
@@ -309,10 +373,11 @@ function toStates(
 // 見る
 
 export function overview(project: ProjectDoc) {
-  const snap = project.snapshot();
+  const snap = readableSnapshot(project);
   const index = ResourcePathIndex.fromSnapshot(snap);
   const registry = project.registry();
   const nameOf = (id: string) => registry.get(id)?.name ?? id;
+  const entities = readableEntities(project);
   return {
     name: snap.name,
     outputs: snap.outputs.map((o) => ({
@@ -324,12 +389,15 @@ export function overview(project: ProjectDoc) {
         name: project.system(s.id)?.name ?? s.id,
         enabled: s.enabled,
       })),
-      entities: project.entities(o.id).map((e) => ({
-        id: e.id,
-        name: e.name,
-        parent: e.parent,
-        kokostates: Object.keys(e.states).map(nameOf),
-      })),
+      entities: entities
+        .filter((e) => "output" in e && e.output === o.id)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          parent: e.parent,
+          kokostates: Object.keys(e.states).map(nameOf),
+          ...(e.origin ? { origin: e.origin } : {}),
+        })),
     })),
     kokostates: snap.kokostates.map((k) => ({
       id: k.id,
@@ -353,6 +421,19 @@ export function overview(project: ProjectDoc) {
     systems: snap.systems.map((s) => ({ id: s.id, name: s.name, path: index.pathOf(s.id) })),
     materials: snap.materials,
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, kind: a.kind })),
+    prefabs: (snap.prefabs ?? []).map((p) => ({
+      ...p,
+      path: index.pathOf(p.id),
+      entities: entities
+        .filter((e) => "prefab" in e && e.prefab === p.id)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          parent: e.parent,
+          kokostates: Object.keys(e.states).map(nameOf),
+          ...(e.instanceOf ? { instanceOf: e.instanceOf } : {}),
+        })),
+    })),
     dependencies: snap.dependencies ?? [],
   };
 }
@@ -363,8 +444,13 @@ export function entityDetail(project: ProjectDoc, ref: string) {
   return {
     id: e.id,
     name: e.name,
-    output: e.output,
+    ...("output" in e ? { output: e.output } : { prefab: e.prefab }),
     parent: e.parent,
+    ...(e.instanceOf ? { instanceOf: e.instanceOf } : {}),
+    ...(e.origin
+      ? { origin: e.origin, overrides: getPrefabOverride(readableSnapshot(project), e.id) ?? {} }
+      : {}),
+    ...(e.instanceSystems ? { instanceSystems: e.instanceSystems } : {}),
     states: Object.fromEntries(
       Object.entries(e.states).map(([koko, values]) => {
         const def = registry.get(koko);
@@ -380,8 +466,8 @@ export function entityDetail(project: ProjectDoc, ref: string) {
 }
 
 export function systemDetail(project: ProjectDoc, ref: string) {
-  const s = pick(project.systems(), ref, "System");
-  return { id: s.id, name: s.name, code: project.code(s.id)?.toString() ?? "" };
+  const s = pick(readableSnapshot(project).systems, ref, "System");
+  return { id: s.id, name: s.name, code: s.code };
 }
 
 /** 制作データの親子から、実行時と同じ行列で世界座標を求める（配置の親は含めない） */
@@ -415,7 +501,7 @@ export function getEntities(
     parent?: string | null;
   },
 ) {
-  let list = project.entities();
+  let list = readableEntities(project).filter((e): e is EntityDef => "output" in e);
   if (args.entities) {
     const ids = new Set(args.entities.map((r) => entityOf(project, r).id));
     list = list.filter((e) => ids.has(e.id));
@@ -429,7 +515,7 @@ export function getEntities(
     list = list.filter((e) => koko in e.states);
   }
   if (args.material) {
-    const mat = resolveNamed(project.materials(), args.material, "Material");
+    const mat = resolveNamed(readableSnapshot(project).materials, args.material, "Material");
     list = list.filter((e) => e.states[BUILTIN.Mesh]?.material === mat);
   }
   if (args.parent !== undefined) {
@@ -442,7 +528,9 @@ export function getEntities(
   const worldOf = (output: string) => {
     let world = worlds.get(output);
     if (!world) {
-      world = buildWorld(project.snapshot(), output, project.registry()).world;
+      world = buildWorld(readableSnapshot(project), output, project.registry(), {
+        schemas: projectSchemas(project),
+      }).world;
       worlds.set(output, world);
     }
     return world;
@@ -465,19 +553,179 @@ export interface NamedRef {
   name: string;
 }
 
+export function prefabDetail(project: ProjectDoc, ref: string) {
+  const prefab = prefabOf(project, ref);
+  return {
+    ...prefab,
+    entities: readableEntities(project)
+      .filter((e) => "prefab" in e && e.prefab === prefab.id)
+      .map((e) => entityDetail(project, e.id)),
+  };
+}
+
+function prefabSystems(project: ProjectDoc, systems: { system: string; enabled?: boolean }[]) {
+  return systems.map((s) => ({
+    id: pick(readableSnapshot(project).systems, s.system, "System").id,
+    enabled: s.enabled !== false,
+  }));
+}
+
+function checkPrefabName(project: ProjectDoc, name: string, self?: string) {
+  if (validateName(name) !== null) throw new AgentError("プレハブの名前に使えない文字があります");
+  const index = ResourcePathIndex.fromSnapshot(project.snapshot());
+  const parent = self ? (index.entry(self)?.parent ?? null) : null;
+  const conflict = index
+    .all()
+    .some(
+      (entry) => entry.id !== self && entry.parent === parent && norm(entry.name) === norm(name),
+    );
+  if (conflict) throw new AgentError(`同じ場所に「${name}」があります`);
+}
+
+export function createPrefab(
+  project: ProjectDoc,
+  args: {
+    name: string;
+    editIn?: "here" | "isolated";
+    systems?: { system: string; enabled?: boolean }[];
+  },
+) {
+  checkPrefabName(project, args.name);
+  const systems = prefabSystems(project, args.systems ?? []);
+  let id = "";
+  project.transact(() => {
+    id = project.addPrefab(args.name);
+    const prefab = project.prefab(id);
+    if (prefab)
+      project.updatePrefab({ ...prefab, systems, ...(args.editIn ? { editIn: args.editIn } : {}) });
+  });
+  return prefabDetail(project, id);
+}
+
+export function updatePrefab(
+  project: ProjectDoc,
+  args: {
+    prefab: string;
+    name?: string;
+    editIn?: "here" | "isolated";
+    systems?: { system: string; enabled?: boolean }[];
+  },
+) {
+  const prefab = prefabOf(project, args.prefab);
+  if (isPackageResourceId(prefab.id))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  if (args.name !== undefined) checkPrefabName(project, args.name, prefab.id);
+  const systems = args.systems ? prefabSystems(project, args.systems) : prefab.systems;
+  project.transact(() => {
+    if (args.name !== undefined) project.renamePrefab(prefab.id, args.name);
+    project.updatePrefab({
+      ...prefab,
+      name: args.name ?? prefab.name,
+      systems,
+      editIn: args.editIn ?? prefab.editIn,
+    });
+  });
+  return prefabDetail(project, prefab.id);
+}
+
+export function makePrefabFromEntity(
+  project: ProjectDoc,
+  args: { entity: string; name?: string; systems?: string[] },
+) {
+  const entity = editableEntity(project, args.entity);
+  if (args.name !== undefined) checkPrefabName(project, args.name);
+  const systems = args.systems?.map((s) => pick(readableSnapshot(project).systems, s, "System").id);
+  const plan = project.makePrefabFromEntity(entity.id, {
+    name: args.name,
+    systems,
+    schemas: projectSchemas(project),
+  });
+  return {
+    prefab: prefabDetail(project, plan.prefab.id),
+    owner: plan.owner,
+    moved: plan.moved,
+    rewrites: plan.rewrites,
+    outsideRefs: plan.outsideRefs,
+    scriptMentions: plan.scriptMentions,
+  };
+}
+
+export function placePrefab(
+  project: ProjectDoc,
+  args: {
+    prefab: string;
+    output?: string;
+    ownerPrefab?: string;
+    name?: string;
+    parent?: string;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+  },
+): NamedRef {
+  const prefab = prefabOf(project, args.prefab);
+  if (args.ownerPrefab && args.output)
+    throw new AgentError("output と ownerPrefab は同時に指定できません");
+  const owner = args.ownerPrefab
+    ? prefabOf(project, args.ownerPrefab)
+    : outputOf(project, args.output);
+  if (args.ownerPrefab && isPackageResourceId(owner.id))
+    throw new AgentError("ライブラリのプレハブの中身は変えられません");
+  const parent = args.parent ? entityOf(project, args.parent) : null;
+  if (
+    parent &&
+    (args.ownerPrefab
+      ? !("prefab" in parent) || parent.prefab !== owner.id
+      : !("output" in parent) || parent.output !== owner.id)
+  )
+    throw new AgentError("親は同じアウトプットかプレハブの Entity にしてください");
+  let id = "";
+  project.transact(() => {
+    id = project.addInstance({
+      prefab: prefab.id,
+      ...(args.ownerPrefab ? { ownerPrefab: owner.id } : { output: owner.id }),
+      name: args.name,
+      parent: parent?.id,
+      position: args.position,
+    });
+    if (args.rotation) project.setField(id, BUILTIN.Transform, "rotation", args.rotation);
+    if (args.scale) project.setField(id, BUILTIN.Transform, "scale", args.scale);
+  });
+  return { id, name: args.name ?? prefab.name };
+}
+
 export function createEntity(
   project: ProjectDoc,
   args: {
     name: string;
     output?: string;
+    prefab?: string;
     parent?: string | null;
     states?: Record<string, Record<string, unknown>>;
   },
 ): NamedRef {
-  const output = outputOf(project, args.output);
-  const parent = args.parent ? entityOf(project, args.parent).id : null;
+  if (args.prefab && args.output) throw new AgentError("output と prefab は同時に指定できません");
+  const parent = args.parent ? entityOf(project, args.parent) : null;
   const states = toStates(project, args.states ?? {});
-  const id = project.addEntity({ output: output.id, name: args.name, parent, states });
+  let id: string;
+  if (args.prefab) {
+    const prefab = prefabOf(project, args.prefab);
+    if (isPackageResourceId(prefab.id))
+      throw new AgentError("ライブラリのプレハブの中身は変えられません");
+    if (parent && (!("prefab" in parent) || parent.prefab !== prefab.id))
+      throw new AgentError("親は同じプレハブの Entity にしてください");
+    id = project.addPrefabEntity({
+      prefab: prefab.id,
+      name: args.name,
+      parent: parent?.id,
+      states,
+    });
+  } else {
+    const output = outputOf(project, args.output);
+    if (parent && (!("output" in parent) || parent.output !== output.id))
+      throw new AgentError("親は同じアウトプットの Entity にしてください");
+    id = project.addEntity({ output: output.id, name: args.name, parent: parent?.id, states });
+  }
   return { id, name: args.name };
 }
 
@@ -489,17 +737,25 @@ export function updateEntity(
     parent?: string | null;
     states?: Record<string, Record<string, unknown>>;
     removeStates?: string[];
+    index?: number;
   },
 ): NamedRef {
-  const e = entityOf(project, args.entity);
+  const e = editableEntity(project, args.entity);
   const states = toStates(project, args.states ?? {});
   const remove = (args.removeStates ?? []).map((r) => kokoOf(project, r).id);
+  const parent =
+    args.parent === undefined
+      ? undefined
+      : args.parent === null
+        ? null
+        : entityOf(project, args.parent).id;
   project.transact(() => {
+    if (args.index !== undefined)
+      project.placeEntity(e.id, parent === undefined ? e.parent : parent, args.index);
+    else if (parent !== undefined) project.setParent(e.id, parent);
     if (args.name !== undefined) project.renameEntity(e.id, args.name);
-    if (args.parent !== undefined)
-      project.setParent(e.id, args.parent ? entityOf(project, args.parent).id : null);
     for (const [koko, values] of Object.entries(states)) {
-      if (!(koko in (project.entity(e.id)?.states ?? {}))) project.addState(e.id, koko, values);
+      if (!(koko in e.states)) project.addState(e.id, koko, values);
       else for (const [f, v] of Object.entries(values)) project.setField(e.id, koko, f, v);
     }
     for (const koko of remove) project.removeState(e.id, koko);
@@ -508,9 +764,96 @@ export function updateEntity(
 }
 
 export function deleteEntity(project: ProjectDoc, ref: string): NamedRef {
-  const e = entityOf(project, ref);
+  const e = editableEntity(project, ref);
   project.removeEntity(e.id);
   return { id: e.id, name: e.name };
+}
+
+/** 同じ実体の操作を使い、インスタンスと、その中の Entity をそれぞれの形で複製する。 */
+export function duplicateEntity(
+  project: ProjectDoc,
+  args: {
+    entity: string;
+    name?: string;
+    withChildren?: boolean;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+  },
+) {
+  const e = editableEntity(project, args.entity);
+  const schemas = projectSchemas(project);
+  let copied = "";
+  project.transact(() => {
+    copied = project.duplicateEntity(e.id, args.withChildren !== false, schemas) ?? "";
+    if (!copied) throw new AgentError("Entity を複製できませんでした");
+    if (args.name !== undefined) project.renameEntity(copied, args.name);
+    if (args.position || args.rotation || args.scale) project.addState(copied, BUILTIN.Transform);
+    for (const field of ["position", "rotation", "scale"] as const)
+      if (args[field]) project.setField(copied, BUILTIN.Transform, field, args[field]);
+  });
+  return entityDetail(project, copied);
+}
+
+export function setInstanceSystems(
+  project: ProjectDoc,
+  args: { entity: string; systems: { system: string; enabled?: boolean }[] },
+) {
+  const e = editableEntity(project, args.entity);
+  project.setInstanceSystems(e.id, prefabSystems(project, args.systems));
+  return entityDetail(project, e.id);
+}
+
+export function revertPrefabChange(
+  project: ProjectDoc,
+  args: {
+    entity: string;
+    kind: "field" | "state" | "name" | "parent" | "order" | "systems";
+    kokostate?: string;
+    field?: string;
+  },
+) {
+  const e = editableEntity(project, args.entity);
+  if (!prefabInstanceAddress(readableSnapshot(project), e.id))
+    throw new AgentError("インスタンスの Entity を選んでください");
+  if (args.kind === "field" || args.kind === "state") {
+    if (!args.kokostate) throw new AgentError("KokoState を指定してください");
+    const koko = kokoOf(project, args.kokostate);
+    if (args.kind === "field") {
+      if (!args.field) throw new AgentError("フィールドを指定してください");
+      project.revertPrefabField(e.id, koko.id, fieldOf(koko, args.field).id);
+    } else project.revertPrefabEntity(e.id, "state", koko.id);
+  } else if (args.kind === "systems") project.setInstanceSystems(e.id, []);
+  else project.revertPrefabEntity(e.id, args.kind);
+  return entityDetail(project, e.id);
+}
+
+function showPrefabInstancePlan(plan: PrefabInstancePlan) {
+  return {
+    entity: plan.entity,
+    prefab: plan.prefab,
+    prefabName: plan.prefabName,
+    owner: plan.owner,
+    changes: plan.changes,
+    moved: plan.moved,
+    rewrites: plan.rewrites,
+    keepMoved: plan.keepMoved,
+    warnings: plan.warnings,
+  };
+}
+
+export function applyPrefabInstance(project: ProjectDoc, ref: string) {
+  const e = editableEntity(project, ref);
+  return showPrefabInstancePlan(
+    project.applyPrefabInstance(e.id, { schemas: projectSchemas(project) }),
+  );
+}
+
+export function unpackPrefabInstance(project: ProjectDoc, ref: string) {
+  const e = editableEntity(project, ref);
+  return showPrefabInstancePlan(
+    project.unpackPrefabInstance(e.id, { schemas: projectSchemas(project) }),
+  );
 }
 
 interface FieldSpec {
@@ -619,6 +962,7 @@ export function updateKokoState(
 ): NamedRef {
   const def = kokoOf(project, args.kokostate);
   if (def.builtin) throw new AgentError("Built-in の KokoState は変えられません");
+  if (isPackageResourceId(def.id)) throw new AgentError("ライブラリの KokoState は変えられません");
   const name = args.name ?? def.name;
   const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : def.typeDefs;
   const { typeDefs: _old, ...rest } = def;
@@ -703,7 +1047,7 @@ export function setOutputSystems(
 ): NamedRef {
   const output = outputOf(project, args.output);
   const systems = args.systems.map((s) => ({
-    id: pick(project.systems(), s.system, "System").id,
+    id: pick(readableSnapshot(project).systems, s.system, "System").id,
     enabled: s.enabled !== false,
   }));
   project.updateOutput({ ...output, systems });
@@ -970,7 +1314,7 @@ function commitStep(project: ProjectDoc, step: Step) {
   if (step.name !== undefined) project.renameEntity(step.id, step.name);
   if (step.parent !== undefined) project.setParent(step.id, step.parent);
   for (const [koko, values] of Object.entries(step.states)) {
-    if (!(koko in (project.entity(step.id)?.states ?? {}))) project.addState(step.id, koko, values);
+    if (!(koko in entityOf(project, step.id).states)) project.addState(step.id, koko, values);
     else for (const [f, v] of Object.entries(values)) project.setField(step.id, koko, f, v);
   }
   for (const koko of step.remove) project.removeState(step.id, koko);
@@ -1067,6 +1411,8 @@ export function applyEntities(project: ProjectDoc, ops: EntityOp[]): ApplyItem[]
         results.push({ ok: true, op: "delete", id: e.id, name: e.name });
       } else {
         const source = resolveLive(live, refs, failedRefs, op.entity);
+        if (project.findEntity(source.id)?.instanceOf)
+          throw new AgentError("インスタンスの複製には duplicate_entity を使ってください");
         const kids = liveDescendants(live, source.id);
         if (created + (1 + kids.length) * op.copies.length > MAX_NEW_ENTITIES)
           throw new AgentError(`一度に作れる Entity は ${MAX_NEW_ENTITIES} までです`);
@@ -1210,10 +1556,23 @@ export async function check(
     packages,
     hostDeclarations: HOST_DECLARATIONS,
   });
+  const schemas = project.prefabFieldSchemas(types.schemas);
+  const readable = project.snapshotWithPackages(schemas);
   const out: Diagnostic[] = [
     ...checkProjectStructure(snap, index),
-    ...checkProjectReferences(snap, types.schemas),
-    ...checkFieldValues(snap, types.schemas),
+    ...checkProjectReferences(
+      {
+        ...readable,
+        dependencies: [
+          ...(snap.dependencies ?? []),
+          ...reachablePackages(snap.dependencies, loadedPackages.get(project)).map(
+            (r) => r.dependency,
+          ),
+        ],
+      },
+      schemas,
+    ),
+    ...checkFieldValues(readable, schemas),
   ];
   for (const s of snap.systems) {
     const compiled = compileSystem(s.id, s.code, index, packages);
@@ -1247,6 +1606,7 @@ export async function simulate(
     equip?: string[];
   },
 ) {
+  setProjectPackages(project, pool);
   const output = outputOf(project, args.output);
   const seconds = Math.min(Math.max(args.seconds ?? 2, 0), MAX_SIM_SECONDS);
   const logs: LogEntry[] = [];
@@ -1255,7 +1615,7 @@ export async function simulate(
     realm: `agent:${workspaceId}`,
     onLog: (l) => logs.push(l),
     packages: pool,
-    schemas: fieldSchemasOf(snapshot, packagesByAlias(pool)),
+    schemas: projectSchemas(project),
   });
   try {
     // 道具（EquipmentTool）を、始める前にエージェントが装備する（撃つなどの入力は装備した道具に届く）
@@ -1285,7 +1645,9 @@ export async function simulate(
     }
     const registry = project.registry();
     const watch = args.watch?.map((r) => entityOf(project, r).id);
-    const matched = project.entities(output.id).filter((e) => !watch || watch.includes(e.id));
+    const matched = readableEntities(project).filter(
+      (e) => "output" in e && e.output === output.id && (!watch || watch.includes(e.id)),
+    );
     const entities = matched.slice(0, MAX_LISTED_ENTITIES).map((e) => ({
       id: e.id,
       name: e.name,
@@ -1348,6 +1710,13 @@ export function guide(): string {
     "   - 銃などの道具（EquipmentTool）への入力（fire など）は、装備した人にだけ届く。simulate の equip に道具の Entity を渡すと、エージェントが装備した状態で始まる。",
     "   - preview は、人がワークスペースを開いている必要がある。再生中なら再生の画面、編集中なら制作データの見た目が写る。",
     "6. 終わったら、人に「保存してください」と伝える。",
+    "",
+    "## プレハブ",
+    "- プレハブは、Entity・KokoState・System をまとめた部品。create_prefab で空から作るか、make_prefab_from_entity で子を含めて作る。変換後は、返ってきた moved の ID 対応と scriptMentions を読む。スクリプト内の ID は自動では変わらない。",
+    "- get_prefab で中身を読み、create_entity の prefab で Entity を足す。update_entity / delete_entity には中の Entity の ID を渡す。いちばん上の Entity は消せない。update_prefab で名前・編集する場所・System を変える。",
+    "- place_prefab でアウトプットに何個でも置ける。プレハブの中身を変えると、同じプレハブから置いたものにも届く。ライブラリのプレハブの中身は変えられない。",
+    "- get_project / get_entities には、展開した Entity の ID と、元のプレハブを表す origin が出る。update_entity で中のフィールド・親・並び順を変えられる。元の Entity や KokoState は消せない。duplicate_entity はインスタンスの複製も扱う。",
+    "- revert_prefab_change で変更を一つずつ戻す。apply_prefab_instance は確認なしで変更をプレハブへ適用する。ライブラリのプレハブには適用できない。unpack_prefab_instance はつながりを切り、ふつうの Entity に戻す。",
     "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
     "## フィールドの型",

@@ -22,6 +22,7 @@ type Group = keyof Picked;
 
 const GROUPS: { key: Group; label: string }[] = [
   { key: "outputs", label: "アウトプット" },
+  { key: "prefabs", label: "プレハブ" },
   { key: "kokostates", label: "KokoState" },
   { key: "systems", label: "Script" },
   { key: "materials", label: "Material" },
@@ -36,6 +37,7 @@ const EMPTY: Picked = {
   materials: [],
   assets: [],
   types: [],
+  prefabs: [],
 };
 
 interface Source {
@@ -274,6 +276,7 @@ function rowsOf(snap: ProjectSnapshot): Record<Group, Row[]> {
     materials: snap.materials.map((m) => ({ id: m.id, name: m.name, where: where(m.id) })),
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, where: where(a.id) })),
     types: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, where: where(t.id) })),
+    prefabs: (snap.prefabs ?? []).map((p) => ({ id: p.id, name: p.name, where: where(p.id) })),
   };
 }
 
@@ -293,6 +296,7 @@ function withDependencies(
     materials: "Material",
     assets: "素材",
     types: "型の定義",
+    prefabs: "プレハブ",
   };
   const nameOf = (group: Group, id: string): string | null => {
     switch (group) {
@@ -308,6 +312,8 @@ function withDependencies(
         return snap.assets?.find((x) => x.id === id)?.name ?? null;
       case "types":
         return snap.types?.find((x) => x.id === id)?.name ?? null;
+      case "prefabs":
+        return snap.prefabs?.find((x) => x.id === id)?.name ?? null;
     }
   };
   for (const g of GROUPS) {
@@ -320,9 +326,13 @@ function withDependencies(
   // ライブラリ：依存から取り込んだ ID（pkg:…）か、`@別名/` の import を使っているもの
   const deps = snap.dependencies ?? [];
   const libraries = new Set<string>();
-  const ids = [...all.kokostates, ...all.systems];
+  const ids = [...all.kokostates, ...all.systems, ...all.prefabs];
   for (const e of snap.entities) {
     if (!all.outputs.includes(e.output)) continue;
+    ids.push(...Object.keys(e.states));
+  }
+  for (const e of snap.prefabEntities ?? []) {
+    if (!all.prefabs.includes(e.prefab)) continue;
     ids.push(...Object.keys(e.states));
   }
   for (const id of ids) {
