@@ -1,7 +1,8 @@
 import { World } from "@tukurium/eks";
-import { buildRegistry, emptyProject, ProjectDoc } from "@tukurium/repo-model";
+import { buildRegistry, DebugSettingsDoc, emptyProject, ProjectDoc } from "@tukurium/repo-model";
 import { Simulation } from "@tukurium/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Y from "yjs";
 
 const fake = vi.hoisted(() => {
   vi.stubGlobal("window", {});
@@ -35,6 +36,55 @@ vi.mock("@tukurium/runtime", () => ({ Simulation: { create: vi.fn() } }));
 import { resolvePackagePool } from "./packages";
 import { useWorkspace } from "./store";
 
+it("デバッグ中の引き継ぎでは途中の世界より開始時点を使う", async () => {
+  const sim = simulation();
+  const restoreDebugCheckpoint = vi.fn();
+  const holdAfterHandoff = vi.fn();
+  Object.assign(sim, { restoreDebugCheckpoint, debug: { holdAfterHandoff } });
+  vi.mocked(Simulation.create).mockResolvedValueOnce(sim);
+  const project = useWorkspace.getState().project;
+  if (!project) throw Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, isHost: false });
+  const checkpoint = {
+    world: { entities: [] },
+    names: {},
+    time: 2,
+    bags: {},
+    partEntities: {},
+    queues: { inputs: [], pending: [] },
+    systems: [],
+  };
+  receive({
+    t: "ws.host",
+    workspaceId: "w_test",
+    resume: {
+      mode: "paused",
+      outputId: "out1",
+      world: { entities: [{ id: "partial" }] },
+      names: {},
+      time: 2.1,
+      partEntities: {},
+      status: [],
+      debug: {
+        id: "old",
+        systemId: "s",
+        entity: null,
+        line: 1,
+        frames: [],
+        states: [],
+        reason: "ブレイクポイント",
+      },
+      debugStart: checkpoint,
+    },
+  });
+  await flush();
+  expect(restoreDebugCheckpoint).toHaveBeenCalledWith(checkpoint);
+  expect(sim.restore).not.toHaveBeenCalled();
+  expect(holdAfterHandoff).toHaveBeenCalledOnce();
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -61,6 +111,65 @@ function simulation() {
     nameOf: (id: string) => id,
   } as unknown as Simulation;
 }
+
+it("再接続した共同編集者は未送信のデバッグ設定を再送する", () => {
+  const project = useWorkspace.getState().project;
+  if (!project) throw new Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, role: "editor" });
+  const server = new Y.Doc();
+  receive({
+    t: "ws.debugDoc",
+    workspaceId: "w_test",
+    full: true,
+    update: Buffer.from(Y.encodeStateAsUpdate(server)).toString("base64"),
+  });
+  expect(useWorkspace.getState().debug?.read().enabled).toBe(true);
+  const sent = fake.send.mock.calls.map((c) => c[0]).find((m) => m.t === "ws.debugUpdate");
+  expect(sent).toBeDefined();
+  Y.applyUpdate(server, Buffer.from(sent.update, "base64"));
+  expect(server.getMap("settings").get("enabled")).toBe(true);
+  server.destroy();
+});
+
+it("再接続で閲覧権限になったら未送信のデバッグ設定を捨てる", () => {
+  const project = useWorkspace.getState().project;
+  if (!project) throw new Error("project missing");
+  const debug = new DebugSettingsDoc(project);
+  debug.setEnabled(true);
+  useWorkspace.setState({ debug, debugReady: true, role: "viewer" });
+  const server = new Y.Doc();
+  receive({
+    t: "ws.debugDoc",
+    workspaceId: "w_test",
+    full: true,
+    update: Buffer.from(Y.encodeStateAsUpdate(server)).toString("base64"),
+  });
+  expect(useWorkspace.getState().debug?.read().enabled).toBe(false);
+  expect(fake.send.mock.calls.some((c) => c[0].t === "ws.debugUpdate")).toBe(false);
+  server.destroy();
+});
+
+it("全パネルを隠していても共有の停止パネルを開く", () => {
+  useWorkspace.setState({ isHost: false, panelsHidden: true, debugOpen: false });
+  receive({
+    t: "ws.frame",
+    workspaceId: "w_test",
+    frame: {
+      mode: "paused",
+      outputId: "out1",
+      time: 0,
+      world: { entities: [] },
+      names: {},
+      status: [],
+      partEntities: {},
+      debug: { id: "stop", systemId: "s", line: 1, entity: null, frames: [], reason: "一時停止" },
+    },
+  });
+  expect(useWorkspace.getState().debugOpen).toBe(true);
+  expect(useWorkspace.getState().panelsHidden).toBe(false);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

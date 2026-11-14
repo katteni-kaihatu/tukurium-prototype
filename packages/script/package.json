@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@jitl/quickjs-wasmfile-release-asyncify": "0.32.0",
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "@tukurium/eks": "workspace:*",
     "quickjs-emscripten-core": "0.32.0"

@@ -113,6 +113,15 @@ export function MainPanel() {
         </label>
 
         <div className={styles.transport}>
+          {ws.debug?.read().enabled && (
+            <button
+              type="button"
+              className={ui.btn}
+              onClick={() => useWorkspace.setState({ debugOpen: true })}
+            >
+              デバッグモード
+            </button>
+          )}
           {mode === "edit" ? (
             <button
               type="button"
@@ -166,6 +175,14 @@ export function MainPanel() {
       </p>
 
       <div className={styles.panels}>
+        <button
+          type="button"
+          className={ui.btn}
+          aria-pressed={ws.debugOpen}
+          onClick={() => useWorkspace.setState({ debugOpen: !ws.debugOpen })}
+        >
+          デバッグ
+        </button>
         <button
           type="button"
           className={ui.btn}
