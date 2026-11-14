@@ -24,6 +24,8 @@ export interface DebugSettings {
   breakOnError: boolean;
   breakpoints: DebugBreakpoint[];
   watches: DebugWatch[];
+  errorEntity?: string;
+  errorCondition?: string;
 }
 type Anchor = Omit<DebugBreakpoint, "line"> & { start: number[]; end: number[] };
 
@@ -90,6 +92,12 @@ export class DebugSettingsDoc {
           typeof w.koko === "string" &&
           typeof w.field === "string",
       ),
+      ...(typeof this.settings.get("errorEntity") === "string"
+        ? { errorEntity: this.settings.get("errorEntity") as string }
+        : {}),
+      ...(typeof this.settings.get("errorCondition") === "string"
+        ? { errorCondition: this.settings.get("errorCondition") as string }
+        : {}),
     };
   }
   setEnabled(enabled: boolean) {
@@ -97,6 +105,12 @@ export class DebugSettingsDoc {
   }
   setBreakOnError(enabled: boolean) {
     this.settings.set("breakOnError", enabled);
+  }
+  setErrorFilter(patch: { entity?: string; condition?: string }) {
+    this.doc.transact(() => {
+      if (patch.entity !== undefined) this.settings.set("errorEntity", patch.entity);
+      if (patch.condition !== undefined) this.settings.set("errorCondition", patch.condition);
+    });
   }
   add(systemId: string, line: number, kind: DebugBreakpoint["kind"] = "breakpoint"): string | null {
     const text = this.project.code(systemId);

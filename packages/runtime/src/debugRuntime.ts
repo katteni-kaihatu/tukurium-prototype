@@ -355,14 +355,14 @@ export class DebugRuntime {
     apply: (entities: ScriptEntity[]) => (edits: DebugEdit[]) => void,
   ): Promise<DebugEdit[]> {
     if (this.disposed || !this.settings.enabled) return [];
-    if (point.phase !== "mutation") this.pointsThisFrame++;
+    if (point.phase !== "mutation" && point.error === undefined) this.pointsThisFrame++;
     let hit = false;
     const values = Object.fromEntries(
       (point.frames.at(-1)?.variables ?? [])
         .filter((v) => !v.unavailable)
         .map((v) => [v.name, decodeValue(v.value)]),
     );
-    for (const rule of point.phase === "mutation" ? [] : this.rules) {
+    for (const rule of point.phase === "mutation" || point.error !== undefined ? [] : this.rules) {
       if (
         rule.systemId !== point.systemId ||
         rule.line !== point.line ||
@@ -385,13 +385,31 @@ export class DebugRuntime {
     const hostChanges = this.hostChanges.splice(0);
     const candidates = [
       ...hostChanges,
-      ...(point.phase === "mutation" ? this.guestChanges(entities, point.systemId) : []),
+      ...(point.phase === "mutation" || point.error !== undefined
+        ? this.guestChanges(entities, point.systemId)
+        : []),
     ];
     const detectedChange = candidates.find((c) => this.matchesChange(c, values));
     const change = this.step?.mode === "frame" ? undefined : detectedChange;
+    let errorHit =
+      point.error !== undefined &&
+      this.settings.breakOnError &&
+      (!this.settings.errorEntity || this.settings.errorEntity === point.entity);
+    if (errorHit && this.settings.errorCondition?.trim()) {
+      try {
+        errorHit = !!evaluateDebugExpression(
+          compileDebugExpression(this.settings.errorCondition),
+          values,
+        );
+      } catch (error) {
+        this.warn(point.systemId, `error:${String(error)}`, String(error));
+        errorHit = false;
+      }
+    }
     const step = this.step;
     const stepping =
       point.phase !== "mutation" &&
+      point.error === undefined &&
       step &&
       (step.mode === "into" ||
         (step.mode === "over" && step.depth === 0) ||
@@ -400,7 +418,7 @@ export class DebugRuntime {
           !point.frames.some(
             (f) => f.id === step.id && (f.systemId ?? point.systemId) === step.systemId,
           )));
-    if (!stepping && !(hit && step?.mode !== "frame") && !change) {
+    if (!stepping && !(hit && step?.mode !== "frame") && !change && !errorHit) {
       return [];
     }
     this.step = null;
@@ -420,15 +438,18 @@ export class DebugRuntime {
       entity: change?.entity ?? point.entity,
       line: point.line,
       frames: point.frames,
-      reason: change
-        ? "フィールドの変化"
-        : stepping
-          ? "ステップ実行"
-          : hit
-            ? "ブレイクポイント"
-            : "一時停止",
+      reason: errorHit
+        ? "実行中のエラー"
+        : change
+          ? "フィールドの変化"
+          : stepping
+            ? "ステップ実行"
+            : hit
+              ? "ブレイクポイント"
+              : "一時停止",
       states: this.host?.states(change?.entity ?? point.entity) ?? [],
       ...(change ? { change } : {}),
+      ...(errorHit ? { message: point.error } : {}),
     };
     const result = new Promise<DebugEdit[]>((resolve) => {
       this.resolve = resolve;

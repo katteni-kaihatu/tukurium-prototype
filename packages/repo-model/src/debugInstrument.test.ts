@@ -16,6 +16,9 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      protect: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
+      raise: (_frame: unknown, _line: number, error: unknown) => error,
+      caught: () => {},
       changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (_frame: unknown, _line: number, read: () => [string, unknown, boolean][]) =>
         samples.push(read()),
@@ -41,6 +44,9 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      protect: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
+      raise: (_frame: unknown, _line: number, error: unknown) => error,
+      caught: () => {},
       changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (_frame: unknown, _line: number, read: () => unknown) => {
         variables = read();
@@ -53,6 +59,10 @@ describe("デバッグ用の書き換え", () => {
     ).toEqual(["x", 3, false]);
   });
   it.each([
+    ["function f(){const obj={x:7,tag(){return this.x}};return obj.tag`template`;} f()", 7],
+    ["function f(){let o={x:0};({x:o.x}={x:1});return o.x;} f()", 1],
+    ["function f(){let o={x:0};[o.x]=[1];return o.x;} f()", 1],
+    ["function f(){let o={x:0};for([o.x] of [[1]]){}return o.x;} f()", 1],
     ["function f(){const g=()=>Math.abs(-2); return g()} f()", 2],
     ["function f(){const x=null; return x?.foo().bar} f()", undefined],
     ["function f(){var g=1; function g(){} return g} f()", 1],
@@ -68,6 +78,9 @@ describe("デバッグ用の書き換え", () => {
       },
       leave: () => {},
       error: () => {},
+      protect: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
+      raise: (_frame: unknown, _line: number, error: unknown) => error,
+      caught: () => {},
       changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: () => {},
       read: () => undefined,
@@ -94,6 +107,9 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      protect: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
+      raise: (_frame: unknown, _line: number, error: unknown) => error,
+      caught: () => {},
       changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (
         _frame: unknown,
@@ -142,6 +158,9 @@ globalThis.result = sum(1);`;
           return undefined;
         }
       },
+      protect: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
+      raise: (_frame: unknown, _line: number, error: unknown) => error,
+      caught: () => {},
       changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (
         frame: (typeof stack)[number],

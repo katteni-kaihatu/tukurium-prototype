@@ -42,6 +42,27 @@ export function DebugPanel() {
             />{" "}
             実行中のエラーで一時停止
           </label>
+          {settings.breakOnError && (
+            <fieldset>
+              <legend>エラーの絞り込み</legend>
+              <label>
+                Entity
+                <input
+                  aria-label="エラーのEntity"
+                  value={settings.errorEntity ?? ""}
+                  disabled={!canWrite}
+                  placeholder="空欄ならすべて"
+                  onChange={(e) => debug.setErrorFilter({ entity: e.target.value })}
+                />
+              </label>
+              <ExpressionInput
+                label="エラーの条件式"
+                value={settings.errorCondition ?? ""}
+                disabled={!canWrite}
+                onChange={(condition) => debug.setErrorFilter({ condition })}
+              />
+            </fieldset>
+          )}
           <h3>一時停止の条件</h3>
           {ws.debugStop && (
             <section aria-label="一時停止した場所">

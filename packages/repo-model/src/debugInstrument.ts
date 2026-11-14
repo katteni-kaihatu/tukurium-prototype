@@ -82,7 +82,14 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
     }
     return result;
   };
-  const walk = (n: Tree, scopes: Scope[], frame: string | null, parent?: Tree, inChain = false) => {
+  const walk = (
+    n: Tree,
+    scopes: Scope[],
+    frame: string | null,
+    parent?: Tree,
+    inChain = false,
+    inPattern = false,
+  ) => {
     if (skipped.has(n)) return;
     if (isFunction(n)) {
       if (n.generator || n.async)
@@ -301,6 +308,67 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
       }
       point(n, scopes, frame);
     }
+    if (frame && n.type === "TryStatement") {
+      const block = n.block as Tree;
+      const errorName = `${bridge}_caught_${n.start}`;
+      add(block.start + 1, "try{", -80);
+      add(
+        block.end - 1,
+        `}catch(${errorName}){${bridge}.error(${frame},${errorName});throw ${errorName};}`,
+        80,
+      );
+      if (n.handler && n.finalizer) {
+        const finalizer = n.finalizer as Tree;
+        const keyword = tokens.find(
+          (t) =>
+            t.type.label === "finally" &&
+            t.start >= (n.handler as Tree).end &&
+            t.end <= finalizer.start,
+        );
+        if (keyword) {
+          add(n.start, "try{", -40);
+          add(
+            keyword.start,
+            `}catch(${errorName}_outer){${bridge}.error(${frame},${errorName}_outer);throw ${errorName}_outer;}`,
+            -40,
+          );
+        }
+      }
+    }
+    if (frame && parent) {
+      if (
+        n.type === "MemberExpression" &&
+        !inPattern &&
+        !inChain &&
+        !(parent.type === "TaggedTemplateExpression" && parent.tag === n) &&
+        !(
+          (parent.type === "CallExpression" || parent.type === "NewExpression") &&
+          parent.callee === n
+        ) &&
+        !(parent.type === "AssignmentExpression" && parent.left === n) &&
+        !(
+          (parent.type === "ForOfStatement" || parent.type === "ForInStatement") &&
+          parent.left === n
+        ) &&
+        !(parent.type === "UpdateExpression" && parent.argument === n) &&
+        !(parent.type === "UnaryExpression" && parent.operator === "delete")
+      ) {
+        add(
+          n.start,
+          `${bridge}.protect(${frame},${(n.property as Tree)?.loc?.start.line ?? n.loc?.start.line ?? 1},()=> (`,
+          4 - n.end / (source.length + 1),
+        );
+        add(n.end, "))", -4);
+      }
+      if (parent.type === "ThrowStatement" && parent.argument === n) {
+        add(
+          n.start,
+          `${bridge}.raise(${frame},${n.loc?.start.line ?? 1},${bridge}.protect(${frame},${n.loc?.start.line ?? 1},()=> (`,
+          2.5,
+        );
+        add(n.end, ")))", -4);
+      }
+    }
     if (
       frame &&
       ([
@@ -315,7 +383,11 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
       !(inChain && n.type === "CallExpression") &&
       (n.callee as Tree | undefined)?.type !== "Super"
     ) {
-      add(n.start, `${bridge}.changed(${frame},${n.loc?.start.line ?? 1},()=> (`, 5);
+      add(
+        n.start,
+        `${bridge}.changed(${frame},${n.loc?.start.line ?? 1},()=> (`,
+        4 - n.end / (source.length + 1),
+      );
       add(n.end, "))", -5);
     }
     if (frame && (n.type === "ForOfStatement" || n.type === "ForInStatement")) {
@@ -336,6 +408,9 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
           (inChain &&
             ((n.type === "MemberExpression" && c === n.object) ||
               (n.type === "CallExpression" && c === n.callee))),
+        inPattern ||
+          ["ObjectPattern", "ArrayPattern", "RestElement"].includes(n.type) ||
+          (n.type === "AssignmentPattern" && c === n.left),
       );
   };
   function point(n: Tree, scopes: Scope[], frame: string, at = n.start) {

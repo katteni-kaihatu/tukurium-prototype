@@ -67,6 +67,7 @@ globalThis.__debugBridge = (() => {
   let nextScope = 0;
   const scopes = new WeakMap();
   let reported = new WeakSet();
+  let reportedPrimitives = new Set();
   // 検査するために利用者の getter や toJSON を呼ばない。
   const copy = (value, seen = new Set(), depth = 0) => {
     if(typeof value === 'function' || typeof value === 'symbol') throw new Error('表示できない値');
@@ -102,7 +103,7 @@ globalThis.__debugBridge = (() => {
       try { return {name:v[0],value:__codec.encode(copy(v[1].value)),writable:v[2] && v[1].ok,unavailable:!v[1].ok,state:stateRef(v[1].value),binding:v[3]}; }
       catch { return {name:v[0],value:null,writable:false,unavailable:true}; }
     })})),
-    entities: __codec.encode(__debugEntities), ...(error ? {error} : {})
+    entities: __codec.encode(__debugEntities), ...(error !== undefined ? {error} : {})
   });
   const stop = (frame, error, phase) => {
     const edits = JSON.parse(__debugPause(JSON.stringify(snapshot(frame, error, phase))));
@@ -121,13 +122,25 @@ globalThis.__debugBridge = (() => {
     scope() { return ++nextScope; },
     scopeFor(value) { let id=scopes.get(value); if(id===undefined){id=++nextScope;scopes.set(value,id);} return id; },
     binding(key,owner) { try { return key+':'+owner(); } catch { return undefined; } },
-    reset() { stack.length=0; reported=new WeakSet(); },
+    reset() { stack.length=0; reported=new WeakSet(); reportedPrimitives=new Set(); },
     enter(name,line,systemId) { const f={id:++nextId,name,line,systemId,read:null,write:null}; if(__debugActive) stack.push(f); return f; },
     leave(f) { if(stack[stack.length-1]===f) stack.pop(); },
     read(fn) { try { return {ok:true,value:fn()}; } catch { return {ok:false}; } },
     point(f,line,read,write) { if(!__debugActive)return; f.line=line; f.read=read; f.write=write; stop(f); },
-    changed(f,line,fn) { f.line=line; const result=fn(); if(__debugActive && __debugWatching)stop(f,undefined,'mutation'); return result; },
-    error(f,error) { if(!__debugActive)return; if(error && typeof error==='object') { if(reported.has(error))return; reported.add(error); } stop(f,String(error)); }
+    protect(f,line,fn) { f.line=line; try{return fn();}catch(error){this.error(f,error);throw error;} },
+    raise(f,line,error) { f.line=line; if(error && typeof error==='object')reported.delete(error);else reportedPrimitives.delete(error); this.error(f,error); return error; },
+    changed(f,line,fn) { const result=this.protect(f,line,fn); if(__debugActive && __debugWatching)stop(f,undefined,'mutation'); return result; },
+    error(f,error) {
+      if(!__debugActive)return;
+      let message;
+      if(error && typeof error==='object') {
+        if(reported.has(error))return; reported.add(error);
+        message='例外が発生しました（詳細は続けた後のエラー欄に出ます）';
+      } else {
+        if(reportedPrimitives.has(error))return; reportedPrimitives.add(error); message=String(error);
+      }
+      stop(f,message);
+    }
   };
 })();
 `;
