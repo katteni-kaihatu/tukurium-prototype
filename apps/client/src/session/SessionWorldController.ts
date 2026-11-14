@@ -4,7 +4,7 @@ import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { useWorkspace } from "../workspace/store";
 import { EQUIP_REACH, equipsSomething, holdsSomething } from "../workspace/WorkspaceController";
-import { openRing, provideRingItems } from "./ringMenu";
+import { openRing, provideRingItems } from "./ringItems";
 import type { SessionEngine } from "./SessionEngine";
 import {
   queueSessionEffects,

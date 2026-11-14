@@ -15,7 +15,7 @@ import { useApp } from "../app/store";
 import { EntityView } from "../render/EntityView";
 import { CAMERA_FOV } from "../session/FpsController";
 import { readShotPng } from "../session/readShotPng";
-import { openRing, provideRingItems } from "../session/ringMenu";
+import { openRing, provideRingItems } from "../session/ringItems";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
