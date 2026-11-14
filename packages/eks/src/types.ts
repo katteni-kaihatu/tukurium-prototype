@@ -21,6 +21,7 @@ export type FieldValue = Value;
 export interface FieldDef {
   id: FieldId;
   name: string;
+  description?: string;
   type: string;
   default: FieldValue;
 }
@@ -42,6 +43,7 @@ export const FIELD_TYPE = {
 export interface KokoStateDef {
   id: KokoStateId;
   name: string;
+  description?: string;
   /** フィールドなしの KokoState はタグとして Query の絞り込みに使う。 */
   fields: FieldDef[];
   builtin?: boolean;

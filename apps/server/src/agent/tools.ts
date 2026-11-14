@@ -858,6 +858,7 @@ export function unpackPrefabInstance(project: ProjectDoc, ref: string) {
 
 interface FieldSpec {
   name: string;
+  description?: string;
   /** 一覧の名前（`FIELD_TYPES`）か、TypeScript の型の文 */
   type: string;
   default?: unknown;
@@ -883,6 +884,7 @@ function toFields(
     const base: FieldDef = {
       id,
       name: s.name,
+      ...(s.description !== undefined ? { description: s.description } : {}),
       type: basic?.type ?? s.type,
       default: structuredClone(basic?.default),
     };
@@ -929,7 +931,13 @@ function typeDefIds(project: ProjectDoc, refs: string[]): string[] {
 
 export function createKokoState(
   project: ProjectDoc,
-  args: { name: string; fields: FieldSpec[]; role?: string; typeDefs?: string[] },
+  args: {
+    name: string;
+    fields: FieldSpec[];
+    role?: string;
+    typeDefs?: string[];
+    description?: string;
+  },
 ): NamedRef {
   const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : undefined;
   const id = project.addKokoState(args.name);
@@ -939,6 +947,7 @@ export function createKokoState(
     project.updateKokoState({
       ...def,
       fields: toFields(project, id, args.fields, [], typeDefs),
+      ...(args.description !== undefined ? { description: args.description } : {}),
       ...(args.role ? { role: args.role } : {}),
       ...(typeDefs?.length ? { typeDefs } : {}),
     });
@@ -955,6 +964,7 @@ export function updateKokoState(
   args: {
     kokostate: string;
     name?: string;
+    description?: string;
     fields?: FieldSpec[];
     role?: string;
     typeDefs?: string[];
@@ -969,6 +979,7 @@ export function updateKokoState(
   project.updateKokoState({
     ...rest,
     name,
+    ...(args.description !== undefined ? { description: args.description } : {}),
     fields: args.fields ? toFields(project, def.id, args.fields, def.fields, typeDefs) : def.fields,
     ...(args.role !== undefined ? { role: args.role } : {}),
     ...(typeDefs?.length ? { typeDefs } : {}),

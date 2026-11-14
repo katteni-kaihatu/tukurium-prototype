@@ -208,7 +208,12 @@ export function kokoChange(head: FileMap | null, def: KokoStateDef): KokoChange 
   for (const f of def.fields) {
     const old = prev.get(f.id);
     if (!old) fields[f.id] = "added";
-    else if (old.name !== f.name || old.type !== f.type || !equalValues(old.default, f.default)) {
+    else if (
+      old.name !== f.name ||
+      old.type !== f.type ||
+      old.description !== f.description ||
+      !equalValues(old.default, f.default)
+    ) {
       fields[f.id] = "modified";
     }
   }
@@ -218,7 +223,10 @@ export function kokoChange(head: FileMap | null, def: KokoStateDef): KokoChange 
     [...(saved.typeDefs ?? [])].sort(),
     [...(def.typeDefs ?? [])].sort(),
   );
-  const kind = name || typeDefs || Object.keys(fields).length > 0 ? "modified" : null;
+  const kind =
+    name || typeDefs || saved.description !== def.description || Object.keys(fields).length > 0
+      ? "modified"
+      : null;
   return { kind, name, fields };
 }
 

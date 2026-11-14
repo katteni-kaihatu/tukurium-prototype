@@ -4,7 +4,7 @@ import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { gunAndTargetSample, type ProjectSnapshot } from "@tukurium/repo-model";
 import { describe, expect, it } from "vitest";
-import { existingImports, importCandidates, importCompletionSource } from "./importCompletion";
+import { importCandidates, importCompletionSource } from "./importCompletion";
 
 function sample(): ProjectSnapshot {
   const snap = gunAndTargetSample();
@@ -52,36 +52,20 @@ describe("importCompletionSource", () => {
     expect(result?.from).toBe('import Gun from "'.length);
   });
 
-  it("import のあとでは、名前からパスまで入れる", () => {
-    const result = complete("import Gu");
-    const gun = result?.options.find((o) => o.label === "Gun");
-    expect(gun?.apply).toBe('Gun from "../States/Gun.koko";');
+  it("一重引用符のパスも出す", () => {
+    expect(complete("import Gun from '../")?.options.map((o) => o.label)).toContain(
+      "../States/Gun.koko",
+    );
   });
 
-  it("本文で名前を書くと、import の行を足す候補を出す（import 済みのものは出さない）", () => {
-    const result = complete('import Gun from "../States/Gun.koko";\nconst a = Tar');
-    const labels = result?.options.map((o) => o.label) ?? [];
-    expect(labels).toContain("Target");
-    expect(labels).not.toContain("Gun");
+  it("import の名前と本文では TypeScript の候補と重ねない", () => {
+    expect(complete("import Gu")).toBeNull();
+    expect(complete('import Gun from "../States/Gun.koko";\nconst a = Tar')).toBeNull();
   });
 
   it(". のあと・文字列やコメントの中では出さない", () => {
     expect(complete("e.Gu")).toBeNull();
     expect(complete('log("Gu')).toBeNull();
     expect(complete("// Gu")).toBeNull();
-  });
-});
-
-describe("existingImports", () => {
-  it("import の名前とパス、次の import を足す位置（最後の import の次の行）", () => {
-    const doc = '// 説明\nimport Gun from "./Gun.koko";\nexport default system({});\n';
-    const { names, insertAt } = existingImports(stateOf(doc));
-    expect(names.get("Gun")).toBe("./Gun.koko");
-    expect(insertAt).toBe(doc.indexOf("export"));
-  });
-
-  it("import がなければ、先頭のコメントの下", () => {
-    const doc = "// 説明\nexport default system({});\n";
-    expect(existingImports(stateOf(doc)).insertAt).toBe(doc.indexOf("export"));
   });
 });
