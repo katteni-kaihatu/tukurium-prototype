@@ -73,7 +73,7 @@ interface WorkspaceState {
   debugStop: DebugStop | null;
   debugFrameId: number | null;
   debugEdit(edit: DebugEdit): void;
-  debugCommand(cmd: "continue" | "pause"): void;
+  debugCommand(cmd: "continue" | "pause" | "into" | "over" | "out" | "frame"): void;
   workspaceId: string | null;
   project: ProjectDoc | null;
   awareness: Awareness | null;
@@ -623,9 +623,9 @@ client().on((msg) => {
     case "ws.debugCommand": {
       if (msg.workspaceId !== s.workspaceId || !s.isHost || !s.sim?.debug) return;
       if (msg.cmd === "pause") s.sim.debug.requestPause();
-      else if (msg.cmd === "edit" && msg.stopId && msg.edit) {
-        s.sim.debug.edit(msg.stopId, msg.edit as DebugEdit);
-      } else if (msg.stopId && s.sim.debug.resume(msg.stopId)) {
+      else if (msg.cmd === "edit") {
+        if (msg.stopId && msg.edit) s.sim.debug.edit(msg.stopId, msg.edit as DebugEdit);
+      } else if (msg.stopId && s.sim.debug.resume(msg.stopId, msg.cmd)) {
         set({ mode: "play", debugStop: null });
         sendFrame();
       }

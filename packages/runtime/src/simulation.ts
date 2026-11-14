@@ -983,8 +983,9 @@ export class Simulation {
   async stepDebug(dt: number): Promise<void> {
     if (!this.debug || this.disposed || this.debugRunning) return;
     this.debugRunning = true;
-    this.debug.beginFrame();
     try {
+      await this.debug.beginFrame();
+      if (this.disposed) return;
       this.time += dt;
       this.physics.sync(this.world);
       const collisions = this.physics.step(this.world, dt);
@@ -1049,6 +1050,7 @@ export class Simulation {
         this.log(null, `イベントが多すぎるため ${this.pending.length} 件を捨てました`, "error");
         this.pending = [];
       }
+      await this.debug.endFrame();
     } finally {
       this.debugRunning = false;
     }

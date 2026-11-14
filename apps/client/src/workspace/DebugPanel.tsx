@@ -45,8 +45,12 @@ export function DebugPanel() {
             <section aria-label="一時停止した場所">
               <p>
                 {ws.debugStop.reason}：
-                {ws.project?.system(ws.debugStop.systemId)?.name ?? ws.debugStop.systemId}{" "}
-                {ws.debugStop.line} 行目
+                {ws.debugStop.line > 0 && (
+                  <>
+                    {ws.project?.system(ws.debugStop.systemId)?.name ?? ws.debugStop.systemId}{" "}
+                    {ws.debugStop.line} 行目
+                  </>
+                )}
               </p>
               <button
                 type="button"
@@ -56,11 +60,46 @@ export function DebugPanel() {
               >
                 続ける
               </button>
+              <div className={styles.row}>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  disabled={!canWrite}
+                  onClick={() => ws.debugCommand("over")}
+                >
+                  次の行へ
+                </button>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  disabled={!canWrite}
+                  onClick={() => ws.debugCommand("into")}
+                >
+                  関数の中へ
+                </button>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  disabled={!canWrite}
+                  onClick={() => ws.debugCommand("out")}
+                >
+                  関数から出る
+                </button>
+                <button
+                  type="button"
+                  className={ui.btn}
+                  disabled={!canWrite}
+                  onClick={() => ws.debugCommand("frame")}
+                >
+                  次のフレームまで
+                </button>
+              </div>
               {stop?.message && <p role="alert">{stop.message}</p>}
               <h3>呼び出しの順</h3>
               <button
                 type="button"
                 className={ui.btn}
+                disabled={!stop?.systemId}
                 onClick={() => {
                   if (!stop) return;
                   const systemId = frame?.systemId ?? stop.systemId;

@@ -26,6 +26,7 @@ export interface RuntimeDebugOptions {
   settings(): DebugSettings;
   onPause(stop: DebugStop): void;
 }
+export type DebugStep = "continue" | "into" | "over" | "out" | "frame";
 
 /** 一度に一つのフレームを進める。設定はフレームの先頭で取り直す。 */
 export class DebugRuntime {
@@ -36,6 +37,16 @@ export class DebugRuntime {
   private pauseRequested = false;
   private disposed = false;
   private edits: DebugEdit[] = [];
+  private frameNumber = 0;
+  private pointsThisFrame = 0;
+  private step: {
+    mode: Exclude<DebugStep, "continue">;
+    frame: number;
+    depth: number;
+    id: number;
+    line: number;
+    systemId: string;
+  } | null = null;
   constructor(
     private readonly options: RuntimeDebugOptions,
     private readonly host?: {
@@ -48,14 +59,34 @@ export class DebugRuntime {
   register(systemId: string, lines: number[]) {
     this.lines.set(systemId, lines);
   }
-  beginFrame() {
+  async beginFrame() {
+    this.frameNumber++;
+    this.pointsThisFrame = 0;
     this.settings = this.options.settings();
+    if (this.step?.mode === "frame" && this.frameNumber > this.step.frame)
+      await this.boundary("次のフレーム");
+  }
+  async endFrame() {
+    if (this.pauseRequested || (this.step && this.pointsThisFrame === 0))
+      await this.boundary("フレームの切れ目");
   }
   requestPause() {
     this.pauseRequested = true;
   }
-  resume(id: string): boolean {
+  resume(id: string, mode: DebugStep = "continue"): boolean {
     if (this.stop?.id !== id || !this.resolve) return false;
+    const frame = this.stop.frames.at(-1);
+    this.step =
+      mode === "continue"
+        ? null
+        : {
+            mode,
+            frame: this.frameNumber,
+            depth: this.stop.frames.length,
+            id: frame?.id ?? -1,
+            line: this.stop.line,
+            systemId: this.stop.systemId,
+          };
     this.stop = null;
     const resolve = this.resolve;
     this.resolve = null;
@@ -69,6 +100,7 @@ export class DebugRuntime {
     this.resolve = null;
     this.stop = null;
     this.edits = [];
+    this.step = null;
   }
   edit(id: string, edit: DebugEdit): boolean {
     const stop = this.stop;
@@ -140,6 +172,7 @@ export class DebugRuntime {
     apply: (entities: ScriptEntity[]) => (edits: DebugEdit[]) => void,
   ): Promise<DebugEdit[]> {
     if (this.disposed || !this.settings.enabled) return [];
+    this.pointsThisFrame++;
     const hit = this.settings.breakpoints.find(
       (p) =>
         p.enabled &&
@@ -147,7 +180,18 @@ export class DebugRuntime {
         p.systemId === point.systemId &&
         (this.lines.get(p.systemId)?.find((line) => line >= p.line) ?? -1) === point.line,
     );
-    if (!this.pauseRequested && !hit) return [];
+    const step = this.step;
+    const stepping =
+      step &&
+      (step.mode === "into" ||
+        (step.mode === "over" && step.depth === 0) ||
+        (step.mode === "over" && point.frames.length <= step.depth) ||
+        (step.mode === "out" &&
+          !point.frames.some(
+            (f) => f.id === step.id && (f.systemId ?? point.systemId) === step.systemId,
+          )));
+    if (!stepping && !(hit && step?.mode !== "frame")) return [];
+    this.step = null;
     this.pauseRequested = false;
     const restore = apply(decodeValue(point.entities) as ScriptEntity[]);
     this.stop = {
@@ -156,7 +200,7 @@ export class DebugRuntime {
       entity: point.entity,
       line: point.line,
       frames: point.frames,
-      reason: hit ? "ブレイクポイント" : "一時停止",
+      reason: stepping ? "ステップ実行" : hit ? "ブレイクポイント" : "一時停止",
       states: this.host?.states(point.entity) ?? [],
     };
     const result = new Promise<DebugEdit[]>((resolve) => {
@@ -170,5 +214,24 @@ export class DebugRuntime {
     } finally {
       restore(edits);
     }
+  }
+  private async boundary(reason: string): Promise<void> {
+    if (this.disposed || !this.settings.enabled) return;
+    this.step = null;
+    this.pauseRequested = false;
+    this.stop = {
+      id: crypto.randomUUID(),
+      systemId: "",
+      entity: null,
+      line: 0,
+      frames: [],
+      states: [],
+      reason,
+    };
+    const wait = new Promise<DebugEdit[]>((resolve) => {
+      this.resolve = resolve;
+    });
+    this.options.onPause(this.stop);
+    await wait;
   }
 }

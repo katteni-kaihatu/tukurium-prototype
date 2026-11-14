@@ -239,7 +239,7 @@ export const DebugStop = z.object({
   ),
 });
 export type DebugStop = z.infer<typeof DebugStop>;
-export const DebugCommand = z.enum(["continue", "pause", "edit"]);
+export const DebugCommand = z.enum(["continue", "pause", "edit", "into", "over", "out", "frame"]);
 export const DebugValueEdit = z.union([
   z.object({
     kind: z.literal("variable").optional(),
