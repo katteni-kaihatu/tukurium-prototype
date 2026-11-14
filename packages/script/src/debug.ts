@@ -30,6 +30,7 @@ export interface DebugKokoState {
   fields: { id: string; name: string; value: Json }[];
 }
 export interface DebugPoint {
+  phase?: "mutation";
   systemId: string;
   entity: string | null;
   line: number;
@@ -58,6 +59,8 @@ export type DebugEdit = DebugVariableEdit | DebugStateEdit;
 export const DEBUG_PRELUDE = `
 let __debugActive = false;
 let __debugEntities = [];
+let __debugWatching = false;
+globalThis.__setDebugWatching = value => { __debugWatching=value; };
 globalThis.__debugBridge = (() => {
   const stack = [];
   let nextId = 0;
@@ -92,7 +95,8 @@ globalThis.__debugBridge = (() => {
       if(e.states[key]===value)return {entity:e.id,koko:key};
     return undefined;
   };
-  const snapshot = (frame, error) => ({
+  const snapshot = (frame, error, phase) => ({
+    phase,
     systemId: frame.systemId || __current, entity: __entity, line: frame.line,
     frames: stack.map(f => ({id:f.id,name:f.name,line:f.line,systemId:f.systemId,variables:(f.read ? f.read() : []).map(v => {
       try { return {name:v[0],value:__codec.encode(copy(v[1].value)),writable:v[2] && v[1].ok,unavailable:!v[1].ok,state:stateRef(v[1].value),binding:v[3]}; }
@@ -100,8 +104,8 @@ globalThis.__debugBridge = (() => {
     })})),
     entities: __codec.encode(__debugEntities), ...(error ? {error} : {})
   });
-  const stop = (frame, error) => {
-    const edits = JSON.parse(__debugPause(JSON.stringify(snapshot(frame, error))));
+  const stop = (frame, error, phase) => {
+    const edits = JSON.parse(__debugPause(JSON.stringify(snapshot(frame, error, phase))));
     if(edits.abort) { __debugActive=false; throw new Error("デバッグ実行を終了しました"); }
     for (const edit of edits) {
       if(edit.kind==='state') {
@@ -122,6 +126,7 @@ globalThis.__debugBridge = (() => {
     leave(f) { if(stack[stack.length-1]===f) stack.pop(); },
     read(fn) { try { return {ok:true,value:fn()}; } catch { return {ok:false}; } },
     point(f,line,read,write) { if(!__debugActive)return; f.line=line; f.read=read; f.write=write; stop(f); },
+    changed(f,line,fn) { f.line=line; const result=fn(); if(__debugActive && __debugWatching)stop(f,undefined,'mutation'); return result; },
     error(f,error) { if(!__debugActive)return; if(error && typeof error==='object') { if(reported.has(error))return; reported.add(error); } stop(f,String(error)); }
   };
 })();

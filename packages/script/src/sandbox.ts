@@ -295,6 +295,11 @@ export class ScriptSandbox {
   private disposeRequested = false;
   private cancelWait: (() => void) | null = null;
   private debugDeadline = Number.POSITIVE_INFINITY;
+  setDebugWatching(enabled: boolean): void {
+    if (!this.host.debug || this.busy || this.disposeRequested) return;
+    for (const vm of this.realms.values())
+      this.unwrap(vm, vm.evalCode(`__setDebugWatching(${enabled})`), null, "runtime").dispose();
+  }
 
   private constructor(
     private readonly memory: WebAssembly.Memory,

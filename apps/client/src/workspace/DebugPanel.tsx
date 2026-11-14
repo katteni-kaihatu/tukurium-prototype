@@ -1,6 +1,7 @@
-import { decodeValue, encodeValue, type Value } from "@tukurium/eks";
+import { decodeValue, encodeValue, stringifyValue, type Value } from "@tukurium/eks";
 import { compileDebugExpression } from "@tukurium/repo-model";
 import { useState } from "react";
+import { openRing } from "../session/ringMenuModel";
 import styles from "./DebugPanel.module.css";
 import { useWorkspace } from "./store";
 import ui from "./ui.module.css";
@@ -96,6 +97,13 @@ export function DebugPanel() {
                 </button>
               </div>
               {stop?.message && <p role="alert">{stop.message}</p>}
+              {stop?.change && (
+                <p>
+                  {stop.change.source}：{stop.change.field}{" "}
+                  {stringifyValue(decodeValue(stop.change.oldValue) as Value)} →{" "}
+                  {stringifyValue(decodeValue(stop.change.newValue) as Value)}
+                </p>
+              )}
               <h3>呼び出しの順</h3>
               <button
                 type="button"
@@ -175,6 +183,27 @@ export function DebugPanel() {
                       key={field.id}
                       className={styles.value}
                       htmlFor={`debug-state-${state.id}-${field.id}`}
+                      onContextMenu={(e) => {
+                        if (!canWrite || !stop?.entity) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openRing([
+                          {
+                            id: "debug-watch",
+                            label: "変わったら一時停止する",
+                            enabled: true,
+                            run: () =>
+                              debug.setWatch({
+                                id: crypto.randomUUID(),
+                                enabled: true,
+                                entity: stop.entity!,
+                                koko: state.id,
+                                field: field.id,
+                                condition: "",
+                              }),
+                          },
+                        ]);
+                      }}
                     >
                       <span>{field.name}</span>
                       <TextValueInput
@@ -278,6 +307,36 @@ export function DebugPanel() {
                   onChange={(expression) => debug.update(point.id, { expression })}
                 />
               )}
+            </fieldset>
+          ))}
+          {settings.watches.map((w) => (
+            <fieldset key={w.id}>
+              <legend>フィールドの変化</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={w.enabled}
+                  disabled={!canWrite}
+                  onChange={(e) => debug.setWatch({ ...w, enabled: e.target.checked })}
+                />
+                {ws.runtime()?.nameOf(w.entity) ?? w.entity} /{" "}
+                {ws.project?.kokostate(w.koko)?.name ?? w.koko} / {w.field}
+              </label>
+              <ExpressionInput
+                label="変化の条件式"
+                value={w.condition ?? ""}
+                disabled={!canWrite}
+                onChange={(condition) => debug.setWatch({ ...w, condition })}
+              />
+              <small>oldValue（前の値）と newValue（新しい値）が使えます。</small>
+              <button
+                type="button"
+                className={ui.btn}
+                disabled={!canWrite}
+                onClick={() => debug.removeWatch(w.id)}
+              >
+                監視を削除
+              </button>
             </fieldset>
           ))}
           <div className={styles.row}>

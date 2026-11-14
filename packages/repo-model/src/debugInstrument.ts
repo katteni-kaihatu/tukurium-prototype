@@ -82,7 +82,7 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
     }
     return result;
   };
-  const walk = (n: Tree, scopes: Scope[], frame: string | null, parent?: Tree) => {
+  const walk = (n: Tree, scopes: Scope[], frame: string | null, parent?: Tree, inChain = false) => {
     if (skipped.has(n)) return;
     if (isFunction(n)) {
       if (n.generator || n.async)
@@ -209,7 +209,7 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
         add(start, `{${entry}`, -100);
         const scopesIn = [...scopes, params];
         point(body, scopesIn, frameName, start);
-        add(start, "return (", 10);
+        add(start, "return (", 1);
         walk(body, scopesIn, frameName, n);
         add(n.end, `);${end}}`, 100);
       }
@@ -301,8 +301,42 @@ export function instrumentDebug(source: string, systemId?: string): DebugInstrum
       }
       point(n, scopes, frame);
     }
+    if (
+      frame &&
+      ([
+        "AssignmentExpression",
+        "UpdateExpression",
+        "CallExpression",
+        "NewExpression",
+        "TaggedTemplateExpression",
+        "ChainExpression",
+      ].includes(n.type) ||
+        (n.type === "UnaryExpression" && n.operator === "delete")) &&
+      !(inChain && n.type === "CallExpression") &&
+      (n.callee as Tree | undefined)?.type !== "Super"
+    ) {
+      add(n.start, `${bridge}.changed(${frame},${n.loc?.start.line ?? 1},()=> (`, 5);
+      add(n.end, "))", -5);
+    }
+    if (frame && (n.type === "ForOfStatement" || n.type === "ForInStatement")) {
+      const body = n.body as Tree;
+      add(
+        body.type === "BlockStatement" ? body.start + 1 : body.start,
+        `${bridge}.changed(${frame},${n.loc?.start.line ?? 1},()=>{});`,
+        body.type === "BlockStatement" ? -80 : -10,
+      );
+    }
     for (const c of children(n))
-      walk(c, c === n.body && loopBodyScopes ? loopBodyScopes : current, frame, n);
+      walk(
+        c,
+        c === n.body && loopBodyScopes ? loopBodyScopes : current,
+        frame,
+        n,
+        n.type === "ChainExpression" ||
+          (inChain &&
+            ((n.type === "MemberExpression" && c === n.object) ||
+              (n.type === "CallExpression" && c === n.callee))),
+      );
   };
   function point(n: Tree, scopes: Scope[], frame: string, at = n.start) {
     const line = n.loc?.start.line ?? 1;

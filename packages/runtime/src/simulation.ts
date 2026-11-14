@@ -409,7 +409,12 @@ export class Simulation {
       hostFunctions: Object.fromEntries(
         HOST_API.map((name) => [
           name,
-          (args: Value[], ctx: HostCallContext) => ref.sim?.callHost(name, args, ctx),
+          (args: Value[], ctx: HostCallContext) => {
+            const sim = ref.sim;
+            return sim?.debug
+              ? sim.debug.hostOperation(() => sim.callHost(name, args, ctx))
+              : sim?.callHost(name, args, ctx);
+          },
         ]),
       ),
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
@@ -441,6 +446,22 @@ export class Simulation {
         states: (entity) => sim.debugStates(entity),
         writeState: (edit) => sim.writeDebugState(edit),
         log: (systemId, message) => sim.log(systemId, message, "log"),
+        watching: (enabled) => sim.sandbox.setDebugWatching(enabled),
+        guestValue: (watch, entities, systemId) => {
+          const sys = sim.systems.find((s) => s.id === systemId);
+          const field = sim.registry.get(watch.koko)?.fields.find((f) => f.id === watch.field);
+          const states = sys
+            ? entities.find((e) => e.id === watch.entity)?.states[
+                sim.localKey(watch.koko, sys.realm)
+              ]
+            : undefined;
+          return states &&
+            field &&
+            Object.hasOwn(states, field.name) &&
+            sim.accepts(watch.koko, field, states[field.name])
+            ? encodeValue(states[field.name])
+            : undefined;
+        },
       });
     return sim;
   }
@@ -990,6 +1011,7 @@ export class Simulation {
       this.time += dt;
       this.physics.sync(this.world);
       const collisions = this.physics.step(this.world, dt);
+      await this.debug.externalChanges("物理演算");
       for (const c of collisions)
         for (const [self, other] of [
           [c.a, c.b],
@@ -1008,14 +1030,20 @@ export class Simulation {
       const inputs = this.inputs;
       this.inputs = [];
       for (const ev of inputs) {
-        if (this.equipInput(ev)) continue;
+        if (this.equipInput(ev)) {
+          await this.debug.externalChanges("組み込みの装備処理");
+          continue;
+        }
         this.deliverInteract(ev);
-        if (this.builtinInput(ev)) continue;
+        const handled = this.builtinInput(ev);
+        await this.debug.externalChanges("組み込みの入力処理");
+        if (handled) continue;
         for (const sys of this.active("onInput")) {
           const targets = this.matches(sys).filter((id) => this.acceptsInput(id, ev.player));
           await this.runSystemDebug(sys, "onInput", targets, [ev as unknown as Value]);
         }
       }
+      await this.debug.externalChanges("組み込みの入力処理");
       for (const sys of this.active("onUpdate"))
         await this.runSystemDebug(sys, "onUpdate", this.matches(sys), [dt]);
       let budget = MAX_EVENTS_PER_STEP;
@@ -2018,6 +2046,7 @@ export class Simulation {
       });
     };
     this.activeDebugApply = apply;
+    this.debug?.beginSystem(before, sys.id);
     try {
       const after = await this.sandbox.runAsync(sys.id, handler, before, args);
       if (!this.disposed) apply(after);
@@ -2026,6 +2055,7 @@ export class Simulation {
       if (this.sandbox.broken) this.dispose();
     } finally {
       this.activeDebugApply = null;
+      this.debug?.endSystem();
     }
   }
 

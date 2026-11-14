@@ -16,6 +16,7 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (_frame: unknown, _line: number, read: () => [string, unknown, boolean][]) =>
         samples.push(read()),
     };
@@ -40,6 +41,7 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (_frame: unknown, _line: number, read: () => unknown) => {
         variables = read();
       },
@@ -51,6 +53,8 @@ describe("デバッグ用の書き換え", () => {
     ).toEqual(["x", 3, false]);
   });
   it.each([
+    ["function f(){const g=()=>Math.abs(-2); return g()} f()", 2],
+    ["function f(){const x=null; return x?.foo().bar} f()", undefined],
     ["function f(){var g=1; function g(){} return g} f()", 1],
     ["function f(){function g(){return 1} function g(){return 2} return g()} f()", 2],
     ["function f(){var {g}={g:4}; function g(){} return g} f()", 4],
@@ -64,6 +68,7 @@ describe("デバッグ用の書き換え", () => {
       },
       leave: () => {},
       error: () => {},
+      changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: () => {},
       read: () => undefined,
     };
@@ -89,6 +94,7 @@ describe("デバッグ用の書き換え", () => {
           return undefined;
         }
       },
+      changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (
         _frame: unknown,
         line: number,
@@ -136,6 +142,7 @@ globalThis.result = sum(1);`;
           return undefined;
         }
       },
+      changed: (_frame: unknown, _line: number, fn: () => unknown) => fn(),
       point: (
         frame: (typeof stack)[number],
         line: number,

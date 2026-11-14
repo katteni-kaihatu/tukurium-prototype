@@ -204,6 +204,16 @@ const Bags = z.record(z.string(), z.array(BagItem).max(64));
 const PartEntities = z.record(z.string(), z.array(z.string()));
 
 export const DebugStop = z.object({
+  change: z
+    .object({
+      entity: z.string(),
+      koko: z.string(),
+      field: z.string(),
+      oldValue: z.unknown(),
+      newValue: z.unknown(),
+      source: z.string(),
+    })
+    .optional(),
   message: z.string().optional(),
   states: z
     .array(

@@ -17,6 +17,7 @@ export interface DebugWatch {
   entity: string;
   koko: string;
   field: string;
+  condition?: string;
 }
 export interface DebugSettings {
   enabled: boolean;
