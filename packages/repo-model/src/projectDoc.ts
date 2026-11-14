@@ -17,6 +17,7 @@ import { validateAlias } from "./packageDependency";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
+  type EntityBase,
   type EntityDef,
   type FolderDef,
   type MaterialDef,
@@ -24,6 +25,9 @@ import {
   type OutputDef,
   type OutputKind,
   type PackageDependency,
+  type PrefabDef,
+  type PrefabEntityDef,
+  type PrefabInstanceLink,
   type ProjectSnapshot,
   type SystemDef,
   type TypeDef,
@@ -39,6 +43,7 @@ import { planImportRefactor } from "./systemCompiler";
 import { renameTypeName } from "./typeText";
 
 const clone = <T>(v: T): T => structuredClone(v);
+const TRANSFORM = "builtin.Transform";
 
 /** Entity の KokoState の値を入れる Y.Map（フィールド ID → 保存する形の値） */
 type ValueMap = Y.Map<Json>;
@@ -119,7 +124,10 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
  * - types       : Y.Map<TypeDef>        型の定義（ADR 0065）
  * - materials   : Y.Map<MaterialDef>
  * - outputs     : Y.Map<OutputDef>
- * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<Y.Map<Json>>)
+ * - entities    : Y.Map<Y.Map>          id, name, parent, output, order, states(Y.Map<Y.Map<Json>>),
+ *                                       instanceOf（プレハブのインスタンスのときだけ）
+ * - prefabs     : Y.Map<PrefabDef>      プレハブ（ADR 0076）
+ * - prefabEntities : Y.Map<Y.Map>       プレハブの中の Entity。entities と同じ形で、output の代わりに prefab
  *
  * フィールドの値と初期値は、タグ付きの JSON（ADR 0065）で入れる。JSON で表せない値
  * （undefined・Date・Map など）も、そのまま同期・保存できる。読むときに値へ戻す。
@@ -176,6 +184,21 @@ export class ProjectDoc {
   }
   private get entityMap() {
     return this.doc.getMap<Y.Map<unknown>>("entities");
+  }
+  private get prefabMap() {
+    return this.doc.getMap<PrefabDef>("prefabs");
+  }
+  /** プレハブの中の Entity（ADR 0076）。アウトプットの Entity とは別に持つ */
+  private get prefabEntityMap() {
+    return this.doc.getMap<Y.Map<unknown>>("prefabEntities");
+  }
+  /** アウトプットの Entity か、プレハブの中の Entity（ID は両方を通して一つ） */
+  private node(id: EntityId): Y.Map<unknown> | undefined {
+    return this.entityMap.get(id) ?? this.prefabEntityMap.get(id);
+  }
+  /** すべての Entity（アウトプットのものと、プレハブの中のもの） */
+  private nodes(): Y.Map<unknown>[] {
+    return [...this.entityMap.values(), ...this.prefabEntityMap.values()];
   }
 
   transact(fn: () => void, origin: unknown = "local"): void {
@@ -295,7 +318,7 @@ export class ProjectDoc {
       if (!prev) return;
       // Entity が持っている値を新しい定義に合わせる：消えたフィールドは削除、足したフィールドと
       // 型が変わったフィールドは初期値。ほかのフィールドの値には触れない（同時に値を変えた人の変更を残す）
-      for (const e of this.entityMap.values()) {
+      for (const e of this.nodes()) {
         const states = e.get("states") as Y.Map<ValueMap>;
         const values = states.get(def.id);
         if (!values) continue;
@@ -312,7 +335,7 @@ export class ProjectDoc {
   removeKokoState(id: KokoStateId): void {
     this.transact(() => {
       this.kokoMap.delete(id);
-      for (const e of this.entityMap.values()) (e.get("states") as Y.Map<unknown>).delete(id);
+      for (const e of this.nodes()) (e.get("states") as Y.Map<unknown>).delete(id);
     });
   }
   private assertKokoName(name: string, self: KokoStateId | null): void {
@@ -360,6 +383,11 @@ export class ProjectDoc {
       for (const o of this.outputMap.values()) {
         if (o.systems.some((s) => s.id === id)) {
           this.outputMap.set(o.id, { ...o, systems: o.systems.filter((s) => s.id !== id) });
+        }
+      }
+      for (const p of this.prefabMap.values()) {
+        if (p.systems.some((s) => s.id === id)) {
+          this.prefabMap.set(p.id, { ...p, systems: p.systems.filter((s) => s.id !== id) });
         }
       }
     });
@@ -446,7 +474,7 @@ export class ProjectDoc {
   removeMaterial(id: string): void {
     this.transact(() => {
       this.materialMap.delete(id);
-      for (const e of this.entityMap.values()) {
+      for (const e of this.nodes()) {
         const states = e.get("states") as Y.Map<ValueMap>;
         const mesh = states.get("builtin.Mesh");
         if (mesh?.get("material") === id) mesh.set("material", none());
@@ -480,7 +508,7 @@ export class ProjectDoc {
       for (const m of this.materialMap.values()) {
         if (m.map === id) this.materialMap.set(m.id, { ...m, map: null });
       }
-      for (const e of this.entityMap.values()) {
+      for (const e of this.nodes()) {
         const states = e.get("states") as Y.Map<ValueMap>;
         for (const values of states.values()) {
           for (const [field, value] of values) if (value === id) values.set(field, none());
@@ -532,10 +560,13 @@ export class ProjectDoc {
     parent?: EntityId | null;
     states?: Record<KokoStateId, KokoStateValues>;
     id?: EntityId;
+    /** プレハブのインスタンスにする（ADR 0076） */
+    instanceOf?: PrefabInstanceLink;
   }): EntityId {
     if (this.outputMap.get(init.output)?.kind === "library")
       throw new Error("ライブラリには Entity を作れません");
     const id = init.id ?? newId("ent");
+    assertEntityId(id);
     const registry = this.registry();
     this.transact(() => {
       const e = new Y.Map<unknown>();
@@ -550,12 +581,13 @@ export class ProjectDoc {
         states.set(koko, valueMap(registry.createValues(koko, values)));
       }
       e.set("states", states);
+      if (init.instanceOf) e.set("instanceOf", clone(init.instanceOf));
       this.entityMap.set(id, e);
     });
     return id;
   }
   renameEntity(id: EntityId, name: string): void {
-    this.entityMap.get(id)?.set("name", name);
+    this.node(id)?.set("name", name);
   }
   setParent(id: EntityId, parent: EntityId | null): void {
     this.assertCanParent(id, parent);
@@ -594,9 +626,12 @@ export class ProjectDoc {
     this.transact(() => {
       const ids = this.descendants(id);
       for (const eid of ids) this.entityMap.delete(eid);
+      // インスタンスを消したら、その中（展開した Entity）を指す印も外す（ADR 0076）
+      const gone = (entity: EntityId) =>
+        ids.some((eid) => entity === eid || entity.startsWith(`${eid}/`));
       for (const o of this.outputMap.values()) {
-        if (o.keep.some((k) => ids.includes(k.entity))) {
-          this.outputMap.set(o.id, { ...o, keep: o.keep.filter((k) => !ids.includes(k.entity)) });
+        if (o.keep.some((k) => gone(k.entity))) {
+          this.outputMap.set(o.id, { ...o, keep: o.keep.filter((k) => !gone(k.entity)) });
         }
       }
     });
@@ -617,6 +652,152 @@ export class ProjectDoc {
     values.set(field, encodeValue(value));
   }
 
+  // ---------- プレハブ（ADR 0076） ----------
+  prefabs(): PrefabDef[] {
+    return [...this.prefabMap.values()].map(clone);
+  }
+  prefab(id: string): PrefabDef | undefined {
+    const p = this.prefabMap.get(id);
+    return p ? clone(p) : undefined;
+  }
+  /** 空のプレハブを作る。いちばん上の Entity を一つだけ持つ（インスタンスの Entity が、これに当たる） */
+  addPrefab(name: string): string {
+    const id = newId("pf");
+    const root = newId("ent");
+    this.transact(() => {
+      this.prefabMap.set(id, { id, name, root, systems: [], keep: [] });
+      this.prefabEntityMap.set(
+        root,
+        entityNode({
+          id: root,
+          name,
+          parent: null,
+          prefab: id,
+          order: 0,
+          states: { [TRANSFORM]: this.registry().createValues(TRANSFORM) },
+        }),
+      );
+    });
+    return id;
+  }
+  /** 名前を変える。インスタンスは ID で結び付いているので、切れない */
+  renamePrefab(id: string, name: string): void {
+    const p = this.prefabMap.get(id);
+    const next = name.trim();
+    if (!p || !next || p.name === next) return;
+    this.assertSiblingName(next, id);
+    this.prefabMap.set(id, { ...p, name: next });
+  }
+  /** System の並び・「維持」の印・編集する場所を変える（ID と、いちばん上の Entity は変えられない） */
+  updatePrefab(def: PrefabDef): void {
+    const p = this.prefabMap.get(def.id);
+    if (!p) return;
+    this.prefabMap.set(def.id, { ...clone(def), root: p.root });
+  }
+  /** プレハブを、中の Entity ごと、渡した形に置き直す（なければ作る）。値は、そのまま入れる */
+  restorePrefab(def: PrefabDef, entities: readonly PrefabEntityDef[]): void {
+    this.transact(() => {
+      this.prefabMap.set(def.id, clone(def));
+      const keep = new Set(entities.map((e) => e.id));
+      for (const [eid, e] of [...this.prefabEntityMap.entries()])
+        if (e.get("prefab") === def.id && !keep.has(eid)) this.prefabEntityMap.delete(eid);
+      for (const e of entities)
+        this.prefabEntityMap.set(e.id, entityNode({ ...e, prefab: def.id }));
+    });
+  }
+  /** プレハブと、その中の Entity を消す。インスタンスは残る（問題として出る） */
+  removePrefab(id: string): void {
+    this.transact(() => {
+      this.prefabMap.delete(id);
+      for (const [eid, e] of [...this.prefabEntityMap.entries()])
+        if (e.get("prefab") === id) this.prefabEntityMap.delete(eid);
+    });
+  }
+  /** プレハブの中の Entity（並び順）。prefab を省くと、すべてのプレハブのもの */
+  prefabEntities(prefab?: string): PrefabEntityDef[] {
+    const out: PrefabEntityDef[] = [];
+    for (const e of this.prefabEntityMap.values()) {
+      const def = this.toPrefabEntityDef(e);
+      if (prefab === undefined || def.prefab === prefab) out.push(def);
+    }
+    return out.sort((a, b) => a.order - b.order);
+  }
+  prefabEntity(id: EntityId): PrefabEntityDef | undefined {
+    const e = this.prefabEntityMap.get(id);
+    return e ? this.toPrefabEntityDef(e) : undefined;
+  }
+  /** プレハブの中に Entity を作る。親を省くと、いちばん上の Entity の下に入る */
+  addPrefabEntity(init: {
+    prefab: string;
+    name: string;
+    parent?: EntityId;
+    states?: Record<KokoStateId, KokoStateValues>;
+    id?: EntityId;
+    /** 別のプレハブのインスタンスにする（入れ子） */
+    instanceOf?: PrefabInstanceLink;
+  }): EntityId {
+    const prefab = this.prefabMap.get(init.prefab);
+    if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
+    const parent = init.parent ?? prefab.root;
+    if (this.prefabEntityMap.get(parent)?.get("prefab") !== init.prefab)
+      throw new Error("親は、同じプレハブの中の Entity にしてください");
+    const id = init.id ?? newId("ent");
+    assertEntityId(id);
+    if (this.node(id)) throw new Error(`Entity の ID が重複しています: ${id}`);
+    const registry = this.registry();
+    this.transact(() => {
+      const siblings = this.prefabEntities(init.prefab).filter((s) => s.parent === parent);
+      const states: Record<KokoStateId, KokoStateValues> = {};
+      for (const [koko, values] of Object.entries(init.states ?? {}))
+        states[koko] = registry.createValues(koko, values);
+      this.prefabEntityMap.set(
+        id,
+        entityNode({
+          id,
+          name: init.name,
+          parent,
+          prefab: init.prefab,
+          order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
+          states,
+          ...(init.instanceOf ? { instanceOf: init.instanceOf } : {}),
+        }),
+      );
+    });
+    return id;
+  }
+  /**
+   * プレハブのインスタンスを、アウトプットに置く。場所・向き・大きさは、インスタンスそのものの
+   * Transform に持つ（初めは、プレハブのいちばん上の Entity の向きと大きさを写す）。
+   */
+  addInstance(init: {
+    output: string;
+    prefab: string;
+    name?: string;
+    parent?: EntityId | null;
+    position?: [number, number, number];
+    id?: EntityId;
+  }): EntityId {
+    const prefab = this.prefabMap.get(init.prefab);
+    if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
+    const root = this.prefabEntity(prefab.root);
+    const transform: KokoStateValues = { ...root?.states[TRANSFORM] };
+    if (init.position) transform.position = [...init.position];
+    return this.addEntity({
+      output: init.output,
+      name: init.name ?? prefab.name,
+      parent: init.parent ?? null,
+      states: { [TRANSFORM]: transform },
+      instanceOf: { prefab: init.prefab },
+      ...(init.id ? { id: init.id } : {}),
+    });
+  }
+  /** あるプレハブのインスタンス（アウトプットの中と、ほかのプレハブの中） */
+  instancesOf(prefab: string): (EntityDef | PrefabEntityDef)[] {
+    return [...this.entities(), ...this.prefabEntities()].filter(
+      (e) => e.instanceOf?.prefab === prefab,
+    );
+  }
+
   // ---------- 保存した形に戻す ----------
 
   /** Entity を、渡した形に丸ごと置き直す（なければ作る）。値は定義に合わせ直さず、そのまま入れる。 */
@@ -632,6 +813,8 @@ export class ProjectDoc {
       const states = new Y.Map<ValueMap>();
       for (const [k, v] of Object.entries(def.states)) states.set(k, valueMap(v));
       e.set("states", states);
+      if (def.instanceOf) e.set("instanceOf", clone(def.instanceOf));
+      else e.delete("instanceOf");
       this.makeRoomAfter(def.id);
     });
   }
@@ -700,6 +883,7 @@ export class ProjectDoc {
       ...this.typeDefs().map((t) => t.id),
       ...this.materials().map((m) => m.id),
       ...this.assets().map((a) => a.id),
+      ...this.prefabs().map((p) => p.id),
     ]);
     const folders = this.folders();
     const folderIds = new Set(folders.map((f) => f.id));
@@ -726,6 +910,8 @@ export class ProjectDoc {
       folders,
       placement,
       dependencies: this.dependencies(),
+      prefabs: this.prefabs(),
+      prefabEntities: this.prefabEntities(),
     };
   }
 
@@ -759,6 +945,10 @@ export class ProjectDoc {
       for (const o of snap.outputs)
         if (!this.outputMap.has(o.id)) this.outputMap.set(o.id, clone(o));
       for (const e of snap.entities) if (!this.entityMap.has(e.id)) this.restoreEntity(e);
+      for (const p of snap.prefabs ?? [])
+        if (!this.prefabMap.has(p.id)) this.prefabMap.set(p.id, clone(p));
+      for (const e of snap.prefabEntities ?? [])
+        if (!this.prefabEntityMap.has(e.id)) this.prefabEntityMap.set(e.id, entityNode(e));
       for (const [r, f] of Object.entries(snap.placement ?? {}))
         if (!this.placementMap.has(r)) this.placementMap.set(r, f);
       for (const d of snap.dependencies ?? [])
@@ -779,6 +969,8 @@ export class ProjectDoc {
         this.assetMap,
         this.outputMap,
         this.entityMap,
+        this.prefabMap,
+        this.prefabEntityMap,
         this.folderMap,
         this.placementMap,
         this.dependencyMap,
@@ -806,18 +998,9 @@ export class ProjectDoc {
       for (const m of snap.materials) this.materialMap.set(m.id, clone(m));
       for (const a of snap.assets ?? []) this.assetMap.set(a.id, clone(a));
       for (const o of snap.outputs) this.outputMap.set(o.id, clone(o));
-      for (const e of snap.entities) {
-        const map = new Y.Map<unknown>();
-        map.set("id", e.id);
-        map.set("name", e.name);
-        map.set("parent", e.parent);
-        map.set("output", e.output);
-        map.set("order", e.order);
-        const states = new Y.Map<ValueMap>();
-        for (const [k, v] of Object.entries(e.states)) states.set(k, valueMap(v));
-        map.set("states", states);
-        this.entityMap.set(e.id, map);
-      }
+      for (const e of snap.entities) this.entityMap.set(e.id, entityNode(e));
+      for (const p of snap.prefabs ?? []) this.prefabMap.set(p.id, clone(p));
+      for (const e of snap.prefabEntities ?? []) this.prefabEntityMap.set(e.id, entityNode(e));
     });
   }
 
@@ -876,6 +1059,7 @@ export class ProjectDoc {
       ...this.typeMap.values(),
       ...this.materialMap.values(),
       ...this.assetMap.values(),
+      ...this.prefabMap.values(),
     ];
     for (const r of resources) if (this.folderOf(r.id) === parent) out.push(r);
     return out;
@@ -1017,20 +1201,50 @@ export class ProjectDoc {
   }
 
   private statesOf(id: EntityId): Y.Map<ValueMap> {
-    const e = this.entityMap.get(id);
+    const e = this.node(id);
     if (!e) throw new Error(`Unknown entity: ${id}`);
     return e.get("states") as Y.Map<ValueMap>;
   }
 
   private toEntityDef(e: Y.Map<unknown>): EntityDef {
-    const states = e.get("states") as Y.Map<ValueMap>;
-    return {
-      id: e.get("id") as string,
-      name: e.get("name") as string,
-      parent: (e.get("parent") as string | null) ?? null,
-      output: e.get("output") as string,
-      order: (e.get("order") as number) ?? 0,
-      states: decodeStates(states.toJSON() as Record<KokoStateId, StoredValues>),
-    };
+    return { ...readEntityBase(e), output: e.get("output") as string };
   }
+
+  private toPrefabEntityDef(e: Y.Map<unknown>): PrefabEntityDef {
+    return { ...readEntityBase(e), prefab: e.get("prefab") as string };
+  }
+}
+
+/** Entity の ID に「/」は使えない（展開した Entity の ID の区切りに使う。ADR 0076） */
+function assertEntityId(id: EntityId): void {
+  if (id === "" || id.includes("/")) throw new Error(`Entity の ID に使えない書き方です: ${id}`);
+}
+
+/** Entity を入れる Y.Map を作る（値は定義に合わせ直さず、そのまま入れる） */
+function entityNode(def: EntityDef | PrefabEntityDef): Y.Map<unknown> {
+  const map = new Y.Map<unknown>();
+  map.set("id", def.id);
+  map.set("name", def.name);
+  map.set("parent", def.parent ?? null);
+  if ("output" in def) map.set("output", def.output);
+  else map.set("prefab", def.prefab);
+  map.set("order", def.order);
+  const states = new Y.Map<ValueMap>();
+  for (const [k, v] of Object.entries(def.states)) states.set(k, valueMap(v));
+  map.set("states", states);
+  if (def.instanceOf) map.set("instanceOf", clone(def.instanceOf));
+  return map;
+}
+
+function readEntityBase(e: Y.Map<unknown>): EntityBase {
+  const states = e.get("states") as Y.Map<ValueMap>;
+  const instanceOf = e.get("instanceOf") as PrefabInstanceLink | undefined;
+  return {
+    id: e.get("id") as string,
+    name: e.get("name") as string,
+    parent: (e.get("parent") as string | null) ?? null,
+    order: (e.get("order") as number) ?? 0,
+    states: decodeStates(states.toJSON() as Record<KokoStateId, StoredValues>),
+    ...(instanceOf ? { instanceOf: clone(instanceOf) } : {}),
+  };
 }

@@ -34,6 +34,8 @@ export function planRevert(
       return codeRevert(project, head, id, part);
     case "material":
       return materialRevert(project, head, id, part);
+    case "prefab":
+      return part ? null : prefabRevert(project, head, id);
     case "model":
     case "image":
     case "audio":
@@ -43,6 +45,14 @@ export function planRevert(
     default:
       return null;
   }
+}
+
+/** プレハブを、中の Entity ごと、保存した形に戻す（保存になければ消す。ADR 0076） */
+function prefabRevert(project: ProjectDoc, head: ProjectSnapshot, id: string): (() => void) | null {
+  const saved = head.prefabs?.find((p) => p.id === id);
+  if (!saved) return project.prefab(id) ? () => project.removePrefab(id) : null;
+  const entities = (head.prefabEntities ?? []).filter((e) => e.prefab === id);
+  return () => project.restorePrefab(saved, entities);
 }
 
 /** 差分のうち、part に当たる行だけにする（Inspector の丸に出す分）。part がなければそのまま。 */

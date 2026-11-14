@@ -7,7 +7,14 @@ import type { AssetKind, ProjectSnapshot } from "./schema";
  */
 
 /** 論理パスを持つリソースの種類 */
-export type PathKind = "folder" | "kokostate" | "system" | "typedef" | "material" | "asset";
+export type PathKind =
+  | "folder"
+  | "kokostate"
+  | "system"
+  | "typedef"
+  | "material"
+  | "asset"
+  | "prefab";
 
 /** Built-in の KokoState を指すパスの頭 */
 export const BUILTIN_PREFIX = "@builtin/";
@@ -17,6 +24,7 @@ const KIND_EXT: Record<Exclude<PathKind, "folder" | "asset">, string> = {
   system: ".system",
   typedef: ".types",
   material: ".material",
+  prefab: ".prefab",
 };
 
 const ASSET_EXT: Record<AssetKind, string> = {
@@ -135,6 +143,8 @@ export class ResourcePathIndex {
       add({ id: m.id, kind: "material", name: m.name, parent: placed(m.id), ext: ".material" });
     for (const a of snap.assets ?? [])
       add({ id: a.id, kind: "asset", name: a.name, parent: placed(a.id), ext: ASSET_EXT[a.kind] });
+    for (const p of snap.prefabs ?? [])
+      add({ id: p.id, kind: "prefab", name: p.name, parent: placed(p.id), ext: ".prefab" });
     this.findCycles(folders.map((f) => f.id));
   }
 

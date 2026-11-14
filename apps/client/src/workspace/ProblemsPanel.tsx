@@ -105,7 +105,11 @@ export function ProblemsPanel() {
   const toggle = <T,>(list: readonly T[], values: readonly T[], on: boolean): T[] =>
     on ? [...new Set([...list, ...values])] : list.filter((v) => !values.includes(v));
   /** スクリプトはコードのその行へ。定義は詳細パネル、Entity は Inspector */
-  const openDef = (el: EventTarget | null, kind: "koko" | "system" | "material", id: string) => {
+  const openDef = (
+    el: EventTarget | null,
+    kind: "koko" | "system" | "material" | "prefab",
+    id: string,
+  ) => {
     const mode =
       el instanceof Element && el.closest("[data-mode]")?.getAttribute("data-mode") === "3d"
         ? "3d"
@@ -141,7 +145,8 @@ export function ProblemsPanel() {
         select({ kind: "output", id });
       };
     if (kind === "kokostate") return (e) => openDef(e.currentTarget, "koko", id);
-    if (kind === "system" || kind === "material") return (e) => openDef(e.currentTarget, kind, id);
+    if (kind === "system" || kind === "material" || kind === "prefab")
+      return (e) => openDef(e.currentTarget, kind, id);
     return null;
   };
   if (items.length === 0)
@@ -309,7 +314,8 @@ export function ProblemsPanel() {
                             ? "コードを開く"
                             : d.subject.kind === "kokostate" ||
                                 d.subject.kind === "system" ||
-                                d.subject.kind === "material"
+                                d.subject.kind === "material" ||
+                                d.subject.kind === "prefab"
                               ? "詳細パネルで開く"
                               : (d.detail ?? "Inspector で選ぶ")
                         }

@@ -18,6 +18,7 @@
     "e2e": "playwright test",
     "smoke": "node scripts/smoke.mjs",
     "bench:sim": "pnpm --filter @tukurium/runtime bench",
+    "bench:prefab": "pnpm --filter @tukurium/runtime bench:prefab",
     "bench:server": "pnpm --filter @tukurium/server bench"
   },
   "devDependencies": {

@@ -20,6 +20,7 @@ import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
 import { ARRIVAL_OFFSET, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
+import { expandedSnapshot } from "./hooks";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
@@ -268,7 +269,11 @@ export class WorkspaceController {
       if (key !== this.editKey || !this.editWorld || this.editDoc !== ws.project) {
         this.editKey = key;
         this.editDoc = ws.project;
-        this.editWorld = buildWorld(ws.project.snapshot(), ws.outputId).world;
+        // プレハブのインスタンスは、中身に展開して見せる（ADR 0076。画面のほかの所と同じ展開を使う）
+        this.editWorld = buildWorld(
+          expandedSnapshot(ws.project, ws.rev, ws.fieldSchemas),
+          ws.outputId,
+        ).world;
       }
       this.view.sync(this.editWorld, { materials, holdCamera: null });
       this.publishPreview(dt, anchor, anchorKey);

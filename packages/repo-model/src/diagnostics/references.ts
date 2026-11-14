@@ -8,6 +8,7 @@ import {
 } from "@tukurium/eks";
 import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
+import { expandPrefabs, prefabProblems } from "../prefab";
 import { ResourcePathIndex } from "../resourcePath";
 import type { ProjectSnapshot } from "../schema";
 import { compileSystem } from "../systemCompiler";
@@ -42,7 +43,11 @@ export function checkProjectReferences(
   for (const a of snap.assets ?? []) resources.set(a.id, a.kind);
   const defs = new Map<string, KokoStateDef>();
   for (const k of [...BUILTIN_KOKOSTATES, ...snap.kokostates]) defs.set(k.id, k);
-  const entities = new Map(snap.entities.map((e) => [e.id, e]));
+  // 指す先の Entity は、プレハブを展開した並びで確かめる（インスタンスの中の Entity も指せる。ADR 0076）。
+  // 問題を出す相手は、制作データにある Entity（展開で作ったものは、利用者が直せない）
+  const entities = new Map(
+    expandPrefabs(snap, schemas ? { schemas } : {}).entities.map((e) => [e.id, e]),
+  );
   const outputs = new Map(snap.outputs.map((o) => [o.id, o]));
   const systems = new Set(snap.systems.map((s) => s.id));
 
@@ -95,6 +100,36 @@ export function checkProjectReferences(
   for (const m of snap.materials)
     if (m.map)
       checkResource({ kind: "material", id: m.id }, ["map"], m.map, "image", `「${m.name}」の map`);
+
+  // プレハブのインスタンス（ADR 0076）：プレハブがない・プレハブが自分を含んでいる
+  const prefabName = (id: string) => snap.prefabs?.find((p) => p.id === id)?.name ?? id;
+  for (const p of prefabProblems(snap)) {
+    const subject: ResourceRef =
+      p.owner.kind === "output" ? { kind: "entity", id: p.entity } : p.owner;
+    const name =
+      p.owner.kind === "output"
+        ? (snap.entities.find((e) => e.id === p.entity)?.name ?? p.entity)
+        : (snap.prefabEntities?.find((e) => e.id === p.entity)?.name ?? p.entity);
+    if (p.kind === "missing")
+      push({
+        code: "missing-prefab",
+        severity: "error",
+        subject,
+        location: { kind: "property", path: ["instanceOf", p.entity] },
+        related: [],
+        message: `「${name}」のプレハブがありません（インスタンスは、中身のない Entity として残っています）`,
+        detail: `ID: ${p.prefab}`,
+      });
+    else
+      push({
+        code: "prefab-cycle",
+        severity: "error",
+        subject,
+        location: { kind: "property", path: ["instanceOf", p.entity] },
+        related: p.path.filter((id) => id !== p.owner.id).map((id) => ({ kind: "prefab", id })),
+        message: `プレハブ「${prefabName(p.owner.id)}」の中の「${name}」が、自分を含むプレハブ「${prefabName(p.prefab)}」のインスタンスになっています（展開しません）`,
+      });
+  }
 
   for (const e of snap.entities) {
     const subject: ResourceRef = { kind: "entity", id: e.id };

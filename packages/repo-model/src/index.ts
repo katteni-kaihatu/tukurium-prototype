@@ -9,6 +9,7 @@ export * from "./marubatsuSample";
 export * from "./official";
 export * from "./packageDependency";
 export * from "./packageManifest";
+export * from "./prefab";
 export * from "./projectDoc";
 export * from "./resourcePath";
 export * from "./sampleModels";

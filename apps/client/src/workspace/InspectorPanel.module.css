@@ -138,6 +138,12 @@
   cursor: grab;
 }
 
+/* プレハブから来た Entity（インスタンスの中）。いまは変えられないので、控えめに出す */
+.node[data-from-prefab="true"] .nodeName {
+  opacity: 0.62;
+  font-style: italic;
+}
+
 .node[data-current="true"] .nodeName {
   color: var(--c-brand);
   font-weight: 700;

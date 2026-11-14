@@ -20,7 +20,7 @@
 | 型・単体テスト | `pnpm typecheck` / `pnpm test` |
 | ブラウザでの通しテスト（背骨の 4 本、2 分ほど。開発サーバーを自動で起動） | `pnpm e2e` |
 | 本番ビルドの動作確認 | `pnpm build` のあと `AUTH_DEV_LOGIN=1 CLIENT_DIR=apps/client/dist node apps/server/dist/main.js` を起動して `pnpm smoke http://localhost:8787`（開発用ログインで入る） |
-| 計測 | `pnpm bench:sim` / `pnpm bench:server <ws URL>` |
+| 計測 | `pnpm bench:sim` / `pnpm bench:prefab` / `pnpm bench:server <ws URL>` |
 
 ## テストの方針（プロトタイプの間）
 

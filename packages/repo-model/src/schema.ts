@@ -86,14 +86,59 @@ export interface AssetDef {
   contentType: string;
 }
 
-export interface EntityDef {
+/** プレハブを編集する場所（ADR 0076）。here：その場、isolated：離れた空間 */
+export type PrefabEditPlace = "here" | "isolated";
+
+/**
+ * プレハブ（ADR 0076）。Entity・KokoState・System のまとまりを、部品として登録したリソース。
+ * 中の Entity は、アウトプットの Entity とは別に持つ（`ProjectSnapshot.prefabEntities`）。
+ * アウトプットの中に、インスタンスとして置いて使う。プレハブだけをセッションに出すことはない。
+ */
+export interface PrefabDef {
+  id: string;
+  name: string;
+  /**
+   * いちばん上の Entity（プレハブの中の Entity の ID）。プレハブの中の Entity は、すべてこの下に入る。
+   * インスタンスの Entity が、この Entity に当たる。
+   */
+  root: EntityId;
+  /** プレハブの System。インスタンスを置いたアウトプットで動く。並び順が実行順 */
+  systems: OutputSystem[];
+  /** プレハブの中で付けた「維持」の印（Entity は、プレハブの中の ID） */
+  keep: KeepMark[];
+  /** 編集する場所。ないときは「その場」 */
+  editIn?: PrefabEditPlace;
+}
+
+/** インスタンスが持つ、プレハブとのつながり（ADR 0076） */
+export interface PrefabInstanceLink {
+  /** プレハブのリソース ID。名前を変えても動かしても切れない */
+  prefab: string;
+}
+
+/** アウトプットの Entity と、プレハブの中の Entity に共通の形 */
+export interface EntityBase {
   id: EntityId;
   name: string;
   parent: EntityId | null;
-  output: string;
   /** 兄弟の中での並び順 */
   order: number;
   states: Record<KokoStateId, KokoStateValues>;
+  /**
+   * プレハブのインスタンスなら、そのプレハブ（ADR 0076）。使う所の手前で、プレハブの中身に展開する
+   * （`expandPrefabs`）。場所・向き・大きさ（Transform）は、インスタンスそのものが持つ。
+   */
+  instanceOf?: PrefabInstanceLink;
+}
+
+export interface EntityDef extends EntityBase {
+  output: string;
+}
+
+/** プレハブの中の Entity。アウトプットではなく、プレハブに属する */
+export interface PrefabEntityDef extends EntityBase {
+  /** 属するプレハブの ID */
+  prefab: string;
 }
 
 /** リポジトリ（制作データ）の中身をそのまま JSON にしたもの。 */
@@ -121,10 +166,14 @@ export interface ProjectSnapshot {
   provenance?: Provenance[];
   /** Resources のフォルダ（古いデータにはない） */
   folders?: FolderDef[];
-  /** リソース（KokoState・System・マテリアル・素材）の ID → 入っているフォルダの ID。ないものはいちばん上 */
+  /** リソース（KokoState・System・マテリアル・素材・プレハブ）の ID → 入っているフォルダの ID。ないものはいちばん上 */
   placement?: Record<string, string>;
   /** 使うライブラリ（別名の順。古いデータにはない。ADR 0015） */
   dependencies?: PackageDependency[];
+  /** プレハブ（古いデータにはない。ADR 0076） */
+  prefabs?: PrefabDef[];
+  /** プレハブの中の Entity（古いデータにはない。ADR 0076） */
+  prefabEntities?: PrefabEntityDef[];
 }
 
 /**
