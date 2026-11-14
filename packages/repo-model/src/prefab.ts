@@ -402,7 +402,8 @@ class Expander {
     return out;
   }
 
-  run(): ExpandedSnapshot {
+  /** stack は、いま開いている途中のプレハブ（プレハブを編集用に開くときの、そのプレハブ） */
+  run(stack: readonly string[] = []): ExpandedSnapshot {
     const snap = this.snap;
     if (!snap.entities.some((e) => e.instanceOf)) return snap;
 
@@ -412,9 +413,11 @@ class Expander {
     // 取っておく入れ物を渡されたときだけ、インスタンスごとの結果も取っておく
     const stamps = this.options.cache ? new Map<EntityId, Stamp>() : null;
     for (const e of snap.entities) {
-      const template = e.instanceOf
-        ? this.template(e.instanceOf.prefab, [], new Map()).template
-        : null;
+      // 開いている途中のプレハブを含むインスタンス（輪）は、展開しない
+      const template =
+        e.instanceOf && !stack.includes(e.instanceOf.prefab)
+          ? this.template(e.instanceOf.prefab, stack, new Map()).template
+          : null;
       if (!e.instanceOf || !template) {
         // プレハブがないインスタンスは、そのまま残す（問題として出す）
         entities.push(e);
@@ -501,6 +504,49 @@ export function expandPrefabs(
   options: ExpandOptions = {},
 ): ExpandedSnapshot {
   return new Expander(snap, options).run();
+}
+
+/**
+ * プレハブを、編集用の Entity の並びにする（ADR 0076）。プレハブを開いて直すときの
+ * Hierarchy・Inspector・空間の表示が読む。アウトプットを展開したものと同じ形なので、`buildWorld` にそのまま渡せる。
+ *
+ * - プレハブの中の Entity は、そのままの ID。`output` には、プレハブの ID を入れる
+ * - いちばん上の Entity だけが親を持たない。親が見つからない Entity は、いちばん上の Entity の下に付ける
+ * - 中に置いた別のプレハブのインスタンス（入れ子）は、「その Entity の ID / 中の ID」で展開する（origin が付く）。
+ *   このプレハブを含むもの（輪）は、展開しない
+ * - `outputs` は、このプレハブを表す一つだけ（ID はプレハブの ID。System と「維持」の印は、入れ子の分を足し合わせたもの）
+ *
+ * プレハブか、そのいちばん上の Entity がなければ null。取っておく入れ物（cache）は、
+ * アウトプットの展開（`expandPrefabs`）のものとは分ける（インスタンスごとの結果が、互いを捨て合うため）。
+ */
+export function expandPrefabForEdit(
+  snap: ProjectSnapshot,
+  prefabId: string,
+  options: ExpandOptions = {},
+): ExpandedSnapshot | null {
+  const prefab = snap.prefabs?.find((p) => p.id === prefabId);
+  const own = (snap.prefabEntities ?? []).filter((e) => e.prefab === prefabId);
+  if (!prefab || !own.some((e) => e.id === prefab.root)) return null;
+  const ids = new Set(own.map((e) => e.id));
+  const entities: EntityDef[] = own.map(({ prefab: _prefab, ...e }) => {
+    if (e.id !== prefab.root)
+      return {
+        ...e,
+        parent: e.parent !== null && ids.has(e.parent) ? e.parent : prefab.root,
+        output: prefabId,
+      };
+    // いちばん上の Entity が持つインスタンスの印は、使わない（展開でも数えない）
+    const { instanceOf: _link, ...root } = e;
+    return { ...root, parent: null, output: prefabId };
+  });
+  const output: OutputDef = {
+    id: prefabId,
+    name: prefab.name,
+    kind: "item",
+    systems: prefab.systems,
+    keep: prefab.keep,
+  };
+  return new Expander({ ...snap, entities, outputs: [output] }, options).run([prefabId]);
 }
 
 export type PrefabProblem =

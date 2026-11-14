@@ -1,5 +1,5 @@
 import { KokoStateRegistry, World } from "@tukurium/eks";
-import type { MaterialDef, ProjectDoc } from "@tukurium/repo-model";
+import type { MaterialDef, PrefabDef, ProjectDoc } from "@tukurium/repo-model";
 import {
   buildWorld,
   type EffectEvent,
@@ -19,8 +19,9 @@ import { openRing, provideRingItems } from "../session/ringMenu";
 import type { SessionEngine } from "../session/SessionEngine";
 import { useSessionWorld } from "../session/sessionWorld";
 import { waitUntilIdle } from "../session/waitUntilIdle";
-import { ARRIVAL_OFFSET, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
-import { expandedSnapshot } from "./hooks";
+import { ARRIVAL_OFFSET, prefabAnchor, type WorkspaceAnchor, workspaceAnchor } from "./anchor";
+import { expandedSnapshot, prefabEditSnapshot } from "./hooks";
+import { type Box, prefabEditOrigin, type Vec3 } from "./prefabPlace";
 import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
 
 const STEP = 1 / 60;
@@ -46,6 +47,25 @@ export function equipsSomething(world: World, player: string): boolean {
 
 /** 編集中の見た目をほかの人へ送る間隔の下限 */
 const PREVIEW_SEC = 0.4;
+/** 開いたプレハブの置き場所を決めるのに、素材の読み込みを待つ長さの上限（秒） */
+const PREFAB_PLACE_WAIT_SEC = 1.5;
+
+/** Three.js の箱を、origin から見た箱にする（空なら null） */
+const toBox = (box: THREE.Box3 | null, origin: readonly number[]): Box | null =>
+  box && !box.isEmpty()
+    ? {
+        min: [
+          box.min.x - (origin[0] ?? 0),
+          box.min.y - (origin[1] ?? 0),
+          box.min.z - (origin[2] ?? 0),
+        ],
+        max: [
+          box.max.x - (origin[0] ?? 0),
+          box.max.y - (origin[1] ?? 0),
+          box.max.z - (origin[2] ?? 0),
+        ],
+      }
+    : null;
 
 /** その場所の手前（+Z 側）に、そこを向いて立つ */
 export function enterSpace(engine: SessionEngine, at: [number, number, number]): void {
@@ -58,6 +78,8 @@ const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF:
 /**
  * ワークスペースを 3D 空間に映す。
  * - Edit：制作データから組み立てた World を表示。クロスヘアのクリックで Entity を選ぶ。
+ *   プレハブを開いている間は、その中身も出す（ADR 0076 の 9）。「その場」ではアウトプットの横か手前に、
+ *   「離れた空間」では独立した空間に出し、選ぶのも境界も、プレハブの中身が相手になる。
  * - Play：ホストは Simulation を固定ステップで進めて状態を配り、ほかの人は届いた状態を表示する。
  *   クリックやキーは入力としてホストへ渡す。
  * 編集空間はアウトプットの物体全体を囲む境界で示す（要件 §6「編集対象の表示」）。
@@ -70,6 +92,14 @@ export class WorkspaceController {
   private editWorld: World | null = null;
   private editKey = "";
   private editDoc: ProjectDoc | null = null;
+  /** 開いているプレハブの中身（アウトプットとは別に映す） */
+  private readonly prefabView = new EntityView();
+  private prefabWorld: World | null = null;
+  private prefabKey = "";
+  private prefabDef: PrefabDef | null = null;
+  private prefabDefKey = "";
+  /** 開いたプレハブの置き場所（置く先の空間の原点から見た位置）。開いたときに一度決め、開いている間は動かさない */
+  private prefabPlace: { key: string; origin: Vec3 | null; waited: number } | null = null;
   private materialsDoc: ProjectDoc | null = null;
   private frameTimer = 0;
   private materials: MaterialDef[] = [];
@@ -84,18 +114,28 @@ export class WorkspaceController {
   private readonly disposers: (() => void)[] = [];
 
   constructor(private readonly engine: SessionEngine) {
-    engine.scene.add(this.view.root);
+    engine.scene.add(this.view.root, this.prefabView.root);
+    // 開いているプレハブの中身は、編集の手伝いなので、サムネイルに写さない（ADR 0046）
+    this.prefabView.root.userData.noShot = true;
+    this.prefabView.root.visible = false;
     this.disposers.push(
       engine.solids.bind("workspace", () => {
         const ws = useWorkspace.getState();
         if (!ws.project || !ws.ready) return null;
-        const origin = (ws.anchor ?? this.anchorOf()).position;
+        // アウトプットの置き場所（プレハブを離れた空間で開いていても、アウトプットは元の所にある）
+        const origin = this.anchorOf().position;
         if (ws.mode !== "edit") {
           const world = ws.runtime()?.world ?? ws.remote?.world;
           return world ? { world, origin } : null;
         }
         return this.editWorld ? { world: this.editWorld, origin } : null;
       }),
+      // 開いているプレハブの中身にも、ぶつかる
+      engine.solids.bind("workspace-prefab", () =>
+        this.prefabWorld && this.prefabView.root.visible
+          ? { world: this.prefabWorld, origin: this.prefabView.root.position.toArray() }
+          : null,
+      ),
     );
     this.bounds = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
@@ -178,6 +218,7 @@ export class WorkspaceController {
     this.endTurn();
     for (const d of this.disposers) d();
     this.view.dispose();
+    this.prefabView.dispose();
     this.bounds.removeFromParent();
     this.bounds.geometry.dispose();
     this.selectionBox.removeFromParent();
@@ -185,21 +226,29 @@ export class WorkspaceController {
 
   private update(dt: number): void {
     const ws = useWorkspace.getState();
-    // ワークスペースの編集空間の位置（重ならないように横にずらす。非公開・ワールドは独立した空間）
-    const anchor = this.anchorOf();
-    this.view.root.position.set(...anchor.position);
+    // アウトプットの編集空間の位置（重ならないように横にずらす。非公開・ワールドは独立した空間）
+    const outputAnchor = this.anchorOf();
+    this.view.root.position.set(...outputAnchor.position);
+    // 自分がいる編集空間。プレハブを「離れた空間」で開いている間は、そのための独立した空間
+    const prefab = this.openPrefab();
+    const anchor =
+      prefab?.editIn === "isolated"
+        ? prefabAnchor(useApp.getState().session?.workspaces ?? [], ws.workspaceId ?? "")
+        : outputAnchor;
     const anchorKey = JSON.stringify(anchor);
     if (anchorKey !== this.anchorKey) {
       this.anchorKey = anchorKey;
       const prev = useWorkspace.getState().anchor;
       const next = ws.workspaceId ? anchor : null;
       useWorkspace.setState({ anchor: next });
-      // 独立した空間に切り替わったら移動し、終わったらセッションへ戻す
-      if (next?.isolated && !prev?.isolated) enterSpace(this.engine, next.position);
+      // 独立した空間に切り替わったら（別の独立した空間へ移るときも）移動し、終わったらセッションへ戻す
+      const moved = prev?.position.join() !== next?.position.join();
+      if (next?.isolated && (!prev?.isolated || moved)) enterSpace(this.engine, next.position);
       else if (!next?.isolated && prev?.isolated) enterSpace(this.engine, prev.slot);
     }
     if (!ws.project || !ws.ready) {
       this.view.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
+      this.syncPrefab(null, [], outputAnchor, anchor, dt);
       this.bounds.visible = false;
       this.selectionBox.visible = false;
       return;
@@ -276,11 +325,19 @@ export class WorkspaceController {
         ).world;
       }
       this.view.sync(this.editWorld, { materials, holdCamera: null });
-      this.publishPreview(dt, anchor, anchorKey);
+      // ほかの人へ送る見た目は、アウトプットのもの（プレハブを開いていても変えない）
+      this.publishPreview(
+        dt,
+        outputAnchor,
+        anchor === outputAnchor ? anchorKey : JSON.stringify(outputAnchor),
+      );
     }
+    this.syncPrefab(prefab, materials, outputAnchor, anchor, dt);
+    // 選ぶ相手と境界は、いま編集しているもの（開いているプレハブか、アウトプット）
+    const target = prefab ? this.prefabView : this.view;
 
     // 編集空間の境界（Edit のときだけ）
-    const box = ws.mode === "edit" ? this.view.bounds() : null;
+    const box = ws.mode === "edit" && target.root.visible ? target.bounds() : null;
     this.bounds.visible = box !== null;
     if (box) {
       const size = box.getSize(new THREE.Vector3()).addScalar(0.3);
@@ -289,7 +346,7 @@ export class WorkspaceController {
     }
 
     // 選択中の Entity の枠
-    const sel = ws.selection?.kind === "entity" ? this.view.objectOf(ws.selection.id) : undefined;
+    const sel = ws.selection?.kind === "entity" ? target.objectOf(ws.selection.id) : undefined;
     this.selectionBox.visible = Boolean(sel) && ws.mode === "edit";
     if (sel && ws.mode === "edit") {
       this.selectionBox.setFromObject(sel);
@@ -353,6 +410,109 @@ export class WorkspaceController {
     } finally {
       target.dispose();
     }
+  }
+
+  /** 開いているプレハブ（Edit のときだけ。制作データが変わるまで、同じものを返す） */
+  private openPrefab(): PrefabDef | null {
+    const ws = useWorkspace.getState();
+    const open = ws.mode === "edit" && ws.ready ? ws.editingPrefab : null;
+    if (!open || !ws.project) {
+      this.prefabDefKey = "";
+      this.prefabDef = null;
+      return null;
+    }
+    const key = `${ws.workspaceId}:${ws.rev}:${open.id}`;
+    if (key !== this.prefabDefKey) {
+      this.prefabDefKey = key;
+      this.prefabDef = ws.project.prefab(open.id) ?? null;
+    }
+    return this.prefabDef;
+  }
+
+  /**
+   * 開いているプレハブの中身を映す（ADR 0076 の 9）。prefab が null なら、片付ける。
+   * 置き場所は、開いたときに一度決める（直している間に、中身が動かないように）。
+   * - その場：アウトプットの編集空間の中。開いた元のインスタンスの横か、区画に出ているものの手前
+   * - 離れた空間：そのための独立した空間の中
+   */
+  private syncPrefab(
+    prefab: PrefabDef | null,
+    materials: MaterialDef[],
+    outputAnchor: WorkspaceAnchor,
+    anchor: WorkspaceAnchor,
+    dt: number,
+  ): void {
+    const ws = useWorkspace.getState();
+    const root = this.prefabView.root;
+    if (!prefab || !ws.project) {
+      if (this.prefabWorld || this.prefabPlace) {
+        this.prefabView.sync(EMPTY_WORLD, { materials: [], holdCamera: null });
+        this.prefabWorld = null;
+        this.prefabKey = "";
+        this.prefabPlace = null;
+      }
+      root.visible = false;
+      return;
+    }
+    const key = `${ws.workspaceId}:${ws.rev}:${prefab.id}`;
+    if (key !== this.prefabKey || !this.prefabWorld) {
+      this.prefabKey = key;
+      const snapshot = prefabEditSnapshot(ws.project, prefab.id, ws.rev, ws.fieldSchemas);
+      this.prefabWorld = snapshot ? buildWorld(snapshot, prefab.id).world : EMPTY_WORLD;
+    }
+    this.prefabView.sync(this.prefabWorld, { materials, holdCamera: null });
+
+    const here = prefab.editIn !== "isolated";
+    const from = ws.editingPrefab?.from ?? null;
+    const placeKey = `${ws.workspaceId}:${prefab.id}:${from}:${here}`;
+    if (this.prefabPlace?.key !== placeKey)
+      this.prefabPlace = { key: placeKey, origin: null, waited: 0 };
+    const place = this.prefabPlace;
+    const base = here ? outputAnchor.position : anchor.position;
+    if (!place.origin) {
+      // 形が決まってから置く（素材を読み込んでいる間は、少し待つ）
+      place.waited += dt;
+      const loading = this.prefabView.pending + this.view.pending > 0;
+      if (loading && place.waited < PREFAB_PLACE_WAIT_SEC) {
+        root.visible = false;
+        return;
+      }
+      // 中身の広がりは、プレハブの原点から見た箱にする
+      root.position.set(0, 0, 0);
+      root.updateMatrixWorld(true);
+      const content = toBox(this.prefabView.bounds(), [0, 0, 0]);
+      if (!here) {
+        place.origin = prefabEditOrigin({ content, instance: null, output: null });
+      } else {
+        this.view.root.updateMatrixWorld(true);
+        const at = outputAnchor.position;
+        const boxOf = (o: THREE.Object3D) => toBox(new THREE.Box3().setFromObject(o), at);
+        const fromObject = from ? this.view.objectOf(from) : undefined;
+        // インスタンスに形がなければ、その場所（点）をよける
+        const point = fromObject?.getWorldPosition(new THREE.Vector3());
+        const instance = fromObject
+          ? (boxOf(fromObject) ??
+            toBox(point ? new THREE.Box3(point, point.clone().addScalar(0.001)) : null, at))
+          : null;
+        // よけるのは、アウトプットのいちばん上に並んでいる、ほかの物
+        const obstacles = this.view.root.children
+          .filter((o) => o !== fromObject)
+          .map(boxOf)
+          .filter((b): b is Box => b !== null);
+        place.origin = prefabEditOrigin({
+          content,
+          instance,
+          output: toBox(this.view.bounds(), at),
+          obstacles,
+        });
+      }
+    }
+    root.position.set(
+      base[0] + place.origin[0],
+      base[1] + place.origin[1],
+      base[2] + place.origin[2],
+    );
+    root.visible = true;
   }
 
   private anchorOf(): WorkspaceAnchor {
@@ -499,7 +659,15 @@ export class WorkspaceController {
       distance,
     );
     const r = (n: number) => Math.round(n * 100) / 100;
-    return [r(p.x), r(Math.max(p.y, 0.5)), r(p.z)];
+    p.y = Math.max(p.y, 0.5);
+    // プレハブを開いているときは、そのいちばん上の Entity から見た位置にする（中の Entity は、その下に入る）
+    const prefab = this.openPrefab();
+    const frame = prefab ? this.prefabView.objectOf(prefab.root) : undefined;
+    if (frame && this.prefabView.root.visible) {
+      frame.updateWorldMatrix(true, false);
+      frame.worldToLocal(this.view.root.localToWorld(p));
+    }
+    return [r(p.x), r(p.y), r(p.z)];
   }
 
   private viewRay(): { origin: [number, number, number]; direction: [number, number, number] } {
@@ -546,7 +714,8 @@ export class WorkspaceController {
       const session = useSessionWorld.getState().view()?.world;
       if (session && holdsSomething(session, this.me())) return;
       this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.engine.camera);
-      const id = this.view.pick(this.raycaster);
+      // プレハブを開いている間は、その中身だけを選ぶ（アウトプットの物を選んで、うっかり閉じないように）
+      const id = (this.openPrefab() ? this.prefabView : this.view).pick(this.raycaster);
       ws.select(id ? { kind: "entity", id } : null);
     }
   }
