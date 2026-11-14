@@ -64,6 +64,7 @@
 - 展開した Entity の ID は「インスタンスの ID `/` 中の Entity の ID」。セッションでは、さらに頭に配置の ID が付く（`配置/インスタンス/中の Entity`）。Entity の ID を `/` で切って意味を読まない。
 - 計測は `pnpm bench:prefab`。機械が混んでいると値がぶれるので、何回か流して落ち着いた値を見る。
 - 展開のあとの手直し（消えた親の付け替え・親子の輪の確かめ・System を集めること）は、展開した Entity すべてをたどらない（ADR 0076 の 5。`Expander.run()`）。展開に手を入れるときは、すべてをたどる展開（`thorough`）と同じ結果になることを `prefabExpandShortcut.test.ts` で確かめ、`pnpm bench:prefab` の「何も変わっていない」が 1 ms を超えないことを見る。展開のたびに、すべての Entity を回る処理（`entities.map()` で索引を作る、など）を足すと、すぐに数 ms になる。
+- インスタンスの上書き（`prefabOverrides`）をじかに読むと、効いていないもの（プレハブ側で外した KokoState へのフィールドの上書き。データは残してある）も入っている。「変えた所」を数える所は、`getPrefabOverride()` に展開した Entity を渡すか、`splitPrefabOverride()`・`hasEffectivePrefabOverrides()` で、効いているものだけを取る。
 - Hierarchy・Inspector のように「いま編集しているもの」を出す所は、`useEditTarget()`（`workspace/hooks.ts`）を読む。アウトプットか、開いているプレハブの並びが返る。`useExpanded()` は、いつもアウトプットの並び。プレハブを開いているときの Entity は、`project.entity()` では引けない（`project.findEntity()` か `project.prefabEntity()` を使う）。
 - 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
 - `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。

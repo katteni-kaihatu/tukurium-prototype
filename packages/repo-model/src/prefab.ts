@@ -81,9 +81,51 @@ export function prefabInstanceAddress(
   return instance ? { instance, path: id.slice(instance.id.length + 1) } : undefined;
 }
 
+/**
+ * 上書きを、いま効いているものと、効いていないものに分ける（ADR 0076 の 8）。
+ * 効いていないのは、その Entity が、いま持っていない KokoState（プレハブ側で外したもの）へのフィールドの上書き。
+ * 展開では重ねないので、変えた所に数えない。データは残す（プレハブ側で付け直すと、また効く）。
+ * shown は、その Entity を展開したもの。ないとき（プレハブ側で Entity ごと消えたとき）は、分けずに返す。
+ */
+export function splitPrefabOverride(
+  patch: PrefabEntityOverride,
+  shown: Pick<EntityBase, "states"> | undefined,
+): { effective?: PrefabEntityOverride; stale?: PrefabEntityOverride } {
+  if (!shown || !patch.states) return { effective: patch };
+  const kept: Record<KokoStateId, KokoStateValues> = {};
+  const stale: Record<KokoStateId, KokoStateValues> = {};
+  for (const [koko, values] of Object.entries(patch.states))
+    (Object.hasOwn(shown.states, koko) ? kept : stale)[koko] = values;
+  if (Object.keys(stale).length === 0) return { effective: patch };
+  const { states: _states, ...rest } = patch;
+  const effective = Object.keys(kept).length > 0 ? { ...rest, states: kept } : rest;
+  return {
+    ...(Object.keys(effective).length > 0 ? { effective } : {}),
+    stale: { states: stale },
+  };
+}
+
+/**
+ * インスタンスが、いま効いている上書きを持っているか（Hierarchy の印に使う）。
+ * find は、展開した Entity を ID で引く。
+ */
+export function hasEffectivePrefabOverrides(
+  instance: EntityBase,
+  find: (id: EntityId) => Pick<EntityBase, "states"> | undefined,
+): boolean {
+  return Object.entries(instance.prefabOverrides ?? {}).some(
+    ([path, patch]) => splitPrefabOverride(patch, find(join(instance.id, path))).effective,
+  );
+}
+
+/**
+ * その Entity が、インスタンスで変えた所。shown（その Entity を展開したもの）を渡すと、
+ * 効いていない上書き（プレハブ側で外した KokoState へのもの）を除く。
+ */
 export function getPrefabOverride(
   snap: ProjectSnapshot,
   id: EntityId,
+  shown?: Pick<EntityBase, "states">,
 ): PrefabEntityOverride | undefined {
   const address = prefabInstanceAddress(snap, id);
   if (!address) return undefined;
@@ -108,7 +150,8 @@ export function getPrefabOverride(
   }
   const states = mergeStateFields(local, explicit?.states);
   for (const [koko, values] of Object.entries(states))
-    if (Object.keys(values).length === 0) delete states[koko];
+    if (Object.keys(values).length === 0 || (shown && !Object.hasOwn(shown.states, koko)))
+      delete states[koko];
   const result: PrefabEntityOverride = { ...explicit, addedStates: added, states };
   if (Object.keys(states).length === 0) delete result.states;
   if (Object.keys(added).length === 0) delete result.addedStates;
@@ -209,6 +252,22 @@ function mergeStateFields(
   const result = { ...base };
   for (const [koko, values] of Object.entries(fields ?? {}))
     result[koko] = { ...result[koko], ...values };
+  return result;
+}
+
+/**
+ * フィールドの上書きを重ねる。その Entity が、いま持っている KokoState のフィールドだけを重ねる。
+ * プレハブ側で外した KokoState への上書きは、重ねない（その KokoState を、上書きだけで作らない）。
+ * 上書きのデータは残るので、プレハブ側で付け直すと、また効く（ADR 0076 の 8）
+ */
+function overrideStateFields(
+  base: Record<KokoStateId, KokoStateValues>,
+  fields: Record<KokoStateId, KokoStateValues> | undefined,
+): Record<KokoStateId, KokoStateValues> {
+  if (!fields) return base;
+  const result = { ...base };
+  for (const [koko, values] of Object.entries(fields))
+    if (Object.hasOwn(result, koko)) result[koko] = { ...result[koko], ...values };
   return result;
 }
 
@@ -533,7 +592,7 @@ class Expander {
         const before = entities[at];
         if (!before) continue;
         const values = marked(
-          mergeStateFields(mergeStateFields(before.states, patch.addedStates), patch.states),
+          overrideStateFields(mergeStateFields(before.states, patch.addedStates), patch.states),
         );
         entities[at] = {
           ...before,
@@ -578,7 +637,7 @@ class Expander {
     for (const t of template.entities) {
       let states = this.mapEntityRefs(t.states, t.refs, replace);
       const patch = instance.prefabOverrides?.[t.rel];
-      states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
+      states = overrideStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
       const origin: PrefabOrigin = { instance: instance.id, ...t.origin };
       if (t.rel === "") {
         const {
@@ -590,7 +649,7 @@ class Expander {
         } = instance;
         // いちばん上の Entity：ID・名前・親・並び順と、場所・向き・大きさは、インスタンスのもの
         states = mergeStateFields(this.mapEntityRefs(t.states, t.refs, replace), instance.states);
-        states = mergeStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
+        states = overrideStateFields(mergeStateFields(states, patch?.addedStates), patch?.states);
         out.push({ ...rest, states, origin });
       } else {
         if (patch?.parent !== undefined) {

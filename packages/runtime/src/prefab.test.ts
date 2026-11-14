@@ -79,6 +79,27 @@ describe("プレハブのインスタンスの再生（ADR 0076）", () => {
     }
   });
 
+  it("プレハブ側で外した KokoState は、値を変えていたインスタンスでも、再生で持たない", async () => {
+    const { doc, core, counter, instances } = project();
+    const [first, second] = instances as [string, string];
+    const firstCore = expandedEntityId(first, core);
+    doc.setField(firstCore, counter, "n", 500);
+    doc.removeState(core, counter);
+    sim = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    sim.step(1 / 60);
+    // 変えたフィールドだけを持つ Counter が、そのインスタンスにだけ残って、数えられたりしない
+    expect(sim.world.statesOf(firstCore)).not.toContain(counter);
+    expect(sim.world.statesOf(expandedEntityId(second, core))).not.toContain(counter);
+    expect(sim.world.get(first, counter)?.n).toBe(1);
+    sim.dispose();
+    // プレハブ側で付け直すと、変えた値から数える
+    doc.addState(core, counter, { n: 100 });
+    sim = await Simulation.create(doc.snapshot(), OUT, { realm: "ws" });
+    sim.step(1 / 60);
+    expect(sim.world.get(firstCore, counter)?.n).toBe(501);
+    expect(sim.world.get(expandedEntityId(second, core), counter)?.n).toBe(101);
+  });
+
   it("保存したファイル（リリース）から読んでも、同じように動く", async () => {
     const { doc, core, counter, instances } = project();
     sim = await Simulation.create(fromFiles(toFiles(doc.snapshot())), OUT, { realm: "ws" });

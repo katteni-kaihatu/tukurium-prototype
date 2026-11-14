@@ -5,6 +5,7 @@ import {
   expandPrefabs,
   fromFiles,
   getPrefabOverride,
+  hasEffectivePrefabOverrides,
   isBuiltin,
   isInstanceRoot,
   type KeepMark,
@@ -364,6 +365,8 @@ function Hierarchy() {
     }
     return false;
   };
+  /** 展開した Entity（プレハブ側で外した KokoState への上書きを、変えた所に数えないために引く） */
+  const shownById = new Map(target.snapshot.entities.map((e) => [e.id, e]));
   // Edit：プレハブのインスタンスを、中身に展開した並び（ADR 0076）
   const nodes: TreeNode[] = rt
     ? rt.world.entityIds().map((id) => ({ id, name: rt.nameOf(id), parent: rt.world.parentOf(id) }))
@@ -378,7 +381,7 @@ function Hierarchy() {
           fromPrefab: e.origin !== undefined && !isInstanceRoot(e),
           added: !e.origin && addedToInstance(e.id),
           changed:
-            Object.keys(getPrefabOverride(snapshot, e.id) ?? {}).length > 0 ||
+            Object.keys(getPrefabOverride(snapshot, e.id, e) ?? {}).length > 0 ||
             (isInstanceRoot(e) &&
               (() => {
                 const raw = prefabInstanceAddress(snapshot, e.id)?.instance;
@@ -388,7 +391,8 @@ function Hierarchy() {
                     (p) => p.prefab === e.origin?.prefab && p.id === e.origin?.entity,
                   );
                 return (
-                  Object.keys(raw?.prefabOverrides ?? {}).length > 0 ||
+                  (raw !== undefined &&
+                    hasEffectivePrefabOverrides(raw, (id) => shownById.get(id))) ||
                   (raw?.instanceSystems?.length ?? 0) > 0 ||
                   Object.keys(raw?.states ?? {}).some(
                     (k) => k !== BUILTIN.Transform && !source?.states[k],
@@ -1122,7 +1126,7 @@ function EntityProperties({ id }: { id: EntityId }) {
   const editing = canEdit;
   const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
   const address = prefabInstanceAddress(snapshot, id);
-  const override = getPrefabOverride(snapshot, id);
+  const override = getPrefabOverride(snapshot, id, shown);
   const savedSnapshot = saved ? fromFiles(saved) : undefined;
   const wasAddress = savedSnapshot ? prefabInstanceAddress(savedSnapshot, id) : undefined;
   const savedParts = address

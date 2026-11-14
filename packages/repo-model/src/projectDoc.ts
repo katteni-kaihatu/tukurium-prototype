@@ -1056,6 +1056,8 @@ export class ProjectDoc {
     const target = this.overrideTarget(id);
     if (target) {
       if (Object.hasOwn(target.entity.states, koko)) return;
+      // プレハブ側で外した KokoState への上書きが残っていたら、消す（足した KokoState に、古い値を重ねない）
+      this.deleteOverrides(target, (parts) => parts[1] === "states" && parts[2] === koko);
       const value = this.registry().createValues(koko, values);
       if (target.path === "") this.statesOf(id).set(koko, valueMap(value));
       else {

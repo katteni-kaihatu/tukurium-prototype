@@ -448,7 +448,7 @@ export function entityDetail(project: ProjectDoc, ref: string) {
     parent: e.parent,
     ...(e.instanceOf ? { instanceOf: e.instanceOf } : {}),
     ...(e.origin
-      ? { origin: e.origin, overrides: getPrefabOverride(readableSnapshot(project), e.id) ?? {} }
+      ? { origin: e.origin, overrides: getPrefabOverride(readableSnapshot(project), e.id, e) ?? {} }
       : {}),
     ...(e.instanceSystems ? { instanceSystems: e.instanceSystems } : {}),
     states: Object.fromEntries(
