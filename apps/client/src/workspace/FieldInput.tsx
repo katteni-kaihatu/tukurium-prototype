@@ -44,6 +44,12 @@ const FIELD_TITLE: Record<string, string> = {
   [`${BUILTIN.RigidBody}/linvel`]: "速度（メートル/秒）。実行が書き換えることがあります",
   [`${BUILTIN.RigidBody}/angvel`]: "回転の速度（ラジアン/秒）",
   [`${BUILTIN.RigidBody}/ccd`]: "速い物が薄い床をすり抜けないようにします",
+  [`${BUILTIN.RigidBody}/lockMoveX`]: "オンにすると X の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockMoveY`]: "オンにすると Y の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockMoveZ`]: "オンにすると Z の向きへ動きません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateX`]: "オンにすると X 軸まわりに回りません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateY`]: "オンにすると Y 軸まわりに回りません（ワールドの軸）",
+  [`${BUILTIN.RigidBody}/lockRotateZ`]: "オンにすると Z 軸まわりに回りません（ワールドの軸）",
 };
 
 /**

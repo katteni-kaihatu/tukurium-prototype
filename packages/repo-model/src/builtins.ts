@@ -110,6 +110,17 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       { id: "angvel", name: "angvel", type: FIELD_TYPE.vec3, default: [0, 0, 0] },
       /** 速い物が薄い床をすり抜けないようにする */
       { id: "ccd", name: "ccd", type: FIELD_TYPE.boolean, default: true },
+      /**
+       * 軸の固定（ADR 0076）。true の軸には、ぶつかっても重力でも動かない（dynamic のときだけ効く）。
+       * 軸はワールドの軸で、親や自分の向きでは変わらない。固定した軸の位置・角度は、今の値のまま保つ。
+       */
+      { id: "lockMoveX", name: "lockMoveX", type: FIELD_TYPE.boolean, default: false },
+      { id: "lockMoveY", name: "lockMoveY", type: FIELD_TYPE.boolean, default: false },
+      { id: "lockMoveZ", name: "lockMoveZ", type: FIELD_TYPE.boolean, default: false },
+      /** その軸まわりの回転を止める。3 つとも true なら、倒れも転がりもしない */
+      { id: "lockRotateX", name: "lockRotateX", type: FIELD_TYPE.boolean, default: false },
+      { id: "lockRotateY", name: "lockRotateY", type: FIELD_TYPE.boolean, default: false },
+      { id: "lockRotateZ", name: "lockRotateZ", type: FIELD_TYPE.boolean, default: false },
     ],
   },
   {
