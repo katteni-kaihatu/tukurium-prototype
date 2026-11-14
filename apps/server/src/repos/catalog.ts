@@ -50,6 +50,7 @@ export class ItemCatalog {
     const published = listing ? (releases.find((r) => r.id === listing.releaseId) ?? null) : null;
     return {
       ...work,
+      name: await this.shownName(work, published, latest, output?.name),
       // リリースした版のサムネイル（Resources の画像の素材 ID。ADR 0046）
       thumbnail: output?.thumbnail ?? null,
       tags: work.tags ?? [],
@@ -67,6 +68,24 @@ export class ItemCatalog {
           }
         : null,
     };
+  }
+
+  /**
+   * 画面に出す名前。マーケットで公開中の版があれば、その版のアウトプットの名前。
+   * 無ければ最新の版のアウトプットの名前。どちらも無ければ、リリースしたときの名前。
+   */
+  async shownName(
+    work: Work,
+    published: Release | null,
+    latest: Release | null,
+    latestName?: string,
+  ): Promise<string> {
+    if (published && published.id !== latest?.id) {
+      const snap = await this.repos.snapshot(work.repoId, published.commit).catch(() => null);
+      const name = snap?.outputs.find((o) => o.id === work.outputId)?.name;
+      if (name) return name;
+    }
+    return latestName || work.name;
   }
 
   /** 作品の詳細。バージョンと、その版を出した保存のメッセージ、マーケットの履歴を付ける。 */
