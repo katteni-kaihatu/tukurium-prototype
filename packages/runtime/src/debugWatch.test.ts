@@ -66,6 +66,65 @@ async function run(body: string, condition = "", type = "number", initial: Value
   }
 }
 describe("フィールドの変化", () => {
+  it("Entity を絞らない見張りは、その KokoState を持つどの Entity でも止まる", async () => {
+    const stops: DebugStop[] = [];
+    const entity = (id: string, order: number) => ({
+      id,
+      name: id,
+      output: "out",
+      parent: null,
+      order,
+      states: { c: { amount: 0 } },
+    });
+    const sim = await Simulation.create(
+      {
+        ...emptyProject("watch"),
+        kokostates: [
+          { id: "c", name: "C", fields: [{ id: "amount", name: "n", type: "number", default: 0 }] },
+        ],
+        systems: [
+          {
+            id: "s",
+            name: "S",
+            code: "import C from './C.koko';\nexport default system({query:{with:[C]},onUpdate(e){\ne.get(C).n+=1;\n}});",
+          },
+        ],
+        outputs: [
+          {
+            id: "out",
+            name: "Out",
+            kind: "item" as const,
+            systems: [{ id: "s", enabled: true }],
+            keep: [],
+          },
+        ],
+        entities: [entity("a", 0), entity("b", 1)],
+      },
+      "out",
+      {
+        realm: "r",
+        debug: {
+          settings: () => ({
+            enabled: true,
+            breakOnError: false,
+            breakpoints: [],
+            watches: [{ id: "w", enabled: true, entity: "", koko: "c", field: "amount" }],
+          }),
+          onPause: (s) => {
+            stops.push(s);
+            sim.debug?.resume(s.id);
+          },
+        },
+      },
+    );
+    try {
+      await sim.stepDebug(0.1);
+      expect(stops.map((s) => s.change?.entity).sort()).toEqual(["a", "b"]);
+      expect(sim.systemStatus()[0]?.error).toBeNull();
+    } finally {
+      sim.dispose();
+    }
+  });
   it("型に合わず取り込まれない書き換えでは止まらない", async () => {
     const result = await run("c.n=String(2);");
     expect(result.stops).toEqual([]);

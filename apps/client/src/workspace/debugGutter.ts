@@ -52,8 +52,8 @@ export function debugGutter(systemId: string) {
             ?.read()
             .breakpoints.find((p) => p.systemId === systemId && p.line === number);
           if (previous) s.debug?.update(previous.id, { kind: "logpoint" });
-          const id = previous?.id ?? s.debug?.add(systemId, number, "logpoint");
-          useWorkspace.setState({ debugOpen: true, debugPointId: id ?? null });
+          if (!previous) s.debug?.add(systemId, number, "logpoint");
+          useWorkspace.setState({ debugOpen: true });
         } else if ((event as MouseEvent).button === 0) s.debug?.toggle(systemId, number);
         return true;
       },

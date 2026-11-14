@@ -11,6 +11,10 @@ export function DebugPanel() {
   const ws = useWorkspace();
   const [systemId, setSystemId] = useState("");
   const [line, setLine] = useState(1);
+  const [watchKoko, setWatchKoko] = useState("");
+  const [watchField, setWatchField] = useState("");
+  // 続行・ステップのたびに停止の表示は作り直される。開いた KokoState は、ここで覚えておく。
+  const [openStates, setOpenStates] = useState<string[]>([]);
   const debug = ws.debug;
   const settings = debug?.read();
   const canWrite = ws.debugReady && (ws.role === "editor" || ws.role === "admin");
@@ -18,6 +22,9 @@ export function DebugPanel() {
   const chosen = systemId || ws.project?.systems()[0]?.id || "";
   const stop = ws.debugStop;
   const frame = stop?.frames.find((f) => f.id === ws.debugFrameId) ?? stop?.frames.at(-1);
+  const kokostates = ws.project?.kokostates() ?? [];
+  const chosenKoko = kokostates.find((k) => k.id === watchKoko) ?? kokostates[0];
+  const chosenField = chosenKoko?.fields.find((f) => f.id === watchField) ?? chosenKoko?.fields[0];
   return (
     <div className={styles.panel}>
       <label>
@@ -198,7 +205,20 @@ export function DebugPanel() {
                 {stop?.entity ? (ws.runtime()?.nameOf(stop.entity) ?? stop.entity) : "なし"}
               </h3>
               {stop?.states?.map((state) => (
-                <details key={state.id}>
+                <details
+                  key={state.id}
+                  open={openStates.includes(state.id)}
+                  onToggle={(e) => {
+                    const open = e.currentTarget.open;
+                    setOpenStates((ids) =>
+                      open === ids.includes(state.id)
+                        ? ids
+                        : open
+                          ? [...ids, state.id]
+                          : ids.filter((id) => id !== state.id),
+                    );
+                  }}
+                >
                   <summary>{state.name}</summary>
                   {state.fields.map((field) => (
                     <label
@@ -251,11 +271,8 @@ export function DebugPanel() {
             </section>
           )}
           {settings.breakpoints.map((point) => (
-            <fieldset
-              key={point.id}
-              onFocus={() => useWorkspace.setState({ debugPointId: point.id })}
-            >
-              <legend>{ws.debugPointId === point.id ? "選択中の条件" : "条件"}</legend>
+            <fieldset key={point.id}>
+              <legend>条件</legend>
               <div className={styles.row}>
                 <input
                   type="checkbox"
@@ -268,7 +285,6 @@ export function DebugPanel() {
                   type="button"
                   className={ui.btn}
                   onClick={() => {
-                    useWorkspace.setState({ debugPointId: point.id });
                     ws.openSystem(point.systemId);
                     useWorkspace.setState({
                       jumpTo: {
@@ -315,6 +331,19 @@ export function DebugPanel() {
                   onChange={(e) => debug.update(point.id, { entity: e.target.value })}
                 />
               </label>
+              <button
+                type="button"
+                className={ui.btn}
+                disabled={!canWrite}
+                aria-pressed={ws.debugPointId === point.id}
+                onClick={() =>
+                  useWorkspace.setState({
+                    debugPointId: ws.debugPointId === point.id ? null : point.id,
+                  })
+                }
+              >
+                {ws.debugPointId === point.id ? "選ぶのをやめる" : "右クリックで選ぶ"}
+              </button>
               <ExpressionInput
                 label="条件式"
                 value={point.condition}
@@ -341,9 +370,33 @@ export function DebugPanel() {
                   disabled={!canWrite}
                   onChange={(e) => debug.setWatch({ ...w, enabled: e.target.checked })}
                 />
-                {ws.runtime()?.nameOf(w.entity) ?? w.entity} /{" "}
-                {ws.project?.kokostate(w.koko)?.name ?? w.koko} / {w.field}
+                {ws.project?.kokostate(w.koko)?.name ?? w.koko} /{" "}
+                {ws.project?.kokostate(w.koko)?.fields.find((f) => f.id === w.field)?.name ??
+                  w.field}
               </label>
+              <label>
+                Entity{" "}
+                <input
+                  aria-label="見張るEntity"
+                  disabled={!canWrite}
+                  placeholder="空欄ならすべて"
+                  value={w.entity}
+                  onChange={(e) => debug.setWatch({ ...w, entity: e.target.value })}
+                />
+              </label>
+              <button
+                type="button"
+                className={ui.btn}
+                disabled={!canWrite}
+                aria-pressed={ws.debugPointId === w.id}
+                onClick={() =>
+                  useWorkspace.setState({
+                    debugPointId: ws.debugPointId === w.id ? null : w.id,
+                  })
+                }
+              >
+                {ws.debugPointId === w.id ? "選ぶのをやめる" : "右クリックで選ぶ"}
+              </button>
               <ExpressionInput
                 label="変化の条件式"
                 value={w.condition ?? ""}
@@ -385,15 +438,61 @@ export function DebugPanel() {
               type="button"
               className={ui.btn}
               disabled={!canWrite || !chosen}
-              onClick={() => useWorkspace.setState({ debugPointId: debug.add(chosen, line) })}
+              onClick={() => debug.add(chosen, line)}
             >
-              条件を足す
+              行の条件を足す
+            </button>
+          </div>
+          <div className={styles.row}>
+            <select
+              aria-label="見張るKokoState"
+              value={chosenKoko?.id ?? ""}
+              onChange={(e) => {
+                setWatchKoko(e.target.value);
+                setWatchField("");
+              }}
+            >
+              {kokostates.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.name}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="見張るフィールド"
+              value={chosenField?.id ?? ""}
+              onChange={(e) => setWatchField(e.target.value)}
+            >
+              {chosenKoko?.fields.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className={ui.btn}
+              disabled={!canWrite || !chosenKoko || !chosenField}
+              onClick={() => {
+                if (chosenKoko && chosenField)
+                  debug.setWatch({
+                    id: crypto.randomUUID(),
+                    enabled: true,
+                    entity: "",
+                    koko: chosenKoko.id,
+                    field: chosenField.id,
+                    condition: "",
+                  });
+              }}
+            >
+              フィールドの変化を足す
             </button>
           </div>
           <p className={ui.muted}>
             式では、代入・関数呼び出し・オブジェクト同士の同一性比較はできません。
-            行番号の横を左クリックで一時停止、右クリックでログを追加します。条件を選んでから Entity
-            を右クリックすると絞り込めます。設定の変更は次のフレームから反映します。
+            行番号の横を左クリックで一時停止、右クリックでログを追加します。条件の「右クリックで選ぶ」を押してから
+            Entity を右クリックすると、その Entity
+            に絞り込めます。設定の変更は次のフレームから反映します。
           </p>
         </>
       )}

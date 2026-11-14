@@ -23,7 +23,13 @@ import { ARRIVAL_OFFSET, prefabAnchor, type WorkspaceAnchor, workspaceAnchor } f
 import { offerDebugEntity } from "./debugActions";
 import { expandedSnapshot, prefabEditSnapshot } from "./hooks";
 import { type Box, prefabEditOrigin, type Vec3 } from "./prefabPlace";
-import { queueOutgoingEffects, queueOutgoingSounds, sendFrame, useWorkspace } from "./store";
+import {
+  logError,
+  queueOutgoingEffects,
+  queueOutgoingSounds,
+  sendFrame,
+  useWorkspace,
+} from "./store";
 
 const STEP = 1 / 60;
 const MAX_STEPS_PER_FRAME = 5;
@@ -283,8 +289,10 @@ export class WorkspaceController {
             void sim
               .stepDebug(STEP)
               .catch((error) => {
-                if (useWorkspace.getState().sim === sim)
-                  useWorkspace.setState({ error: String(error), mode: "paused" });
+                if (useWorkspace.getState().sim !== sim) return;
+                // 理由が見えないまま止まらないように、ログに出してから一時停止する。
+                logError(`デバッグ実行を進められませんでした：${String(error)}`);
+                useWorkspace.setState({ mode: "paused" });
               })
               .finally(() => {
                 if (this.pendingDebug === sim) this.pendingDebug = null;

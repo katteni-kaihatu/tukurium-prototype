@@ -27,7 +27,12 @@ export interface DebugSettings {
   errorEntity?: string;
   errorCondition?: string;
 }
-type Anchor = Omit<DebugBreakpoint, "line"> & { start: number[]; end: number[] };
+type Anchor = Omit<DebugBreakpoint, "line"> & {
+  start: number[];
+  end: number[];
+  /** 付けた行の直前の改行。最初の行にはない。 */
+  before?: number[];
+};
 
 /** 制作データとは別の、保存しない Y.Doc。位置だけは制作データの Y.Text を指す。 */
 export class DebugSettingsDoc {
@@ -67,10 +72,18 @@ export class DebugSettingsDoc {
         );
         if (!start || !end || start.type !== text || end.type !== text || start.index >= end.index)
           continue;
+        const code = text.toString();
+        // 行の中身を消してから前の行とつなげたとき。行末の改行は残るが、付けた行はもうない。
+        if (
+          Array.isArray(point.before) &&
+          code.slice(start.index, end.index).trim() === "" &&
+          this.deleted(point.before)
+        )
+          continue;
         breakpoints.push({
           id,
           systemId: point.systemId,
-          line: text.toString().slice(0, start.index).split("\n").length,
+          line: code.slice(0, start.index).split("\n").length,
           enabled: point.enabled === true,
           kind: point.kind === "logpoint" ? "logpoint" : "breakpoint",
           condition: typeof point.condition === "string" ? point.condition : "",
@@ -99,6 +112,10 @@ export class DebugSettingsDoc {
         ? { errorCondition: this.settings.get("errorCondition") as string }
         : {}),
     };
+  }
+  private deleted(position: number[]): boolean {
+    const id = Y.decodeRelativePosition(new Uint8Array(position)).item;
+    return id !== null && Y.getItem(this.project.doc.store, id).deleted;
   }
   setEnabled(enabled: boolean) {
     this.settings.set("enabled", enabled);
@@ -129,6 +146,13 @@ export class DebugSettingsDoc {
       condition: "",
       expression: "",
       entity: "",
+      ...(start > 0
+        ? {
+            before: Array.from(
+              Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, start, -1)),
+            ),
+          }
+        : {}),
       start: Array.from(
         Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, start, 0)),
       ),

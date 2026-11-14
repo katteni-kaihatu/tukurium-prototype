@@ -620,6 +620,8 @@ const pushLog = (entry: LogEntry) =>
   set((s) => ({ logs: [...s.logs, { ...entry, seq: seq++ }].slice(-MAX_LOGS) }));
 const log = (message: string, level: LogEntry["level"] = "log") =>
   pushLog({ time: ws().sim?.time ?? 0, systemId: null, message, level });
+/** 再生の途中で起きた失敗を、ログのパネルに出す。 */
+export const logError = (message: string) => log(message, "error");
 
 client().on((msg) => {
   const s = ws();

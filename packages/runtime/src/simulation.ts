@@ -466,6 +466,7 @@ export class Simulation {
         writeState: (edit) => sim.writeDebugState(edit),
         log: (systemId, message) => sim.log(systemId, message, "log"),
         watching: (enabled) => sim.sandbox.setDebugWatching(enabled),
+        entitiesWith: (koko) => sim.world.entityIds().filter((id) => sim.world.hasState(id, koko)),
         guestKey: (watch, systemId) => {
           const sys = sim.systems.find((s) => s.id === systemId);
           const field = sim.registry.get(watch.koko)?.fields.find((f) => f.id === watch.field);

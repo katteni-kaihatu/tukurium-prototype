@@ -79,6 +79,8 @@ export class DebugRuntime {
       writeState(edit: DebugStateEdit): boolean;
       log?(systemId: string, message: string): void;
       watching?(enabled: boolean): void;
+      /** その KokoState を持つ Entity。Entity を絞らない見張りを、フレームの先頭で広げる。 */
+      entitiesWith?(koko: string): string[];
       /** 見張るフィールドの、その System の VM の中での置き場所（KokoState のキーとフィールド名）。 */
       guestKey?(
         w: DebugSettings["watches"][number],
@@ -100,6 +102,16 @@ export class DebugRuntime {
     this.frameNumber++;
     this.pointsThisFrame = 0;
     this.settings = structuredClone(this.options.settings());
+    // Entity を絞らない見張りは、今その KokoState を持つ Entity ごとの見張りにする。
+    this.settings.watches = this.settings.watches.flatMap((w) =>
+      w.entity
+        ? [w]
+        : (this.host?.entitiesWith?.(w.koko) ?? []).map((entity) => ({
+            ...w,
+            id: `${w.id}:${entity}`,
+            entity,
+          })),
+    );
     this.watchValues.clear();
     for (const w of this.settings.watches) {
       const value = this.watchValue(w);
