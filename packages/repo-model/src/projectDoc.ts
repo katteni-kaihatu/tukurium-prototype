@@ -1245,13 +1245,22 @@ export class ProjectDoc {
     });
     return id;
   }
-  /** 名前を変える。インスタンスは ID で結び付いているので、切れない */
+  /**
+   * 名前を変える。インスタンスは ID で結び付いているので、切れない。
+   * いちばん上の Entity の名前が、変える前のプレハブの名前と同じなら、新しい名前に合わせる
+   * （作ってすぐ名前を付けたプレハブを開いたとき、Hierarchy に、作ったときの名前が残らないように）。
+   * いちばん上の Entity に別の名前を付けていたら、そのままにする。インスタンスの名前は、変えない。
+   */
   renamePrefab(id: string, name: string): void {
     const p = this.prefabMap.get(id);
     const next = name.trim();
     if (!p || !next || p.name === next) return;
     this.assertSiblingName(next, id);
-    this.prefabMap.set(id, { ...p, name: next });
+    this.transact(() => {
+      this.prefabMap.set(id, { ...p, name: next });
+      const root = this.prefabEntityMap.get(p.root);
+      if (root?.get("name") === p.name) root.set("name", next);
+    });
   }
   /** System の並び・「維持」の印・編集する場所を変える（ID と、いちばん上の Entity は変えられない） */
   updatePrefab(def: PrefabDef): void {
