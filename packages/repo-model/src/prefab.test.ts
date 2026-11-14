@@ -341,8 +341,13 @@ describe("プレハブの展開", () => {
     const a = doc.addPrefab("A");
     const b = doc.addPrefab("B");
     const inA = doc.addPrefabEntity({ prefab: a, name: "Bを置く", instanceOf: { prefab: b } });
-    const inB = doc.addPrefabEntity({ prefab: b, name: "Aを置く", instanceOf: { prefab: a } });
-    const self = doc.addPrefabEntity({ prefab: a, name: "自分", instanceOf: { prefab: a } });
+    const inB = doc.addPrefabEntity({ prefab: b, name: "Aを置く" });
+    const self = doc.addPrefabEntity({ prefab: a, name: "自分" });
+    // 読み込みや共同編集で輪が入った場合も、展開と診断は止まらない。
+    const broken = doc.snapshot();
+    for (const e of broken.prefabEntities ?? [])
+      if (e.id === inB || e.id === self) e.instanceOf = { prefab: a };
+    doc.load(broken);
     const inst = doc.addInstance({ output: OUT, prefab: a, id: "ent_a" });
     const snap = doc.snapshot();
     // A → B まで開き、B の中の A は開かない（そのままの Entity として残る）

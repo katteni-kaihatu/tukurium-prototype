@@ -59,9 +59,13 @@ export function PrefabFromEntityAsk({
     return () => window.removeEventListener("pointerdown", close, true);
   }, [anchor, onClose]);
 
-  const name = project.entity(entityId)?.name ?? "Entity";
+  const name = project.findEntity(entityId)?.name ?? "Entity";
   const plan = result.ok ? result.plan : null;
-  const output = plan ? project.output(plan.output) : undefined;
+  const owner = plan
+    ? plan.owner.kind === "prefab"
+      ? project.prefab(plan.owner.id)
+      : project.output(plan.owner.id)
+    : undefined;
   const systemNames = new Map<string, string>([
     ...project.systems().map((s) => [s.id, s.name] as const),
     ...packageSystems(packages.values()).map((s) => [s.id, `@${s.alias}/${s.name}`] as const),
@@ -129,10 +133,13 @@ export function PrefabFromEntityAsk({
               <>
                 <ul className={styles.list}>
                   {plan.rewrites.map((r) => (
-                    <li key={`${r.entity}:${r.koko}:${r.field}`}>
+                    <li
+                      key={`${r.entity}:${r.override?.path ?? ""}:${r.override?.added ?? false}:${r.koko}:${r.field}`}
+                    >
                       <span>
                         「{r.entityName}」の {r.kokoName}.{r.fieldName}
                         {r.owner.kind === "prefab" ? "（プレハブの中）" : ""}
+                        {r.override ? "（インスタンスの上書き）" : ""}
                       </span>
                       <span className={styles.to}>
                         → {r.targets.map((t) => movedName(t.from)).join("、")}
@@ -166,6 +173,49 @@ export function PrefabFromEntityAsk({
                 {plan.keepMoved.some((k) => k.from.entity !== plan.entity) &&
                   "中の Entity は ID が変わるので、セッションに出してある配置では、次の「適用」のとき一度だけ、いまの値を引き継ぎません。"}
               </p>
+            </section>
+          )}
+
+          {plan.structureRewrites.length > 0 && (
+            <section className={styles.part} aria-label="書き換える親と上書きの対象">
+              <h4 className={styles.heading}>書き換える親と上書きの対象</h4>
+              <ul className={styles.list}>
+                {plan.structureRewrites.map((r) => (
+                  <li key={`${r.entity}:${r.kind}:${r.from}`}>
+                    <span>
+                      「{r.name}」の{r.kind}
+                    </span>
+                    <code className={styles.ids}>
+                      {r.from} → {r.to}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {plan.keepRewrites.length > 0 && (
+            <section className={styles.part} aria-label="書き換える「維持」の印">
+              <h4 className={styles.heading}>書き換える「維持」の印</h4>
+              <ul className={styles.list}>
+                {plan.keepRewrites.flatMap((r) =>
+                  r.changes.map(({ from, to }) => (
+                    <li
+                      key={`${r.owner.kind}:${r.owner.id}:${from.entity}:${from.koko}:${from.field}`}
+                    >
+                      <span>
+                        {r.owner.kind === "prefab"
+                          ? project.prefab(r.owner.id)?.name
+                          : project.output(r.owner.id)?.name}
+                        ：{fieldLabel(from.koko, from.field)}
+                      </span>
+                      <code className={styles.ids}>
+                        {from.entity} → {to.entity}
+                      </code>
+                    </li>
+                  )),
+                )}
+              </ul>
             </section>
           )}
 
@@ -212,11 +262,11 @@ export function PrefabFromEntityAsk({
             </section>
           )}
 
-          {output && output.systems.length > 0 && (
+          {owner && owner.systems.length > 0 && (
             <section className={styles.part} aria-label="プレハブにも入れる System">
               <h4 className={styles.heading}>プレハブにも入れる System</h4>
               <ul className={styles.list}>
-                {output.systems.map((s) => (
+                {owner.systems.map((s) => (
                   <li key={s.id}>
                     <label className={styles.check}>
                       <input
@@ -234,8 +284,9 @@ export function PrefabFromEntityAsk({
                 ))}
               </ul>
               <p className={ui.muted}>
-                入れた System
-                は、このプレハブのインスタンスを置いたアウトプットで動きます。今のアウトプットの並びにも残すので、動き方は変わりません。あとから、プレハブの詳細でも足せます。
+                入れた System は、このプレハブのインスタンスを置いたアウトプットで動きます。今の
+                {plan.owner.kind === "prefab" ? "プレハブ" : "アウトプット"}
+                の並びにも残すので、動き方は変わりません。あとから、プレハブの詳細でも足せます。
               </p>
             </section>
           )}

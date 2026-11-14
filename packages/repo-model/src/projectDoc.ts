@@ -37,6 +37,7 @@ import {
   planApplyPrefabInstance,
   planUnpackPrefabInstance,
 } from "./prefabInstance";
+import { prefabUsePath } from "./prefabNesting";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -1254,6 +1255,8 @@ export class ProjectDoc {
   }): EntityId {
     const prefab = this.prefabMap.get(init.prefab);
     if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
+    if (init.instanceOf && prefabUsePath(this.snapshot(), init.instanceOf.prefab, init.prefab))
+      throw new Error("プレハブの中に、自分自身を含めることはできません");
     const parent = init.parent ?? prefab.root;
     if (this.expandedPeers(parent).find((e) => e.id === parent)?.output !== init.prefab)
       throw new Error("親は、同じプレハブの中の Entity にしてください");
@@ -1282,30 +1285,37 @@ export class ProjectDoc {
     return id;
   }
   /**
-   * プレハブのインスタンスを、アウトプットに置く。場所・向き・大きさは、インスタンスそのものの
+   * プレハブのインスタンスを、アウトプットか別のプレハブに置く。場所・向き・大きさは、インスタンスそのものの
    * Transform に持つ（初めは、プレハブのいちばん上の Entity の向きと大きさを写す）。
    */
-  addInstance(init: {
-    output: string;
-    prefab: string;
-    name?: string;
-    parent?: EntityId | null;
-    position?: [number, number, number];
-    id?: EntityId;
-  }): EntityId {
+  addInstance(
+    init: ({ output: string; ownerPrefab?: never } | { ownerPrefab: string; output?: never }) & {
+      prefab: string;
+      name?: string;
+      parent?: EntityId | null;
+      position?: [number, number, number];
+      id?: EntityId;
+    },
+  ): EntityId {
     const prefab = this.prefabMap.get(init.prefab);
     if (!prefab) throw new Error(`プレハブがありません: ${init.prefab}`);
     const root = this.prefabEntity(prefab.root);
     const transform: KokoStateValues = { ...root?.states[TRANSFORM] };
     if (init.position) transform.position = [...init.position];
-    return this.addEntity({
-      output: init.output,
+    else if (init.ownerPrefab !== undefined) transform.position = [0, 0, 0];
+    const entity = {
       name: init.name ?? prefab.name,
-      parent: init.parent ?? null,
       states: { [TRANSFORM]: transform },
       instanceOf: { prefab: init.prefab },
       ...(init.id ? { id: init.id } : {}),
-    });
+    };
+    return init.ownerPrefab !== undefined
+      ? this.addPrefabEntity({
+          ...entity,
+          prefab: init.ownerPrefab,
+          ...(init.parent ? { parent: init.parent } : {}),
+        })
+      : this.addEntity({ ...entity, output: init.output, parent: init.parent ?? null });
   }
   /** あるプレハブのインスタンス（アウトプットの中と、ほかのプレハブの中） */
   instancesOf(prefab: string): (EntityDef | PrefabEntityDef)[] {
@@ -1321,7 +1331,7 @@ export class ProjectDoc {
     id: EntityId,
     options: Omit<PrefabFromEntityOptions, "kokostates"> = {},
   ): PrefabFromEntityResult {
-    const base = this.entityMap.get(id)?.get("name");
+    const base = this.node(id)?.get("name");
     const usable = typeof base === "string" && validateName(base) === null ? base : "プレハブ";
     return planPrefabFromEntity(this.snapshot(), id, {
       ...options,
@@ -1330,7 +1340,7 @@ export class ProjectDoc {
     });
   }
   /**
-   * アウトプットの Entity（中の Entity を含む）から、プレハブを作る（ADR 0076 の 10）。
+   * アウトプットかプレハブの中の Entity（子を含む）から、プレハブを作る（ADR 0076 の 10）。
    * 選んだ Entity は、ID を引き継いで、そのプレハブのインスタンスになる。中身は、新しい ID でプレハブに移す。
    * ほかの Entity から中の Entity への参照と「維持」の印は、切れないように書き換える。
    * 一つの transaction で行う（共同編集の相手に、途中の形が見えない）。変換できないときは、わけを投げる。
@@ -1343,29 +1353,7 @@ export class ProjectDoc {
     if (!result.ok) throw new Error(result.reason);
     const plan = result.plan;
     this.assertSiblingName(plan.prefab.name, plan.prefab.id);
-    this.transact(() => {
-      this.prefabMap.set(plan.prefab.id, clone(plan.prefab));
-      for (const e of plan.prefabEntities) this.prefabEntityMap.set(e.id, entityNode(e));
-      // 中の Entity は、プレハブへ移した。選んだ Entity は、Transform だけを持つインスタンスにする
-      for (const m of plan.moved) if (m.from !== plan.entity) this.entityMap.delete(m.from);
-      const self = this.entityMap.get(plan.entity);
-      if (self) {
-        const states = self.get("states") as Y.Map<ValueMap>;
-        for (const koko of [...states.keys()])
-          if (!Object.hasOwn(plan.instance.states, koko)) states.delete(koko);
-        self.set("instanceOf", clone(plan.instance.instanceOf));
-        self.set("prefabOverrides", overridesMap({}));
-        self.delete("instanceSystems");
-        self.delete("unpackedSystems");
-      }
-      for (const r of plan.rewrites)
-        (this.node(r.entity)?.get("states") as Y.Map<ValueMap> | undefined)
-          ?.get(r.koko)
-          ?.set(r.field, encodeValue(r.value));
-      const output = this.outputMap.get(plan.output);
-      if (output && plan.keepMoved.length > 0)
-        this.outputMap.set(output.id, { ...output, keep: clone(plan.outputKeep) });
-    });
+    this.applyPrefabPlan(plan);
     return plan;
   }
 
@@ -1403,7 +1391,7 @@ export class ProjectDoc {
   }
 
   /** 計画で変わったフィールドだけを書き込む。Y.Map を丸ごと置き換えない。 */
-  private applyPrefabPlan(plan: PrefabInstancePlan): void {
+  private applyPrefabPlan(plan: Pick<PrefabInstancePlan, "before" | "after">): void {
     this.transact(() => {
       const before = new Map(
         [...plan.before.entities, ...(plan.before.prefabEntities ?? [])].map((e) => [e.id, e]),

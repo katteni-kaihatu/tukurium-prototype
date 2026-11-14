@@ -12,6 +12,7 @@ export * from "./packageManifest";
 export * from "./prefab";
 export * from "./prefabFromEntity";
 export * from "./prefabInstance";
+export * from "./prefabNesting";
 export * from "./projectDoc";
 export * from "./resourcePath";
 export * from "./sampleModels";
