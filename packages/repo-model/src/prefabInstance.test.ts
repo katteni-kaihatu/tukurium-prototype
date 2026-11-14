@@ -141,6 +141,26 @@ describe("インスタンスの変更をプレハブに適用", () => {
     expect(at(`${other}/${a}`).states[BUILTIN.Mesh]?.shape).toBe("sphere");
   });
 
+  it("確認に出す変更は、KokoState・System・親を ID ではなく名前で示す", () => {
+    const { doc, instance, child, b, schemas } = setup();
+    const system = doc.addSystem("追加System", "");
+    const extra = doc.addKokoState("Extra");
+    doc.addState(instance, extra);
+    doc.setInstanceSystems(instance, [{ id: system, enabled: true }]);
+    doc.setParent(child, `${instance}/${b}`);
+    const result = doc.planApplyPrefabInstance(instance, { schemas });
+    if (!result.ok) throw new Error(result.reason);
+    const details = result.plan.changes.map((c) => c.detail);
+    expect(details).toEqual(
+      expect.arrayContaining([
+        "親: 「B」",
+        "追加した KokoState: Extra",
+        "追加した System: 追加System",
+      ]),
+    );
+    for (const id of [system, extra, b]) expect(details.join("\n")).not.toContain(id);
+  });
+
   it("追加 Entity の親・参照・上書き内の参照・維持の印を新しい ID に付け替える", () => {
     const { doc, instance, other, root, a, child, koko, schemas, at, prefab } = setup();
     const added = doc.addEntity({
