@@ -4,9 +4,9 @@ import {
   emptyValueOf,
   type FieldDef,
   type FieldValue,
+  isPlainObject,
   type KokoStateDef,
   knownSchema,
-  refTargetOf,
   stringifyValue,
   type ValueSchema,
   type Vec3,
@@ -154,12 +154,119 @@ function schemaFor(project: ProjectDoc, kokoId: string, field: FieldDef): ValueS
 }
 
 /**
+ * JSON から来た値を、型（スキーマ）に沿って読み替える（入れ子の中も）。
+ * - 参照（Entity・Material・素材）は、ID でも一意な名前でも指せる。名前は ID にする
+ * - KokoState の参照・フィールドの参照は、Entity・KokoState・フィールドを、ID でも名前でも書ける
+ * - JSON には undefined がないので、「なし」にできる所では、null も「なし」として受け取る
+ * 元の値は書き換えない。
+ */
+function resolveNames(
+  project: ProjectDoc,
+  schema: ValueSchema,
+  value: unknown,
+  what: string,
+): unknown {
+  if (value === null && acceptsUndefined(schema)) return undefined;
+  switch (schema.kind) {
+    case "ref": {
+      if (typeof value !== "string") return value;
+      const label = `${what}の${REF_TARGET_LABEL[schema.target]}`;
+      if (schema.target === "entity") return entityOf(project, value).id;
+      if (schema.target === "material") return resolveNamed(project.materials(), value, label);
+      const kind = RESOURCE_FIELD_KIND[schema.target] as AssetKind;
+      return resolveNamed(assetsOf(project, kind), value, label);
+    }
+    case "kokoRef":
+    case "fieldRef": {
+      if (
+        !isPlainObject(value) ||
+        typeof value.entity !== "string" ||
+        typeof value.koko !== "string"
+      )
+        return value;
+      const def = kokoOf(project, value.koko);
+      const out: Record<string, unknown> = {
+        ...value,
+        entity: entityOf(project, value.entity).id,
+        koko: def.id,
+      };
+      if (schema.kind === "fieldRef" && typeof value.field === "string")
+        out.field = fieldOf(def, value.field).id;
+      return out;
+    }
+    case "union": {
+      // 読み替えたあとで型に合う、最初の選択肢で読む（文字と参照が並ぶ型では、先に書いた方）
+      let failed: unknown;
+      for (const option of schema.options) {
+        try {
+          const read = resolveNames(project, option, value, what);
+          if (validateValue(option, read) === null) return read;
+        } catch (e) {
+          failed ??= e;
+        }
+      }
+      // どれにも合わない：名前が見つからなかったのなら、それを理由として返す
+      if (failed) throw failed;
+      return value;
+    }
+    case "tuple":
+      return Array.isArray(value)
+        ? value.map((v, i) => {
+            const item = schema.items[i];
+            return item ? resolveNames(project, item, v, what) : v;
+          })
+        : value;
+    case "list":
+      return Array.isArray(value)
+        ? value.map((v) => resolveNames(project, schema.item, v, what))
+        : value;
+    case "record": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = { ...value };
+      for (const f of schema.fields)
+        if (Object.hasOwn(value, f.name))
+          out[f.name] = resolveNames(project, f.schema, value[f.name], what);
+      return out;
+    }
+    case "map": {
+      if (!isPlainObject(value)) return value;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value))
+        out[key] = resolveNames(project, schema.value, value[key], what);
+      return out;
+    }
+    case "Map":
+      return value instanceof Map
+        ? new Map(
+            [...value].map(([k, v]) => [
+              resolveNames(project, schema.key, k, what),
+              resolveNames(project, schema.value, v, what),
+            ]),
+          )
+        : value;
+    case "Set":
+      return value instanceof Set
+        ? new Set([...value].map((v) => resolveNames(project, schema.item, v, what)))
+        : value;
+    default:
+      return value;
+  }
+}
+
+/**
  * フィールドの型（スキーマ）に合わせて値を確かめる（JSON から来るので、形を直せるものは直す）。
  * 値は、保存する形（タグ付きの JSON。ADR 0065）で受け取る。参照の「なし」は `{"$t":"undefined"}`。
  * JSON には undefined がないので、参照と「なし」にできる型では、null も「なし」として受け取る。
- * 参照（Entity・Material・素材）は、ID でも一意な名前でも指せる。
+ * 参照（Entity・Material・素材・KokoState・フィールド）は、入れ子の中でも、ID でも一意な名前でも指せる。
+ * given：まだ制作データにないフィールド（作っている途中の定義）のスキーマ。
  */
-function coerce(project: ProjectDoc, kokoId: string, field: FieldDef, raw: unknown): FieldValue {
+function coerce(
+  project: ProjectDoc,
+  kokoId: string,
+  field: FieldDef,
+  raw: unknown,
+  given?: { schema: ValueSchema | undefined },
+): FieldValue {
   const bad = (why?: string) =>
     new AgentError(
       `フィールド「${field.name}」（${field.type}）に使えない値です: ${stringifyValue(raw)}${why ? `（${why}）` : ""}`,
@@ -170,17 +277,10 @@ function coerce(project: ProjectDoc, kokoId: string, field: FieldDef, raw: unkno
   } catch {
     throw bad();
   }
-  const schema = schemaFor(project, kokoId, field);
+  const schema = given ? given.schema : schemaFor(project, kokoId, field);
   // 型エラーで形が分からないフィールドは、値の形式で表せる値ならそのまま入れる（ADR 0065）
   if (!schema) return value as FieldValue;
-  if (value === null && acceptsUndefined(schema)) value = undefined;
-  const target = refTargetOf(schema);
-  if (target && typeof value === "string") {
-    const what = `フィールド「${field.name}」の${REF_TARGET_LABEL[target]}`;
-    if (target === "entity") return entityOf(project, value).id;
-    if (target === "material") return resolveNamed(project.materials(), value, what);
-    return resolveNamed(assetsOf(project, RESOURCE_FIELD_KIND[target] as AssetKind), value, what);
-  }
+  value = resolveNames(project, schema, value, `フィールド「${field.name}」`);
   if (schema.kind === "color" && typeof value === "string") value = value.toLowerCase();
   const why = validateValue(schema, value, { finite: isBuiltin(kokoId) });
   if (why) throw bad(why);
@@ -236,7 +336,12 @@ export function overview(project: ProjectDoc) {
       name: k.name,
       path: index.pathOf(k.id),
       fields: k.fields.map((f) => ({ id: f.id, name: f.name, type: f.type, default: f.default })),
+      // 使う型の定義（フィールドの型の文から、その型を名前で使える）
+      ...(k.typeDefs?.length
+        ? { typeDefs: k.typeDefs.map((id) => project.typeDef(id)?.name ?? id) }
+        : {}),
     })),
+    typeDefs: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, path: index.pathOf(t.id) })),
     builtinKokostates: registry
       .all()
       .filter((k) => k.builtin)
@@ -425,8 +530,9 @@ function toFields(
   kokoId: string,
   specs: FieldSpec[],
   prev: FieldDef[] = [],
+  typeDefs?: string[],
 ): FieldDef[] {
-  return specs.map((s) => {
+  const bases = specs.map((s) => {
     const id =
       prev.find((p) => norm(p.name) === norm(s.name))?.id ??
       `f_${s.name.replace(/[^A-Za-z0-9_]/g, "") || "field"}_${Math.random().toString(36).slice(2, 6)}`;
@@ -437,46 +543,129 @@ function toFields(
       type: basic?.type ?? s.type,
       default: structuredClone(basic?.default),
     };
-    if (s.default !== undefined)
-      return { ...base, default: coerce(project, kokoId, base, s.default) };
+    return { spec: s, basic, base };
+  });
+  // TypeScript で書いた型のスキーマは、新しいフィールドを入れた仮の定義から、まとめて作る
+  // （ほかの KokoState の名前と、使う型の定義の型を、型の文から使えるように）
+  let probed: Record<string, ValueSchema> | undefined;
+  const schemaOf = (base: FieldDef): ValueSchema | undefined => {
+    const known = knownSchema(base.type);
+    if (known) return known;
+    if (!probed) {
+      const probe = project.snapshot();
+      probe.kokostates = probe.kokostates.map((k) =>
+        k.id === kokoId
+          ? {
+              ...k,
+              fields: bases.map((b) => b.base),
+              ...(typeDefs ? { typeDefs } : {}),
+            }
+          : k,
+      );
+      probed = fieldSchemasOf(probe, new Map())[kokoId] ?? {};
+    }
+    return probed[base.id];
+  };
+  return bases.map(({ spec, basic, base }) => {
+    if (spec.default !== undefined)
+      return {
+        ...base,
+        default: coerce(project, kokoId, base, spec.default, { schema: schemaOf(base) }),
+      };
     if (basic) return base;
-    // TypeScript で書いた型：この型だけを持つ仮の定義から、スキーマを作る
-    const probe = project.snapshot();
-    probe.kokostates = [{ id: "ks_probe", name: "Probe", fields: [base] }];
-    const schema = knownSchema(base.type) ?? fieldSchemasOf(probe, new Map()).ks_probe?.[base.id];
+    const schema = schemaOf(base);
     return { ...base, default: schema ? emptyValueOf(schema) : undefined };
   });
 }
 
+/** 型の定義を、ID か名前で指した一覧を、ID の一覧にする */
+function typeDefIds(project: ProjectDoc, refs: string[]): string[] {
+  const all = project.typeDefs();
+  return [...new Set(refs.map((ref) => pick(all, ref, "型の定義").id))];
+}
+
 export function createKokoState(
   project: ProjectDoc,
-  args: { name: string; fields: FieldSpec[]; role?: string },
+  args: { name: string; fields: FieldSpec[]; role?: string; typeDefs?: string[] },
 ): NamedRef {
+  const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : undefined;
   const id = project.addKokoState(args.name);
   const def = project.kokostate(id);
   if (!def) throw new AgentError("KokoState を作れませんでした");
-  project.updateKokoState({
-    ...def,
-    fields: toFields(project, id, args.fields),
-    ...(args.role ? { role: args.role } : {}),
-  });
+  try {
+    project.updateKokoState({
+      ...def,
+      fields: toFields(project, id, args.fields, [], typeDefs),
+      ...(args.role ? { role: args.role } : {}),
+      ...(typeDefs?.length ? { typeDefs } : {}),
+    });
+  } catch (e) {
+    // 初期値が型に合わないなどで作れなかったら、空の KokoState を残さない
+    project.removeKokoState(id);
+    throw e;
+  }
   return { id, name: args.name };
 }
 
 export function updateKokoState(
   project: ProjectDoc,
-  args: { kokostate: string; name?: string; fields?: FieldSpec[]; role?: string },
+  args: {
+    kokostate: string;
+    name?: string;
+    fields?: FieldSpec[];
+    role?: string;
+    typeDefs?: string[];
+  },
 ): NamedRef {
   const def = kokoOf(project, args.kokostate);
   if (def.builtin) throw new AgentError("Built-in の KokoState は変えられません");
   const name = args.name ?? def.name;
+  const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : def.typeDefs;
+  const { typeDefs: _old, ...rest } = def;
   project.updateKokoState({
-    ...def,
+    ...rest,
     name,
-    fields: args.fields ? toFields(project, def.id, args.fields, def.fields) : def.fields,
+    fields: args.fields ? toFields(project, def.id, args.fields, def.fields, typeDefs) : def.fields,
     ...(args.role !== undefined ? { role: args.role } : {}),
+    ...(typeDefs?.length ? { typeDefs } : {}),
   });
   return { id: def.id, name };
+}
+
+// 型の定義（ADR 0065）：名前を付けた型を TypeScript で書き、KokoState のフィールドの型から使う
+
+export function typeDefDetail(project: ProjectDoc, ref: string) {
+  const t = pick(project.typeDefs(), ref, "型の定義");
+  return {
+    id: t.id,
+    name: t.name,
+    code: project.code(t.id)?.toString() ?? "",
+    usedBy: project
+      .kokostates()
+      .filter((k) => k.typeDefs?.includes(t.id))
+      .map((k) => k.name),
+  };
+}
+
+export function createTypeDef(project: ProjectDoc, args: { name: string; code: string }): NamedRef {
+  return { id: project.addTypeDef(args.name, args.code), name: args.name };
+}
+
+export function updateTypeDef(
+  project: ProjectDoc,
+  args: { typedef: string; code?: string; name?: string },
+): NamedRef {
+  const t = pick(project.typeDefs(), args.typedef, "型の定義");
+  project.transact(() => {
+    if (args.name !== undefined) project.renameTypeDef(t.id, args.name);
+    if (args.code !== undefined) {
+      const text = project.code(t.id);
+      if (!text) throw new AgentError("型の定義のコードが見つかりません");
+      text.delete(0, text.length);
+      text.insert(0, args.code);
+    }
+  });
+  return { id: t.id, name: args.name ?? t.name };
 }
 
 export function createSystem(
@@ -1161,7 +1350,24 @@ export function guide(): string {
     "6. 終わったら、人に「保存してください」と伝える。",
     "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
-    `## フィールドの型: ${FIELD_TYPES.join(", ")}。または TypeScript の型の文（例：\`{ suit: string; rank: number }[]\`、\`Record<string, number>\`、\`EntityRef | undefined\`）。「なし」は undefined（null は使えない）`,
+    "## フィールドの型",
+    `- 一覧の名前：${FIELD_TYPES.join(", ")}。`,
+    '- または TypeScript の型の文。例：`{ suit: string; rank: number }[]`（レコードのリスト）、`Record<string, number>`（マップ）、`"easy" | "hard"`（選択肢）、`EntityRef | undefined`。',
+    "- 保存できる型だけを書ける：数・文字・真偽・bigint・undefined・リテラル・リスト・タプル・レコード・`Record<string, V>`・`Map`・`Set`・`Date`・`Vec3`・`Color`・参照。関数やクラスは型エラーになる。「なし」は undefined（null は型に書けない）。",
+    "- 参照の型：`EntityRef`・`MaterialRef`・`TextureRef`・`ModelRef`・`AudioRef`、Entity についた KokoState を指す `KokoStateRef<Health>`、そのフィールドを指す `FieldRef<number>`（`<>` を省くと、どれでも指せる）。System からは `world.getState(ref)`・`world.setState(ref, values)`・`world.getField(ref)`・`world.setField(ref, value)` で、指す先を読み書きする。",
+    '- 名前を付けた型（`Card` など）は、型の定義に書く：create_typedef で `export type Card = { ... };` を作り、KokoState の typeDefs にその型の定義を入れると、フィールドの型の文で `Card[]` と書ける。System からは `import type { Card } from "./Cards.types";`（パスは get_project の typeDefs の path）。',
+    "- 初期値を省くと、型の空の値になる（「なし」にできる型は undefined、数は 0、リスト・マップは空）。",
+    "",
+    "## 値の渡し方（フィールドの値・初期値）",
+    "- ふつうの JSON で渡す。数は数、リストは配列、レコードと `Record<string, V>` はオブジェクト。",
+    "- JSON で表せない値は、`$t` のキーを持つオブジェクトで渡す（読むときも、この形で返る）：",
+    '  - なし：`{"$t":"undefined"}`（渡すときは null でもよい）',
+    '  - 日時：`{"$t":"Date","v":"2026-01-02T03:04:05.000Z"}`',
+    '  - Map：`{"$t":"Map","v":[["a",1],["b",2]]}`、Set：`{"$t":"Set","v":["a","b"]}`',
+    '  - 大きな整数：`{"$t":"bigint","v":"123"}`、数の NaN・Infinity：`{"$t":"number","v":"NaN"}`',
+    "- 参照は、入れ子の中でも、ID でも一意な名前でも渡せる（保存されるのは ID）。",
+    '  - KokoState の参照：`{"entity":"的1","koko":"Target"}`。フィールドの参照：`{"entity":"的1","koko":"Target","field":"hp"}`。',
+    "- 型に合わない値は、どこが合わないかを付けて断る。",
     "",
     "## System の書き方（見本：サンプル「銃と的」の Shoot）",
     "```ts",

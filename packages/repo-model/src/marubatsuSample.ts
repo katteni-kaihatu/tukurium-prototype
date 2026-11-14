@@ -18,6 +18,24 @@ export function marubatsuCellPosition(index: number): [number, number, number] {
 /** リセットのボタンの中心 */
 export const MARUBATSU_RESET: [number, number, number] = [0, 0.38, 3.08];
 
+/**
+ * 型の定義。Board と Cell のフィールドの型から使う（ADR 0065）。
+ * System からも `import type` で使える。
+ */
+const TYPES = `// マルバツの型。Board と Cell の「使う型の定義」に入っています。
+
+/** 印。先行が ○、後攻が × */
+export type Mark = "O" | "X";
+
+/** 席についた人 */
+export type Seat = {
+  /** 参加者の ID */
+  player: string;
+  /** 表示する名前 */
+  name: string;
+};
+`;
+
 const CLEAR_BOARD = `function clearBoard(board: BoardValues) {
   for (let i = 0; i < 9; i++) {
     const id = world.find("マス" + i);
@@ -28,25 +46,28 @@ const CLEAR_BOARD = `function clearBoard(board: BoardValues) {
     if (cell.piece2) world.destroy(cell.piece2);
     world.set(id, Cell, { mark: "", piece: undefined, piece2: undefined });
   }
-  board.marks = "         ";
-  board.first = "";
-  board.second = "";
-  board.firstName = "";
-  board.secondName = "";
+  board.marks = ["", "", "", "", "", "", "", "", ""];
+  board.seats = {};
   board.turn = "";
   board.result = "";
-  board.line = "";
+  board.line = [];
 }
 `;
 
 const PLAY = `// マルバツ。クリックで○か×がつき、先に三つまっすぐ並べた方が勝ち。
 // 最初にマスを押した人が先行、次に押した人が後攻。登録が済んだら、その二人以外は押せない。
 // リセットはクリックでも、近くで E（Interact）でも最初からに戻る。E は Reset の System が受ける。
+//
+// 盤の様子は Board が持つ。フィールドの型は TypeScript の型の文で書いてある。
+// - marks：マスごとの印のリスト（(Mark | "")[]）
+// - seats：印から、席についた人へのマップ（Record<string, Seat>）。Seat はレコード
+// - line：そろったマスの番号のリスト（number[]）
 import Board from "../States/Board.koko";
 import Cell from "../States/Cell.koko";
 import Label from "@builtin/Label.koko";
 import Mesh from "@builtin/Mesh.koko";
 import Transform from "@builtin/Transform.koko";
+import type { Mark, Seat } from "../Types/Marubatsu.types";
 
 type BoardValues = FieldsOf<typeof Board>;
 type CellValues = FieldsOf<typeof Cell>;
@@ -62,24 +83,27 @@ const LINES = [
   [2, 4, 6],
 ];
 
-function judge(marks: string): { winner: string; line: string } | null {
+function judge(marks: (Mark | "")[]): { winner: Mark | "draw"; line: number[] } | null {
   for (let i = 0; i < LINES.length; i++) {
     const line = LINES[i];
     const a = marks[line[0]];
-    if (a !== " " && a === marks[line[1]] && a === marks[line[2]]) {
-      return { winner: a, line: line.join(",") };
+    if (a !== "" && a === marks[line[1]] && a === marks[line[2]]) {
+      return { winner: a, line: line.slice() };
     }
   }
-  if (marks.indexOf(" ") < 0) return { winner: "draw", line: "" };
+  if (marks.indexOf("") < 0) return { winner: "draw", line: [] };
   return null;
 }
 
+/** その印の席についた人。まだ空いていれば undefined */
+function seatOf(board: BoardValues, mark: Mark): Seat | undefined {
+  return board.seats[mark];
+}
+
 ${CLEAR_BOARD}
-function putMark(board: BoardValues, cellId: string, cell: CellValues, mark: string) {
-  const chars = board.marks.split("");
-  if (chars.length !== 9 || chars[cell.index] !== " ") return;
-  chars[cell.index] = mark;
-  board.marks = chars.join("");
+function putMark(board: BoardValues, cellId: EntityRef, cell: CellValues, mark: Mark) {
+  if (board.marks.length !== 9 || board.marks[cell.index] !== "") return;
+  board.marks[cell.index] = mark;
   board.turn = mark === "O" ? "X" : "O";
   const color = mark === "O" ? "#314e86" : "#8d3d3d";
   const piece = world.spawn({
@@ -126,19 +150,18 @@ function statusText(board: BoardValues): string {
   if (board.result === "draw") return "引き分け";
   if (board.result === "O") return "先行の勝ち";
   if (board.result === "X") return "後攻の勝ち";
-  if (!board.first) return "マスをクリックして参加";
-  if (!board.second) return "後攻を待っています";
+  if (!seatOf(board, "O")) return "マスをクリックして参加";
+  if (!seatOf(board, "X")) return "後攻を待っています";
   return board.turn === "X" ? "後攻の番" : "先行の番";
 }
 
-function seatText(role: string, name: string, filled: string): string {
-  if (!filled) return role + "　空き";
-  return role + "　" + (name || "参加中");
+function seatText(role: string, seat: Seat | undefined): string {
+  if (!seat) return role + "　空き";
+  return role + "　" + (seat.name || "参加中");
 }
 
-function lampColor(mark: string, board: BoardValues): Color {
-  const filled = mark === "O" ? board.first : board.second;
-  if (!filled) return "#d5cfc3";
+function lampColor(mark: Mark, board: BoardValues): Color {
+  if (!seatOf(board, mark)) return "#d5cfc3";
   if (board.result === "draw") return "#9aa7b5";
   if (board.result === mark) return "#2f6d4f";
   if (board.result) return "#9aa7b5";
@@ -150,9 +173,9 @@ function paint(board: BoardValues) {
   const status = world.find("様子");
   if (status) world.set(status, Label, { text: statusText(board) });
   const first = world.find("先行の表示");
-  if (first) world.set(first, Label, { text: seatText("先行", board.firstName, board.first) });
+  if (first) world.set(first, Label, { text: seatText("先行", seatOf(board, "O")) });
   const second = world.find("後攻の表示");
-  if (second) world.set(second, Label, { text: seatText("後攻", board.secondName, board.second) });
+  if (second) world.set(second, Label, { text: seatText("後攻", seatOf(board, "X")) });
   const lampO = world.find("先行の印");
   if (lampO) world.set(lampO, Mesh, { color: lampColor("O", board) });
   const lampX = world.find("後攻の印");
@@ -160,7 +183,7 @@ function paint(board: BoardValues) {
   for (let i = 0; i < 9; i++) {
     const id = world.find("マス" + i);
     if (!id) continue;
-    const win = board.line.length > 0 && board.line.split(",").indexOf(String(i)) >= 0;
+    const win = board.line.indexOf(i) >= 0;
     world.set(id, Mesh, { color: win ? "#f3d27a" : "#f7f3ea" });
   }
 }
@@ -183,26 +206,26 @@ export default system({
     if (!cell || cell.mark) return;
     const who = ev.player || "";
     const name = ev.playerName || "";
-    let mark = "";
-    if (!board.first) {
-      board.first = who;
-      board.firstName = name;
+    const first = seatOf(board, "O");
+    const second = seatOf(board, "X");
+    let mark: Mark | "" = "";
+    if (!first) {
+      board.seats["O"] = { player: who, name: name };
       mark = "O";
-    } else if (!board.second) {
-      if (who === board.first) return;
-      board.second = who;
-      board.secondName = name;
+    } else if (!second) {
+      if (who === first.player) return;
+      board.seats["X"] = { player: who, name: name };
       mark = "X";
-    } else if (who !== board.first && who !== board.second) {
+    } else if (who !== first.player && who !== second.player) {
       return;
-    } else if (board.turn === "O" && who !== board.first) {
+    } else if (board.turn === "O" && who !== first.player) {
       return;
-    } else if (board.turn === "X" && who !== board.second) {
+    } else if (board.turn === "X" && who !== second.player) {
       return;
     } else {
       mark = board.turn;
     }
-    if (mark !== "O" && mark !== "X") return;
+    if (mark === "") return;
     putMark(board, hit.entity, cell, mark);
     log(mark === "O" ? "先行" : "後攻", name || "参加中");
   },
@@ -261,7 +284,13 @@ function label(
   };
 }
 
-/** 同梱サンプル：二人で遊ぶマルバツ */
+/** 何も置いていない盤（マス 9 つ分の空の印） */
+const emptyMarks = (): string[] => Array.from({ length: 9 }, () => "");
+
+/**
+ * 同梱サンプル：二人で遊ぶマルバツ。
+ * フィールドの型に、型の定義（`Mark`・`Seat`）と、リスト・マップ・レコードを使う見本でもある（ADR 0065）。
+ */
 export function marubatsuSample(): ProjectSnapshot {
   const cells: EntityDef[] = [];
   for (let i = 0; i < 9; i++) {
@@ -296,11 +325,13 @@ export function marubatsuSample(): ProjectSnapshot {
     folders: [
       { id: "f_states", name: "States", parent: null },
       { id: "f_sys", name: "Systems", parent: null },
+      { id: "f_types", name: "Types", parent: null },
     ],
     placement: {
       ks_board: "f_states",
       ks_cell: "f_states",
       ks_reset: "f_states",
+      td_maru: "f_types",
       sys_maru: "f_sys",
       sys_reset: "f_sys",
     },
@@ -308,23 +339,25 @@ export function marubatsuSample(): ProjectSnapshot {
       {
         id: "ks_board",
         name: "Board",
+        typeDefs: ["td_maru"],
         fields: [
-          { id: "f_marks", name: "marks", type: FIELD_TYPE.string, default: "         " },
-          { id: "f_first", name: "first", type: FIELD_TYPE.string, default: "" },
-          { id: "f_second", name: "second", type: FIELD_TYPE.string, default: "" },
-          { id: "f_firstName", name: "firstName", type: FIELD_TYPE.string, default: "" },
-          { id: "f_secondName", name: "secondName", type: FIELD_TYPE.string, default: "" },
-          { id: "f_turn", name: "turn", type: FIELD_TYPE.string, default: "" },
-          { id: "f_result", name: "result", type: FIELD_TYPE.string, default: "" },
-          { id: "f_line", name: "line", type: FIELD_TYPE.string, default: "" },
+          // マスごとの印（リスト）。0 が左上、8 が右下
+          { id: "f_marks", name: "marks", type: '(Mark | "")[]', default: emptyMarks() },
+          // 印から、席についた人へ（マップ。値はレコード）。先行は "O"、後攻は "X"
+          { id: "f_seats", name: "seats", type: "Record<string, Seat>", default: {} },
+          { id: "f_turn", name: "turn", type: 'Mark | ""', default: "" },
+          { id: "f_result", name: "result", type: 'Mark | "draw" | ""', default: "" },
+          // そろったマスの番号（リスト）
+          { id: "f_line", name: "line", type: "number[]", default: [] },
         ],
       },
       {
         id: "ks_cell",
         name: "Cell",
+        typeDefs: ["td_maru"],
         fields: [
           { id: "f_index", name: "index", type: FIELD_TYPE.number, default: 0 },
-          { id: "f_mark", name: "mark", type: FIELD_TYPE.string, default: "" },
+          { id: "f_mark", name: "mark", type: 'Mark | ""', default: "" },
           { id: "f_piece", name: "piece", type: FIELD_TYPE.entity, default: undefined },
           { id: "f_piece2", name: "piece2", type: FIELD_TYPE.entity, default: undefined },
         ],
@@ -335,6 +368,7 @@ export function marubatsuSample(): ProjectSnapshot {
       { id: "sys_maru", name: "Marubatsu", code: PLAY },
       { id: "sys_reset", name: "MarubatsuReset", code: RESET },
     ],
+    types: [{ id: "td_maru", name: "Marubatsu", code: TYPES }],
     materials: [],
     outputs: [
       {
@@ -366,14 +400,11 @@ export function marubatsuSample(): ProjectSnapshot {
           },
           [BUILTIN.Collider]: { sensor: false },
           ks_board: {
-            f_marks: "         ",
-            f_first: "",
-            f_second: "",
-            f_firstName: "",
-            f_secondName: "",
+            f_marks: emptyMarks(),
+            f_seats: {},
             f_turn: "",
             f_result: "",
-            f_line: "",
+            f_line: [],
           },
         },
       },

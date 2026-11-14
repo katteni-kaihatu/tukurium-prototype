@@ -100,6 +100,7 @@ describe("入れ子の値を直す（ADR 0065）", () => {
     expect(schemaLabel(maybe(NUMBER))).toBe("Number | （なし）");
     expect(schemaLabel(card)).toBe("{ suit, rank, note }");
     expect(schemaLabel({ kind: "literal", value: "♠" })).toBe("♠");
+    expect(schemaLabel({ kind: "literal", value: "" })).toBe('""');
     expect(schemaLabel({ kind: "tuple", items: [NUMBER, NUMBER, NUMBER] })).toBe("Vector3");
     expect(countLabel(hand, [1, 2])).toBe("2 件");
     expect(countLabel({ kind: "map", value: NUMBER }, { a: 1 })).toBe("1 件");

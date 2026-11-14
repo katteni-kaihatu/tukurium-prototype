@@ -39,7 +39,7 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const states = z
   .record(z.string(), z.record(z.string(), z.unknown()))
   .describe(
-    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。参照（Entity・Material・素材）の「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す',
+    '{ KokoState の名前か ID: { フィールドの名前か ID: 値 } }。例: { "Transform": { "position": [0, 1, -3] } }。値はふつうの JSON。リスト・レコード・マップもそのまま書く。参照は ID か名前で渡す（入れ子の中でも）。「なし」は {"$t":"undefined"} と出る。外すときは、それか null を渡す。Date・Map・Set などの書き方は guide の「値の渡し方」',
   );
 const fieldSpec = z.object({
   name: z.string().min(1).max(64),
@@ -47,9 +47,20 @@ const fieldSpec = z.object({
     .string()
     .min(1)
     .max(2000)
-    .describe(`一覧の名前（${T.FIELD_TYPES.join(", ")}）か、TypeScript の型の文`),
-  default: z.unknown().optional(),
+    .describe(
+      `一覧の名前（${T.FIELD_TYPES.join(", ")}）か、TypeScript の型の文（例：{ suit: string; rank: number }[]、Record<string, number>、KokoStateRef<Health> | undefined）。書ける型は guide の「フィールドの型」`,
+    ),
+  default: z
+    .unknown()
+    .optional()
+    .describe("初期値（値の渡し方は guide）。省くと、型の空の値になる"),
 });
+const typeDefRefs = z
+  .array(z.string())
+  .max(50)
+  .describe(
+    "使う型の定義（ID か名前）。入れると、その型の定義が export している型を、フィールドの型の文で名前のまま使える",
+  );
 
 export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: AssetStore) {
   const agent = new AgentClient(hub);
@@ -148,7 +159,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     "get_project",
     {
       title: "プロジェクトの要約",
-      description: "アウトプット・Entity の木・KokoState・System・Material・素材の一覧",
+      description: "アウトプット・Entity の木・KokoState・型の定義・System・Material・素材の一覧",
     },
     () => run(() => T.overview(T.projectOf(agent).project)),
   );
@@ -287,6 +298,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
         name: z.string().min(1).max(64),
         fields: z.array(fieldSpec),
         role: z.string().optional().describe("役割（guide を参照）"),
+        typeDefs: typeDefRefs.optional(),
       },
     },
     (args) => run(() => T.createKokoState(T.writable(agent), args)),
@@ -297,15 +309,55 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "KokoState を変える",
       description:
-        "名前・フィールド・役割を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ）",
+        "名前・フィールド・役割・使う型の定義を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ。型を変えたフィールドの値は、初期値になる）。typeDefs は使う型の定義の全部",
       inputSchema: {
         kokostate: z.string(),
         name: z.string().min(1).max(64).optional(),
         fields: z.array(fieldSpec).optional(),
         role: z.string().optional(),
+        typeDefs: typeDefRefs.optional(),
       },
     },
     (args) => run(() => T.updateKokoState(T.writable(agent), args)),
+  );
+
+  reg(
+    "get_typedef",
+    {
+      title: "型の定義を読む",
+      description: "型の定義のコードと、それを使っている KokoState",
+      inputSchema: { typedef: z.string().describe("型の定義の ID か名前") },
+    },
+    ({ typedef }) => run(() => T.typeDefDetail(T.projectOf(agent).project, typedef)),
+  );
+
+  reg(
+    "create_typedef",
+    {
+      title: "型の定義を作る",
+      description:
+        "名前を付けた型を TypeScript で書く（export type Card = { suit: string; rank: number };）。書けるのは type と interface だけ。KokoState の typeDefs に入れると、フィールドの型の文から使える",
+      inputSchema: {
+        name: z.string().min(1).max(64),
+        code: z.string().max(200_000),
+      },
+    },
+    (args) => run(() => T.createTypeDef(T.writable(agent), args)),
+  );
+
+  reg(
+    "update_typedef",
+    {
+      title: "型の定義を変える",
+      description:
+        "型の定義のコード（全体）か名前を変える。すでにある値は書き換えない（足したフィールドは空の値で埋めて使い、型が変わった所は check に問題として出る）",
+      inputSchema: {
+        typedef: z.string(),
+        code: z.string().max(200_000).optional(),
+        name: z.string().min(1).max(64).optional(),
+      },
+    },
+    (args) => run(() => T.updateTypeDef(T.writable(agent), args)),
   );
 
   reg(

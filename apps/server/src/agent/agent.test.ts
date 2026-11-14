@@ -241,20 +241,24 @@ export default system({
       return Object.fromEntries((hand()?.fields ?? []).map((f) => [f.name, values[f.id]]));
     };
     await expect.poll(handValues).toMatchObject({
-      // 入れ子の中の参照も、名前から ID にはしない（名前で指せるのは、参照そのもののフィールドだけ）
-      cards: [{ suit: "spade", rank: 1, owner: "回る箱" }],
+      // 入れ子の中の参照も、名前から ID になる
+      cards: [{ suit: "spade", rank: 1, owner: box()?.id }],
       drawn: new Date("2026-11-10T00:00:00.000Z"),
       score: new Map([["a", 3]]),
     });
     await expect(
       call("update_entity", { entity: "回る箱", states: { Hand: { cards: [{ suit: 1 }] } } }),
     ).rejects.toThrow(/\[0\]\.suit：文字ではありません/);
-    // 保存できない型は、そのフィールドの型エラーとして出る。入れ子の中の参照切れも出る
+    // 入れ子の中でも、ない名前の参照は入らない
+    await expect(
+      call("update_entity", {
+        entity: "回る箱",
+        states: { Hand: { cards: [{ suit: "spade", rank: 1, owner: "ない箱" }] } },
+      }),
+    ).rejects.toThrow(/見つかりません/);
+    // 保存できない型は、そのフィールドの型エラーとして出る
     const typeProblems = await call("check");
-    expect(typeProblems.map((p: { code: string }) => p.code).sort()).toEqual([
-      "field-type-unsaveable",
-      "missing-entity",
-    ]);
+    expect(typeProblems.map((p: { code: string }) => p.code)).toEqual(["field-type-unsaveable"]);
     await call("update_kokostate", {
       kokostate: "Hand",
       fields: [
@@ -266,6 +270,110 @@ export default system({
     await call("update_entity", {
       entity: "回る箱",
       states: { Hand: { cards: [{ suit: "spade", rank: 1, owner: box()?.id }] } },
+    });
+    expect(await call("check")).toBe("問題はありません");
+
+    // 型の定義を作り、KokoState のフィールドの型から使う（ADR 0065）
+    await call("create_typedef", {
+      name: "Cards",
+      code: 'export type Card = { suit: "spade" | "heart"; rank: number };\n',
+    });
+    await call("create_kokostate", {
+      name: "Deck",
+      typeDefs: ["Cards"],
+      fields: [
+        { name: "cards", type: "Card[]", default: [{ suit: "heart", rank: 2 }] },
+        { name: "byName", type: "Record<string, Card>" },
+        { name: "gun", type: "KokoStateRef<Gun> | undefined" },
+        { name: "ammo", type: "FieldRef<number> | undefined" },
+      ],
+    });
+    const deck = () => a.project.kokostates().find((k) => k.name === "Deck");
+    await expect
+      .poll(() => deck()?.fields.map((f) => f.default))
+      .toEqual([[{ suit: "heart", rank: 2 }], {}, undefined, undefined]);
+    // 初期値が型に合わなければ、KokoState を作らない
+    await expect(
+      call("create_kokostate", {
+        name: "Bad",
+        typeDefs: ["Cards"],
+        fields: [{ name: "cards", type: "Card[]", default: [{ suit: "club", rank: 1 }] }],
+      }),
+    ).rejects.toThrow(/\[0\]\.suit/);
+    expect((await call("get_project")).kokostates.map((k: { name: string }) => k.name)).toEqual([
+      "Gun",
+      "Target",
+      "Spinner",
+      "Hand",
+      "Deck",
+    ]);
+    // KokoState の参照・フィールドの参照は、Entity・KokoState・フィールドを名前で渡せる（保存されるのは ID）
+    await call("update_entity", {
+      entity: "回る箱",
+      states: {
+        Deck: {
+          byName: { ace: { suit: "spade", rank: 1 } },
+          gun: { entity: "銃", koko: "Gun" },
+          ammo: { entity: "銃", koko: "Gun", field: "ammo" },
+        },
+      },
+    });
+    const deckValues = () => {
+      const values = box()?.states[deck()?.id ?? ""] ?? {};
+      return Object.fromEntries((deck()?.fields ?? []).map((f) => [f.name, values[f.id]]));
+    };
+    await expect.poll(deckValues).toEqual({
+      cards: [{ suit: "heart", rank: 2 }],
+      byName: { ace: { suit: "spade", rank: 1 } },
+      gun: { entity: "ent_gun", koko: "ks_gun" },
+      ammo: { entity: "ent_gun", koko: "ks_gun", field: "f_ammo" },
+    });
+    // 指せない KokoState の参照・ないフィールドの参照は入らない
+    await expect(
+      call("update_entity", {
+        entity: "回る箱",
+        states: { Deck: { gun: { entity: "的1", koko: "Target" } } },
+      }),
+    ).rejects.toThrow(/フィールド「gun」.*に使えない値です/);
+    await expect(
+      call("update_entity", {
+        entity: "回る箱",
+        states: { Deck: { ammo: { entity: "銃", koko: "Gun", field: "nope" } } },
+      }),
+    ).rejects.toThrow(/見つかりません/);
+    expect(await call("check")).toBe("問題はありません");
+    // 要約と、型の定義の中身が読める
+    const summary = await call("get_project");
+    expect(summary.typeDefs).toEqual([expect.objectContaining({ name: "Cards" })]);
+    expect(summary.kokostates.find((k: { name: string }) => k.name === "Deck").typeDefs).toEqual([
+      "Cards",
+    ]);
+    expect(await call("get_typedef", { typedef: "Cards" })).toMatchObject({
+      name: "Cards",
+      code: expect.stringContaining("export type Card"),
+      usedBy: ["Deck"],
+    });
+    // 型の定義にフィールドを足しても、すでにある値は問題にならない（空の値で埋めて使う）。名前も変えられる
+    await call("update_typedef", {
+      typedef: "Cards",
+      name: "Trumps",
+      code: 'export type Card = { suit: "spade" | "heart"; rank: number; joker: boolean };\n',
+    });
+    expect(await call("check")).toBe("問題はありません");
+    expect((await call("get_typedef", { typedef: "Trumps" })).usedBy).toEqual(["Deck"]);
+    // 型が変わった所は、値の問題として出る（初期値と、Entity の cards・byName）
+    await call("update_typedef", {
+      typedef: "Trumps",
+      code: "export type Card = { suit: number; rank: number };\n",
+    });
+    expect((await call("check")).map((p: { code: string }) => p.code).sort()).toEqual([
+      "default-type-mismatch",
+      "value-type-mismatch",
+      "value-type-mismatch",
+    ]);
+    await call("update_typedef", {
+      typedef: "Trumps",
+      code: 'export type Card = { suit: "spade" | "heart"; rank: number };\n',
     });
     expect(await call("check")).toBe("問題はありません");
 
