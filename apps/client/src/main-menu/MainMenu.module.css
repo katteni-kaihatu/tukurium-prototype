@@ -883,3 +883,7 @@
     height: 28px;
   }
 }
+.pageHeader > .button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

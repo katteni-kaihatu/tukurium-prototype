@@ -392,7 +392,6 @@ export function registerRepoRoutes(
     handle(async (req) => {
       const q = z.object({ owner: z.string().optional() }).parse(req.query);
       const works = await store.works(q);
-      const viewer = await userOf(req);
       return Promise.all(
         works.map(async (w) => {
           const latest = (await store.releases(w.id))[0] ?? null;
@@ -411,9 +410,6 @@ export function registerRepoRoutes(
             thumbnail: output?.thumbnail ?? null,
             // 公式かどうかは発行者で決める（名前は見ない。ADR 0013 §1）
             official: isOfficial(w.owner),
-            // マーケットの価格（登録していなければ null）と、見ている人が使えるか
-            price: (await store.listing(w.id))?.price ?? null,
-            unlocked: viewer ? await catalog.canUse(viewer.id, w) : w.perms.use,
           };
         }),
       );

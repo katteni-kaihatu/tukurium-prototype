@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../app/store";
 import { Thumbnail } from "../app/Thumbnail";
 import { api, type Work } from "../net/api";
 import { currentWorld } from "../session/openWorld";
-import { useCatalog } from "./catalogStore";
+import { refreshOwned, useCatalog } from "./catalogStore";
 import styles from "./MainMenu.module.css";
 import { enterSession } from "./sessionActions";
 import { useMainMenu } from "./store";
 
-/** 公開されているワールドから、セッションのルートワールドを選ぶ（ADR 0066） */
+/** マーケットにあるワールドから、セッションのルートワールドを選ぶ（ADR 0066） */
 export function WorldsPage() {
   const client = useApp((s) => s.client);
   const session = useApp((s) => s.session);
@@ -26,34 +26,27 @@ export function WorldsPage() {
   const [nameEdited, setNameEdited] = useState(false);
   const waiting = useRef(false);
 
-  const reload = () => {
+  const owned = useCatalog((c) => c.owned);
+  const ownedReady = useCatalog((c) => c.ownedLoaded || c.ownedError !== null);
+  const loadSeq = useRef(0);
+  const reload = useCallback(() => {
+    const seq = ++loadSeq.current;
     setLoadError(null);
-    api.works().then(
+    marketWorlds().then(
       (list) => {
+        if (seq !== loadSeq.current) return;
         setWorks(list);
         setLoaded(true);
       },
       (e: Error) => {
+        if (seq !== loadSeq.current) return;
         setLoadError(e.message);
         setLoaded(true);
       },
     );
-  };
-  // マーケットで入手したら、鍵の状態を読み直す
-  const ownedCount = useCatalog((c) => c.owned.length);
-  useEffect(() => {
-    void ownedCount;
-    api.works().then(
-      (list) => {
-        setWorks(list);
-        setLoaded(true);
-      },
-      (e: Error) => {
-        setLoadError(e.message);
-        setLoaded(true);
-      },
-    );
-  }, [ownedCount]);
+  }, []);
+  useEffect(() => reload(), [reload]);
+  const ready = loaded && ownedReady;
   useEffect(
     () =>
       client.on((msg) => {
@@ -68,7 +61,12 @@ export function WorldsPage() {
     [client],
   );
 
-  const worlds = works.filter((w) => w.outputKind === "world" && w.latest);
+  // マーケットで有料なら、作者か入手した人だけが開ける（無料はだれでも）
+  const ownedIds = new Set(owned.map((item) => item.workId));
+  const worlds = works.map((w) => ({
+    ...w,
+    unlocked: !w.market?.price || w.owner === me?.id || ownedIds.has(w.id),
+  }));
   const query = queries.worlds.trim().toLocaleLowerCase();
   const list = worlds.filter((w) =>
     `${w.name} ${w.ownerName ?? ""} ${w.repoName ?? ""}`.toLocaleLowerCase().includes(query),
@@ -80,6 +78,7 @@ export function WorldsPage() {
   }, [chosen?.name, myName, nameEdited]);
 
   const shownError = session ? actionError : (actionError ?? sessionError);
+  const marketRelease = (w: Work) => w.market?.release ?? null;
   const changeWorld = (releaseId: string) => {
     setActionError(null);
     waiting.current = true;
@@ -93,10 +92,13 @@ export function WorldsPage() {
           <h1>ワールド</h1>
           <p className={styles.muted}>
             {session
-              ? "公開されているワールドから、このセッションの場所を選べます。変える前に、全員へ3秒のカウントダウンが出ます。"
-              : "公開されているワールドを選ぶと、そのワールドで新しいセッションを開けます。"}
+              ? "マーケットにあるワールドから、このセッションの場所を選べます。変える前に、全員へ3秒のカウントダウンが出ます。"
+              : "マーケットにあるワールドを選ぶと、そのワールドで新しいセッションを開けます。有料のワールドは、購入してから開けます。"}
           </p>
         </div>
+        <button className={styles.button} type="button" onClick={() => openMarket()}>
+          マーケットで探す
+        </button>
       </div>
       {session && (
         <p className={styles.notice} role="status">
@@ -112,7 +114,14 @@ export function WorldsPage() {
           value={queries.worlds}
           onChange={(e) => useMainMenu.getState().setQuery("worlds", e.target.value)}
         />
-        <button className={styles.button} type="button" onClick={reload}>
+        <button
+          className={styles.button}
+          type="button"
+          onClick={() => {
+            reload();
+            void refreshOwned();
+          }}
+        >
           更新
         </button>
       </div>
@@ -131,7 +140,7 @@ export function WorldsPage() {
           {shownError}
         </p>
       )}
-      {!loaded ? (
+      {!ready ? (
         <p role="status">ワールドを読み込んでいます…</p>
       ) : (
         <div className={styles.split}>
@@ -140,11 +149,11 @@ export function WorldsPage() {
               <p className={styles.empty}>
                 {query
                   ? "検索に一致するワールドはありません。"
-                  : "公開されたワールドはまだありません。"}
+                  : "マーケットにワールドはまだありません。"}
               </p>
             )}
             {list.map((w) => {
-              const releaseId = w.latest?.id;
+              const releaseId = marketRelease(w)?.id;
               const opened = releaseId !== undefined && open?.releaseId === releaseId;
               const pending = session?.worldChange?.releaseId === releaseId;
               return (
@@ -163,18 +172,20 @@ export function WorldsPage() {
                           ? "開いています"
                           : pending
                             ? "まもなく変わります"
-                            : w.unlocked === false
-                              ? `有料 · ${w.price?.toLocaleString("ja-JP")} P`
-                              : "ワールド"}
+                            : w.market?.price
+                              ? w.unlocked
+                                ? `入手済み · ${w.market.price.toLocaleString("ja-JP")} P`
+                                : `有料 · ${w.market.price.toLocaleString("ja-JP")} P`
+                              : "無料"}
                       </span>
                       <strong>
-                        {w.unlocked === false && <LockIcon />} {w.name}
+                        {!w.unlocked && <LockIcon />} {w.name}
                       </strong>
                     </span>
                   </span>
                   <span className={styles.muted}>
                     {w.ownerName ?? "作者"}
-                    {w.latest ? ` · v${w.latest.version}` : ""}
+                    {w.market?.release ? ` · v${w.market.release.version}` : ""}
                   </span>
                 </button>
               );
@@ -184,10 +195,13 @@ export function WorldsPage() {
             <WorldDetail
               work={chosen}
               inSession={!!session}
-              opened={chosen.latest?.id !== undefined && open?.releaseId === chosen.latest.id}
-              changing={session?.worldChange?.releaseId === chosen.latest?.id}
+              opened={
+                marketRelease(chosen)?.id !== undefined &&
+                open?.releaseId === marketRelease(chosen)?.id
+              }
+              changing={session?.worldChange?.releaseId === marketRelease(chosen)?.id}
               canUse={chosen.perms.use || chosen.owner === me?.id}
-              locked={chosen.unlocked === false}
+              locked={!chosen.unlocked}
               name={name}
               onName={(value) => {
                 setNameEdited(true);
@@ -196,11 +210,11 @@ export function WorldsPage() {
               offline={status !== "online"}
               pending={pendingSession}
               onChange={() => {
-                const releaseId = chosen.latest?.id;
+                const releaseId = marketRelease(chosen)?.id;
                 if (releaseId) changeWorld(releaseId);
               }}
               onCreate={() => {
-                const releaseId = chosen.latest?.id;
+                const releaseId = marketRelease(chosen)?.id;
                 if (!releaseId || !name.trim()) return;
                 void enterSession(
                   { t: "session.create", name: name.trim(), worldReleaseId: releaseId },
@@ -243,7 +257,8 @@ function WorldDetail({
   onChange(): void;
   onCreate(): void;
 }) {
-  const releaseId = work.latest?.id;
+  const release = work.market?.release ?? null;
+  const releaseId = release?.id;
   return (
     <aside className={styles.detail} aria-label="ワールドの詳細">
       {work.thumbnail && (
@@ -255,26 +270,17 @@ function WorldDetail({
       <h2>{work.name}</h2>
       <p className={styles.muted}>
         {work.ownerName ?? "作者"} / {work.repoName}
-        {work.latest ? ` · v${work.latest.version}` : ""}
+        {release ? ` · v${release.version}` : ""}
       </p>
       {!canUse && <p className={styles.muted}>利用の権限がありません。</p>}
       {canUse && locked ? (
         <>
           <p className={styles.notice}>
-            <LockIcon /> 有料のワールドです（{work.price?.toLocaleString("ja-JP")}{" "}
-            P）。マーケットで入手すると開けます。
+            <LockIcon /> 有料のワールドです（{work.market?.price.toLocaleString("ja-JP")}{" "}
+            P）。マーケットで購入すると開けます。
           </p>
-          <button
-            type="button"
-            className={styles.primary}
-            onClick={() => {
-              const menu = useMainMenu.getState();
-              menu.setQuery("market", "");
-              menu.select("market", work.id);
-              menu.selectPage("market");
-            }}
-          >
-            マーケットで入手する
+          <button type="button" className={styles.primary} onClick={() => openMarket(work.id)}>
+            マーケットで購入する
           </button>
         </>
       ) : inSession ? (
@@ -315,6 +321,27 @@ function WorldDetail({
       )}
     </aside>
   );
+}
+
+/** マーケットに登録されたワールドを、すべて読む（一覧は数十件ずつ返る） */
+async function marketWorlds(): Promise<Work[]> {
+  const all: Work[] = [];
+  let offset: number | null = 0;
+  while (offset !== null) {
+    const page = await api.market("", offset, undefined, [], "world");
+    all.push(...page.items);
+    offset = page.nextOffset;
+  }
+  return all;
+}
+
+/** マーケットを、ワールドだけの表示で開く。workId を渡すと、その作品を選ぶ */
+function openMarket(workId?: string) {
+  const menu = useMainMenu.getState();
+  useCatalog.setState({ marketKind: "world", marketTags: [] });
+  menu.setQuery("market", "");
+  menu.select("market", workId);
+  menu.selectPage("market");
 }
 
 function LockIcon() {
