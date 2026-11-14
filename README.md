@@ -33,7 +33,7 @@ pnpm dev
 | `pnpm typecheck` | 型チェック |
 | `pnpm lint` / `pnpm format` | Biome による検査・整形 |
 | `pnpm build` | クライアントとサーバーのビルド |
-| `pnpm e2e` | ブラウザでの通しテスト（Playwright。背骨の 4 本：一人で作って撃つ・2 人で編集・セッションに出して適用・3 人で一周） |
+| `pnpm e2e` | ブラウザでの通しテスト（Playwright。背骨の 4 本：一人で作って撃つ・2 人で編集・セッションに出して適用・保存してリリースし置く） |
 | `pnpm smoke <URL>` | 設置した環境の動作確認（セッション作成・ワークスペース作成・再生） |
 
 ### 周辺サービス（PostgreSQL・S3 互換ストレージ）

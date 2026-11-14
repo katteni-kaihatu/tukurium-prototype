@@ -8,7 +8,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "bench": "tsx bench/sim-step.ts"
+    "bench": "tsx bench/sim-step.ts",
+    "bench:prefab": "tsx bench/expand-prefabs.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "0.21.0",

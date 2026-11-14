@@ -31,6 +31,7 @@ import {
   buildRegistry,
   type CapabilityId,
   compileSystem,
+  expandPrefabs,
   type GuestPolicy,
   HOST_CAPABILITIES,
   inferCapabilities,
@@ -442,6 +443,8 @@ export class Simulation {
     if (this.parts.has(spec.id)) this.removePart(spec.id);
     const part: Part = {
       ...spec,
+      // プレハブのインスタンスは、ここで中身に展開しておく（ADR 0076）。版（realm）は、渡された制作データから決める
+      snapshot: this.expand(spec.snapshot, spec.packages, spec.schemas),
       realm: this.realmOf(spec.realm, spec.snapshot),
       source: spec.realm,
       entities: new Set(),
@@ -450,6 +453,18 @@ export class Simulation {
     this.registerRealm(part.realm, part.snapshot, part.packages, part.schemas);
     this.instantiate(part);
     this.loadSystems(part);
+  }
+
+  /** プレハブのインスタンスを中身に展開した制作データ（Entity・System の並び・「維持」の印。ADR 0076） */
+  private expand(
+    snapshot: ProjectSnapshot,
+    packages?: PackageResolution[],
+    schemas?: FieldSchemas,
+  ): ProjectSnapshot {
+    return expandPrefabs(snapshot, {
+      kokostates: packageKokoStates(reachablePackages(snapshot.dependencies, packages)),
+      ...(schemas ? { schemas } : {}),
+    });
   }
 
   removePart(id: string): void {
@@ -643,7 +658,7 @@ export class Simulation {
   applyPart(
     source: string,
     outputId: string,
-    snapshot: ProjectSnapshot,
+    given: ProjectSnapshot,
     packages?: PackageResolution[],
     schemas?: FieldSchemas,
   ): ApplyReport {
@@ -655,7 +670,9 @@ export class Simulation {
     const report: ApplyReport = { instances: targets.length, kept: 0, dropped: 0 };
     if (targets.length === 0) return report;
     // 適用した配置だけを、新しい版の realm へまとめて移す（ほかの出力は古い版のまま。ADR 0010 §4）
-    const realm = this.realmOf(source, snapshot);
+    const realm = this.realmOf(source, given);
+    // プレハブの変更も、アウトプットの変更の一つとして届く（展開してから比べる。ADR 0076）
+    const snapshot = this.expand(given, packages, schemas);
     const marks = snapshot.outputs.find((o) => o.id === outputId)?.keep ?? [];
     const newDefs = new Map(
       [

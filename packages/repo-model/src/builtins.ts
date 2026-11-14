@@ -111,7 +111,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
       /** 速い物が薄い床をすり抜けないようにする */
       { id: "ccd", name: "ccd", type: FIELD_TYPE.boolean, default: true },
       /**
-       * 軸の固定（ADR 0076）。true の軸には、ぶつかっても重力でも動かない（dynamic のときだけ効く）。
+       * 軸の固定（ADR 0077）。true の軸には、ぶつかっても重力でも動かない（dynamic のときだけ効く）。
        * 軸はワールドの軸で、親や自分の向きでは変わらない。固定した軸の位置・角度は、今の値のまま保つ。
        */
       { id: "lockMoveX", name: "lockMoveX", type: FIELD_TYPE.boolean, default: false },

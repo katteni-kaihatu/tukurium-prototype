@@ -5,6 +5,8 @@ import type {
   MaterialDef,
   OutputDef,
   PackageDependency,
+  PrefabDef,
+  PrefabEntityDef,
   ProjectSnapshot,
   Provenance,
   SystemDef,
@@ -51,7 +53,14 @@ export function outputFilePath(id: string): string {
   return `outputs/${safe(id)}/output.json`;
 }
 
-/** ファイルに書く Entity（値は保存する形。アウトプットはパスで分かるので書かない） */
+export function prefabFilePath(id: string): string {
+  return `prefabs/${safe(id)}.json`;
+}
+export function prefabEntityFilePath(prefabId: string, entityId: string): string {
+  return `prefabs/${safe(prefabId)}/entities/${safe(entityId)}.json`;
+}
+
+/** ファイルに書く Entity（値は保存する形。アウトプット・プレハブはパスで分かるので書かない） */
 type StoredEntity = Omit<EntityDef, "output" | "states"> & {
   states: Record<string, StoredValues>;
 };
@@ -84,6 +93,15 @@ export function toFiles(snap: ProjectSnapshot): FileMap {
   for (const e of snap.entities) {
     const { output, states, ...rest } = e;
     files[entityFilePath(output, e.id)] = json({
+      ...rest,
+      states: encodeStates(states),
+    } satisfies StoredEntity);
+  }
+  // プレハブと、その中の Entity（ADR 0076）
+  for (const p of snap.prefabs ?? []) files[prefabFilePath(p.id)] = json(p);
+  for (const e of snap.prefabEntities ?? []) {
+    const { prefab, states, ...rest } = e;
+    files[prefabEntityFilePath(prefab, e.id)] = json({
       ...rest,
       states: encodeStates(states),
     } satisfies StoredEntity);
@@ -125,6 +143,23 @@ export function fromFiles(files: FileMap): ProjectSnapshot {
       snap.types ??= [];
       snap.types.push({ ...def, code: files[p.replace(/\.json$/, ".d.ts")] ?? "" });
     } else if (/^outputs\/[^/]+\/output\.json$/.test(p)) snap.outputs.push(parse<OutputDef>(p));
+    else if (/^prefabs\/[^/]+\.json$/.test(p)) {
+      snap.prefabs ??= [];
+      snap.prefabs.push(parse<PrefabDef>(p));
+    }
+  }
+  for (const pf of snap.prefabs ?? []) {
+    const prefix = `prefabs/${safe(pf.id)}/entities/`;
+    for (const p of paths) {
+      if (!p.startsWith(prefix)) continue;
+      const stored = parse<StoredEntity>(p);
+      snap.prefabEntities ??= [];
+      snap.prefabEntities.push({
+        ...stored,
+        states: decodeStates(stored.states),
+        prefab: pf.id,
+      } satisfies PrefabEntityDef);
+    }
   }
   for (const o of snap.outputs) {
     const prefix = `outputs/${safe(o.id)}/entities/`;

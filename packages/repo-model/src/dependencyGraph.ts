@@ -8,7 +8,7 @@ import {
 import { BUILTIN_KOKOSTATES } from "./builtins";
 import type { ResourceKind } from "./diagnostics/types";
 import { ResourcePathIndex } from "./resourcePath";
-import type { ProjectSnapshot } from "./schema";
+import type { EntityBase, ProjectSnapshot } from "./schema";
 import { compileSystem } from "./systemCompiler";
 
 /**
@@ -17,6 +17,8 @@ import { compileSystem } from "./systemCompiler";
  *
  * - Material → 画像の素材
  * - Entity → 持っている KokoState・指しているリソースや Entity・親の Entity
+ * - インスタンスの Entity → プレハブ（ADR 0076）
+ * - プレハブ → その System・中の Entity が持っている KokoState や指しているリソース・中で使っているプレハブ
  * - Output → その System・その Entity
  * - System → import した KokoState（安定 ID）
  * - System → `@別名/...` で import したライブラリ（`name:package/<別名>`。ADR 0015）
@@ -75,22 +77,35 @@ export class ProjectDependencyGraph {
       for (const id of k.typeDefs ?? [])
         this.edge({ kind: "kokostate", id: k.id }, { kind: "typedef", id });
 
-    for (const e of snap.entities) {
-      const from: GraphRef = { kind: "entity", id: e.id };
-      if (e.parent) this.edge(from, { kind: "entity", id: e.parent });
+    /** Entity が持っている KokoState と、値が指しているもの。inPrefab：プレハブの中の Entity（Entity どうしの辺は持たない） */
+    const uses = (from: GraphRef, e: EntityBase, inPrefab: boolean) => {
+      if (e.instanceOf) this.edge(from, { kind: "prefab", id: e.instanceOf.prefab });
       for (const [kokoId, values] of Object.entries(e.states)) {
         this.edge(from, { kind: "kokostate", id: kokoId });
         for (const f of defs.get(kokoId)?.fields ?? []) {
           const schema = schemaOfField(schemas, kokoId, f);
           if (!schema) continue;
           visitRefs(schema, values[f.id], (target, id) => {
+            if (target === "entity" && inPrefab) return;
             const kind = target === "entity" || target === "material" ? target : "asset";
             this.edge(from, { kind, id });
           });
         }
       }
+    };
+
+    for (const e of snap.entities) {
+      const from: GraphRef = { kind: "entity", id: e.id };
+      if (e.parent) this.edge(from, { kind: "entity", id: e.parent });
+      uses(from, e, false);
       this.edge({ kind: "output", id: e.output }, from);
     }
+
+    // プレハブ（ADR 0076）。中の Entity が使うものは、プレハブが使うものとして持つ
+    for (const p of snap.prefabs ?? [])
+      for (const s of p.systems)
+        this.edge({ kind: "prefab", id: p.id }, { kind: "system", id: s.id });
+    for (const e of snap.prefabEntities ?? []) uses({ kind: "prefab", id: e.prefab }, e, true);
 
     for (const o of snap.outputs)
       for (const s of o.systems)
@@ -175,6 +190,9 @@ function resourceHashes(snap: ProjectSnapshot): Map<string, string> {
   for (const o of snap.outputs) put("output", o.id, o);
   for (const e of snap.entities) put("entity", e.id, e);
   for (const f of snap.folders ?? []) put("folder", f.id, f);
+  // プレハブは、中の Entity も合わせて一つのリソースとして比べる
+  for (const p of snap.prefabs ?? [])
+    put("prefab", p.id, [p, (snap.prefabEntities ?? []).filter((e) => e.prefab === p.id)]);
   return out;
 }
 

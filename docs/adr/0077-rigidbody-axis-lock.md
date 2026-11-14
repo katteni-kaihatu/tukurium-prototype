@@ -1,4 +1,4 @@
-# ADR 0076：RigidBody に、軸ごとの移動と回転の固定を持たせる
+# ADR 0077：RigidBody に、軸ごとの移動と回転の固定を持たせる
 
 - 状態: 採用・実装済み（2026-11-14）
 - 関連: [ADR 0068](0068-physics-collider-and-player.md)（Collider と RigidBody）

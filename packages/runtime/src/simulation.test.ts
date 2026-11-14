@@ -1217,7 +1217,7 @@ describe("Simulation：物理の地面と Collider（ADR 0068）", () => {
     expect(pos[1]).toBeGreaterThan(0);
   });
 
-  describe("軸の固定（ADR 0076）", () => {
+  describe("軸の固定（ADR 0077）", () => {
     /** 球の下に、Z の向きへ下る坂を置く。固定しなければ、球は Z へ転がる */
     const onSlope = (rigid: Record<string, unknown>) => {
       const p = ball(rigid, {}, {}, 3);

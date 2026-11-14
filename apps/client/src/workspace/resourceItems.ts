@@ -14,6 +14,7 @@ export type ResKind =
   | "system"
   | "typedef"
   | "material"
+  | "prefab"
   | "model"
   | "image"
   | "audio";
@@ -39,6 +40,7 @@ export const KIND_META: Record<ResKind, { label: string; bg: string; fg: string 
   system: { label: "Script", bg: "#E3E7F6", fg: "#2F4A9C" },
   typedef: { label: "Types", bg: "#E6F1F4", fg: "#1F5E6B" },
   material: { label: "Material", bg: "#F4F1EA", fg: "#9A4A16" },
+  prefab: { label: "Prefab", bg: "#E4EEFB", fg: "#1D5FA8" },
   model: { label: "Model", bg: "#E3E7F6", fg: "#2F4A9C" },
   image: { label: "Texture", bg: "#E5F3EC", fg: "#1F6B47" },
   audio: { label: "Audio", bg: "#F1E8F8", fg: "#6B3E9A" },
@@ -67,6 +69,8 @@ export function resourceItems(project: ProjectDoc): ResItem[] {
       parent: project.folderOf(m.id),
       color: m.color,
     });
+  for (const p of project.prefabs())
+    items.push({ id: p.id, kind: "prefab", name: p.name, parent: project.folderOf(p.id) });
   for (const a of project.assets())
     items.push({ id: a.id, kind: a.kind, name: a.name, parent: project.folderOf(a.id) });
   return items;
@@ -94,6 +98,8 @@ export function itemRef(item: ResItem): GraphRef | null {
       return { kind: "typedef", id: item.id };
     case "material":
       return { kind: "material", id: item.id };
+    case "prefab":
+      return { kind: "prefab", id: item.id };
     case "image":
     case "model":
     case "audio":
@@ -113,6 +119,7 @@ const USER_LABEL: [GraphRef["kind"], string][] = [
   ["system", "System"],
   ["output", "アウトプット"],
   ["material", "マテリアル"],
+  ["prefab", "プレハブ"],
 ];
 
 /**
