@@ -18,7 +18,7 @@ import {
   type SoundEvent,
   type SystemStatus,
 } from "@tukurium/runtime";
-import type { PlayFrame, PlayMode, WorkspaceRole } from "@tukurium/shared";
+import type { DebugStop, PlayFrame, PlayMode, WorkspaceRole } from "@tukurium/shared";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { create } from "zustand";
@@ -69,6 +69,8 @@ interface WorkspaceState {
   debugReady: boolean;
   debugRev: number;
   debugOpen: boolean;
+  debugStop: DebugStop | null;
+  debugCommand(cmd: "continue" | "pause"): void;
   workspaceId: string | null;
   project: ProjectDoc | null;
   awareness: Awareness | null;
@@ -274,6 +276,17 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
     debugReady: false,
     debugRev: 0,
     debugOpen: false,
+    debugStop: null,
+    debugCommand: (cmd) => {
+      const s = get();
+      if (s.workspaceId)
+        client().send({
+          t: "ws.debugCommand",
+          workspaceId: s.workspaceId,
+          cmd,
+          stopId: s.debugStop?.id,
+        });
+    },
     workspaceId: null,
     project: null,
     awareness: null,
@@ -384,6 +397,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugReady: false,
         debugRev: 0,
         debugOpen: false,
+        debugStop: null,
         project,
         awareness,
         role: null,
@@ -443,6 +457,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => {
         debugReady: false,
         debugRev: 0,
         debugOpen: false,
+        debugStop: null,
         workspaceId: null,
         project: null,
         awareness: null,
@@ -588,6 +603,15 @@ const log = (message: string, level: LogEntry["level"] = "log") =>
 client().on((msg) => {
   const s = ws();
   switch (msg.t) {
+    case "ws.debugCommand": {
+      if (msg.workspaceId !== s.workspaceId || !s.isHost || !s.sim?.debug) return;
+      if (msg.cmd === "pause") s.sim.debug.requestPause();
+      else if (msg.stopId && s.sim.debug.resume(msg.stopId)) {
+        set({ mode: "play", debugStop: null });
+        sendFrame();
+      }
+      return;
+    }
     case "ws.debugDoc": {
       if (msg.workspaceId !== s.workspaceId || !s.project) return;
       const canWrite = s.role === "editor" || s.role === "admin";
@@ -702,17 +726,23 @@ async function hostCommand(cmd: "play" | "pause" | "resume" | "stop", outputId?:
       if (s.mode === "edit") await startSim(outputId ?? s.outputId, null);
       return;
     case "pause":
+      if (s.sim?.debug) {
+        s.sim.debug.requestPause();
+        return;
+      }
       if (s.mode === "play") set({ mode: "paused" });
       sendFrame();
       return;
     case "resume":
+      if (s.sim?.debug?.stop) s.sim.debug.resume(s.sim.debug.stop.id);
+      set({ debugStop: null });
       if (s.mode === "paused") set({ mode: "play" });
       sendFrame();
       return;
     case "stop":
       cancelPendingPlay();
       s.sim?.dispose();
-      set({ sim: null, mode: "edit", systemStatus: [] });
+      set({ sim: null, mode: "edit", systemStatus: [], debugStop: null });
       sendFrame();
       return;
   }
@@ -740,6 +770,24 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     packages,
     // 型を確かめる Worker が作ったスキーマ（まだなければ、型の文から分かる分だけで確かめる）
     schemas: ws().fieldSchemas,
+    ...(s.debug?.read().enabled
+      ? {
+          debug: {
+            settings: () =>
+              s.debug?.read() ?? {
+                enabled: false,
+                breakOnError: false,
+                breakpoints: [],
+                watches: [],
+              },
+            onPause: (stop: DebugStop) => {
+              if (!current()) return;
+              set({ debugStop: stop, debugOpen: true, panelsHidden: false, mode: "paused" });
+              sendFrame();
+            },
+          },
+        }
+      : {}),
     onLog: (entry) => {
       if (!started && !current()) return;
       pushLog(entry);
@@ -765,6 +813,7 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
     outputId,
     mode: resume?.mode === "paused" ? "paused" : "play",
     systemStatus: sim.systemStatus(),
+    debugStop: null,
   });
   log(resume ? "前のホストの状態から再生を続けます" : "Play を開始しました");
   sendFrame();
@@ -802,6 +851,7 @@ export function sendFrame(): void {
         world: sim.world.snapshot(),
         names: Object.fromEntries(sim.world.entityIds().map((id) => [id, sim.nameOf(id)])),
         status: sim.systemStatus(),
+        debug: s.debugStop,
         bags: sim.bagsSnapshot(),
         partEntities: sim.partEntitiesSnapshot(),
       }
@@ -820,7 +870,7 @@ export function sendFrame(): void {
 function applyFrame(frame: PlayFrame) {
   const s = ws();
   if (frame.mode === "edit" || !frame.world || !s.project) {
-    set({ mode: "edit", remote: null, systemStatus: [] });
+    set({ mode: "edit", remote: null, systemStatus: [], debugStop: null });
     return;
   }
   const world = s.remote?.world ?? new World(buildRegistry(s.project.kokostates()));
@@ -829,6 +879,8 @@ function applyFrame(frame: PlayFrame) {
     incomingSounds: [...st.incomingSounds, ...(frame.sounds ?? [])].slice(-32),
     incomingEffects: [...st.incomingEffects, ...(frame.effects ?? [])].slice(-32),
     mode: frame.mode,
+    debugStop: frame.debug ?? null,
+    ...(frame.debug ? { debugOpen: true, panelsHidden: false } : {}),
     outputId: frame.outputId || st.outputId,
     remote: { world, names: frame.names, bags: (frame.bags ?? {}) as Record<string, BagItem[]> },
     systemStatus: frame.status,

@@ -203,7 +203,33 @@ const Bags = z.record(z.string(), z.array(BagItem).max(64));
 /** 配置 → Entity。実行中に作った物の処理・削除のため、ホスト交代時にも所属を戻す。 */
 const PartEntities = z.record(z.string(), z.array(z.string()));
 
+export const DebugStop = z.object({
+  id: z.string(),
+  systemId: z.string(),
+  entity: z.string().nullable(),
+  line: z.number(),
+  reason: z.string(),
+  frames: z.array(
+    z.object({
+      id: z.number(),
+      name: z.string(),
+      line: z.number(),
+      variables: z.array(
+        z.object({
+          name: z.string(),
+          value: z.unknown(),
+          writable: z.boolean(),
+          unavailable: z.boolean().optional(),
+        }),
+      ),
+    }),
+  ),
+});
+export type DebugStop = z.infer<typeof DebugStop>;
+export const DebugCommand = z.enum(["continue", "pause"]);
+
 export const PlayFrame = z.object({
+  debug: DebugStop.nullable().optional(),
   sounds: z.array(SoundEvent).max(32).optional(),
   effects: z.array(EffectEvent).max(32).optional(),
   mode: PlayMode,
@@ -335,6 +361,12 @@ export const ClientMessage = z.discriminatedUnion("t", [
   z.object({ t: z.literal("ws.end"), workspaceId: id }),
   z.object({ t: z.literal("ws.update"), workspaceId: id, update: b64 }),
   z.object({ t: z.literal("ws.debugUpdate"), workspaceId: id, update: b64 }),
+  z.object({
+    t: z.literal("ws.debugCommand"),
+    workspaceId: id,
+    cmd: DebugCommand,
+    stopId: z.string().optional(),
+  }),
   z.object({ t: z.literal("ws.awareness"), workspaceId: id, update: b64 }),
   z.object({
     t: z.literal("ws.setRole"),
@@ -479,6 +511,13 @@ export const ServerMessage = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("ws.doc"), workspaceId: id, update: b64, role: WorkspaceRole }),
   z.object({ t: z.literal("ws.debugDoc"), workspaceId: id, update: b64, full: z.boolean() }),
+  z.object({
+    t: z.literal("ws.debugCommand"),
+    workspaceId: id,
+    cmd: DebugCommand,
+    stopId: z.string().optional(),
+    from: id,
+  }),
   z.object({ t: z.literal("ws.denied"), workspaceId: id, reason: z.string() }),
   /** ワークスペースが閉じられた。開いていた人に届く */
   z.object({ t: z.literal("ws.ended"), workspaceId: id, reason: z.string() }),

@@ -723,6 +723,46 @@ describe("本人識別とセッション", () => {
 });
 
 describe("ワークスペース", () => {
+  it("デバッグ停止を共有し、続ける操作は共同編集者だけがホストへ送れる", async () => {
+    const { url } = await start();
+    const { a, b, workspaceId } = await sessionWithWorkspace(url);
+    b.send({ t: "ws.open", workspaceId });
+    await b.next("ws.doc");
+    const debug = {
+      id: "stop-1",
+      systemId: "s",
+      entity: "e",
+      line: 4,
+      frames: [],
+      reason: "ブレイクポイント",
+    };
+    a.send({
+      t: "ws.frame",
+      workspaceId,
+      frame: {
+        mode: "paused",
+        outputId: "out",
+        time: 1,
+        world: {},
+        names: {},
+        status: [],
+        partEntities: {},
+        debug,
+      },
+    });
+    expect((await b.next("ws.frame")).frame.debug).toEqual(debug);
+    b.send({ t: "ws.debugCommand", workspaceId, cmd: "continue", stopId: "stop-1" });
+    expect(await a.next("ws.debugCommand")).toMatchObject({
+      cmd: "continue",
+      stopId: "stop-1",
+      from: b.me.id,
+    });
+    a.send({ t: "ws.setRole", workspaceId, userId: b.me.id, role: "viewer" });
+    await b.next("ws.role");
+    b.send({ t: "ws.debugCommand", workspaceId, cmd: "continue", stopId: "stop-1" });
+    expect((await b.next("error")).message).toContain("共同編集");
+  });
+
   it("デバッグ設定を共有し、閲覧者の変更を拒み、制作データには保存しない", async () => {
     const { url, store } = await start();
     const { a, b, workspaceId } = await sessionWithWorkspace(url);

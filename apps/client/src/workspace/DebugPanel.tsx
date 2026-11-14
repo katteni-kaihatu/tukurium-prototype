@@ -37,6 +37,23 @@ export function DebugPanel() {
             実行中のエラーで一時停止
           </label>
           <h3>一時停止の条件</h3>
+          {ws.debugStop && (
+            <section aria-label="一時停止した場所">
+              <p>
+                {ws.debugStop.reason}：
+                {ws.project?.system(ws.debugStop.systemId)?.name ?? ws.debugStop.systemId}{" "}
+                {ws.debugStop.line} 行目
+              </p>
+              <button
+                type="button"
+                className={ui.btnPrimary}
+                disabled={!canWrite}
+                onClick={() => ws.debugCommand("continue")}
+              >
+                続ける
+              </button>
+            </section>
+          )}
           {settings.breakpoints.map((point) => (
             <div key={point.id} className={styles.row}>
               <input

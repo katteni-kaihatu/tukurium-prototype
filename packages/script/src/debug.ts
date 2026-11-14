@@ -33,7 +33,7 @@ let __debugEntities = [];
 globalThis.__debugBridge = (() => {
   const stack = [];
   let nextId = 0;
-  const reported = new WeakSet();
+  let reported = new WeakSet();
   const snapshot = (frame, error) => ({
     systemId: __current, entity: __entity, line: frame.line,
     frames: stack.map(f => ({id:f.id,name:f.name,line:f.line,variables:(f.read ? f.read() : []).map(v => {
@@ -44,12 +44,14 @@ globalThis.__debugBridge = (() => {
   });
   const stop = (frame, error) => {
     const edits = JSON.parse(__debugPause(JSON.stringify(snapshot(frame, error))));
+    if(edits.abort) { __debugActive=false; throw new Error("デバッグ実行を終了しました"); }
     for (const edit of edits) {
       const target = stack.find(f => f.id === edit.frameId);
       if (target && target.write) target.write(edit.name, __codec.decode(edit.value));
     }
   };
   return {
+    reset() { stack.length=0; reported=new WeakSet(); },
     enter(name,line) { const f={id:++nextId,name,line,read:null,write:null}; if(__debugActive) stack.push(f); return f; },
     leave(f) { if(stack[stack.length-1]===f) stack.pop(); },
     read(fn) { try { return {ok:true,value:fn()}; } catch { return {ok:false}; } },

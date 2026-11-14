@@ -85,6 +85,7 @@ const KEY_ACTIONS: Record<string, string> = { KeyR: "reload", KeyE: "use", KeyF:
  * 編集空間はアウトプットの物体全体を囲む境界で示す（要件 §6「編集対象の表示」）。
  */
 export class WorkspaceController {
+  private pendingDebug: Simulation | null = null;
   private readonly view = new EntityView();
   private readonly bounds: THREE.LineSegments;
   private readonly selectionBox = new THREE.BoxHelper(new THREE.Object3D(), 0x603d56);
@@ -272,11 +273,30 @@ export class WorkspaceController {
       // ホスト：実行して、状態を配る
       if (ws.mode === "play") {
         this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS_PER_FRAME);
-        while (this.accumulator >= STEP) {
-          ws.sim.step(STEP);
-          this.accumulator -= STEP;
+        if (ws.sim.debug) {
+          const sim = ws.sim;
+          if (this.pendingDebug === sim) this.accumulator = 0;
+          else if (this.accumulator >= STEP) {
+            this.accumulator -= STEP;
+            this.pendingDebug = sim;
+            void sim
+              .stepDebug(STEP)
+              .catch((error) => {
+                if (useWorkspace.getState().sim === sim)
+                  useWorkspace.setState({ error: String(error), mode: "paused" });
+              })
+              .finally(() => {
+                if (this.pendingDebug === sim) this.pendingDebug = null;
+              });
+          }
+        } else {
+          while (this.accumulator >= STEP) {
+            ws.sim.step(STEP);
+            this.accumulator -= STEP;
+          }
         }
       }
+      if (ws.mode === "paused") this.accumulator = 0;
       this.view.sync(ws.sim.world, {
         materials,
         holdCamera: this.engine.camera,

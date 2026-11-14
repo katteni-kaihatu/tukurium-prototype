@@ -11,10 +11,12 @@ import {
 } from "@tukurium/eks";
 import {
   newQuickJSWASMModuleFromVariant,
+  type QuickJSAsyncContext,
   type QuickJSContext,
   type QuickJSHandle,
   type QuickJSRuntime,
 } from "quickjs-emscripten-core";
+import { DEBUG_PRELUDE, type DebugEdit, type DebugPoint } from "./debug";
 
 /** スクリプトから見える Entity。KokoState の ID → フィールド名 → 値。 */
 export interface ScriptEntity {
@@ -41,6 +43,7 @@ export interface HostCallContext {
 export type HostFunction = (args: Value[], ctx: HostCallContext) => Value;
 
 export interface SandboxOptions {
+  debug?: { onPoint(point: DebugPoint): Promise<DebugEdit[]> };
   /** ハンドラ 1 回の呼び出しで使える時間。超えたら中断する。 */
   timeLimitMs?: number;
   /** 読み込み（領域の準備・スクリプトの評価）で使える時間。初回は VM の準備が入るので長めにする。 */
@@ -116,7 +119,7 @@ export function lineInStack(stack: string | undefined, systemId: string | null):
   return m ? Number(m[1]) : null;
 }
 
-const PRELUDE = (hostNames: string[]) => `
+const PRELUDE = (hostNames: string[], debug = false) => `
 "use strict";
 // 値の書き出しと読み込み（ホストと同じ関数。ADR 0065）。undefined・Date・Map・Set・bigint・NaN も、
 // ホストとの間をそのまま行き来できる
@@ -232,6 +235,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
   const entities = fields ? JSON.parse(entitiesJson) : __read(entitiesJson);
   if (fields) __eachField(entities, fields.read, false);
   const args = __read(argsJson);
+  ${debug ? "__debugBridge.reset(); __debugEntities = entities; __debugActive = true;" : ""}
   __current = id;
   try {
     for (const e of entities) {
@@ -251,6 +255,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
       fn.call(handler.startsWith("contract:") ? def.contracts : def, view, ...args);
     }
   } finally {
+    ${debug ? "__debugActive = false; __debugEntities = [];" : ""}
     __current = null;
     __entity = null;
   }
@@ -286,17 +291,23 @@ export class ScriptSandbox {
   private currentLimit = 0;
   private readonly realms = new Map<string, QuickJSContext>();
   private readonly systemRealm = new Map<string, string>();
+  private busy = false;
+  private disposeRequested = false;
+  private cancelWait: (() => void) | null = null;
+  private debugDeadline = Number.POSITIVE_INFINITY;
 
   private constructor(
     private readonly memory: WebAssembly.Memory,
     private readonly runtime: QuickJSRuntime,
-    private readonly options: Required<Omit<SandboxOptions, "hostFunctions" | "onLog">>,
-    private readonly host: Pick<SandboxOptions, "hostFunctions" | "onLog">,
+    private readonly options: Required<Omit<SandboxOptions, "hostFunctions" | "onLog" | "debug">>,
+    private readonly host: Pick<SandboxOptions, "hostFunctions" | "onLog" | "debug">,
   ) {}
 
   static async create(options: SandboxOptions = {}): Promise<ScriptSandbox> {
     // リリース版の同期ビルドだけを使う（デバッグ版などを配信物に含めない）
-    const QuickJS = await newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
+    const QuickJS = options.debug
+      ? await (await import("./debugModule")).createDebugModule()
+      : await newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
     const runtime = QuickJS.newRuntime();
     const opts = {
       timeLimitMs: options.timeLimitMs ?? 20,
@@ -308,6 +319,7 @@ export class ScriptSandbox {
     const sandbox = new ScriptSandbox(QuickJS.getWasmMemory(), runtime, opts, {
       hostFunctions: options.hostFunctions,
       onLog: options.onLog,
+      debug: options.debug,
     });
     sandbox.heapLimit = sandbox.memory.buffer.byteLength + opts.memoryLimitBytes;
     return sandbox;
@@ -318,6 +330,7 @@ export class ScriptSandbox {
    * 同じ ID は置き換える（別の領域へ移す場合も、元の領域からは取り除く）。
    */
   loadSystem(id: string, source: string, realm = "default"): SystemMeta {
+    if (this.busy) throw new Error("実行中のスクリプトは読み込み直せません");
     const prev = this.systemRealm.get(id);
     if (prev !== undefined && prev !== realm) this.unloadSystem(id);
     const vm = this.realm(realm);
@@ -347,6 +360,7 @@ export class ScriptSandbox {
   }
 
   unloadSystem(id: string): void {
+    if (this.busy) throw new Error("実行中のスクリプトは取り除けません");
     const realm = this.systemRealm.get(id);
     if (realm === undefined) return;
     const vm = this.realms.get(realm);
@@ -359,11 +373,12 @@ export class ScriptSandbox {
 
   /** 領域ごと破棄する（その領域の System もすべて取り除く）。 */
   disposeRealm(realm: string): void {
+    if (this.busy) throw new Error("実行中の領域は取り除けません");
     const vm = this.realms.get(realm);
     if (!vm) return;
     for (const [id, r] of [...this.systemRealm]) if (r === realm) this.systemRealm.delete(id);
     this.realms.delete(realm);
-    vm.dispose();
+    this.disposeVm(vm);
   }
 
   /**
@@ -381,6 +396,7 @@ export class ScriptSandbox {
     args: Value[] = [],
     taggedFields?: TaggedFields,
   ): ScriptEntity[] {
+    if (this.host.debug) throw new Error("デバッグ実行には runAsync を使います");
     const realm = this.systemRealm.get(id);
     const vm = realm === undefined ? undefined : this.realms.get(realm);
     if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
@@ -417,10 +433,72 @@ export class ScriptSandbox {
   }
 
   dispose(): void {
-    for (const vm of this.realms.values()) vm.dispose();
+    if (this.busy) {
+      this.disposeRequested = true;
+      this.cancelWait?.();
+      return;
+    }
+    for (const vm of this.realms.values()) this.disposeVm(vm);
     this.realms.clear();
     this.systemRealm.clear();
     this.runtime.dispose();
+  }
+
+  private disposeVm(vm: QuickJSContext): void {
+    if (this.host.debug) {
+      // asyncify 0.32 は Runtime の登録を先に外す。ホスト関数を先に解放しておく。
+      for (const name of ["__debugPause", "__hostCall", "__log"])
+        vm.setProp(vm.global, name, vm.undefined);
+    }
+    vm.dispose();
+  }
+
+  /** 非同期版だけの実行経路。停止している時間は実行時間の制限に含めない。 */
+  async runAsync(
+    id: string,
+    handler: string,
+    entities: ScriptEntity[],
+    args: Value[] = [],
+  ): Promise<ScriptEntity[]> {
+    if (!this.host.debug || this.busy || this.disposeRequested)
+      throw new Error("デバッグ実行を開始できません");
+    const realm = this.systemRealm.get(id);
+    const vm = (realm === undefined ? undefined : this.realms.get(realm)) as
+      | QuickJSAsyncContext
+      | undefined;
+    if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
+    this.busy = true;
+    this.currentLimit = this.options.timeLimitMs;
+    this.debugDeadline = performance.now() + this.currentLimit;
+    this.overMemory = false;
+    this.runtime.setInterruptHandler(() => {
+      if (this.memory.buffer.byteLength > this.heapLimit) {
+        this.overMemory = true;
+        return true;
+      }
+      return this.disposeRequested || performance.now() > this.debugDeadline;
+    });
+    const values = [id, handler, stringifyValue(entities), "", stringifyValue(args)];
+    try {
+      const result = this.unwrap(
+        vm,
+        await vm.evalCodeAsync(
+          `__run(${values.map((value) => JSON.stringify(value)).join(",")})`,
+          "debug-run.js",
+        ),
+        id,
+        "runtime",
+      );
+      try {
+        return parseValue(vm.getString(result)) as ScriptEntity[];
+      } finally {
+        result.dispose();
+      }
+    } finally {
+      this.runtime.removeInterruptHandler();
+      this.busy = false;
+      if (this.disposeRequested) this.dispose();
+    }
   }
 
   private realm(name: string): QuickJSContext {
@@ -432,14 +510,18 @@ export class ScriptSandbox {
       this.withDeadline(this.options.loadTimeLimitMs, () => {
         this.unwrap(
           vm,
-          vm.evalCode(PRELUDE(Object.keys(this.host.hostFunctions ?? {})), "prelude.js"),
+          vm.evalCode(
+            PRELUDE(Object.keys(this.host.hostFunctions ?? {}), Boolean(this.host.debug)) +
+              (this.host.debug ? DEBUG_PRELUDE : ""),
+            "prelude.js",
+          ),
           null,
           "load",
         ).dispose();
       });
     } catch (e) {
       // 準備に失敗した領域を残すと、サンドボックスの破棄で VM ごと落ちる
-      vm.dispose();
+      this.disposeVm(vm);
       throw e;
     }
     this.realms.set(name, vm);
@@ -447,6 +529,33 @@ export class ScriptSandbox {
   }
 
   private installHost(vm: QuickJSContext, realm: string): void {
+    if (this.host.debug) {
+      const debug = this.host.debug;
+      const pause = (vm as QuickJSAsyncContext).newAsyncifiedFunction(
+        "__debugPause",
+        async (text) => {
+          const point = JSON.parse(vm.getString(text)) as DebugPoint;
+          const remaining = this.debugDeadline - performance.now();
+          this.debugDeadline = Number.POSITIVE_INFINITY;
+          let cancel!: () => void;
+          const cancelled = new Promise<null>((resolve) => {
+            cancel = () => resolve(null);
+          });
+          this.cancelWait = cancel;
+          try {
+            const result = await Promise.race([debug.onPoint(point), cancelled]);
+            return vm.newString(
+              JSON.stringify(this.disposeRequested || result === null ? { abort: true } : result),
+            );
+          } finally {
+            this.cancelWait = null;
+            this.debugDeadline = performance.now() + remaining;
+          }
+        },
+      );
+      vm.setProp(vm.global, "__debugPause", pause);
+      pause.dispose();
+    }
     const hostFns = this.host.hostFunctions ?? {};
     const ctxOf = (idH: QuickJSHandle): HostCallContext => ({
       realm,
@@ -454,6 +563,7 @@ export class ScriptSandbox {
     });
 
     const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH, entityH) => {
+      if (this.disposeRequested) return vm.undefined;
       const name = vm.getString(nameH);
       const fn = hostFns[name];
       if (!fn) throw new Error(`unknown host function ${name}`);
@@ -465,6 +575,7 @@ export class ScriptSandbox {
     hostCall.dispose();
 
     const log = vm.newFunction("__log", (idH, msgH) => {
+      if (this.disposeRequested) return;
       this.host.onLog?.(vm.getString(msgH), ctxOf(idH));
     });
     vm.setProp(vm.global, "__log", log);

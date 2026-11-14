@@ -117,6 +117,9 @@ importers:
       '@fastify/websocket':
         specifier: 11.3.6
         version: 11.3.6
+      '@jitl/quickjs-wasmfile-release-asyncify':
+        specifier: 0.32.0
+        version: 0.32.0
       '@jitl/quickjs-wasmfile-release-sync':
         specifier: 0.32.0
         version: 0.32.0

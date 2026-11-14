@@ -485,6 +485,13 @@ export class Hub {
           return this.deny(conn, "デバッグ設定の変更には共同編集の権限が必要です");
         return;
       }
+      case "ws.debugCommand": {
+        const w = this.workspaceFor(conn, msg.workspaceId);
+        if (!w || !canWrite(this.roleOf(w, user.id)))
+          return this.deny(conn, "デバッグ操作には共同編集の権限が必要です");
+        if (w.host) this.send(w.host, { ...msg, from: user.id });
+        return;
+      }
       case "ws.awareness": {
         const w = this.workspaceFor(conn, msg.workspaceId);
         if (!w || !canRead(this.roleOf(w, user.id))) return;

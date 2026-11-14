@@ -102,6 +102,26 @@ it("再接続で閲覧権限になったら未送信のデバッグ設定を捨�
   server.destroy();
 });
 
+it("全パネルを隠していても共有の停止パネルを開く", () => {
+  useWorkspace.setState({ isHost: false, panelsHidden: true, debugOpen: false });
+  receive({
+    t: "ws.frame",
+    workspaceId: "w_test",
+    frame: {
+      mode: "paused",
+      outputId: "out1",
+      time: 0,
+      world: { entities: [] },
+      names: {},
+      status: [],
+      partEntities: {},
+      debug: { id: "stop", systemId: "s", line: 1, entity: null, frames: [], reason: "一時停止" },
+    },
+  });
+  expect(useWorkspace.getState().debugOpen).toBe(true);
+  expect(useWorkspace.getState().panelsHidden).toBe(false);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(resolvePackagePool).mockReset().mockResolvedValue([]);

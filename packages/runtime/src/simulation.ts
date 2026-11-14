@@ -35,6 +35,7 @@ import {
   type GuestPolicy,
   HOST_CAPABILITIES,
   inferCapabilities,
+  instrumentDebug,
   isBuiltin,
   isPackageResourceId,
   librarySnapshot,
@@ -60,6 +61,7 @@ import {
 import { buildWorld } from "./buildWorld";
 import type { PackageExecutionContext, PackageId } from "./capabilities";
 import { HOST_ONLY_CONTRACTS, isContractName, parseContractPayload } from "./contracts";
+import { DebugRuntime, type RuntimeDebugOptions } from "./debugRuntime";
 import {
   equippedBy,
   equipper,
@@ -142,6 +144,7 @@ export interface LogEntry {
 }
 
 export interface SimulationOptions {
+  debug?: RuntimeDebugOptions;
   /** スクリプトの領域（リポジトリ単位）。別リポジトリの System とは別の VM になる。 */
   realm: string;
   onLog?: (entry: LogEntry) => void;
@@ -356,6 +359,9 @@ export type HostName = (typeof HOST_API)[number];
  * スクリプトが動かした物体の当たり判定は、次のステップから反映される。
  */
 export class Simulation {
+  debug: DebugRuntime | null = null;
+  private debugRunning = false;
+  private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
   readonly world: World;
   readonly registry: KokoStateRegistry;
   time = 0;
@@ -403,9 +409,26 @@ export class Simulation {
         ]),
       ),
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
+      ...(options.debug
+        ? {
+            debug: {
+              onPoint: async (point) =>
+                ref.sim?.debug?.point(point, (entities) => {
+                  const sim = ref.sim;
+                  if (!sim) return () => {};
+                  const runningWorld = sim.world.snapshot();
+                  sim.activeDebugApply?.(entities);
+                  return () => {
+                    if (!sim.disposed) sim.world.restore(runningWorld);
+                  };
+                }) ?? [],
+            },
+          }
+        : {}),
     });
     const sim = new Simulation(sandbox, new Physics(), multi, options);
     ref.sim = sim;
+    if (options.debug) sim.debug = new DebugRuntime(options.debug);
     return sim;
   }
 
@@ -944,9 +967,85 @@ export class Simulation {
     }
   }
 
+  /** デバッグだけはフレームの途中で待つ。通常の step の順序をそのまま保つ。 */
+  async stepDebug(dt: number): Promise<void> {
+    if (!this.debug || this.disposed || this.debugRunning) return;
+    this.debugRunning = true;
+    this.debug.beginFrame();
+    try {
+      this.time += dt;
+      this.physics.sync(this.world);
+      const collisions = this.physics.step(this.world, dt);
+      for (const c of collisions)
+        for (const [self, other] of [
+          [c.a, c.b],
+          [c.b, c.a],
+        ]) {
+          if (!self || !other || !this.world.has(self)) continue;
+          for (const sys of this.active("onCollision"))
+            if (this.entityMatches(sys, self))
+              await this.runSystemDebug(
+                sys,
+                "onCollision",
+                [self],
+                [{ other, started: c.started }],
+              );
+        }
+      const inputs = this.inputs;
+      this.inputs = [];
+      for (const ev of inputs) {
+        if (this.equipInput(ev)) continue;
+        this.deliverInteract(ev);
+        if (this.builtinInput(ev)) continue;
+        for (const sys of this.active("onInput")) {
+          const targets = this.matches(sys).filter((id) => this.acceptsInput(id, ev.player));
+          await this.runSystemDebug(sys, "onInput", targets, [ev as unknown as Value]);
+        }
+      }
+      for (const sys of this.active("onUpdate"))
+        await this.runSystemDebug(sys, "onUpdate", this.matches(sys), [dt]);
+      let budget = MAX_EVENTS_PER_STEP;
+      while (this.pending.length > 0 && budget-- > 0 && !this.disposed) {
+        const ev = this.pending.shift() as PendingEvent;
+        if (!this.world.has(ev.target)) continue;
+        if (ev.kind === "contract") {
+          const handler = `contract:${ev.name}`;
+          const player =
+            ev.name === "Interact"
+              ? ((ev.data as { player?: unknown } | null)?.player ?? null)
+              : null;
+          for (const sys of this.active(handler))
+            if (this.entityMatches(sys, ev.target)) {
+              this.interacting = typeof player === "string" ? { systemId: sys.id, player } : null;
+              try {
+                await this.runSystemDebug(sys, handler, [ev.target], [ev.data]);
+              } finally {
+                this.interacting = null;
+              }
+            }
+        } else
+          for (const sys of this.active("onEvent"))
+            if (this.entityMatches(sys, ev.target))
+              await this.runSystemDebug(
+                sys,
+                "onEvent",
+                [ev.target],
+                [{ name: ev.name, data: ev.data }],
+              );
+      }
+      if (this.pending.length > 0) {
+        this.log(null, `イベントが多すぎるため ${this.pending.length} 件を捨てました`, "error");
+        this.pending = [];
+      }
+    } finally {
+      this.debugRunning = false;
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.debug?.dispose();
     this.sandbox.dispose();
     this.physics.dispose();
   }
@@ -1481,7 +1580,13 @@ export class Simulation {
             "load",
             first.location?.kind === "script" ? first.location.line : null,
           );
-        const meta = this.sandbox.loadSystem(id, compiled.javascript, realm);
+        const instrumented = this.debug ? instrumentDebug(compiled.javascript) : null;
+        if (instrumented) this.debug?.register(id, instrumented.lines);
+        const meta = this.sandbox.loadSystem(
+          id,
+          instrumented?.javascript ?? compiled.javascript,
+          realm,
+        );
         const scope = this.scopeOfRealm(realm);
         const resolve = (refs: string[]) =>
           refs.map((n) => {
@@ -1875,6 +1980,37 @@ export class Simulation {
     } catch (e) {
       this.fail(sys, e);
       if (this.sandbox.broken) this.dispose();
+    }
+  }
+
+  private async runSystemDebug(
+    sys: LoadedSystem,
+    handler: string,
+    ids: EntityId[],
+    args: Value[],
+  ): Promise<void> {
+    if (ids.length === 0 || !sys.enabled || this.disposed) return;
+    const before = ids.map((id) => this.toScriptEntity(id, sys));
+    const apply = (after: ScriptEntity[]) => {
+      after.forEach((e, i) => {
+        const prev = before[i];
+        if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
+        for (const [key, values] of Object.entries(e.states)) {
+          const koko = isShared(key) ? key : this.kid(sys.realm, key);
+          if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
+          this.writeNamed(e.id, koko, values, prev.states[key] ?? null);
+        }
+      });
+    };
+    this.activeDebugApply = apply;
+    try {
+      const after = await this.sandbox.runAsync(sys.id, handler, before, args);
+      if (!this.disposed) apply(after);
+    } catch (e) {
+      if (!this.disposed) this.fail(sys, e);
+      if (this.sandbox.broken) this.dispose();
+    } finally {
+      this.activeDebugApply = null;
     }
   }
 
