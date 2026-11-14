@@ -314,18 +314,19 @@ export function checkProjectReferences(
             targetOf,
           );
     }
-    checkSystemsAndKeep(
-      { systems: e.instanceSystems ?? [], keep: [] },
-      subject,
-      label,
-      {
-        notInDependencies: "instance-system-not-in-dependencies",
-        systemMissing: "instance-system-missing",
-        keepInvalid: "keep-invalid",
-      },
-      targetOf,
-      [...at, "instanceSystems"],
-    );
+    for (const field of ["unpackedSystems", "instanceSystems"] as const)
+      checkSystemsAndKeep(
+        { systems: e[field] ?? [], keep: [] },
+        subject,
+        label,
+        {
+          notInDependencies: "instance-system-not-in-dependencies",
+          systemMissing: "instance-system-missing",
+          keepInvalid: "keep-invalid",
+        },
+        targetOf,
+        [...at, field],
+      );
   };
 
   // プレハブ（ADR 0076）：中の Entity が指すもの・System・「維持」の印。問題は、プレハブを相手にして出す

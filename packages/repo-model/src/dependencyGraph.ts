@@ -103,7 +103,7 @@ export class ProjectDependencyGraph {
         if (override.parent && !inPrefab)
           this.edge(from, { kind: "entity", id: entityOwner(override.parent) });
       }
-      for (const system of e.instanceSystems ?? [])
+      for (const system of [...(e.unpackedSystems ?? []), ...(e.instanceSystems ?? [])])
         this.edge(from, { kind: "system", id: system.id });
     };
 

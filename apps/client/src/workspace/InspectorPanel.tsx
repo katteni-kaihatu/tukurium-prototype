@@ -55,6 +55,7 @@ import {
 import { KokoRoleIcon } from "./KokoRoleIcon";
 import { LibraryContents } from "./LibraryContents";
 import { MakePrefabIcon, PrefabFromEntityAsk } from "./PrefabFromEntityAsk";
+import { type PrefabInstanceAction, PrefabInstanceAsk } from "./PrefabInstanceAsk";
 import { BadgeDot, badgeFor } from "./ProblemBadge";
 import { prefabChangeParts, prefabPart } from "./prefabChanges";
 import { useWorkspace } from "./store";
@@ -1103,6 +1104,11 @@ function EntityProperties({ id }: { id: EntityId }) {
   const [systemAnchor, setSystemAnchor] = useState<HTMLElement | null>(null);
   /** 「プレハブにする」の確認を出している Entity と、そのボタン（ほかの Entity を選んだら、出さない） */
   const [ask, setAsk] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const [instanceAsk, setInstanceAsk] = useState<{
+    id: string;
+    action: PrefabInstanceAction;
+    anchor: HTMLElement;
+  } | null>(null);
   const registry = project.registry();
   // 開いているプレハブ（ADR 0076）。開いている間は、プレハブの中の Entity を直す
   const prefab = target.prefabId ? project.prefab(target.prefabId) : undefined;
@@ -1177,6 +1183,11 @@ function EntityProperties({ id }: { id: EntityId }) {
   });
   // 制作データにある Entity（アウトプットのものか、開いているプレハブの中のもの）。展開で作ったものは、ない
   const projectEntity = mode === "edit" ? project.findEntity(id) : undefined;
+  const instancePrefab = projectEntity?.instanceOf?.prefab;
+  const instanceName = instancePrefab
+    ? (project.prefab(instancePrefab)?.name ?? "（消えたプレハブ）")
+    : "";
+  const libraryInstance = instancePrefab ? packageAliasOf(project, instancePrefab) !== null : false;
   const editable = (_koko: string) => editing;
   const sourceEntity = origin
     ? project.prefabEntities(origin.prefab).find((e) => e.id === origin.entity)
@@ -1214,7 +1225,8 @@ function EntityProperties({ id }: { id: EntityId }) {
   const peers = target.snapshot.entities.filter((e) => e.output === ownerId);
   const kids = peers.filter((e) => e.parent === id);
   /** この Entity からプレハブを作れるか（アウトプットのふつうの Entity だけ） */
-  const canMakePrefab = editing && !prefab && !origin && projectEntity !== undefined;
+  const canMakePrefab =
+    editing && !prefab && !origin && projectEntity !== undefined && !projectEntity.instanceOf;
   const kokoKey = (koko: string) => `${id}:${koko}`;
   const allOpen = attached.length === 0 || attached.every((koko) => !closedKoko[kokoKey(koko)]);
   const keep: { saved: KeepMark[]; current: KeepMark[] } = prefab
@@ -1407,25 +1419,72 @@ function EntityProperties({ id }: { id: EntityId }) {
             onDone={() => setAsk(null)}
           />
         )}
+        {instanceAsk?.id === id && editing && instancePrefab && (
+          <PrefabInstanceAsk
+            key={`${id}:${instanceAsk.action}`}
+            entityId={id}
+            action={instanceAsk.action}
+            anchor={instanceAsk.anchor}
+            onClose={() => setInstanceAsk(null)}
+            onDone={() => setInstanceAsk(null)}
+          />
+        )}
       </div>
       <div className={styles.entityBody}>
-        {origin && (
+        {(origin || instancePrefab) && (
           <div className={ui.section}>
             <p className={ui.notice}>
               {inside
                 ? `プレハブ「${prefabName}」から来た Entity です。ここで変えた所は、このインスタンスだけに残ります。プレハブから来た Entity と KokoState は消せません。`
-                : `プレハブ「${prefabName}」のインスタンスです。場所・向き・大きさは、このインスタンスの置き方です。△ はプレハブから変えた所、丸は最後の保存から変えた所です。`}
+                : `プレハブ「${instanceName || prefabName}」のインスタンスです。場所・向き・大きさは、このインスタンスの置き方です。△ はプレハブから変えた所、丸は最後の保存から変えた所です。`}
             </p>
-            {mode === "edit" && project.prefab(origin.prefab) && (
+            {mode === "edit" && (origin || instancePrefab) && (
               <div className={ui.toolbar}>
-                <button
-                  type="button"
-                  className={ui.btn}
-                  // アウトプットのインスタンスから開いたら、その横に出す
-                  onClick={() => openPrefab(origin.prefab, prefab ? null : origin.instance)}
-                >
-                  プレハブを開く
-                </button>
+                {origin && project.prefab(origin.prefab) && (
+                  <button
+                    type="button"
+                    className={ui.btn}
+                    // アウトプットのインスタンスから開いたら、その横に出す
+                    onClick={() => openPrefab(origin.prefab, prefab ? null : origin.instance)}
+                  >
+                    プレハブを開く
+                  </button>
+                )}
+                {instancePrefab && (
+                  <>
+                    <button
+                      type="button"
+                      className={ui.btn}
+                      disabled={!editing || libraryInstance}
+                      title={libraryInstance ? "ライブラリのプレハブには適用できません" : undefined}
+                      aria-haspopup="dialog"
+                      aria-expanded={instanceAsk?.id === id && instanceAsk.action === "apply"}
+                      onClick={(event) => {
+                        setAsk(null);
+                        setDupAnchor(null);
+                        setSystemAnchor(null);
+                        setInstanceAsk({ id, action: "apply", anchor: event.currentTarget });
+                      }}
+                    >
+                      プレハブに適用
+                    </button>
+                    <button
+                      type="button"
+                      className={ui.btn}
+                      disabled={!editing}
+                      aria-haspopup="dialog"
+                      aria-expanded={instanceAsk?.id === id && instanceAsk.action === "unpack"}
+                      onClick={(event) => {
+                        setAsk(null);
+                        setDupAnchor(null);
+                        setSystemAnchor(null);
+                        setInstanceAsk({ id, action: "unpack", anchor: event.currentTarget });
+                      }}
+                    >
+                      ふつうの Entity に戻す
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

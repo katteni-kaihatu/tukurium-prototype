@@ -30,6 +30,13 @@ import {
   type PrefabFromEntityResult,
   planPrefabFromEntity,
 } from "./prefabFromEntity";
+import {
+  type PrefabInstanceOptions,
+  type PrefabInstancePlan,
+  type PrefabInstanceResult,
+  planApplyPrefabInstance,
+  planUnpackPrefabInstance,
+} from "./prefabInstance";
 import { normalizeName, validateName } from "./resourcePath";
 import {
   type AssetDef,
@@ -142,7 +149,11 @@ const overrideKey = (...parts: string[]): string => JSON.stringify(parts);
 
 /** 1 フィールドを 1 キーにする。最初の同時編集でも、途中の入れ物の作成が競合しない。 */
 function overridesMap(overrides: Record<string, PrefabEntityOverride>): OverrideStore {
-  const out = new Y.Map<Json>();
+  return new Y.Map(overrideEntries(overrides));
+}
+
+function overrideEntries(overrides: Record<string, PrefabEntityOverride>): Map<string, Json> {
+  const out = new Map<string, Json>();
   for (const [path, value] of Object.entries(overrides)) {
     for (const key of ["name", "parent", "order"] as const)
       if (Object.hasOwn(value, key)) out.set(overrideKey(path, key), encodeValue(value[key]));
@@ -174,6 +185,50 @@ function readOverrides(map: OverrideStore): Record<string, PrefabEntityOverride>
     }
   }
   return out;
+}
+
+/** 定義の保存形はそのまま、共同編集では名前・System・維持などを別々のキーにする。 */
+class DefinitionMap<T extends { id: string }> {
+  constructor(private readonly map: Y.Map<Y.Map<unknown> | T>) {}
+
+  get(id: string): T | undefined {
+    const value = this.map.get(id);
+    return value instanceof Y.Map ? clone(value.toJSON() as T) : value && clone(value);
+  }
+  has(id: string): boolean {
+    return this.map.has(id);
+  }
+  delete(id: string): void {
+    this.map.delete(id);
+  }
+  clear(): void {
+    this.map.clear();
+  }
+  *values(): IterableIterator<T> {
+    for (const id of this.map.keys()) {
+      const value = this.get(id);
+      if (value) yield value;
+    }
+  }
+  set(id: string, def: T): void {
+    const write = () => {
+      const stored = this.map.get(id);
+      let node: Y.Map<unknown>;
+      if (stored instanceof Y.Map) node = stored;
+      else {
+        node = new Y.Map();
+        this.map.set(id, node);
+      }
+      for (const key of new Set([...node.keys(), ...Object.keys(def)])) {
+        const next = (def as unknown as Record<string, unknown>)[key];
+        if (equalValues(node.get(key), next)) continue;
+        if (next === undefined) node.delete(key);
+        else node.set(key, clone(next));
+      }
+    };
+    if (this.map.doc) this.map.doc.transact(write);
+    else write();
+  }
 }
 
 /**
@@ -243,13 +298,13 @@ export class ProjectDoc {
     return this.doc.getMap<PackageDependency>("dependencies");
   }
   private get outputMap() {
-    return this.doc.getMap<OutputDef>("outputs");
+    return new DefinitionMap(this.doc.getMap<Y.Map<unknown> | OutputDef>("outputs"));
   }
   private get entityMap() {
     return this.doc.getMap<Y.Map<unknown>>("entities");
   }
   private get prefabMap() {
-    return this.doc.getMap<PrefabDef>("prefabs");
+    return new DefinitionMap(this.doc.getMap<Y.Map<unknown> | PrefabDef>("prefabs"));
   }
   /** プレハブの中の Entity（ADR 0076）。アウトプットの Entity とは別に持つ */
   private get prefabEntityMap() {
@@ -479,11 +534,13 @@ export class ProjectDoc {
       this.systemMap.delete(id);
       this.codeMap.delete(id);
       for (const e of this.nodes()) {
-        const systems = e.get("instanceSystems") as OutputSystem[] | undefined;
-        if (systems?.some((s) => s.id === id)) {
-          const left = systems.filter((s) => s.id !== id);
-          if (left.length > 0) e.set("instanceSystems", left);
-          else e.delete("instanceSystems");
+        for (const field of ["unpackedSystems", "instanceSystems"] as const) {
+          const systems = e.get(field) as OutputSystem[] | undefined;
+          if (systems?.some((s) => s.id === id)) {
+            const left = systems.filter((s) => s.id !== id);
+            if (left.length > 0) e.set(field, left);
+            else e.delete(field);
+          }
         }
       }
       for (const o of this.outputMap.values()) {
@@ -944,6 +1001,7 @@ export class ProjectDoc {
           to.set("prefabOverrides", overridesMap(overrides));
         }
         if (src.instanceSystems) to.set("instanceSystems", clone(src.instanceSystems));
+        if (src.unpackedSystems) to.set("unpackedSystems", clone(src.unpackedSystems));
       }
     });
     return created.get(id);
@@ -1297,6 +1355,8 @@ export class ProjectDoc {
           if (!Object.hasOwn(plan.instance.states, koko)) states.delete(koko);
         self.set("instanceOf", clone(plan.instance.instanceOf));
         self.set("prefabOverrides", overridesMap({}));
+        self.delete("instanceSystems");
+        self.delete("unpackedSystems");
       }
       for (const r of plan.rewrites)
         (this.node(r.entity)?.get("states") as Y.Map<ValueMap> | undefined)
@@ -1307,6 +1367,123 @@ export class ProjectDoc {
         this.outputMap.set(output.id, { ...output, keep: clone(plan.outputKeep) });
     });
     return plan;
+  }
+
+  /** 変更した分をプレハブに適用する前に、何が変わるかを確かめる。 */
+  planApplyPrefabInstance(id: EntityId, options: PrefabInstanceOptions = {}): PrefabInstanceResult {
+    return planApplyPrefabInstance(this.snapshot(), id, {
+      ...options,
+      kokostates: options.kokostates ?? this.packageDefs,
+    });
+  }
+
+  applyPrefabInstance(id: EntityId, options: PrefabInstanceOptions = {}): PrefabInstancePlan {
+    const result = this.planApplyPrefabInstance(id, options);
+    if (!result.ok) throw new Error(result.reason);
+    this.applyPrefabPlan(result.plan);
+    return result.plan;
+  }
+
+  /** 選んだ一段だけを普通の Entity に戻す。中のインスタンスは残す。 */
+  planUnpackPrefabInstance(
+    id: EntityId,
+    options: PrefabInstanceOptions = {},
+  ): PrefabInstanceResult {
+    return planUnpackPrefabInstance(this.snapshot(), id, {
+      ...options,
+      kokostates: options.kokostates ?? this.packageDefs,
+    });
+  }
+
+  unpackPrefabInstance(id: EntityId, options: PrefabInstanceOptions = {}): PrefabInstancePlan {
+    const result = this.planUnpackPrefabInstance(id, options);
+    if (!result.ok) throw new Error(result.reason);
+    this.applyPrefabPlan(result.plan);
+    return result.plan;
+  }
+
+  /** 計画で変わったフィールドだけを書き込む。Y.Map を丸ごと置き換えない。 */
+  private applyPrefabPlan(plan: PrefabInstancePlan): void {
+    this.transact(() => {
+      const before = new Map(
+        [...plan.before.entities, ...(plan.before.prefabEntities ?? [])].map((e) => [e.id, e]),
+      );
+      const after = new Map(
+        [...plan.after.entities, ...(plan.after.prefabEntities ?? [])].map((e) => [e.id, e]),
+      );
+      for (const [id] of before)
+        if (!after.has(id)) {
+          this.entityMap.delete(id);
+          this.prefabEntityMap.delete(id);
+        }
+      for (const [id, next] of after) {
+        const prev = before.get(id);
+        if (prev && equalValues(prev, next)) continue;
+        const map = "output" in next ? this.entityMap : this.prefabEntityMap;
+        const node = map.get(id);
+        if (!prev || !node) {
+          map.set(id, entityNode(next));
+          continue;
+        }
+        for (const key of [
+          "name",
+          "parent",
+          "order",
+          "instanceOf",
+          "instanceSystems",
+          "unpackedSystems",
+        ] as const) {
+          if (equalValues(prev[key], next[key])) continue;
+          if (next[key] === undefined) node.delete(key);
+          else node.set(key, clone(next[key]));
+        }
+        const states = node.get("states") as Y.Map<ValueMap>;
+        for (const koko of new Set([...Object.keys(prev.states), ...Object.keys(next.states)])) {
+          const was = prev.states[koko],
+            now = next.states[koko];
+          if (equalValues(was, now)) continue;
+          if (!now) {
+            const values = states.get(koko);
+            for (const field of Object.keys(was ?? {})) values?.delete(field);
+            continue;
+          }
+          const values = states.get(koko);
+          if (!values) {
+            states.set(koko, valueMap(now));
+            continue;
+          }
+          for (const field of new Set([...Object.keys(was ?? {}), ...Object.keys(now)])) {
+            if (
+              equalValues(was?.[field], now[field]) &&
+              Object.hasOwn(was ?? {}, field) === Object.hasOwn(now, field)
+            )
+              continue;
+            if (!Object.hasOwn(now, field)) values.delete(field);
+            else values.set(field, encodeValue(now[field]));
+          }
+        }
+        if (!equalValues(prev.prefabOverrides, next.prefabOverrides)) {
+          let store = node.get("prefabOverrides") as OverrideStore | undefined;
+          if (!store) {
+            store = overridesMap({});
+            node.set("prefabOverrides", store);
+          }
+          const previous = overrideEntries(prev.prefabOverrides ?? {});
+          const wanted = overrideEntries(next.prefabOverrides ?? {});
+          for (const key of previous.keys()) if (!wanted.has(key)) store.delete(key);
+          for (const [key, value] of wanted)
+            if (!equalValues(previous.get(key), value)) store.set(key, value);
+        }
+      }
+      for (const next of plan.after.prefabs ?? []) {
+        const prev = plan.before.prefabs?.find((p) => p.id === next.id);
+        if (!equalValues(prev, next)) this.prefabMap.set(next.id, clone(next));
+      }
+      for (const next of plan.after.outputs) {
+        const prev = plan.before.outputs.find((o) => o.id === next.id);
+        if (!equalValues(prev, next)) this.outputMap.set(next.id, clone(next));
+      }
+    });
   }
 
   // ---------- 保存した形に戻す ----------
@@ -1330,6 +1507,8 @@ export class ProjectDoc {
       else e.delete("prefabOverrides");
       if (def.instanceSystems) e.set("instanceSystems", clone(def.instanceSystems));
       else e.delete("instanceSystems");
+      if (def.unpackedSystems) e.set("unpackedSystems", clone(def.unpackedSystems));
+      else e.delete("unpackedSystems");
       this.makeRoomAfter(def.id);
     });
   }
@@ -1922,6 +2101,7 @@ function entityNode(def: EntityDef | PrefabEntityDef): Y.Map<unknown> {
   if (def.instanceOf) map.set("instanceOf", clone(def.instanceOf));
   if (def.instanceOf) map.set("prefabOverrides", overridesMap(def.prefabOverrides ?? {}));
   if (def.instanceSystems) map.set("instanceSystems", clone(def.instanceSystems));
+  if (def.unpackedSystems) map.set("unpackedSystems", clone(def.unpackedSystems));
   return map;
 }
 
@@ -1940,6 +2120,9 @@ function readEntityBase(e: Y.Map<unknown>): EntityBase {
       : {}),
     ...(e.get("instanceSystems")
       ? { instanceSystems: clone(e.get("instanceSystems") as OutputSystem[]) }
+      : {}),
+    ...(e.get("unpackedSystems")
+      ? { unpackedSystems: clone(e.get("unpackedSystems") as OutputSystem[]) }
       : {}),
   };
 }
