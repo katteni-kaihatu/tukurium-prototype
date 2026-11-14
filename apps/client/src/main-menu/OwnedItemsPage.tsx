@@ -28,18 +28,25 @@ function OwnedItems({ onMine }: { onMine(): void }) {
     () => (shelf.owner === catalog.owner ? shelf.labels : {}),
     [shelf.owner, catalog.owner, shelf.labels],
   );
-  const tags = [
-    ...new Set([...shelf.tags, ...catalog.owned.flatMap((item) => item.work?.tags ?? [])]),
-  ].sort((a, b) => a.localeCompare(b, "ja"));
-  const entries = shelfItems(catalog.owned, labels, { ...shelf, query: menu.queries.items });
+  // 自分がリリースしたアイテムは、入手していなくても並べる（入手していれば、所持している版を出す）
+  const mine = useMyItems();
+  const ownedIds = new Set(catalog.owned.map((item) => item.workId));
+  const all = [
+    ...catalog.owned,
+    ...mine.works.filter((work) => !ownedIds.has(work.id)).map(ownCopy),
+  ];
+  const tags = [...new Set([...shelf.tags, ...all.flatMap((item) => item.work?.tags ?? [])])].sort(
+    (a, b) => a.localeCompare(b, "ja"),
+  );
+  const entries = shelfItems(all, labels, { ...shelf, query: menu.queries.items });
   // 絞り込み後も、確認中のアイテムは詳細に残す。
-  const selected = catalog.owned.find((item) => item.workId === menu.selected.items);
+  const selected = all.find((item) => item.workId === menu.selected.items);
   const filtering =
     !!menu.queries.items.trim() ||
     shelf.filter !== "all" ||
     shelf.tags.length > 0 ||
     shelf.availableOnly;
-  const favorites = catalog.owned.filter((item) => labels[item.workId]?.favorite).length;
+  const favorites = all.filter((item) => labels[item.workId]?.favorite).length;
   const ready = !!catalog.owner && shelf.owner === catalog.owner;
   const clearFilters = () => {
     shelf.clearFilters();
@@ -49,7 +56,7 @@ function OwnedItems({ onMine }: { onMine(): void }) {
     <div className={styles.shelf}>
       <div className={common.pageHeader}>
         <h1>
-          アイテム <span className={styles.total}>{catalog.owned.length}</span>
+          アイテム <span className={styles.total}>{all.length}</span>
         </h1>
         <div className={common.headerActions}>
           <button type="button" className={common.button} onClick={onMine}>
@@ -89,7 +96,10 @@ function OwnedItems({ onMine }: { onMine(): void }) {
               aria-label="所持アイテムを更新"
               title="所持アイテムを更新"
               disabled={status !== "online" || catalog.ownedLoading}
-              onClick={() => void refreshOwned()}
+              onClick={() => {
+                void refreshOwned();
+                mine.reload();
+              }}
             >
               <Glyph kind="refresh" />
             </button>
@@ -102,7 +112,7 @@ function OwnedItems({ onMine }: { onMine(): void }) {
                 aria-pressed={shelf.filter === "all"}
                 onClick={() => useItemShelf.setState({ filter: "all" })}
               >
-                すべて <span>{catalog.owned.length}</span>
+                すべて <span>{all.length}</span>
               </button>
               <button
                 type="button"
@@ -145,7 +155,7 @@ function OwnedItems({ onMine }: { onMine(): void }) {
 
           <div className={styles.resultBar}>
             <span aria-live="polite">
-              {entries.length}件{filtering && ` / ${catalog.owned.length}件`}
+              {entries.length}件{filtering && ` / ${all.length}件`}
             </span>
             <label className={styles.available}>
               <input
@@ -251,6 +261,7 @@ function OwnedItems({ onMine }: { onMine(): void }) {
                     <span className={common.caption}>{item.work?.ownerName ?? "作者不明"}</span>
                     <span className={styles.version}>
                       v{item.release?.version ?? "?"}
+                      {isPrivate(item) && <span className={styles.privateBadge}>非公開</span>}
                       {!item.available && <span className={styles.unavailable}>利用不可</span>}
                       {newerRelease(item) && (
                         <span className={styles.updateBadge}>
@@ -296,6 +307,7 @@ function OwnedItems({ onMine }: { onMine(): void }) {
           <ItemDetails
             key={selected.workId}
             item={selected}
+            held={ownedIds.has(selected.workId)}
             onClose={() => menu.select("items", undefined)}
           />
         ) : (
@@ -317,18 +329,12 @@ function OwnedItems({ onMine }: { onMine(): void }) {
   );
 }
 
-/**
- * 自分がリリースしたアイテム。マーケットに出していない非公開のものも含み、ここにだけ出る。
- * 作者は入手しなくても使えるので、所持アイテムには加えずに、最新の版をそのまま取り出す。
- */
-function MyItems({ onBack }: { onBack(): void }) {
-  const status = useApp((s) => s.status);
-  const session = useApp((s) => s.session);
+/** 自分がリリースしたアイテム（マーケットに出していない非公開のものも含む）を読む */
+function useMyItems() {
+  const owner = useCatalog((s) => s.owner);
   const [works, setWorks] = useState<Work[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const seq = useRef(0);
   const reload = useCallback(() => {
     const current = ++seq.current;
@@ -348,7 +354,31 @@ function MyItems({ onBack }: { onBack(): void }) {
       },
     );
   }, []);
-  useEffect(() => reload(), [reload]);
+  // 本人が変わったら、前の人の一覧を残さない
+  useEffect(() => {
+    seq.current++;
+    setWorks([]);
+    setLoaded(false);
+    if (owner) reload();
+  }, [owner, reload]);
+  return { works, loaded, error, reload };
+}
+
+/** マーケットに出していない、自分の作品か */
+function isPrivate(item: OwnedItem) {
+  return !!item.work && item.work.owner === item.userId && !item.work.market;
+}
+
+/**
+ * 自分がリリースしたアイテム。マーケットに出していない非公開のものも含む。
+ * 作者は入手しなくても使えるので、所持アイテムには加えずに、最新の版をそのまま取り出す。
+ */
+function MyItems({ onBack }: { onBack(): void }) {
+  const status = useApp((s) => s.status);
+  const session = useApp((s) => s.session);
+  const { works, loaded, error, reload } = useMyItems();
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const words = query.trim().toLocaleLowerCase();
   const entries = works.filter((w) =>
     `${w.name} ${w.repoName ?? ""} ${(w.tags ?? []).join(" ")}`.toLocaleLowerCase().includes(words),
@@ -365,7 +395,7 @@ function MyItems({ onBack }: { onBack(): void }) {
             自分のアイテム <span className={styles.total}>{works.length}</span>
           </h1>
           <p className={common.muted}>
-            自分がリリースしたアイテムです。マーケットに出していない非公開のアイテムは、ここだけに出て、自分だけが取り出せます。
+            自分がリリースしたアイテムです。マーケットに出していない非公開のアイテムは、自分だけが取り出せます。
           </p>
         </div>
       </div>
@@ -465,9 +495,10 @@ function MyItems({ onBack }: { onBack(): void }) {
             </div>
             <ItemThumbnail work={selected} />
             <div className={styles.detailCopy}>
-              <span className={styles.typeBadge}>
-                {selected.market ? "3Dアイテム" : "非公開のアイテム"}
-              </span>
+              <span className={styles.typeBadge}>3Dアイテム</span>
+              {!selected.market && (
+                <span className={styles.privateBadge}>非公開（マーケットに出していません）</span>
+              )}
               <h2>{selected.name}</h2>
               <p className={common.muted}>プロジェクト: {selected.repoName ?? "?"}</p>
               <dl className={styles.metadata}>
@@ -518,11 +549,20 @@ function ownCopy(work: Work): OwnedItem {
   };
 }
 
-function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
+function ItemDetails({
+  item,
+  held,
+  onClose,
+}: {
+  item: OwnedItem;
+  /** 所持アイテムに入っているか（自分の作品は、入手していなくても並ぶ） */
+  held: boolean;
+  onClose(): void;
+}) {
   const name = item.work?.name ?? "利用できないアイテム";
   const busy = useCatalog((s) => s.busy);
   const online = useApp((s) => s.status === "online");
-  const newer = newerRelease(item);
+  const newer = held ? newerRelease(item) : null;
   const remove = () => {
     if (
       window.confirm(
@@ -547,16 +587,28 @@ function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
       <ItemThumbnail work={item.work} />
       <div className={styles.detailCopy}>
         <span className={styles.typeBadge}>3Dアイテム</span>
+        {isPrivate(item) && (
+          <span className={styles.privateBadge}>非公開（マーケットに出していません）</span>
+        )}
         <h2>{name}</h2>
         <p className={common.muted}>作者: {item.work?.ownerName ?? "不明"}</p>
-        <dl className={styles.metadata}>
-          <dt>所持している版</dt>
-          <dd>v{item.release?.version ?? "?"}</dd>
-          <dt>最新の版</dt>
-          <dd>{item.work?.latest ? `v${item.work.latest.version}` : "なし"}</dd>
-          <dt>入手日</dt>
-          <dd>{new Date(item.acquiredAt).toLocaleDateString("ja-JP")}</dd>
-        </dl>
+        {held ? (
+          <dl className={styles.metadata}>
+            <dt>所持している版</dt>
+            <dd>v{item.release?.version ?? "?"}</dd>
+            <dt>最新の版</dt>
+            <dd>{item.work?.latest ? `v${item.work.latest.version}` : "なし"}</dd>
+            <dt>入手日</dt>
+            <dd>{new Date(item.acquiredAt).toLocaleDateString("ja-JP")}</dd>
+          </dl>
+        ) : (
+          <dl className={styles.metadata}>
+            <dt>取り出す版</dt>
+            <dd>v{item.release?.version ?? "?"}（最新）</dd>
+            <dt>入手</dt>
+            <dd>自分の作品なので不要</dd>
+          </dl>
+        )}
         {newer && (
           <div className={styles.update}>
             <p>新しい版 v{newer.version} が出ています。</p>
@@ -574,14 +626,16 @@ function ItemDetails({ item, onClose }: { item: OwnedItem; onClose(): void }) {
           <ItemAction work={item.work} item={item} />
         </div>
         {item.work && <WorkTagsEditor work={item.work} />}
-        <button
-          type="button"
-          className={styles.removeButton}
-          disabled={!!busy || !online}
-          onClick={remove}
-        >
-          所持アイテムから消す
-        </button>
+        {held && (
+          <button
+            type="button"
+            className={styles.removeButton}
+            disabled={!!busy || !online}
+            onClick={remove}
+          >
+            所持アイテムから消す
+          </button>
+        )}
       </div>
     </aside>
   );

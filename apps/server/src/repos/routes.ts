@@ -401,8 +401,12 @@ export function registerRepoRoutes(
             : null;
           const output = snap?.outputs.find((o) => o.id === w.outputId);
           const outputKind = output?.kind ?? null;
+          const listing = await store.listing(w.id);
+          const published = listing ? await store.release(listing.releaseId) : null;
           return {
             ...(await withOwner(w)),
+            // 名前は、マーケットで公開中の版（無ければ最新の版）のアウトプットの名前
+            name: await catalog.shownName(w, published, latest, output?.name),
             repoName: (await store.repo(w.repoId))?.name ?? "?",
             latest,
             outputKind,
