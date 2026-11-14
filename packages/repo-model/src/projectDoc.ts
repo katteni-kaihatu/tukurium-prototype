@@ -187,6 +187,50 @@ function readOverrides(map: OverrideStore): Record<string, PrefabEntityOverride>
   return out;
 }
 
+/** 定義の保存形はそのまま、共同編集では名前・System・維持などを別々のキーにする。 */
+class PrefabMap {
+  constructor(private readonly map: Y.Map<Y.Map<unknown> | PrefabDef>) {}
+
+  get(id: string): PrefabDef | undefined {
+    const value = this.map.get(id);
+    return value instanceof Y.Map ? clone(value.toJSON() as PrefabDef) : value && clone(value);
+  }
+  has(id: string): boolean {
+    return this.map.has(id);
+  }
+  delete(id: string): void {
+    this.map.delete(id);
+  }
+  clear(): void {
+    this.map.clear();
+  }
+  *values(): IterableIterator<PrefabDef> {
+    for (const id of this.map.keys()) {
+      const value = this.get(id);
+      if (value) yield value;
+    }
+  }
+  set(id: string, def: PrefabDef): void {
+    const write = () => {
+      const stored = this.map.get(id);
+      let node: Y.Map<unknown>;
+      if (stored instanceof Y.Map) node = stored;
+      else {
+        node = new Y.Map();
+        this.map.set(id, node);
+      }
+      for (const key of new Set([...node.keys(), ...Object.keys(def)])) {
+        const next = (def as unknown as Record<string, unknown>)[key];
+        if (equalValues(node.get(key), next)) continue;
+        if (next === undefined) node.delete(key);
+        else node.set(key, clone(next));
+      }
+    };
+    if (this.map.doc) this.map.doc.transact(write);
+    else write();
+  }
+}
+
 /**
  * ワークスペースの制作データ（編集中）。Y.Doc の上に載せ、共同編集でそのまま同期できるようにする。
  *
@@ -260,7 +304,7 @@ export class ProjectDoc {
     return this.doc.getMap<Y.Map<unknown>>("entities");
   }
   private get prefabMap() {
-    return this.doc.getMap<PrefabDef>("prefabs");
+    return new PrefabMap(this.doc.getMap<Y.Map<unknown> | PrefabDef>("prefabs"));
   }
   /** プレハブの中の Entity（ADR 0076）。アウトプットの Entity とは別に持つ */
   private get prefabEntityMap() {
@@ -1399,7 +1443,8 @@ export class ProjectDoc {
             now = next.states[koko];
           if (equalValues(was, now)) continue;
           if (!now) {
-            states.delete(koko);
+            const values = states.get(koko);
+            for (const field of Object.keys(was ?? {})) values?.delete(field);
             continue;
           }
           const values = states.get(koko);

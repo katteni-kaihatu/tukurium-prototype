@@ -130,7 +130,11 @@ describe("インスタンスの変更をプレハブに適用", () => {
     doc.applyPrefabInstance(instance, { schemas });
     expect(doc.prefabEntity(root)?.states[BUILTIN.Collider]).toBeDefined();
     expect(doc.prefabEntity(a)?.states[BUILTIN.Mesh]?.shape).toBe("sphere");
-    expect(doc.entity(instance)?.states[BUILTIN.Collider]).toBeUndefined();
+    expect(doc.entity(instance)?.states[BUILTIN.Collider]).toEqual({});
+    expect(doc.planApplyPrefabInstance(instance, { schemas })).toMatchObject({
+      ok: true,
+      plan: { changes: [] },
+    });
     expect(doc.entity(instance)?.instanceSystems).toBeUndefined();
     expect(doc.prefab(prefab)?.systems).toEqual([{ id: system, enabled: true }]);
     expect(at(other).states[BUILTIN.Collider]).toBeDefined();

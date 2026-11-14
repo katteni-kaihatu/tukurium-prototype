@@ -13,7 +13,7 @@ import { z } from "zod";
  * 14：制作データに、プレハブ（prefabs・prefabEntities）と、インスタンスの印（Entity の instanceOf）が入った
  * （ADR 0076）。
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /** エージェントの視点プレビュー（ADR 0059）。開いている画面がこの大きさで撮る */
 export const PREVIEW_SHOT_WIDTH = 960;

@@ -451,8 +451,15 @@ export function planApplyPrefabInstance(
     if (!root) throw new Error("プレハブのいちばん上の Entity がありません");
     const additions = copy(source.states);
     delete additions[BUILTIN.Transform];
+    const changedAdditions = Object.keys(additions).filter(
+      (koko) => Object.keys(additions[koko] ?? {}).length > 0 || !Object.hasOwn(root.states, koko),
+    );
     root.states = mergeStates(root.states, insideRefs(additions));
-    for (const koko of Object.keys(additions))
+    // 自前の KokoState と上書きが重なるときも、画面で見えている上書きが最後に勝つ。
+    const rootOverrides = copy(source.prefabOverrides?.[""]?.states ?? {});
+    delete rootOverrides[BUILTIN.Transform];
+    root.states = mergeStates(root.states, insideRefs(rootOverrides));
+    for (const koko of changedAdditions)
       plan.changes.push({
         entity: id,
         name: source.name,
@@ -503,7 +510,9 @@ export function planApplyPrefabInstance(
     const self = [...after.entities, ...(after.prefabEntities ?? [])].find((e) => e.id === id);
     if (!self) throw new Error("インスタンスがありません");
     const transform = source.states[BUILTIN.Transform];
-    self.states = transform ? { [BUILTIN.Transform]: copy(transform) } : {};
+    // KokoState の入れ物は残す。別の人が同じ入れ物の別フィールドへ書いた値を消さない。
+    self.states = Object.fromEntries(Object.keys(source.states).map((koko) => [koko, {}]));
+    if (transform) self.states[BUILTIN.Transform] = copy(transform);
     delete self.prefabOverrides;
     delete self.instanceSystems;
     const external = idMapper(
@@ -557,12 +566,14 @@ export function planUnpackPrefabInstance(
     if (!self || !root || !shown) throw new Error("インスタンスの中身がありません");
     Object.assign(self, copy(source), {
       states: refs(shown.states, expanded),
+      instanceSystems: mergeSystems(root.instanceSystems ?? [], source.instanceSystems ?? []),
       unpackedSystems: mergeSystems(
         mergeSystems(prefab.systems, root.unpackedSystems ?? []),
         source.unpackedSystems ?? [],
       ),
     });
     if (!self.unpackedSystems?.length) delete self.unpackedSystems;
+    if (!self.instanceSystems?.length) delete self.instanceSystems;
     delete self.instanceOf;
     delete self.prefabOverrides;
     for (const [path, patch] of Object.entries(source.prefabOverrides ?? {})) {
