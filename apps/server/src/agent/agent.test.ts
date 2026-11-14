@@ -74,6 +74,35 @@ async function roomWithWorkspace(hub: Hub, initial = sampleUpdate()) {
 }
 
 describe("サーバーの中のエージェント（ADR 0054）", () => {
+  it.each([0, 2])(
+    "普通の Entity を %i 段はさんでも、旧一括複製でインスタンスの中身を失わない",
+    (depth) => {
+      const project = new ProjectDoc();
+      project.load(emptyProject("複製"));
+      const prefab = project.addPrefab("部品");
+      project.addPrefabEntity({ prefab, name: "部品の中身", states: { [BUILTIN.Mesh]: {} } });
+      const parent = project.addEntity({ output: "out_main", name: "親" });
+      let under = parent;
+      for (let i = 0; i < depth; i++)
+        under = project.addEntity({ output: "out_main", parent: under, name: `途中${i}` });
+      project.addInstance({ output: "out_main", prefab, parent: under });
+      const before = project.snapshot();
+      const result = Tools.applyEntities(project, [
+        { op: "duplicate", entity: parent, copies: [{ name: "コピー" }] },
+      ]);
+      expect(result).toEqual([
+        { ok: false, op: "duplicate", error: expect.stringContaining("duplicate_entity") },
+      ]);
+      expect(project.snapshot()).toEqual(before);
+      // 案内した道具なら、途中の親を含めてインスタンスのまま複製できる。
+      Tools.duplicateEntity(project, { entity: parent, name: "コピー" });
+      expect(project.entities().filter((e) => e.instanceOf?.prefab === prefab)).toHaveLength(2);
+      expect(
+        expandPrefabs(project.snapshot()).entities.filter((e) => e.name === "部品の中身"),
+      ).toHaveLength(2);
+    },
+  );
+
   it("プレハブの操作でも、閲覧だけの権限・ライブラリ・無効な相手を断る", () => {
     const project = new ProjectDoc(new Y.Doc());
     project.load(gunAndTargetSample());

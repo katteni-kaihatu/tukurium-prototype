@@ -1411,9 +1411,9 @@ export function applyEntities(project: ProjectDoc, ops: EntityOp[]): ApplyItem[]
         results.push({ ok: true, op: "delete", id: e.id, name: e.name });
       } else {
         const source = resolveLive(live, refs, failedRefs, op.entity);
-        if (project.findEntity(source.id)?.instanceOf)
-          throw new AgentError("インスタンスの複製には duplicate_entity を使ってください");
         const kids = liveDescendants(live, source.id);
+        if ([source, ...kids].some((entity) => project.findEntity(entity.id)?.instanceOf))
+          throw new AgentError("インスタンスを含む枝の複製には duplicate_entity を使ってください");
         if (created + (1 + kids.length) * op.copies.length > MAX_NEW_ENTITIES)
           throw new AgentError(`一度に作れる Entity は ${MAX_NEW_ENTITIES} までです`);
         if (source.parent && !live.get(source.parent)?.alive)
