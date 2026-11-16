@@ -352,6 +352,25 @@ export const HOST_API = [
   "bag.count",
   "bag.list",
 ] as const;
+
+/** System の呼び出しの間に、Host API が書いたフィールド（Entity → KokoState → フィールド名） */
+type HostWrites = Map<EntityId, Map<KokoStateId, Set<string>>>;
+
+/**
+ * Entity の値を読み書きする Host API。これを呼ぶ直前に、スクリプトが e.get() で書いた値を World へ書き、
+ * 呼んだあとに、World で変わった値をスクリプトへ返す（ADR 0082）。ほかの Host API（時刻・音・バッグなど）は
+ * Entity の値を見ないので、合わせない。イベントと Contract は、呼び出しが終わってから届く。
+ */
+const SYNC_HOST_API: readonly HostName[] = [
+  "world.get",
+  "world.set",
+  "world.getState",
+  "world.setState",
+  "world.getField",
+  "world.setField",
+  "world.spawn",
+  "world.destroy",
+];
 export type HostName = (typeof HOST_API)[number];
 
 /**
@@ -379,6 +398,8 @@ export class Simulation {
   debug: DebugRuntime | null = null;
   private debugRunning = false;
   private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
+  /** いまの System の呼び出しの間に、Host API が値を変えた Entity（スクリプトが持っている値へ返す。ADR 0082） */
+  private hostWrites: HostWrites | null = null;
   readonly world: World;
   readonly registry: KokoStateRegistry;
   time = 0;
@@ -431,6 +452,7 @@ export class Simulation {
           },
         ]),
       ),
+      syncHostFunctions: [...SYNC_HOST_API],
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
       ...(options.debug
         ? {
@@ -1916,6 +1938,7 @@ export class Simulation {
         const koko = kokoName ? this.resolveKoko(kokoName, ctx.realm) : undefined;
         if (!koko || !own(id) || !this.world.hasState(id, koko) || !values) return false;
         this.writeNamed(id, koko, values as Record<string, Value>, null);
+        this.noteHostWrite(id, koko, Object.keys(values));
         return true;
       },
       // 参照から読み書きする（ADR 0065）。world.get・world.set と同じく、自分の配置の Entity だけ
@@ -1927,6 +1950,7 @@ export class Simulation {
         const koko = stateOf(ref);
         if (!ref || !koko || !values) return false;
         this.writeNamed(ref.entity, koko, values as Record<string, Value>, null);
+        this.noteHostWrite(ref.entity, koko, Object.keys(values));
         return true;
       },
       "world.getField": ([ref]) => {
@@ -1937,6 +1961,7 @@ export class Simulation {
         const at = fieldOf(ref);
         if (!at || !this.accepts(at.koko, at.field, value as Value)) return false;
         at.values[at.field.id] = cloneValue(value) as FieldValue;
+        if (ref) this.noteHostWrite(ref.entity, at.koko, [at.field.name]);
         return true;
       },
       "world.find": ([name]) => {
@@ -2070,21 +2095,62 @@ export class Simulation {
   private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Value[]): void {
     if (ids.length === 0 || !sys.enabled) return;
     const before = ids.map((id) => this.toScriptEntity(id, sys));
-    try {
-      const after = this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys));
-      after.forEach((e, i) => {
-        const prev = before[i];
-        if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
+    // 最後に合わせた値（ADR 0082）。スクリプトが書いた値は、これと比べて、変わったフィールドだけを World へ書く。
+    // 呼び出しの初めの値と比べると、途中で届けた値を初めの値へ戻したときに、届かなくなる
+    const synced = new Map(before.map((e) => [e.id, e]));
+    const apply = (entities: ScriptEntity[]) => {
+      for (const e of entities) {
+        const prev = e && typeof e.id === "string" ? synced.get(e.id) : undefined;
+        if (!prev || !this.world.has(e.id) || !e.states || typeof e.states !== "object") continue;
         for (const [key, values] of Object.entries(e.states)) {
+          // スクリプトに渡した KokoState（Query の with）だけを受け取る
+          if (!Object.hasOwn(prev.states, key)) continue;
           // キーは領域の中の ID（ADR 0010）。その Entity が持っている KokoState だけに書く
           const koko = isShared(key) ? key : this.kid(sys.realm, key);
           if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
           this.writeNamed(e.id, koko, values as Record<string, Value>, prev.states[key] ?? null);
+          prev.states[key] = values;
         }
+      }
+    };
+    const outer = this.hostWrites;
+    const writes: HostWrites = new Map();
+    this.hostWrites = writes;
+    try {
+      const after = this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys), {
+        push: apply,
+        pull: () => {
+          if (writes.size === 0) return undefined;
+          const out: ScriptEntity[] = [];
+          for (const [id, kokos] of writes) {
+            const prev = synced.get(id);
+            if (!prev || !this.world.has(id)) continue;
+            const states: ScriptEntity["states"] = {};
+            for (const [koko, names] of kokos) {
+              // スクリプトに渡した KokoState（Query の with）のものだけを返す
+              const key = this.localKey(koko, sys.realm);
+              const values = this.world.get(id, koko);
+              const known = prev.states[key];
+              if (!values || !known) continue;
+              const patch: Record<string, Value> = {};
+              for (const f of this.registry.require(koko).fields)
+                if (names.has(f.name)) patch[f.name] = cloneValue(values[f.id]);
+              states[key] = patch;
+              // 返した値は、スクリプトも同じ値を持つので、比べる相手にも入れる
+              prev.states[key] = { ...known, ...patch };
+            }
+            if (Object.keys(states).length > 0) out.push({ id, states });
+          }
+          writes.clear();
+          return out;
+        },
       });
+      apply(after);
     } catch (e) {
       this.fail(sys, e);
       if (this.sandbox.broken) this.dispose();
+    } finally {
+      this.hostWrites = outer;
     }
   }
 
@@ -2119,6 +2185,17 @@ export class Simulation {
       this.activeDebugApply = null;
       this.debug?.endSystem();
     }
+  }
+
+  /** Host API が書いたフィールドを覚える（System の呼び出しの間だけ。スクリプトが持っている値へ返す。ADR 0082） */
+  private noteHostWrite(id: EntityId, koko: KokoStateId, names: readonly string[]): void {
+    const writes = this.hostWrites;
+    if (!writes) return;
+    const kokos = writes.get(id) ?? new Map<KokoStateId, Set<string>>();
+    writes.set(id, kokos);
+    const set = kokos.get(koko) ?? new Set<string>();
+    kokos.set(koko, set);
+    for (const name of names) set.add(name);
   }
 
   private debugStates(entity: string | null): DebugKokoState[] {

@@ -61,6 +61,11 @@ export interface SandboxOptions {
   /** VM 全体のメモリ上限。 */
   memoryLimitBytes?: number;
   hostFunctions?: Record<string, HostFunction>;
+  /**
+   * Entity の値を読み書きするホスト関数の名前。これを呼ぶ直前に、スクリプトが持っている値をホストと合わせる
+   * （`run()` の sync。ADR 0082）。渡さなければ、すべてのホスト関数の前で合わせる。
+   */
+  syncHostFunctions?: string[];
   onLog?: (message: string, ctx: HostCallContext) => void;
 }
 
@@ -70,6 +75,16 @@ export interface SandboxOptions {
  * ほかのフィールドは QuickJS の JSON.parse / JSON.stringify に任せる（全 Entity の値を毎回たどらずに済む）。
  */
 export type TaggedFields = Record<string, readonly string[]>;
+
+/**
+ * 呼び出しの途中で、ホストの World と値を合わせる口（ADR 0082）。
+ * - push：Host API を呼ぶ直前に、スクリプトが持っている値が届く。World へ書く。
+ * - pull：Host API のあとに呼ぶ。その間にホストが変えた Entity の、変わったフィールドの値を返す（なければ undefined）。
+ */
+export interface RunSync {
+  push(entities: ScriptEntity[]): void;
+  pull(): ScriptEntity[] | undefined;
+}
 
 export class ScriptError extends Error {
   constructor(
@@ -121,6 +136,23 @@ function fieldsToFix(
   return { read: plain(read), write: plain(write) };
 }
 
+/** QuickJS が書き出した Entity の値を読む */
+function readEntities(out: string, fix: ReturnType<typeof fieldsToFix> | null): ScriptEntity[] {
+  if (!fix) return parseValue(out) as ScriptEntity[];
+  // 値の形式で返ってくるのは、指定したフィールドだけ。ほかのフィールドは、"$t" を持つオブジェクトを
+  // 書かれても、タグとして読まない（ふつうのオブジェクトのまま返す）
+  const result = JSON.parse(out) as StoredEntity[];
+  for (const e of result) {
+    for (const [koko, names] of Object.entries(fix.write)) {
+      const values = e?.states?.[koko];
+      if (values === null || typeof values !== "object") continue;
+      for (const name of names)
+        if (Object.hasOwn(values, name)) values[name] = decodeValue(values[name]) as Json;
+    }
+  }
+  return result as unknown as ScriptEntity[];
+}
+
 /** QuickJS のスタックから、その System のファイルの行番号を取り出す */
 export function lineInStack(stack: string | undefined, systemId: string | null): number | null {
   if (!stack || !systemId) return null;
@@ -129,13 +161,24 @@ export function lineInStack(stack: string | undefined, systemId: string | null):
   return m ? Number(m[1]) : null;
 }
 
-const PRELUDE = (hostNames: string[], debug = false) => `
+const PRELUDE = (hostNames: string[], syncNames: string[], debug = false) => `
 "use strict";
 // 値の書き出しと読み込み（ホストと同じ関数。ADR 0065）。undefined・Date・Map・Set・bigint・NaN も、
 // ホストとの間をそのまま行き来できる
 const __codec = (${VALUE_CODEC_SOURCE})();
 const __write = (v) => JSON.stringify(__codec.encode(v));
 const __read = (text) => __codec.decode(JSON.parse(text));
+// Host API の引数と戻り値は、よく通る道を軽くする。値の形式のタグ（"$t" のキー）がなければ、ふつうの JSON と同じ
+const __readFast = (text) => text.indexOf('"$t"') === -1 ? JSON.parse(text) : __codec.decode(JSON.parse(text));
+const __writeArgs = (args) => {
+  for (let i = 0; i < args.length; i++) {
+    const v = args[i];
+    const t = typeof v;
+    if (t === "string" || t === "boolean" || v === null || (t === "number" && v - v === 0)) continue;
+    return __write(args);
+  }
+  return JSON.stringify(args);
+};
 // Entity の値のうち、fields（KokoState の ID → フィールド名）に書いたフィールドだけを、値の形式から戻す
 // （encode が false）・値の形式に書き出す（true）。全 Entity の分を毎回通るので、よく通る道を軽くしてある
 const __eachField = (entities, fields, encode) => {
@@ -164,6 +207,78 @@ const __eachField = (entities, fields, encode) => {
     }
   }
 };
+// JSON にする。ほかのフィールドに bigint を入れると JSON.stringify が投げるので、型が合わない値として null にする
+// （ホストが受け入れない）。輪になった値などは、もう一度投げてスクリプトのエラーにする
+const __stringify = (v) => {
+  try {
+    return JSON.stringify(v);
+  } catch (e) {
+    return JSON.stringify(v, function (key, x) { return typeof x === "bigint" ? null : x; });
+  }
+};
+// 呼び出しの途中で、ホストの World と値を合わせる（ADR 0082）。合わせるのは、Entity の値を読み書きする
+// Host API を呼ぶ直前と、呼び出しの終わり。
+// { entities, fields, kokos, from（前に合わせた Entity の順番）, i（いまの順番）, got, last（最後に送った文字）, index }
+let __sync = null;
+// 送る Entity の値を文字にする。値の形式を通すフィールドだけを写して書き出す（持っている値は書き換えない）
+// kokos は、値の形式を通すフィールドを持つ KokoState（なければ、そのまま JSON にできる）
+const __pack = (e, fields, kokos) => {
+  if (!fields) return __write(e.states);
+  if (kokos.length === 0) return __stringify(e.states);
+  const states = Object.assign({}, e.states);
+  for (let j = 0; j < kokos.length; j++) {
+    const v = states[kokos[j]];
+    if (v !== null && typeof v === "object") states[kokos[j]] = Object.assign({}, v);
+  }
+  const copy = { id: e.id, states };
+  __eachField([copy], fields.write, true);
+  return __stringify(states);
+};
+// Host API を呼ぶ直前に送る値：前に合わせてから回した Entity と、いまの Entity のうち、前に送ってから
+// 変わったもの。ホストとの境目をまたぐのは重いので、変わったかどうかは、ここで文字を比べて決める
+const __flush = () => {
+  const s = __sync;
+  if (s === null || (s.from === s.i && !s.got)) return undefined;
+  let out = "";
+  for (let k = s.from; k <= s.i; k++) {
+    const text = __pack(s.entities[k], s.fields, s.kokos);
+    if (s.last[k] === text) continue;
+    s.last[k] = text;
+    out += (out === "" ? "[" : ",") + '{"id":' + JSON.stringify(s.entities[k].id) + ',"states":' + text + "}";
+  }
+  s.from = s.i;
+  s.got = false;
+  return out === "" ? undefined : out + "]";
+};
+// Host API の間にホストが変えた値を、持っている値のオブジェクトへ書き戻す（同じオブジェクトを書き換えるので、
+// const g = e.get(Gun) で持っている値にも届く）。text は「変わった Entity」\u0001「戻り値」
+const __pull = (text) => {
+  const cut = text.indexOf("\u0001");
+  const s = __sync;
+  if (s !== null) {
+    const changed = s.fields ? JSON.parse(text.slice(0, cut)) : __read(text.slice(0, cut));
+    if (s.fields && s.kokos.length > 0) __eachField(changed, s.fields.write, false);
+    if (s.index === null) {
+      s.index = new Map();
+      for (let k = 0; k < s.entities.length; k++) s.index.set(s.entities[k].id, k);
+    }
+    for (const c of changed) {
+      const k = s.index.get(c.id);
+      if (k === undefined) continue;
+      const e = s.entities[k];
+      // 届くのは、変わったフィールドだけ。ほかのフィールドは、スクリプトが持っている値のまま
+      for (const koko of Object.keys(c.states)) {
+        const cur = e.states[koko];
+        if (cur === null || typeof cur !== "object") e.states[koko] = c.states[koko];
+        else Object.assign(cur, c.states[koko]);
+      }
+      // 前に送った文字とは合わなくなったので、次に合わせるときに送り直す（ホストは、同じ値なら何もしない）
+      s.last[k] = undefined;
+    }
+  }
+  const r = text.slice(cut + 1);
+  return r === "" ? undefined : __readFast(r);
+};
 const __systems = Object.create(null);
 let __current = null;
 // いま処理している Entity（Host API の呼び出しが、どの配置のためのものかを決める。ADR 0012）
@@ -185,11 +300,15 @@ const __allowed = {};
 globalThis.log = (...args) => __log(__current, args.map((a) => typeof a === "string" ? a : a === undefined ? "undefined" : __write(a)).join(" "));
 globalThis.console = { log: globalThis.log, warn: globalThis.log, error: globalThis.log };
 const __ns = {};
+const __syncNames = new Set(${JSON.stringify(syncNames)});
 for (const full of ${JSON.stringify(hostNames)}) {
   const [ns, fn] = full.split(".");
+  const syncs = __syncNames.has(full);
   (__ns[ns] ??= {})[fn] = (...args) => {
-    const r = __hostCall(full, __write(args), __current, __entity);
-    return r === undefined ? undefined : __read(r);
+    const r = __hostCall(full, __writeArgs(args), __current, __entity, syncs ? __flush() : undefined);
+    if (r === undefined) return undefined;
+    // 先頭が \u0001 なら、ホストが変えた値が付いている
+    return r.charCodeAt(0) === 1 ? __pull(r.slice(1)) : __readFast(r);
   };
 }
 // Raycast の結果に hit.send(Contract名, payload) を付ける（ADR 0012）。token は閉じ込めた値を使い、
@@ -235,7 +354,8 @@ globalThis.__define = (id, def) => {
 globalThis.__undefine = (id) => { delete __systems[id]; delete __allowed[id]; };
 // fieldsJson：JSON で表せない値を持ちうるフィールド（{ read: {...}, write: {...} }）。空なら、全体を値の形式で
 // 読み書きする（どんな値でも運べるが、全 Entity の値をたどるので遅い）
-globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
+// syncOn が "1" なら、Host API の境目でホストと値を合わせる
+globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson, syncOn) => {
   const def = __systems[id];
   const fn = def && (handler.startsWith("contract:")
     ? (def.contracts && def.contracts[handler.slice("contract:".length)])
@@ -247,8 +367,12 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
   const args = __read(argsJson);
   ${debug ? "__debugBridge.reset(); __debugEntities = entities; __debugActive = true; __debugBridge.begin();" : ""}
   __current = id;
+  const sync = syncOn === "1" ? { entities, fields, kokos: fields ? Object.keys(fields.write) : [], from: 0, i: 0, got: false, last: [], index: null } : null;
+  __sync = sync;
   try {
-    for (const e of entities) {
+    for (let i = 0; i < entities.length; i++) {
+      const e = entities[i];
+      if (sync !== null) sync.i = i;
       __entity = e.id;
       const st = e.states;
       const allowed = __allowed[id] ?? new Set();
@@ -258,6 +382,7 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
         value: (k) => {
           if (!__isKoko(k)) throw new TypeError("e.get() には、import した KokoState を渡します");
           if (!allowed.has(k.id)) throw new Error("「" + k.name + "」はこの System の query.with にないので、e.get() では使えません");
+          if (sync !== null) sync.got = true;
           return st[k.id];
         },
         enumerable: false,
@@ -268,16 +393,11 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson) => {
     ${debug ? "__debugActive = false; __debugEntities = [];" : ""}
     __current = null;
     __entity = null;
+    __sync = null;
   }
   if (!fields) return __write(entities);
   __eachField(entities, fields.write, true);
-  try {
-    return JSON.stringify(entities);
-  } catch (e) {
-    // ほかのフィールドに bigint を入れると、JSON.stringify が投げる。型が合わない値なので null にして返す
-    // （ホストが受け入れない）。輪になった値などは、もう一度投げてスクリプトのエラーにする
-    return JSON.stringify(entities, function (key, v) { return typeof v === "bigint" ? null : v; });
-  }
+  return __stringify(entities);
 };
 `;
 
@@ -307,6 +427,8 @@ export class ScriptSandbox {
   private debugDeadline = Number.POSITIVE_INFINITY;
   /** 時計を止めている間の、残りの実行時間。止めていなければ null。 */
   private debugRemaining: number | null = null;
+  /** いまの呼び出しで、値を合わせる口と、値の形式を通すフィールド */
+  private activeSync: { sync: RunSync; fix: ReturnType<typeof fieldsToFix> | null } | null = null;
   setDebugWatching(enabled: boolean): void {
     if (!this.host.debug || this.busy || this.disposeRequested) return;
     for (const vm of this.realms.values())
@@ -316,8 +438,13 @@ export class ScriptSandbox {
   private constructor(
     private readonly memory: WebAssembly.Memory,
     private readonly runtime: QuickJSRuntime,
-    private readonly options: Required<Omit<SandboxOptions, "hostFunctions" | "onLog" | "debug">>,
-    private readonly host: Pick<SandboxOptions, "hostFunctions" | "onLog" | "debug">,
+    private readonly options: Required<
+      Omit<SandboxOptions, "hostFunctions" | "syncHostFunctions" | "onLog" | "debug">
+    >,
+    private readonly host: Pick<
+      SandboxOptions,
+      "hostFunctions" | "syncHostFunctions" | "onLog" | "debug"
+    >,
   ) {}
 
   static async create(options: SandboxOptions = {}): Promise<ScriptSandbox> {
@@ -335,6 +462,7 @@ export class ScriptSandbox {
     runtime.setMaxStackSize(512 * 1024);
     const sandbox = new ScriptSandbox(QuickJS.getWasmMemory(), runtime, opts, {
       hostFunctions: options.hostFunctions,
+      syncHostFunctions: options.syncHostFunctions,
       onLog: options.onLog,
       debug: options.debug,
     });
@@ -412,6 +540,7 @@ export class ScriptSandbox {
     entities: ScriptEntity[],
     args: Value[] = [],
     taggedFields?: TaggedFields,
+    sync?: RunSync,
   ): ScriptEntity[] {
     if (this.host.debug) throw new Error("デバッグ実行には runAsync を使います");
     const realm = this.systemRealm.get(id);
@@ -419,34 +548,29 @@ export class ScriptSandbox {
     if (!vm) throw new ScriptError(`System が読み込まれていません: ${id}`, id, "runtime");
     const json = encodeValue(entities) as unknown as StoredEntity[];
     const fix = taggedFields ? fieldsToFix(json, taggedFields) : null;
-    return this.withDeadline(this.options.timeLimitMs, () => {
-      const out = this.callGlobal(
-        vm,
-        "__run",
-        [
-          vm.newString(id),
-          vm.newString(handler),
-          vm.newString(JSON.stringify(json)),
-          vm.newString(fix ? JSON.stringify(fix) : ""),
-          vm.newString(stringifyValue(args)),
-        ],
-        id,
-        "runtime",
-      );
-      if (!fix) return parseValue(out) as ScriptEntity[];
-      // 値の形式で返ってくるのは、指定したフィールドだけ。ほかのフィールドは、"$t" を持つオブジェクトを
-      // 書かれても、タグとして読まない（ふつうのオブジェクトのまま返す）
-      const result = JSON.parse(out) as StoredEntity[];
-      for (const e of result) {
-        for (const [koko, names] of Object.entries(fix.write)) {
-          const values = e?.states?.[koko];
-          if (values === null || typeof values !== "object") continue;
-          for (const name of names)
-            if (Object.hasOwn(values, name)) values[name] = decodeValue(values[name]) as Json;
-        }
-      }
-      return result as unknown as ScriptEntity[];
-    });
+    const previous = this.activeSync;
+    this.activeSync = sync ? { sync, fix } : null;
+    try {
+      return this.withDeadline(this.options.timeLimitMs, () => {
+        const out = this.callGlobal(
+          vm,
+          "__run",
+          [
+            vm.newString(id),
+            vm.newString(handler),
+            vm.newString(JSON.stringify(json)),
+            vm.newString(fix ? JSON.stringify(fix) : ""),
+            vm.newString(stringifyValue(args)),
+            vm.newString(sync ? "1" : ""),
+          ],
+          id,
+          "runtime",
+        );
+        return readEntities(out, fix);
+      });
+    } finally {
+      this.activeSync = previous;
+    }
   }
 
   dispose(): void {
@@ -542,8 +666,11 @@ export class ScriptSandbox {
         this.unwrap(
           vm,
           vm.evalCode(
-            PRELUDE(Object.keys(this.host.hostFunctions ?? {}), Boolean(this.host.debug)) +
-              (this.host.debug ? DEBUG_PRELUDE : ""),
+            PRELUDE(
+              Object.keys(this.host.hostFunctions ?? {}),
+              this.host.syncHostFunctions ?? Object.keys(this.host.hostFunctions ?? {}),
+              Boolean(this.host.debug),
+            ) + (this.host.debug ? DEBUG_PRELUDE : ""),
             "prelude.js",
           ),
           null,
@@ -617,13 +744,25 @@ export class ScriptSandbox {
       systemId: vm.typeof(idH) === "string" ? vm.getString(idH) : null,
     });
 
-    const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH, entityH) => {
+    const hostCall = vm.newFunction("__hostCall", (nameH, argsH, idH, entityH, syncH) => {
       if (this.disposeRequested) return vm.undefined;
       const name = vm.getString(nameH);
       const fn = hostFns[name];
       if (!fn) throw new Error(`unknown host function ${name}`);
       const entity = entityH && vm.typeof(entityH) === "string" ? vm.getString(entityH) : null;
+      // スクリプトが持っている値を、Host API が World を読む前に書く（ADR 0082）
+      const active = this.activeSync;
+      if (active && syncH && vm.typeof(syncH) === "string")
+        active.sync.push(readEntities(vm.getString(syncH), active.fix));
       const result = fn(parseValue(vm.getString(argsH)) as Value[], { ...ctxOf(idH), entity });
+      // Host API が変えた値は、戻り値の前に添えて返す（先頭の \u0001 が目印。JSON の文字には現れない）
+      const changed = active?.sync.pull();
+      if (active && changed && changed.length > 0) {
+        const text = active.fix ? JSON.stringify(encodeValue(changed)) : stringifyValue(changed);
+        return vm.newString(
+          `\u0001${text}\u0001${result === undefined ? "" : stringifyValue(result)}`,
+        );
+      }
       return result === undefined ? vm.undefined : vm.newString(stringifyValue(result));
     });
     vm.setProp(vm.global, "__hostCall", hostCall);
