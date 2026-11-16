@@ -41,10 +41,42 @@ describe("Host API の一つの定義（HOST_API_SPEC）", () => {
     expect(hostApiCompletions("nope")).toEqual([]);
   });
 
-  it("今は Host API・Built-in の Contract をすべて experimental にし、説明にも出す（ADR 0019）", () => {
-    for (const s of Object.values(HOST_API_SPEC)) expect(s.stability).toBe("experimental");
+  it("今は Host API・Built-in の Contract を、いずれ外すもののほかはすべて experimental にし、説明にも出す（ADR 0019）", () => {
+    for (const s of Object.values(HOST_API_SPEC))
+      expect(s.stability).toBe("deprecated" in s && s.deprecated ? "deprecated" : "experimental");
     for (const c of Object.values(BUILTIN_CONTRACTS)) expect(c.stability).toBe("experimental");
     expect(hostApiCompletions("bag")[0]?.info).toContain("experimental");
     expect(hostApiDeclarations()).toContain("・experimental）");
+  });
+
+  it("静的に危ない Host API に、理由と代わりの書き方を付けて @deprecated にする（ADR 0082）", () => {
+    const deprecated = Object.entries(HOST_API_SPEC)
+      .filter(([, s]) => "deprecated" in s && s.deprecated)
+      .map(([name]) => name)
+      .sort();
+    // Entity を ID の文字で受け取る・返すものと、名前で探す・作る・消すもの
+    expect(deprecated).toEqual([
+      "audio.play",
+      "world.destroy",
+      "world.emit",
+      "world.find",
+      "world.get",
+      "world.getField",
+      "world.getState",
+      "world.set",
+      "world.setField",
+      "world.setState",
+      "world.spawn",
+    ]);
+    const text = hostApiDeclarations();
+    expect(text).toContain("@deprecated");
+    expect(text).toContain("代わりの書き方：追加予定");
+    expect(text.match(/@deprecated/g)).toHaveLength(deprecated.length);
+    expect(hostApiCompletions("world").find((c) => c.label === "spawn")?.info).toContain(
+      "非推奨：",
+    );
+    expect(hostApiCompletions("world").find((c) => c.label === "raycast")?.info).not.toContain(
+      "非推奨",
+    );
   });
 });

@@ -27,3 +27,4 @@ Host だけで判定でき、複数の作品で使われた機能（`world.rayca
 - preview / stable に上げるのは、ワークショップができ、利用者の作品で実際に使われてから。上げるときは、計画の「公式 API への昇格条件」（stable identity・schema・権限・authority・quota・lifecycle・Diagnostic・conformance test）をそろえる。
 - `server-revalidate` / `server-execute` の API（`world.set`・`bag.add` など）は、Server の判定を作るまで experimental のまま（計画の決まり）。
 - 問題の欄で知らせるのは、preview / stable の API が出てきて、experimental と混ざるようになってから考える。
+- （ADR 0082 で追記）`deprecated` は「後継がある、または追加予定で、いずれ外す」ものに付ける。静的に危ない Host API（Entity を ID の文字で受け渡しするものなど）は、後継ができる前でも `deprecated` にし、理由と「追加予定」を書く。印はエディタの打ち消し線とコードホバーにだけ出し、問題の欄には出さない。

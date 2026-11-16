@@ -214,7 +214,7 @@ export class TypeChecker {
   query(query: EditorQuery): EditorResults[EditorQuery["kind"]] {
     const file = this.editorFile(query);
     let result: EditorResults[EditorQuery["kind"]] = null;
-    if (!file) return query.kind === "completions" ? [] : null;
+    if (!file) return query.kind === "completions" || query.kind === "deprecated" ? [] : null;
     const position = query.position;
     switch (query.kind) {
       case "hover": {
@@ -270,6 +270,13 @@ export class TypeChecker {
       }
       case "definition":
         result = this.definition(file, position);
+        break;
+      case "deprecated":
+        // `@deprecated` の付いたものを使っている所（TypeScript の提案の診断。エディタで打ち消し線にする）
+        result = this.service
+          .getSuggestionDiagnostics(file)
+          .filter((d) => d.reportsDeprecated && d.start !== undefined)
+          .map((d) => ({ from: d.start, to: d.start + (d.length ?? 0) }));
         break;
     }
     return result;
