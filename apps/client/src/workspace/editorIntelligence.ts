@@ -1,6 +1,16 @@
 import { autocompletion, type Completion, type CompletionContext } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
-import { closeHoverTooltips, EditorView, hoverTooltip, tooltips } from "@codemirror/view";
+import { StateEffect, StateField } from "@codemirror/state";
+import {
+  closeHoverTooltips,
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  hoverTooltip,
+  tooltips,
+  ViewPlugin,
+  type ViewUpdate,
+} from "@codemirror/view";
 import type {
   EditorDefinition,
   EditorDocumentation,
@@ -33,6 +43,60 @@ export async function queryEditor<K extends EditorQuery["kind"]>(
     current.rev === rev
     ? result
     : null;
+}
+
+// `@deprecated` の付いたもの（静的に危ない Host API など）を使っている所に、打ち消し線を引く（ADR 0082）。
+// 理由は、コードホバーの説明に出る。問題の一覧には出さない
+const deprecatedMark = Decoration.mark({ class: "cm-tk-deprecated" });
+const setDeprecated = StateEffect.define<{ from: number; to: number }[]>();
+const deprecatedField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects)
+      if (e.is(setDeprecated))
+        return Decoration.set(
+          e.value
+            .filter((r) => r.from < r.to && r.to <= tr.state.doc.length)
+            .map((r) => deprecatedMark.range(r.from, r.to)),
+          true,
+        );
+    // 打っている間は、前の印を文字に合わせてずらしておく（次の問い合わせで引き直す）
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+function deprecatedMarks(fileId: string) {
+  return [
+    deprecatedField,
+    ViewPlugin.fromClass(
+      class {
+        private timer: ReturnType<typeof setTimeout> | null = null;
+        private alive = true;
+        constructor(private readonly view: EditorView) {
+          this.schedule(0);
+        }
+        update(update: ViewUpdate) {
+          if (update.docChanged || update.focusChanged) this.schedule(400);
+        }
+        destroy() {
+          this.alive = false;
+          if (this.timer !== null) clearTimeout(this.timer);
+        }
+        private schedule(delay: number) {
+          if (this.timer !== null) clearTimeout(this.timer);
+          this.timer = setTimeout(() => {
+            this.timer = null;
+            void queryEditor(this.view, fileId, { kind: "deprecated", position: 0 }).then(
+              (ranges) => {
+                if (this.alive && ranges) this.view.dispatch({ effects: setDeprecated.of(ranges) });
+              },
+            );
+          }, delay);
+        }
+      },
+    ),
+  ];
 }
 
 export function openEditorDefinition(target: EditorDefinition): void {
@@ -222,7 +286,9 @@ export function editorIntelligence(
         return true;
       },
     }),
+    deprecatedMarks(fileId),
     EditorView.theme({
+      ".cm-tk-deprecated": { textDecoration: "line-through", textDecorationColor: "#8a8792" },
       ".cm-tk-documentation": {
         maxWidth: "420px",
         maxHeight: "260px",

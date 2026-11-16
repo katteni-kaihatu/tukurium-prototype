@@ -26,8 +26,8 @@ const stateRef = z.object({
 
 /**
  * API の安定度（ADR 0019）。experimental：互換性なく変えうる／preview：変えるときは major を上げ、移し方と診断を
- * 用意する／stable：同じ major の中では後方互換を守る／deprecated：後継があり、いずれ外す。
- * 今はすべて experimental（ワークショップができ、実際の作品で使われてから上げる）。
+ * 用意する／stable：同じ major の中では後方互換を守る／deprecated：後継がある、または追加予定で、いずれ外す。
+ * 今は、deprecated のほかはすべて experimental（ワークショップができ、実際の作品で使われてから上げる）。
  */
 export type Stability = "experimental" | "preview" | "stable" | "deprecated";
 
@@ -44,14 +44,31 @@ interface SpecEntry<A extends z.ZodType> extends HostApiPolicy {
   returns: string;
   /** 利用者向けの説明 */
   doc: string;
-  /** 安定度（書かなければ DEFAULT_STABILITY） */
+  /** 安定度（書かなければ DEFAULT_STABILITY。deprecated を書いたものは deprecated） */
   stability?: Stability;
+  /** 静的に危ないので、いずれ外す（ADR 0082）。宣言に `@deprecated` を書き、エディタで打ち消し線を出す */
+  deprecated?: Deprecation;
+}
+
+/** いずれ外す理由と、代わりの書き方（まだなければ「追加予定」） */
+export interface Deprecation {
+  reason: string;
+  instead: string;
 }
 
 const entry = <A extends z.ZodType>(e: SpecEntry<A>) => ({
   ...e,
-  stability: e.stability ?? DEFAULT_STABILITY,
+  stability: e.deprecated ? ("deprecated" as const) : (e.stability ?? DEFAULT_STABILITY),
 });
+
+/** `@deprecated` に書く文 */
+export const deprecationText = (d: Deprecation) => `${d.reason}。代わりの書き方：${d.instead}`;
+
+const BY_ID_REASON =
+  "Entity を ID の文字で受け渡しするので、消えた Entity や、思っていたのと違う Entity を指していても、型で気づけません";
+const BY_NAME_REASON =
+  "Entity を ID の文字で、KokoState を名前の文字で指すので、間違えても型で気づけません";
+const COMING = "追加予定（プレハブのインスタンス型から読み書きする）";
 
 const BAG_NOTE =
   "E で押された Interact を受けている間だけ、押した人のバッグ（どの配置にも属さない）に触れる。種類は import したライブラリの KokoState だけ（ADR 0018）";
@@ -136,6 +153,7 @@ export const HOST_API_SPEC = {
     doc: "再生を始めてからの時間（秒）",
   }),
   "audio.play": entry({
+    deprecated: { reason: BY_ID_REASON, instead: "追加予定（Entity の参照を受け取る形）" },
     args: z
       .tuple([lenient(z.string()), lenient(z.string()), lenient(z.number())])
       .rest(z.unknown()),
@@ -169,6 +187,7 @@ export const HOST_API_SPEC = {
     doc: "光線を飛ばし、当たった物を返す。別の作者の物に当たったときは hit.entity が null（hit.send / hit.effect は使える）",
   }),
   "world.emit": entry({
+    deprecated: { reason: BY_ID_REASON, instead: COMING },
     args: z
       .tuple([entityId, z.string({ error: "イベント名（文字列）を渡してください" }), z.unknown()])
       .rest(z.unknown()),
@@ -183,6 +202,10 @@ export const HOST_API_SPEC = {
     doc: "同じ配置の Entity にイベントを送る（受ける側は onEvent）。別の作者の物へは hit.send を使う",
   }),
   "world.find": entry({
+    deprecated: {
+      reason: "Entity を名前の文字で探すので、名前を変えると見つからなくなり、型で気づけません",
+      instead: COMING,
+    },
     args: z.tuple([lenient(z.string())]).rest(z.unknown()),
     capability: "entity.discover",
     currentReach: "own-placement",
@@ -195,6 +218,7 @@ export const HOST_API_SPEC = {
     doc: "同じ配置の中から、名前で Entity を探して ID を返す",
   }),
   "world.get": entry({
+    deprecated: { reason: BY_NAME_REASON, instead: COMING },
     args: z.tuple([lenient(z.string()), lenient(z.string())]).rest(z.unknown()),
     capability: "state.read",
     currentReach: "own-placement",
@@ -207,6 +231,7 @@ export const HOST_API_SPEC = {
     doc: "同じ配置の Entity の KokoState の値を読む",
   }),
   "world.set": entry({
+    deprecated: { reason: BY_NAME_REASON, instead: COMING },
     args: z.tuple([lenient(z.string()), lenient(z.string()), lenient(record)]).rest(z.unknown()),
     capability: "state.write",
     currentReach: "own-placement",
@@ -219,6 +244,7 @@ export const HOST_API_SPEC = {
     doc: "同じ配置の Entity の KokoState の値を書く",
   }),
   "world.getState": entry({
+    deprecated: { reason: BY_ID_REASON, instead: COMING },
     args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
     capability: "state.read",
     currentReach: "own-placement",
@@ -231,6 +257,7 @@ export const HOST_API_SPEC = {
     doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を読む（指す先がなければ undefined）",
   }),
   "world.setState": entry({
+    deprecated: { reason: BY_ID_REASON, instead: COMING },
     args: z.tuple([lenient(stateRef), lenient(record)]).rest(z.unknown()),
     capability: "state.write",
     currentReach: "own-placement",
@@ -243,6 +270,7 @@ export const HOST_API_SPEC = {
     doc: "KokoState の参照が指す、同じ配置の Entity の KokoState の値を書く",
   }),
   "world.getField": entry({
+    deprecated: { reason: BY_ID_REASON, instead: COMING },
     args: z.tuple([lenient(stateRef)]).rest(z.unknown()),
     capability: "state.read",
     currentReach: "own-placement",
@@ -255,6 +283,7 @@ export const HOST_API_SPEC = {
     doc: "フィールドの参照が指す、同じ配置の Entity のフィールドの値を読む（指す先がなければ undefined）",
   }),
   "world.setField": entry({
+    deprecated: { reason: BY_ID_REASON, instead: COMING },
     args: z.tuple([lenient(stateRef), z.unknown()]).rest(z.unknown()),
     capability: "state.write",
     currentReach: "own-placement",
@@ -267,6 +296,10 @@ export const HOST_API_SPEC = {
     doc: "フィールドの参照が指す、同じ配置の Entity のフィールドに値を書く（型が合わなければ false）",
   }),
   "world.spawn": entry({
+    deprecated: {
+      reason: "名前と KokoState を文字で指して作るので、間違えても型で気づけません",
+      instead: "追加予定（Prefab.spawn）",
+    },
     args: z
       .tuple([
         lenient(
@@ -290,6 +323,10 @@ export const HOST_API_SPEC = {
     doc: "Entity を作って ID を返す。作った Entity は、この System の配置のものになる",
   }),
   "world.destroy": entry({
+    deprecated: {
+      reason: "制作データに置いた Entity も消せてしまい、消したあとの参照を型で守れません",
+      instead: "追加予定（Prefab.destroy）",
+    },
     args: z.tuple([lenient(z.string())]).rest(z.unknown()),
     capability: "entity.destroy",
     currentReach: "own-placement",
@@ -491,7 +528,12 @@ export function hostApiDeclarations(): string {
     lines.push(`declare const ${ns}: {`);
     for (const name of names) {
       const s = HOST_API_SPEC[name];
-      lines.push(`  /** ${s.doc}（${note(s.capability, s.stability)}） */`);
+      const d = (s as { deprecated?: Deprecation }).deprecated;
+      lines.push(
+        d
+          ? `  /**\n   * ${s.doc}（${note(s.capability, s.stability)}）\n   * @deprecated ${deprecationText(d)}\n   */`
+          : `  /** ${s.doc}（${note(s.capability, s.stability)}） */`,
+      );
       lines.push(`  ${name.split(".")[1]}${s.params}: ${s.returns};`);
     }
     lines.push("};");
@@ -519,11 +561,12 @@ export function hostApiCompletions(namespace: string): HostApiCompletion[] {
     }));
   return (namespaces().get(namespace) ?? []).map((name) => {
     const s = HOST_API_SPEC[name];
+    const d = (s as { deprecated?: Deprecation }).deprecated;
     return {
       label: name.split(".")[1] ?? name,
       type: "function",
       detail: `${s.params}: ${s.returns}`,
-      info: `${s.doc}（${note(s.capability, s.stability)}）`,
+      info: `${s.doc}（${note(s.capability, s.stability)}）${d ? `\n非推奨：${deprecationText(d)}` : ""}`,
     };
   });
 }

@@ -84,7 +84,12 @@ type InstanceOf<T> = T extends PrefabType<any, any, infer I> ? I : never;
 ### 8. そのほか
 
 - `Prefab` は、リソースの名前に使えない（予約語。これから）。
-- 静的に危ない Host API に `@deprecated` を付ける。Entity を ID の文字で受け取る・返す Host API すべてが対象で、作ったインスタンスを読み書きする `world.getState` なども含む。代わりの書き方がまだないものは「追加予定」と書く。エディタの中だけに出し、問題の一覧には出さない（これから）。
+- 静的に危ない Host API に `@deprecated` を付ける（実装済み）。
+  - `HOST_API_SPEC` の項目に、理由と代わりの書き方（`deprecated: { reason, instead }`）を持たせる。持つものは、安定度が `deprecated` になり、宣言に `@deprecated` が付く。
+  - 付けたもの：`world.get`・`world.set`・`world.getState`・`world.setState`・`world.getField`・`world.setField`・`world.emit`・`world.find`・`world.spawn`・`world.destroy`・`audio.play`。Entity を ID の文字で受け取るもの、名前で探す・作る・消すもの。作ったインスタンスを読み書きする `world.getState` なども含む。
+  - 代わりの書き方がまだないものは「追加予定」と書く。`world.spawn`・`world.destroy` の代わりは、`Prefab.spawn`・`Prefab.destroy` を作ったときに書き換える。
+  - `world.raycast` には付けていない。結果（`Hit`）が Entity の参照を持つが、引数に ID を取らず、代わりの形も決まっていない。付けるかは、計画者に聞く。
+  - エディタでは、TypeScript の「提案」の診断（`reportsDeprecated`）を使って打ち消し線を引き、理由はコードホバーに出す。問題の一覧には出さない（公式ライブラリと同梱サンプルが多く使っていて、出すと問題だらけに見えるため）。
 
 ## 影響
 

@@ -9,7 +9,9 @@ export type EditorQuery =
   | (EditorLocation & { kind: "hover" })
   | (EditorLocation & { kind: "completions" })
   | (EditorLocation & { kind: "details"; name: string; source?: string })
-  | (EditorLocation & { kind: "definition" });
+  | (EditorLocation & { kind: "definition" })
+  /** `@deprecated` の付いたものを使っている所（position は使わない） */
+  | (EditorLocation & { kind: "deprecated" });
 
 export interface EditorDocumentation {
   display: string;
@@ -38,9 +40,16 @@ export interface EditorCompletion {
   insertText?: string;
 }
 
+/** 文字の範囲（UTF-16 の文字数） */
+export interface EditorRange {
+  from: number;
+  to: number;
+}
+
 export interface EditorResults {
   hover: EditorHover | null;
   completions: EditorCompletion[];
   details: EditorDocumentation | null;
   definition: EditorDefinition | null;
+  deprecated: EditorRange[];
 }
