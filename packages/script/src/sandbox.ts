@@ -67,6 +67,8 @@ export interface SandboxOptions {
    */
   syncHostFunctions?: string[];
   onLog?: (message: string, ctx: HostCallContext) => void;
+  /** 呼び出しの途中で消えた・Query に合わなくなった Entity の値を、スクリプトが読み書きした（ADR 0082） */
+  onGoneAccess?: (entity: string, ctx: HostCallContext) => void;
 }
 
 /**
@@ -79,11 +81,21 @@ export type TaggedFields = Record<string, readonly string[]>;
 /**
  * 呼び出しの途中で、ホストの World と値を合わせる口（ADR 0082）。
  * - push：Host API を呼ぶ直前に、スクリプトが持っている値が届く。World へ書く。
- * - pull：Host API のあとに呼ぶ。その間にホストが変えた Entity の、変わったフィールドの値を返す（なければ undefined）。
+ * - pull：Host API のあとに呼ぶ。その間にホストで起きたこと（値の変化・消えた Entity・足す Entity）を返す（なければ undefined）。
  */
 export interface RunSync {
   push(entities: ScriptEntity[]): void;
-  pull(): ScriptEntity[] | undefined;
+  pull(): RunChanges | undefined;
+}
+
+/** Host API の間にホストで起きたこと（スクリプトが持っている Entity の並びと値へ写す） */
+export interface RunChanges {
+  /** 値が変わった Entity。変わったフィールドの値だけを持つ */
+  changed?: ScriptEntity[];
+  /** 消えた（子も含む）・Query に合わなくなった Entity。このあとの順番で飛ばし、値は読み書きできなくなる */
+  gone?: string[];
+  /** 作った Entity のうち、いま回している並びの後ろに足すもの */
+  added?: ScriptEntity[];
 }
 
 export class ScriptError extends Error {
@@ -241,6 +253,7 @@ const __flush = () => {
   if (s === null || (s.from === s.i && !s.got)) return undefined;
   let out = "";
   for (let k = s.from; k <= s.i; k++) {
+    if (s.gone.size > 0 && s.gone.has(s.entities[k].id)) continue;
     const text = __pack(s.entities[k], s.fields, s.kokos);
     if (s.last[k] === text) continue;
     s.last[k] = text;
@@ -252,19 +265,45 @@ const __flush = () => {
 };
 // Host API の間にホストが変えた値を、持っている値のオブジェクトへ書き戻す（同じオブジェクトを書き換えるので、
 // const g = e.get(Gun) で持っている値にも届く）。text は「変わった Entity」\u0001「戻り値」
+// 消えた・Query に合わなくなった Entity の値を、読み書きできなくする。読むと undefined になり、書いても捨てる。
+// どちらも、ホストへ知らせて問題として出す（System は止めない）。e.get() も、この同じオブジェクトを返す
+const __seal = (e) => {
+  let told = false;
+  const tell = () => {
+    if (told) return;
+    told = true;
+    __log(__current, "\u0001" + e.id);
+  };
+  for (const koko of Object.keys(e.states)) {
+    const values = e.states[koko];
+    if (values === null || typeof values !== "object") continue;
+    for (const name of Object.keys(values))
+      Object.defineProperty(values, name, {
+        get() { tell(); return undefined; },
+        set() { tell(); },
+        enumerable: false,
+        configurable: true,
+      });
+  }
+};
+// Host API の間にホストで起きたことを、こちらへ写す。text は「起きたこと」\u0001「戻り値」。起きたことは
+// { c: 値が変わった Entity（変わったフィールドだけ）, g: 消えた・合わなくなった Entity の ID, a: 足す Entity }
 const __pull = (text) => {
   const cut = text.indexOf("\u0001");
   const s = __sync;
   if (s !== null) {
-    const changed = s.fields ? JSON.parse(text.slice(0, cut)) : __read(text.slice(0, cut));
-    if (s.fields && s.kokos.length > 0) __eachField(changed, s.fields.write, false);
+    const msg = s.fields ? JSON.parse(text.slice(0, cut)) : __read(text.slice(0, cut));
     if (s.index === null) {
       s.index = new Map();
       for (let k = 0; k < s.entities.length; k++) s.index.set(s.entities[k].id, k);
     }
+    const changed = msg.c ?? [];
+    if (s.fields && s.kokos.length > 0) __eachField(changed, s.fields.write, false);
+    // 持っている値のオブジェクトへ書き戻す（同じオブジェクトを書き換えるので、const g = e.get(Gun) で
+    // 持っている値にも届く）
     for (const c of changed) {
       const k = s.index.get(c.id);
-      if (k === undefined) continue;
+      if (k === undefined || s.gone.has(c.id)) continue;
       const e = s.entities[k];
       // 届くのは、変わったフィールドだけ。ほかのフィールドは、スクリプトが持っている値のまま
       for (const koko of Object.keys(c.states)) {
@@ -274,6 +313,21 @@ const __pull = (text) => {
       }
       // 前に送った文字とは合わなくなったので、次に合わせるときに送り直す（ホストは、同じ値なら何もしない）
       s.last[k] = undefined;
+    }
+    // 消えた・合わなくなった Entity は、このあとの順番で飛ばし、ホストへも送らない
+    for (const id of msg.g ?? []) {
+      const k = s.index.get(id);
+      if (k === undefined || s.gone.has(id)) continue;
+      s.gone.add(id);
+      __seal(s.entities[k]);
+    }
+    // 作った Entity のうち、この System の Query に合うものは、いま回している並びの後ろに足す
+    const added = msg.a ?? [];
+    if (s.fields && added.length > 0) __eachField(added, s.fields.read, false);
+    for (const e of added) {
+      if (s.index.has(e.id)) continue;
+      s.index.set(e.id, s.entities.length);
+      s.entities.push(e);
     }
   }
   const r = text.slice(cut + 1);
@@ -367,12 +421,16 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson, syncOn) => 
   const args = __read(argsJson);
   ${debug ? "__debugBridge.reset(); __debugEntities = entities; __debugActive = true; __debugBridge.begin();" : ""}
   __current = id;
-  const sync = syncOn === "1" ? { entities, fields, kokos: fields ? Object.keys(fields.write) : [], from: 0, i: 0, got: false, last: [], index: null } : null;
+  const sync = syncOn === "1" ? { entities, fields, kokos: fields ? Object.keys(fields.write) : [], from: 0, i: 0, got: false, last: [], index: null, gone: new Set() } : null;
   __sync = sync;
   try {
     for (let i = 0; i < entities.length; i++) {
       const e = entities[i];
-      if (sync !== null) sync.i = i;
+      if (sync !== null) {
+        // 渡す前に確かめる：この呼び出しで消えた・Query に合わなくなった Entity は飛ばす（ADR 0082）
+        if (sync.gone.size > 0 && sync.gone.has(e.id)) continue;
+        sync.i = i;
+      }
       __entity = e.id;
       const st = e.states;
       const allowed = __allowed[id] ?? new Set();
@@ -395,9 +453,11 @@ globalThis.__run = (id, handler, entitiesJson, fieldsJson, argsJson, syncOn) => 
     __entity = null;
     __sync = null;
   }
-  if (!fields) return __write(entities);
-  __eachField(entities, fields.write, true);
-  return __stringify(entities);
+  // 消えた Entity は返さない（値は読めなくしてあり、ホストも受け取らない）
+  const out = sync !== null && sync.gone.size > 0 ? entities.filter((e) => !sync.gone.has(e.id)) : entities;
+  if (!fields) return __write(out);
+  __eachField(out, fields.write, true);
+  return __stringify(out);
 };
 `;
 
@@ -439,11 +499,14 @@ export class ScriptSandbox {
     private readonly memory: WebAssembly.Memory,
     private readonly runtime: QuickJSRuntime,
     private readonly options: Required<
-      Omit<SandboxOptions, "hostFunctions" | "syncHostFunctions" | "onLog" | "debug">
+      Omit<
+        SandboxOptions,
+        "hostFunctions" | "syncHostFunctions" | "onLog" | "onGoneAccess" | "debug"
+      >
     >,
     private readonly host: Pick<
       SandboxOptions,
-      "hostFunctions" | "syncHostFunctions" | "onLog" | "debug"
+      "hostFunctions" | "syncHostFunctions" | "onLog" | "onGoneAccess" | "debug"
     >,
   ) {}
 
@@ -464,6 +527,7 @@ export class ScriptSandbox {
       hostFunctions: options.hostFunctions,
       syncHostFunctions: options.syncHostFunctions,
       onLog: options.onLog,
+      onGoneAccess: options.onGoneAccess,
       debug: options.debug,
     });
     sandbox.heapLimit = sandbox.memory.buffer.byteLength + opts.memoryLimitBytes;
@@ -756,9 +820,15 @@ export class ScriptSandbox {
         active.sync.push(readEntities(vm.getString(syncH), active.fix));
       const result = fn(parseValue(vm.getString(argsH)) as Value[], { ...ctxOf(idH), entity });
       // Host API が変えた値は、戻り値の前に添えて返す（先頭の \u0001 が目印。JSON の文字には現れない）
-      const changed = active?.sync.pull();
-      if (active && changed && changed.length > 0) {
-        const text = active.fix ? JSON.stringify(encodeValue(changed)) : stringifyValue(changed);
+      const changes = active?.sync.pull();
+      if (active && changes) {
+        // ないものはキーごと省く（undefined は、値の形式ではタグになる）
+        const msg = {
+          ...(changes.changed ? { c: changes.changed } : {}),
+          ...(changes.gone ? { g: changes.gone } : {}),
+          ...(changes.added ? { a: changes.added } : {}),
+        };
+        const text = active.fix ? JSON.stringify(encodeValue(msg)) : stringifyValue(msg);
         return vm.newString(
           `\u0001${text}\u0001${result === undefined ? "" : stringifyValue(result)}`,
         );
@@ -770,7 +840,10 @@ export class ScriptSandbox {
 
     const log = vm.newFunction("__log", (idH, msgH) => {
       if (this.disposeRequested) return;
-      this.host.onLog?.(vm.getString(msgH), ctxOf(idH));
+      const message = vm.getString(msgH);
+      // 先頭が \u0001 なら、消えた Entity の値を読み書きしたという知らせ（続きは Entity の ID）
+      if (message.startsWith("\u0001")) this.host.onGoneAccess?.(message.slice(1), ctxOf(idH));
+      else this.host.onLog?.(message, ctxOf(idH));
     });
     vm.setProp(vm.global, "__log", log);
     log.dispose();

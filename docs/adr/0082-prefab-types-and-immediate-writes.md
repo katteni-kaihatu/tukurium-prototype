@@ -28,9 +28,11 @@
 
 Host API を呼ばない System と、Entity の値を見ない Host API は変わらない。自分へ `world.set` で書く形は、ホストへ送り、ホストから返すので、いちばん重い。あわせて、Host API の引数と戻り値の読み書きを軽くした（値の形式のタグがなければ、ふつうの JSON として扱う）。
 
-### 2. System に Entity を渡す前に確かめる（これから）
+### 2. System に Entity を渡す前に確かめる（実装済み。デバッグ実行は、これから）
 
-Host API の戻り値に、その呼び出しで消えた Entity（子も含む）と、Query に合わなくなった Entity を添える。QuickJS の側は一覧を持ち、順に回すときに照らして飛ばす。消えた Entity の値の読み書きは行わず、問題（ログの警告）として出す。System は止めない。
+Host API の戻り値に、その呼び出しで消えた Entity（子も含む）と、Query に合わなくなった Entity を添える。QuickJS の側は一覧を持ち、順に回すときに照らして飛ばす。消えた Entity の値は、フィールドを「読むと `undefined` を返し、書いた値を捨てる」形に置き換える。`e.get()` も、この同じオブジェクトを返す（`undefined` を返すと、`e.get(X).y` が例外になり、System が止まるため）。読み書きしたことは、System の注意（`entity-gone`）として出す。System は止めない。消えた Entity は、合わせるときと、呼び出しの終わりの書き出しから外す。
+
+今は、呼び出しの途中で KokoState を付け外しする Host API がないので、飛ばすのは消えた Entity だけ。
 
 `onUpdate` の途中で作り、いま動いている System の Query に合う Entity は、同じ呼び出しの並びの後ろに足す。`onEvent`・`onCollision`・`onInput`・Contract には足さない。**一つの呼び出しで足せるのは 256 個まで**（1 ステップのイベントの上限と同じ）。超えた分は、次に呼ばれたときから渡す。
 

@@ -548,7 +548,8 @@ describe("Simulation：System の扱い", () => {
     sim.step(0.1);
     const child = sim.world.entityIds().find((id) => id.startsWith("rt:"));
     expect(child && sim.world.parentOf(child)).toBe("__root");
-    expect(child && sim.world.get(child, "ks_c")?.n).toBe(42);
+    // 作った Entity は Query に合うので、同じ呼び出しの中で処理される（42 に 1 を足す。ADR 0082）
+    expect(child && sim.world.get(child, "ks_c")?.n).toBe(43);
     sim.step(0.1);
     expect(sim.world.entityIds()).toEqual(["__root", "e1"]);
   });

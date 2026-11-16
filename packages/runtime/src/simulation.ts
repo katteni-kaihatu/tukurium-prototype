@@ -58,6 +58,7 @@ import {
   type DebugKokoState,
   type DebugStateEdit,
   type HostCallContext,
+  type RunChanges,
   type ScriptEntity,
   ScriptError,
   ScriptSandbox,
@@ -356,6 +357,18 @@ export const HOST_API = [
 /** System の呼び出しの間に、Host API が書いたフィールド（Entity → KokoState → フィールド名） */
 type HostWrites = Map<EntityId, Map<KokoStateId, Set<string>>>;
 
+/** System の呼び出しの間に、Host API が World にしたこと（スクリプトが持っている並びと値へ写す。ADR 0082） */
+interface RunTrack {
+  writes: HostWrites;
+  /** 消した Entity（子も含む） */
+  gone: Set<EntityId>;
+  /** 作った Entity */
+  spawned: EntityId[];
+}
+
+/** 一つの呼び出しの途中で作り、同じ呼び出しの並びに足せる Entity の数（ADR 0082） */
+const RUN_ADD_LIMIT = 256;
+
 /**
  * Entity の値を読み書きする Host API。これを呼ぶ直前に、スクリプトが e.get() で書いた値を World へ書き、
  * 呼んだあとに、World で変わった値をスクリプトへ返す（ADR 0082）。ほかの Host API（時刻・音・バッグなど）は
@@ -398,8 +411,8 @@ export class Simulation {
   debug: DebugRuntime | null = null;
   private debugRunning = false;
   private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
-  /** いまの System の呼び出しの間に、Host API が値を変えた Entity（スクリプトが持っている値へ返す。ADR 0082） */
-  private hostWrites: HostWrites | null = null;
+  /** いまの System の呼び出しの間に、Host API が World にしたこと（スクリプトが持っている並びと値へ写す。ADR 0082） */
+  private runTrack: RunTrack | null = null;
   readonly world: World;
   readonly registry: KokoStateRegistry;
   time = 0;
@@ -454,6 +467,12 @@ export class Simulation {
       ),
       syncHostFunctions: [...SYNC_HOST_API],
       onLog: (message, ctx) => ref.sim?.log(ctx.systemId, message, "log"),
+      onGoneAccess: (entity, ctx) =>
+        ref.sim?.warn(
+          ctx.systemId,
+          "entity-gone",
+          `この呼び出しの中で消した Entity「${ref.sim.nameOf(entity)}」の値を読み書きしました（読むと undefined になり、書いた値は捨てます）`,
+        ),
       ...(options.debug
         ? {
             debug: {
@@ -1987,11 +2006,15 @@ export class Simulation {
             this.writeNamed(id, koko, values as Record<string, Value>, null);
           }
         }
+        this.runTrack?.spawned.push(id);
         return id;
       },
       "world.destroy": ([id]) => {
         // 動作上の親を消すと、中の Entity も一緒に消える
-        if (own(id) && !isSpaceRoot(id)) this.world.destroy(id);
+        if (own(id) && !isSpaceRoot(id)) {
+          this.noteDestroy(id);
+          this.world.destroy(id);
+        }
         return undefined;
       },
       "bag.add": ([type, values]) => {
@@ -2113,14 +2136,45 @@ export class Simulation {
         }
       }
     };
-    const outer = this.hostWrites;
-    const writes: HostWrites = new Map();
-    this.hostWrites = writes;
+    const outer = this.runTrack;
+    const track: RunTrack = { writes: new Map(), gone: new Set(), spawned: [] };
+    const writes = track.writes;
+    this.runTrack = track;
+    let added = 0;
     try {
       const after = this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys), {
         push: apply,
         pull: () => {
-          if (writes.size === 0) return undefined;
+          if (writes.size === 0 && track.gone.size === 0 && track.spawned.length === 0)
+            return undefined;
+          const changes: RunChanges = {};
+          // 消えた Entity（子も含む）。このあとの順番で飛ばし、書いた値も受け取らない
+          if (track.gone.size > 0) {
+            const gone = [...track.gone].filter((id) => synced.delete(id));
+            if (gone.length > 0) changes.gone = gone;
+            track.gone.clear();
+          }
+          // 作った Entity。全部を回す onUpdate でだけ、この System の Query に合うものを並びの後ろに足す
+          if (track.spawned.length > 0) {
+            const list: ScriptEntity[] = [];
+            for (const id of handler === "onUpdate" ? track.spawned : []) {
+              if (synced.has(id) || !this.world.has(id) || !this.entityMatches(sys, id)) continue;
+              if (added >= RUN_ADD_LIMIT) {
+                this.warn(
+                  sys.id,
+                  "run-add-limit",
+                  `一つの呼び出しの中で作った Entity が多いため、${RUN_ADD_LIMIT} 個を超えた分は、次の呼び出しから処理します`,
+                );
+                break;
+              }
+              added++;
+              const e = this.toScriptEntity(id, sys);
+              synced.set(id, e);
+              list.push(e);
+            }
+            if (list.length > 0) changes.added = list;
+            track.spawned.length = 0;
+          }
           const out: ScriptEntity[] = [];
           for (const [id, kokos] of writes) {
             const prev = synced.get(id);
@@ -2142,7 +2196,8 @@ export class Simulation {
             if (Object.keys(states).length > 0) out.push({ id, states });
           }
           writes.clear();
-          return out;
+          if (out.length > 0) changes.changed = out;
+          return changes.changed || changes.gone || changes.added ? changes : undefined;
         },
       });
       apply(after);
@@ -2150,7 +2205,7 @@ export class Simulation {
       this.fail(sys, e);
       if (this.sandbox.broken) this.dispose();
     } finally {
-      this.hostWrites = outer;
+      this.runTrack = outer;
     }
   }
 
@@ -2189,13 +2244,21 @@ export class Simulation {
 
   /** Host API が書いたフィールドを覚える（System の呼び出しの間だけ。スクリプトが持っている値へ返す。ADR 0082） */
   private noteHostWrite(id: EntityId, koko: KokoStateId, names: readonly string[]): void {
-    const writes = this.hostWrites;
+    const writes = this.runTrack?.writes;
     if (!writes) return;
     const kokos = writes.get(id) ?? new Map<KokoStateId, Set<string>>();
     writes.set(id, kokos);
     const set = kokos.get(koko) ?? new Set<string>();
     kokos.set(koko, set);
     for (const name of names) set.add(name);
+  }
+
+  /** 消す Entity と、その子を覚える（System の呼び出しの間だけ。同じ呼び出しのあとの順番で渡さない。ADR 0082） */
+  private noteDestroy(id: EntityId): void {
+    const gone = this.runTrack?.gone;
+    if (!gone || gone.has(id)) return;
+    gone.add(id);
+    for (const child of this.world.childrenOf(id)) this.noteDestroy(child);
   }
 
   private debugStates(entity: string | null): DebugKokoState[] {
