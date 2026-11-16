@@ -61,14 +61,14 @@ describe("エディタからの型の問い合わせ", () => {
       'import Gun from "./Gun.koko";\nexport default system({ query: { with: [Gun] }, onUpdate(e) { world.get(e.id, "Gun"); world.raycast([0,0,0], [0,0,1], 10); world.destroy(e.id); } });';
     const at = { ...location, code };
     const ranges = checker.query({ ...at, kind: "deprecated", position: 0 });
-    expect(ranges.map((r) => code.slice(r.from, r.to))).toEqual(["get", "destroy"]);
+    expect(ranges.map((r) => code.slice(r.from, r.to))).toEqual(["get", "raycast", "destroy"]);
     const hover = checker.query({ ...at, kind: "hover", position: code.indexOf("destroy") + 1 });
     expect(hover?.documentation).toContain("@deprecated");
     expect(hover?.documentation).toContain("代わりの書き方：追加予定");
     // 問題の一覧（型エラー）には出さない
     expect(hover?.diagnostics).toEqual([]);
-    const raycast = checker.query({ ...at, kind: "hover", position: code.indexOf("raycast") + 1 });
-    expect(raycast?.documentation).not.toContain("@deprecated");
+    const id = checker.query({ ...at, kind: "hover", position: code.indexOf("e.id") + 2 });
+    expect(id?.documentation ?? "").not.toContain("@deprecated");
   });
 
   it("フィールドの候補と、選んだ候補の型・説明を返す", () => {
