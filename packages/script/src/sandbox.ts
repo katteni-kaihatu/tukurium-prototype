@@ -671,6 +671,7 @@ export class ScriptSandbox {
     handler: string,
     entities: ScriptEntity[],
     args: Value[] = [],
+    sync?: RunSync,
   ): Promise<ScriptEntity[]> {
     if (!this.host.debug || this.busy || this.disposeRequested)
       throw new Error("デバッグ実行を開始できません");
@@ -691,7 +692,16 @@ export class ScriptSandbox {
       }
       return this.disposeRequested || performance.now() > this.debugDeadline;
     });
-    const values = [id, handler, stringifyValue(entities), "", stringifyValue(args)];
+    // 値は、すべて値の形式で運ぶ（fix なし）。sync を渡すと、ふつうの再生と同じく Host API の境目で合わせる
+    const values = [
+      id,
+      handler,
+      stringifyValue(entities),
+      "",
+      stringifyValue(args),
+      sync ? "1" : "",
+    ];
+    this.activeSync = sync ? { sync, fix: null } : null;
     // 絞り込みを渡さない呼び出し元では、すべての文をホストへ渡す（遅いが、取りこぼさない）。
     const config: DebugRunConfig = this.host.debug.config?.(id) ?? {
       lines: {},
@@ -715,6 +725,7 @@ export class ScriptSandbox {
       }
     } finally {
       this.runtime.removeInterruptHandler();
+      this.activeSync = null;
       this.busy = false;
       if (this.disposeRequested) this.dispose();
     }
