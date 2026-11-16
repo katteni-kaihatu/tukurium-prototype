@@ -1,3 +1,5 @@
+<p align="center"><img src="apps/client/public/brand/logo.png" alt="tukurium" width="360"></p>
+
 # Tukurium プロトタイプ
 
 ブラウザの 3D 空間で交流しながら、複数人でアイテムやワールドを制作する環境のプロトタイプ。
