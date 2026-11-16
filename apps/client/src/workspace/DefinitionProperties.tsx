@@ -476,7 +476,7 @@ function KokoDefProperties({ id }: { id: string }) {
   const { error, safely } = useSafe();
   const def = project.registry().get(id);
   if (!def) return <p className={ui.empty}>KokoState が見つかりません</p>;
-  const editing = canEdit && !def.builtin;
+  const editing = canEdit && !def.builtin && !isPackageResourceId(id);
   const save = (next: KokoStateDef) => safely(() => project.updateKokoState(next));
   const setField = (fid: string, patch: Partial<FieldDef>) =>
     save({
@@ -505,6 +505,9 @@ function KokoDefProperties({ id }: { id: string }) {
         {def.builtin && (
           <p className={ui.muted}>Built-in の KokoState です。定義は変更できません。</p>
         )}
+        {isPackageResourceId(id) && (
+          <p className={ui.muted}>ライブラリの KokoState です。定義は変更できません。</p>
+        )}
         <NameRow
           id={id}
           value={def.name}
@@ -513,6 +516,23 @@ function KokoDefProperties({ id }: { id: string }) {
           disabled={!editing}
           onCommit={(name) => save({ ...def, name })}
         />
+        <div className={ui.field}>
+          <label className={ui.label} htmlFor={`description-${id}`}>
+            説明
+          </label>
+          <textarea
+            id={`description-${id}`}
+            key={`${id}:${def.description ?? ""}`}
+            className={ui.input}
+            rows={3}
+            defaultValue={def.description ?? ""}
+            disabled={!editing}
+            onBlur={(e) => {
+              if (e.target.value !== (def.description ?? ""))
+                save({ ...def, description: e.target.value });
+            }}
+          />
+        </div>
         <div className={ui.field}>
           <label className={ui.label} htmlFor={`role-${id}`}>
             役割

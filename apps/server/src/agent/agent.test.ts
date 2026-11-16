@@ -413,8 +413,19 @@ describe("リモートの MCP（/mcp）", () => {
     // KokoState・Entity・System を作る
     await call("create_kokostate", {
       name: "Spinner",
-      fields: [{ name: "speed", type: "number", default: 90 }],
+      description: "回転の設定",
+      fields: [{ name: "speed", type: "number", default: 90, description: "一秒の回転角" }],
     });
+    await expect
+      .poll(() => a.project.kokostates().find((k) => k.name === "Spinner")?.description)
+      .toBe("回転の設定");
+    await call("update_kokostate", { kokostate: "Spinner", description: "回転速度の設定" });
+    await expect
+      .poll(() => a.project.kokostates().find((k) => k.name === "Spinner")?.description)
+      .toBe("回転速度の設定");
+    expect(a.project.kokostates().find((k) => k.name === "Spinner")?.fields[0]?.description).toBe(
+      "一秒の回転角",
+    );
     await call("create_entity", {
       name: "回る箱",
       states: {

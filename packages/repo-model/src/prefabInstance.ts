@@ -10,7 +10,13 @@ import {
 } from "@tukurium/eks";
 import { BUILTIN, BUILTIN_KOKOSTATES } from "./builtins";
 import { isPackageResourceId } from "./packageDependency";
-import { expandPrefabForEdit, expandPrefabs, type PrefabOwner, prefabProblems } from "./prefab";
+import {
+  expandPrefabForEdit,
+  expandPrefabs,
+  type PrefabOwner,
+  prefabProblems,
+  splitPrefabOverride,
+} from "./prefab";
 import {
   type EntityBase,
   type EntityDef,
@@ -384,7 +390,22 @@ export function planApplyPrefabInstance(
         if (from === to && !inside.has(from)) outside.add(from);
       });
     const targets = after.prefabEntities?.filter((e) => e.prefab === prefab.id) ?? [];
-    const changed = Object.entries(source.prefabOverrides ?? {});
+    // 確認の画面には、ID ではなく名前で出す（名前が分からないときだけ ID）
+    const kokoDefs = [...BUILTIN_KOKOSTATES, ...snap.kokostates, ...(options.kokostates ?? [])];
+    const kokoName = (koko: string) => kokoDefs.find((k) => k.id === koko)?.name ?? koko;
+    const systemName = (system: string) =>
+      snap.systems.find((s) => s.id === system)?.name ?? system;
+    // プレハブ側で外した KokoState への上書きは、効いていないので適用しない。インスタンスに残す
+    const changed: [string, PrefabEntityOverride][] = [];
+    const stale: Record<string, PrefabEntityOverride> = {};
+    for (const [path, patch] of Object.entries(source.prefabOverrides ?? {})) {
+      const parts = splitPrefabOverride(
+        patch,
+        view.entities.find((e) => e.id === join(id, path)),
+      );
+      if (parts.effective) changed.push([path, parts.effective]);
+      if (parts.stale) stale[path] = parts.stale;
+    }
     for (const [path, patch] of changed) {
       const eid = join(id, path);
       if (!view.entities.some((e) => e.id === eid))
@@ -413,15 +434,22 @@ export function planApplyPrefabInstance(
         if (mapped.addedStates) delete mapped.addedStates[BUILTIN.Transform];
       }
       patchAt(targets, prefab.root, path, mapped);
-      const name = view.entities.find((e) => e.id === eid)?.name ?? path;
+      const shown = view.entities.find((e) => e.id === eid);
+      const name = shown?.name ?? path;
       for (const key of ["name", "parent", "order"] as const)
         if (mapped[key] !== undefined) {
           const label = { name: "名前", parent: "親", order: "並び順" }[key];
+          // 親は、付け替えた先の Entity の名前で出す
+          const parentName =
+            key === "parent" ? view.entities.find((e) => e.id === shown?.parent)?.name : undefined;
           plan.changes.push({
             entity: eid,
             name,
             kind: key,
-            detail: `${label}: ${stringifyValue(mapped[key])}`,
+            detail:
+              parentName !== undefined
+                ? `${label}: 「${parentName}」`
+                : `${label}: ${stringifyValue(mapped[key])}`,
           });
         }
       for (const group of ["states", "addedStates"] as const)
@@ -456,7 +484,7 @@ export function planApplyPrefabInstance(
     );
     root.states = mergeStates(root.states, insideRefs(additions));
     // 自前の KokoState と上書きが重なるときも、画面で見えている上書きが最後に勝つ。
-    const rootOverrides = copy(source.prefabOverrides?.[""]?.states ?? {});
+    const rootOverrides = copy(changed.find(([path]) => path === "")?.[1].states ?? {});
     delete rootOverrides[BUILTIN.Transform];
     root.states = mergeStates(root.states, insideRefs(rootOverrides));
     for (const koko of changedAdditions)
@@ -464,7 +492,7 @@ export function planApplyPrefabInstance(
         entity: id,
         name: source.name,
         kind: "state",
-        detail: `追加した KokoState: ${koko}`,
+        detail: `追加した KokoState: ${kokoName(koko)}`,
       });
     for (const e of added) {
       const next = copy(e) as EntityDef & PrefabEntityDef;
@@ -488,7 +516,7 @@ export function planApplyPrefabInstance(
         entity: id,
         name: source.name,
         kind: "system",
-        detail: `追加した System: ${s.id}`,
+        detail: `追加した System: ${systemName(s.id)}`,
       });
     const own =
       owner.kind === "output"
@@ -513,7 +541,8 @@ export function planApplyPrefabInstance(
     // KokoState の入れ物は残す。別の人が同じ入れ物の別フィールドへ書いた値を消さない。
     self.states = Object.fromEntries(Object.keys(source.states).map((koko) => [koko, {}]));
     if (transform) self.states[BUILTIN.Transform] = copy(transform);
-    delete self.prefabOverrides;
+    if (Object.keys(stale).length > 0) self.prefabOverrides = copy(stale);
+    else delete self.prefabOverrides;
     delete self.instanceSystems;
     const external = idMapper(
       mappingsForOwner(snap, owner, new Map(plan.moved.map((m) => [m.from, m.expanded]))),
@@ -581,7 +610,17 @@ export function planUnpackPrefabInstance(
       const [head, ...tail] = path.split("/");
       const target = mappings.get(head ?? "");
       if (!target) continue;
-      const mapped = copy(patch);
+      // ふつうの Entity になる所では、効いていない上書き（プレハブ側で外した KokoState へのもの）を
+      // 実体にしない。入れ子のインスタンスへの上書きは、そのインスタンスの上書きとして、そのまま移す
+      const nested = tail.length > 0 || nodes.some((n) => n.id === target && n.instanceOf);
+      const kept = nested
+        ? patch
+        : splitPrefabOverride(
+            patch,
+            view.entities.find((e) => e.id === join(id, path)),
+          ).effective;
+      if (!kept) continue;
+      const mapped = copy(kept);
       if (mapped.parent !== undefined)
         mapped.parent = mapped.parent === null ? id : expanded(mapped.parent);
       if (mapped.states) mapped.states = refs(mapped.states, expanded);

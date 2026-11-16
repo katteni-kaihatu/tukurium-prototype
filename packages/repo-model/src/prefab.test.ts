@@ -78,6 +78,39 @@ describe("プレハブのリソース", () => {
     expect(() => doc.renamePrefab(other, "まと")).toThrow();
   });
 
+  it("名前を変えると、いちばん上の Entity の名前も、同じ名前だったときだけ合わせる", () => {
+    const doc = new ProjectDoc();
+    doc.load(emptyProject("p"));
+    // Resources で作ってすぐ名前を付けたとき：いちばん上の Entity に、作ったときの名前が残らない
+    const id = doc.addPrefab("新しいプレハブ");
+    const root = doc.prefab(id)?.root ?? "";
+    const inst = doc.addInstance({ output: OUT, prefab: id, name: "置いたもの" });
+    let changes = 0;
+    const stop = doc.observe(() => changes++);
+    doc.renamePrefab(id, "的");
+    stop();
+    // 一つの transaction（共同編集の相手に、片方だけ変わった形が見えない）
+    expect(changes).toBe(1);
+    expect(doc.prefab(id)?.name).toBe("的");
+    expect(doc.prefabEntity(root)?.name).toBe("的");
+    // インスタンスの名前は、インスタンスのもの
+    expect(doc.entity(inst)?.name).toBe("置いたもの");
+    // いちばん上の Entity に別の名前を付けていたら、そのままにする
+    doc.renameEntity(root, "台");
+    doc.renamePrefab(id, "まと");
+    expect(doc.prefab(id)?.name).toBe("まと");
+    expect(doc.prefabEntity(root)?.name).toBe("台");
+    // 同じ名前があって断られたときは、どちらも変わらない
+    const other = doc.addPrefab("べつ");
+    expect(() => doc.renamePrefab(other, "まと")).toThrow();
+    expect(doc.prefab(other)?.name).toBe("べつ");
+    expect(doc.prefabEntity(doc.prefab(other)?.root ?? "")?.name).toBe("べつ");
+    // 共同編集の相手にも、同じ形で届く
+    const peer = new ProjectDoc();
+    Y.applyUpdate(peer.doc, Y.encodeStateAsUpdate(doc.doc));
+    expect(peer.snapshot()).toEqual(doc.snapshot());
+  });
+
   it("消すと、インスタンスは残り、問題として出る", () => {
     const { doc, prefab } = targetProject();
     const inst = doc.addInstance({ output: OUT, prefab });

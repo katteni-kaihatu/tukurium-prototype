@@ -91,6 +91,7 @@ type FieldMap = Y.Map<unknown>;
 function fieldMap(f: FieldDef, order: string): FieldMap {
   const m: FieldMap = new Y.Map<unknown>();
   m.set("name", f.name);
+  if (f.description !== undefined) m.set("description", f.description);
   m.set("type", f.type);
   m.set("default", encodeValue(f.default));
   m.set("order", order);
@@ -101,6 +102,7 @@ function kokoMapOf(def: KokoStateDef): KokoMap {
   const m: KokoMap = new Y.Map<unknown>();
   m.set("id", def.id);
   m.set("name", def.name);
+  if (def.description !== undefined) m.set("description", def.description);
   if (def.role !== undefined) m.set("role", def.role);
   if (def.typeDefs !== undefined) m.set("typeDefs", [...def.typeDefs]);
   const fields = new Y.Map<FieldMap>();
@@ -117,6 +119,9 @@ function readFields(fields: Y.Map<FieldMap>): (FieldDef & { order: string })[] {
   const list = [...fields.entries()].map(([id, f]) => ({
     id,
     name: String(f.get("name") ?? id),
+    ...(typeof f.get("description") === "string"
+      ? { description: f.get("description") as string }
+      : {}),
     type: String(f.get("type") ?? ""),
     default: decodeValue(f.get("default")) as FieldValue,
     order: String(f.get("order") ?? ""),
@@ -134,6 +139,9 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
   return {
     id: String(stored.get("id")),
     name: String(stored.get("name")),
+    ...(typeof stored.get("description") === "string"
+      ? { description: stored.get("description") as string }
+      : {}),
     ...(typeof role === "string" ? { role } : {}),
     ...(Array.isArray(typeDefs) ? { typeDefs: typeDefs.map(String) } : {}),
     fields: readFields(stored.get("fields") as Y.Map<FieldMap>).map(({ order: _order, ...f }) => f),
@@ -421,6 +429,10 @@ export class ProjectDoc {
       } else {
         // 変わった所だけを書く。同時に別のフィールドを変えた人の変更を、上書きしない
         if (prev?.name !== def.name) stored.set("name", def.name);
+        if (prev?.description !== def.description) {
+          if (def.description === undefined) stored.delete("description");
+          else stored.set("description", def.description);
+        }
         if (prev?.role !== def.role) {
           if (def.role === undefined) stored.delete("role");
           else stored.set("role", def.role);
@@ -442,6 +454,10 @@ export class ProjectDoc {
             return;
           }
           if (old.name !== f.name) m.set("name", f.name);
+          if (old.description !== f.description) {
+            if (f.description === undefined) m.delete("description");
+            else m.set("description", f.description);
+          }
           if (old.type !== f.type) m.set("type", f.type);
           if (!equalValues(old.default, f.default)) m.set("default", encodeValue(f.default));
           if (old.order !== key) m.set("order", key);
@@ -824,7 +840,10 @@ export class ProjectDoc {
     const target = this.overrideTarget(id);
     const e = this.node(id);
     if (!e && !target) return;
-    const to = e ? this.parentIn(e, parent) : parent;
+    // プレハブから来た Entity の「親なし」は、そのインスタンスのいちばん上の下。兄弟も、そこで数える
+    const to = e
+      ? this.parentIn(e, parent)
+      : (parent ?? (target?.owner.get("id") as EntityId | undefined) ?? null);
     this.assertExpandedParent(id, to);
     const all = this.expandedPeers(id);
     const self = all.find((p) => p.id === id);
@@ -1037,6 +1056,8 @@ export class ProjectDoc {
     const target = this.overrideTarget(id);
     if (target) {
       if (Object.hasOwn(target.entity.states, koko)) return;
+      // プレハブ側で外した KokoState への上書きが残っていたら、消す（足した KokoState に、古い値を重ねない）
+      this.deleteOverrides(target, (parts) => parts[1] === "states" && parts[2] === koko);
       const value = this.registry().createValues(koko, values);
       if (target.path === "") this.statesOf(id).set(koko, valueMap(value));
       else {
@@ -1224,13 +1245,22 @@ export class ProjectDoc {
     });
     return id;
   }
-  /** 名前を変える。インスタンスは ID で結び付いているので、切れない */
+  /**
+   * 名前を変える。インスタンスは ID で結び付いているので、切れない。
+   * いちばん上の Entity の名前が、変える前のプレハブの名前と同じなら、新しい名前に合わせる
+   * （作ってすぐ名前を付けたプレハブを開いたとき、Hierarchy に、作ったときの名前が残らないように）。
+   * いちばん上の Entity に別の名前を付けていたら、そのままにする。インスタンスの名前は、変えない。
+   */
   renamePrefab(id: string, name: string): void {
     const p = this.prefabMap.get(id);
     const next = name.trim();
     if (!p || !next || p.name === next) return;
     this.assertSiblingName(next, id);
-    this.prefabMap.set(id, { ...p, name: next });
+    this.transact(() => {
+      this.prefabMap.set(id, { ...p, name: next });
+      const root = this.prefabEntityMap.get(p.root);
+      if (root?.get("name") === p.name) root.set("name", next);
+    });
   }
   /** System の並び・「維持」の印・編集する場所を変える（ID と、いちばん上の Entity は変えられない） */
   updatePrefab(def: PrefabDef): void {
@@ -2012,7 +2042,12 @@ export class ProjectDoc {
     value: string | number | null,
   ): void {
     const store = this.overrideStore(target);
-    if (equalValues(value, target.base[key])) store.delete(overrideKey(target.path, key));
+    // 親なし（null）は「そのインスタンスのいちばん上の下」。もともとそこにあるなら、変えた所に数えない
+    const same =
+      key === "parent" && value === null
+        ? target.base.parent === target.owner.get("id")
+        : equalValues(value, target.base[key]);
+    if (same) store.delete(overrideKey(target.path, key));
     else store.set(overrideKey(target.path, key), encodeValue(value));
   }
 

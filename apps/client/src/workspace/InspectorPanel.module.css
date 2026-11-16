@@ -204,6 +204,22 @@
   background: var(--c-brand-soft);
 }
 
+/* 名前のうしろの札（追加・元・プレハブ・問題の印など） */
+.tags {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 行の操作のボタンが出ている間、札はボタンの下に隠れる。札をしまって、その幅を名前に回す。
+   プレハブからの変化の印（△）は名前の前にあり、ボタンと重ならない */
+.node:hover:has(> .actions) .tags,
+.node:focus-within:has(> .actions) .tags,
+.node[data-current="true"]:has(> .actions) .tags {
+  display: none;
+}
+
 /* ライブラリの含めるリソース（ADR 0055） */
 .includeGroup {
   margin: 0 0 8px;

@@ -197,6 +197,26 @@ describe("インスタンスで変える操作", () => {
     expect(doc.entity(instance)?.prefabOverrides).toBeUndefined();
   });
 
+  it("もともといちばん上の下にある Entity を「親なし」にしても、変えた所に数えない", () => {
+    const { doc, prefab, instance, other, child, b, at } = setup();
+    doc.setParent(child, null);
+    doc.placeEntity(child, null, 0);
+    expect(at(child)?.parent).toBe(instance);
+    expect(doc.entity(instance)?.prefabOverrides).toBeUndefined();
+    // アウトプットのいちばん上へ落としても、並べ替えるのはインスタンスの中だけ（外の並びは変えない）
+    doc.placeEntity(child, null, 5);
+    expect([at(`${instance}/${b}`)?.order, at(child)?.order]).toEqual([0, 1]);
+    expect([doc.entity(instance)?.order, doc.entity(other)?.order]).toEqual([0, 1]);
+    doc.revertPrefabEntity(child, "order");
+    doc.revertPrefabEntity(`${instance}/${b}`, "order");
+    expect(doc.entity(instance)?.prefabOverrides).toBeUndefined();
+    // 深い所にあるものを「親なし」にすると、インスタンスのいちばん上に付き、変えた所として残る
+    const grand = doc.addPrefabEntity({ prefab, parent: b, name: "孫" });
+    doc.setParent(`${instance}/${grand}`, null);
+    expect(at(`${instance}/${grand}`)?.parent).toBe(instance);
+    expect(doc.entity(instance)?.prefabOverrides).toEqual({ [grand]: { parent: null } });
+  });
+
   it("消えた親を覚え、上書きした子と追加 Entity は残す", () => {
     const { doc, prefab, a, b, instance, child, at } = setup();
     const grand = doc.addPrefabEntity({ prefab, parent: b, name: "孫" });

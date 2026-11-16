@@ -1,4 +1,3 @@
-import type { FieldSchemas } from "@tukurium/eks";
 import {
   belongsToDependency,
   checkFieldValues,
@@ -26,6 +25,7 @@ import { IncrementalCheck } from "./incrementalCheck";
 import { resolvePackagePool, resolvePackages } from "./packages";
 import { checkScripts, type Problem, runSetsByChanges, trackErrorPrints } from "./problems";
 import { useWorkspace } from "./store";
+import { setEditorTypecheck, TypecheckClient } from "./typecheckClient";
 
 /** Host API の宣言（型を確かめるときに Worker へ渡す） */
 const HOST_DECLARATIONS = hostApiDeclarations();
@@ -77,39 +77,39 @@ export function useTypeCheck(): void {
   const ready = useWorkspace((s) => s.ready);
   const rev = useWorkspace((s) => s.rev);
   const packages = useWorkspace((s) => s.packages);
-  const worker = useRef<Worker | null>(null);
+  const worker = useRef<TypecheckClient | null>(null);
   const seq = useRef(0);
-  useEffect(
-    () => () => {
-      worker.current?.terminate();
-      worker.current = null;
-    },
-    [],
-  );
   useEffect(() => {
     if (!project || !ready) return;
+    const client = new TypecheckClient(
+      new Worker(new URL("./typecheck.worker.ts", import.meta.url), { type: "module" }),
+    );
+    worker.current = client;
+    setEditorTypecheck(client);
+    return () => {
+      client.dispose();
+      worker.current = null;
+      setEditorTypecheck(null);
+    };
+  }, [project, ready]);
+  useEffect(() => {
+    const client = worker.current;
+    if (!project || !ready || !client) return;
+    const id = ++seq.current;
+    const input = {
+      snapshot: project.snapshot(),
+      packages: [...packages],
+      hostDeclarations: HOST_DECLARATIONS,
+    };
+    client.updateContext(input);
     const timer = setTimeout(() => {
-      worker.current ??= new Worker(new URL("./typecheck.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      const w = worker.current;
-      const id = ++seq.current;
-      w.onmessage = (
-        e: MessageEvent<{ id: number; diagnostics: Diagnostic[]; schemas: FieldSchemas | null }>,
-      ) => {
+      void client.check(input).then((result) => {
         // 最後に頼んだものの結果だけを受け取る
-        if (e.data.id !== seq.current || useWorkspace.getState().project !== project) return;
-        useWorkspace.setState((s) => ({
-          typeProblems: { diagnostics: e.data.diagnostics, observedVersion: rev },
-          // フィールドのスキーマ（Inspector の入力・値の確かめ・再生で使う）。作れなかったときは前のまま
-          fieldSchemas: e.data.schemas ?? s.fieldSchemas,
-        }));
-      };
-      w.postMessage({
-        id,
-        snapshot: project.snapshot(),
-        packages: [...packages],
-        hostDeclarations: HOST_DECLARATIONS,
+        if (!result || id !== seq.current || useWorkspace.getState().project !== project) return;
+        useWorkspace.setState({
+          typeProblems: { diagnostics: result.diagnostics, observedVersion: rev },
+          fieldSchemas: result.schemas,
+        });
       });
     }, 600);
     return () => clearTimeout(timer);

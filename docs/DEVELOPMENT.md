@@ -62,11 +62,14 @@
 - 展開したあとの制作データは、読むだけにする。取っておいた結果（`PrefabExpansionCache`）を次の展開でも使うので、書き換えると、次の表示が壊れる。プレハブを開いた形の値は凍らせてあり、書き換えると例外になる。
 - プレハブの中の Entity は `snapshot.prefabEntities`（Y.Doc では `prefabEntities`）にあり、`entities` には入らない。Entity を全部たどる処理（KokoState・マテリアル・素材を消したときの片付けなど）は、両方をたどる（`ProjectDoc` の `nodes()`）。
 - 展開した Entity の ID は「インスタンスの ID `/` 中の Entity の ID」。セッションでは、さらに頭に配置の ID が付く（`配置/インスタンス/中の Entity`）。Entity の ID を `/` で切って意味を読まない。
-- 計測は `pnpm bench:prefab`。
+- 計測は `pnpm bench:prefab`。機械が混んでいると値がぶれるので、何回か流して落ち着いた値を見る。
+- 展開のあとの手直し（消えた親の付け替え・親子の輪の確かめ・System を集めること）は、展開した Entity すべてをたどらない（ADR 0076 の 5。`Expander.run()`）。展開に手を入れるときは、すべてをたどる展開（`thorough`）と同じ結果になることを `prefabExpandShortcut.test.ts` で確かめ、`pnpm bench:prefab` の「何も変わっていない」が 1 ms を超えないことを見る。展開のたびに、すべての Entity を回る処理（`entities.map()` で索引を作る、など）を足すと、すぐに数 ms になる。
+- インスタンスの上書き（`prefabOverrides`）をじかに読むと、効いていないもの（プレハブ側で外した KokoState へのフィールドの上書き。データは残してある）も入っている。「変えた所」を数える所は、`getPrefabOverride()` に展開した Entity を渡すか、`splitPrefabOverride()`・`hasEffectivePrefabOverrides()` で、効いているものだけを取る。
 - Hierarchy・Inspector のように「いま編集しているもの」を出す所は、`useEditTarget()`（`workspace/hooks.ts`）を読む。アウトプットか、開いているプレハブの並びが返る。`useExpanded()` は、いつもアウトプットの並び。プレハブを開いているときの Entity は、`project.entity()` では引けない（`project.findEntity()` か `project.prefabEntity()` を使う）。
 - 選ぶときは、ストアの `select()` を通す。選んだものに合わせて、プレハブを開く・閉じる（選んだものが、いつも Hierarchy に出ているものの中にある）。`useWorkspace.setState({ selection })` でじかに入れると、Hierarchy に出ていない Entity を選んだ状態になる。
 - `expandPrefabForEdit()` に渡す、取っておく入れ物（`PrefabExpansionCache`）は、`expandPrefabs()` のものとは分ける。インスタンスごとの結果を、互いに捨て合う。
 - Hierarchy の行の操作（複製・削除・プレハブを開く）のボタンは、行を選ぶかマウスを載せるまで `display: none`。確認用のスクリプトで押すときは、先にその行を選ぶ（選んでいない行のボタンは、見つからない）。
+- Hierarchy の行で、押せるもの・マウスを載せて読むもの（プレハブからの変化の印 `△` など）は、名前の前に置く。名前のうしろは、マウスを載せるか行を選ぶと、行の操作のボタンが重なって、押せなくなる。名前のうしろの札（`元`・`追加`・`プレハブ`・問題の印）は、操作のボタンが出ている間はしまい、その幅を名前に回している。
 - Hierarchy の行の名前のボタンは、マウスを載せると、右側が行の操作のボタンに隠れる。Playwright はボタンの真ん中を押すので、幅の狭い Hierarchy では「ほかの要素がクリックを受け取る」で待ち続ける。確認用のスクリプトでは、左端を押す（`click({ position: { x: 8, y: 8 } })`）。
 - Entity からプレハブを作る処理（`planPrefabFromEntity()`）と展開は、参照を、フィールドの型（スキーマ）からたどる。Entity の参照の型の文は `EntityRef | undefined`（`FIELD_TYPE.entity`）。確認用のスクリプトやテストで `Entity` などと書くと、スキーマが作れず、参照として扱われない（書き換わらない）。入れ子の型（`EntityRef[]` など）は、TypeScript で作ったスキーマ（`FieldSchemas`）を渡したときだけたどる。
 - 確認用のスクリプトで、空間（3D）の所を `page.mouse.click()` で押すと、空間に入った状態になり、そのあとのパネルのクリックが届かない。窓の外を押して閉じる動きを確かめるときは、ほかのパネルの上を押す。
@@ -85,7 +88,7 @@
 | Docker ビルドで pnpm install が失敗する | 新しいパッケージの package.json を COPY していない | Dockerfile に COPY を足す（`pnpm lint` が検査する） |
 | `CLIENT_DIR` を相対パスで渡すと起動しない | @fastify/static は絶対パスしか受け付けない | `config.ts` で絶対パスに直すようにした |
 | Coolify でイメージを取得できない | MinIO の公式イメージの配布が止まった・Docker Hub の取得制限 | 本番の compose には S3 互換ストレージを含めない（外部を使う）。ベースイメージは `NODE_IMAGE` で差し替えられる |
-| Windows で開発サーバーが白い画面になったり、型・ビルドで export がないと出たりする | `DiffTree.tsx` と `diffTree.ts`、`ProjectHome.tsx` と `projectHome.ts`、`RingMenu.tsx` と `ringMenu.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`.tsx` の import が `.ts` の方に当たる | ロジック側を `diffTreeModel.ts`・`projectHomeModel.ts`・`ringMenuModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない（Linux の CI では気付けない） |
+| Windows で開発サーバーが白い画面になったり、型・ビルドで export がないと出たりする | `DiffTree.tsx` と `diffTree.ts`、`ProjectHome.tsx` と `projectHome.ts`、`RingMenu.tsx` と `ringMenu.ts` が大文字・小文字だけ違った。大文字・小文字を区別しないファイルシステムでは、`.tsx` の import が `.ts` の方に当たる | ロジック側を `diffTreeModel.ts`・`projectHomeModel.ts`・`ringMenuModel.ts` にした。同じフォルダに、大文字・小文字だけ違う名前のファイルを作らない。Linux では動いてしまうため、`pnpm lint` の `scripts/check-file-names.mjs` で検査する。 |
 | クラウドの開発環境で Docker ビルドが TLS で失敗する | 外向きの通信が、独自 CA のプロキシを通る | 一時的な Dockerfile で CA（`/root/.ccr/ca-bundle.crt`）を入れて確かめる。リポジトリには入れない |
 
 ### ログイン（ADR 0074）

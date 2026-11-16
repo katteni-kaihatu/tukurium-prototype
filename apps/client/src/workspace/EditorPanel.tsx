@@ -1,5 +1,5 @@
-import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { javascript, javascriptLanguage } from "@codemirror/lang-javascript";
+import { closeCompletion } from "@codemirror/autocomplete";
+import { javascript } from "@codemirror/lang-javascript";
 import {
   Compartment,
   EditorSelection,
@@ -8,16 +8,24 @@ import {
   StateEffect,
   StateField,
 } from "@codemirror/state";
-import { Decoration, EditorView, GutterMarker, gutter } from "@codemirror/view";
-import { type ProjectDoc, systemCodePath, typeCodePath } from "@tukurium/repo-model";
-import { hostApiCompletions } from "@tukurium/runtime";
+import { closeHoverTooltips, Decoration, EditorView, GutterMarker, gutter } from "@codemirror/view";
+import {
+  isPackageResourceId,
+  type ProjectDoc,
+  packageSystems,
+  packageTypeDefs,
+  systemCodePath,
+  typeCodePath,
+} from "@tukurium/repo-model";
 import { basicSetup } from "codemirror";
 import { useEffect, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import { installFlatEditorCoords } from "../panels/editorCoords";
+import { debugGutter } from "./debugGutter";
 import { type LineChanges, lineChanges } from "./diffView";
+import { editorIntelligence } from "./editorIntelligence";
 import { useProject } from "./hooks";
-import { type ImportCandidate, importCandidates, importCompletionSource } from "./importCompletion";
+import { type ImportCandidate, importCandidates } from "./importCompletion";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { scriptLine } from "./problems";
 import { useWorkspace } from "./store";
@@ -112,19 +120,6 @@ export function EditorPanel() {
   );
 }
 
-/**
- * Host API の入力補完：`world.` `audio.` などのあとに、使える関数と説明・要る権限を出す。
- * `hit.` は Raycast の結果のメソッド。候補は runtime の HOST_API_SPEC から作る（一つの定義）
- */
-function hostApiCompletionSource(context: CompletionContext): CompletionResult | null {
-  const m = context.matchBefore(/\b(world|time|audio|contract|effects|hit)\.\w*$/);
-  if (!m) return null;
-  const dot = m.text.indexOf(".");
-  const options = hostApiCompletions(m.text.slice(0, dot));
-  if (options.length === 0) return null;
-  return { from: m.from + dot + 1, options, validFor: /^\w*$/ };
-}
-
 const errorLine = Decoration.line({ class: "cm-tk-errorLine" });
 
 // ---------------------------------------------------------------------------
@@ -212,18 +207,33 @@ function errorLines(lines: number[]) {
 
 /** エディタで開くコード（System か、型の定義）の名前 */
 function codeName(project: ProjectDoc, id: string): string {
-  return project.system(id)?.name ?? project.typeDef(id)?.name ?? id;
+  return project.system(id)?.name ?? project.typeDef(id)?.name ?? libraryCode(id)?.name ?? id;
+}
+
+function libraryCode(id: string) {
+  const packages = useWorkspace.getState().packages;
+  return [...packageSystems(packages.values()), ...packageTypeDefs(packages.values())].find(
+    (s) => s.id === id,
+  );
 }
 
 /** タブに出すファイルの名前（System は .ts、型の定義は .d.ts） */
 function codeFileName(project: ProjectDoc, id: string): string {
-  return `${codeName(project, id)}${project.typeDef(id) ? ".d.ts" : ".ts"}`;
+  const typeDef =
+    project.typeDef(id) ||
+    packageTypeDefs(useWorkspace.getState().packages.values()).some((t) => t.id === id);
+  return `${codeName(project, id)}${typeDef ? ".d.ts" : ".ts"}`;
 }
 
 function CodeView({ systemId }: { systemId: string }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const marks = useRef(new Compartment());
+  const debugMarks = useRef(new Compartment());
+  const debugRev = useWorkspace((s) => s.debugRev);
+  const debugStop = useWorkspace((s) => s.debugStop);
+  const debugFrameId = useWorkspace((s) => s.debugFrameId);
+  const projectRev = useWorkspace((s) => s.rev);
   const lines = useProblems()
     .map((p) => (p.subject.id === systemId ? scriptLine(p) : null))
     .filter((n): n is number => n !== null);
@@ -240,11 +250,12 @@ function CodeView({ systemId }: { systemId: string }) {
   savedRef.current = savedCode;
   const refreshChanges = useRef<() => void>(() => {});
   const role = useWorkspace((s) => s.role);
-  const readOnly = role === "viewer";
+  const readOnly = role === "viewer" || isPackageResourceId(systemId);
 
   useEffect(() => {
     const text = project.code(systemId);
-    if (!host.current || !text) return;
+    const external = libraryCode(systemId);
+    if (!host.current || (!text && !external)) return;
     // import の候補。制作データか依存が変わったときだけ作り直す
     let cache: { rev: number; packages: unknown; list: ImportCandidate[] } | null = null;
     const candidates = () => {
@@ -254,19 +265,19 @@ function CodeView({ systemId }: { systemId: string }) {
       }
       return cache.list;
     };
-    const view = new EditorView({
+    const view: EditorView = new EditorView({
       parent: host.current,
       state: EditorState.create({
-        doc: text.toString(),
+        doc: text?.toString() ?? external?.code ?? "",
         extensions: [
           basicSetup,
           javascript({ typescript: true }),
-          javascriptLanguage.data.of({ autocomplete: hostApiCompletionSource }),
-          javascriptLanguage.data.of({ autocomplete: importCompletionSource(candidates) }),
+          editorIntelligence(systemId, candidates, () => view),
           // カーソル・選択の共有（awareness は閲覧権限のある人にだけ中継される）
-          yCollab(text, awareness),
+          text ? yCollab(text, awareness) : [],
           EditorState.readOnly.of(readOnly),
           marks.current.of([]),
+          debugMarks.current.of(debugGutter(systemId)),
           lineChangesField,
           lineChangeGutter,
           EditorView.updateListener.of((u) => {
@@ -302,6 +313,21 @@ function CodeView({ systemId }: { systemId: string }) {
       }),
     });
     viewRef.current = view;
+    const unsubscribe = useWorkspace.subscribe((current, previous) => {
+      if (
+        current.rev === previous.rev &&
+        current.project === previous.project &&
+        current.debugStop === previous.debugStop &&
+        current.debugFrameId === previous.debugFrameId
+      )
+        return;
+      // 購読は Y.Text の変更中にも呼ばれるので、エディタの更新が終わってから閉じる。
+      queueMicrotask(() => {
+        if (viewRef.current !== view) return;
+        view.dispatch({ effects: closeHoverTooltips });
+        closeCompletion(view);
+      });
+    });
     // 書くたびに比べ直すと重いので、手が止まってから比べる
     let timer: ReturnType<typeof setTimeout> | null = null;
     const compute = () => {
@@ -316,6 +342,7 @@ function CodeView({ systemId }: { systemId: string }) {
     compute();
     return () => {
       if (timer) clearTimeout(timer);
+      unsubscribe();
       refreshChanges.current = () => {};
       viewRef.current = null;
       view.destroy();
@@ -329,6 +356,30 @@ function CodeView({ systemId }: { systemId: string }) {
   }, [savedCode]);
 
   // 問題のある行の印
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 共有設定と本文の版が変わるたびに位置を読み直す
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const frame = debugStop?.frames.find((f) => f.id === debugFrameId) ?? debugStop?.frames.at(-1);
+    const stoppedLine = frame?.line ?? debugStop?.line ?? 0;
+    const line =
+      (frame?.systemId ?? debugStop?.systemId) === systemId &&
+      stoppedLine > 0 &&
+      stoppedLine <= view.state.doc.lines
+        ? stoppedLine
+        : null;
+    const mark = line
+      ? EditorView.decorations.of(
+          Decoration.set([
+            Decoration.line({
+              attributes: { style: "background:#fff1c4;box-shadow:inset 3px 0 #c98d1f" },
+            }).range(view.state.doc.line(line).from),
+          ]),
+        )
+      : [];
+    view.dispatch({ effects: debugMarks.current.reconfigure([debugGutter(systemId), mark]) });
+  }, [debugRev, projectRev, systemId, debugStop, debugFrameId]);
+
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -343,8 +394,10 @@ function CodeView({ systemId }: { systemId: string }) {
     const n = Math.min(jumpTo.line, view.state.doc.lines);
     const line = view.state.doc.line(n);
     view.dispatch({
-      selection: EditorSelection.cursor(line.from),
-      effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+      selection: EditorSelection.cursor(
+        Math.min(jumpTo.position ?? line.from, view.state.doc.length),
+      ),
+      effects: EditorView.scrollIntoView(jumpTo.position ?? line.from, { y: "center" }),
     });
     view.focus();
   }, [jumpTo, systemId]);

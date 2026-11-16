@@ -11,7 +11,7 @@ description: Tukurium の変更を確かめる手順。UI・3D・スクリプト
 pnpm format && pnpm lint && pnpm typecheck && pnpm test
 ```
 
-`pnpm lint` は Biome に加えて、Dockerfile がすべての package.json を COPY しているかも検査する。
+`pnpm lint` は Biome に加えて、Dockerfile がすべての package.json を COPY しているか、大文字・小文字だけが違う名前のファイルがないかも検査する。
 
 Markdown、`docs/`、`.claude/`だけの変更はCIでも省略される。コード、依存関係、ビルド・実行・E2E設定に触れた場合は省略しない。
 
