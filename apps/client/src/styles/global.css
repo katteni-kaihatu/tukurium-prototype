@@ -57,3 +57,10 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: 0 8px 24px rgba(15, 25, 40, 0.22);
 }
+
+/* ホイールを押し込んでキャンバスを動かしている間（ADR 0081） */
+:root[data-canvas-panning],
+:root[data-canvas-panning] * {
+  cursor: grabbing;
+  user-select: none;
+}

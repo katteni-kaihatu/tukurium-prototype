@@ -5,6 +5,15 @@ import type { SessionEngine } from "../session/SessionEngine";
 import { useWorkspace } from "../workspace/store";
 import { PANEL_METERS_PER_PX, type PanelTransform } from "./PanelSpace";
 import styles from "./Panels.module.css";
+import {
+  type CanvasView,
+  canvasView,
+  hostTransform,
+  installCanvasControls,
+  toCanvas,
+  toScreen,
+  usePanelCanvas,
+} from "./panelCanvas";
 
 export interface PanelPlacement {
   /** 左端からの位置（px）。right を指定した場合は無視する */
@@ -63,8 +72,11 @@ export interface PanelDrawerSpec {
 interface PanelState {
   /** true：画面に固定（2D 表示）、false：空間に置く（3D 表示） */
   pinned: boolean;
+  /** 2D のときの位置。画面ではなく、パネルが乗っているキャンバスの上の座標（ADR 0081） */
   x: number;
   y: number;
+  /** 中身に合わせて高さが変わるときの上限（キャンバスの px）。置いた・動かしたときの画面の下端まで */
+  maxHeight: number;
   width: number;
   /** null の間は中身の高さ。一度大きさを変えたら、その高さで固定する */
   height: number | null;
@@ -81,7 +93,14 @@ export function panelViewportInsets() {
   };
 }
 
-const initialState = (spec: PanelSpec): PanelState => {
+/** 画面の下端までの高さを、キャンバスの px で */
+function heightLimit(y: number, view: CanvasView): number {
+  const vh = typeof window === "undefined" ? 800 : window.innerHeight;
+  return Math.max(MIN_PANEL_HEIGHT, (vh - toScreen(view, 0, y).y - 16) / view.scale);
+}
+
+/** 開いたときの位置と大きさ。画面の上で決めてから、いまのキャンバスの見え方で座標に直す */
+const initialState = (spec: PanelSpec, view: CanvasView): PanelState => {
   const { x, right, y, width, height } = spec.initial;
   const vw = typeof window === "undefined" ? 1280 : window.innerWidth;
   const insets = panelViewportInsets();
@@ -95,29 +114,38 @@ const initialState = (spec: PanelSpec): PanelState => {
   );
   const fittedWidth = Math.min(availableWidth, Math.max(MIN_PANEL_WIDTH, vw - left - 8));
   const top = Math.max(y, insets.top);
+  const at = toCanvas(view, left, top);
   return {
     pinned: true,
-    x: left,
-    y: top,
+    x: at.x,
+    y: at.y,
+    maxHeight: heightLimit(at.y, view),
     width: fittedWidth,
-    height: height == null ? null : fitOnScreen(fittedWidth, height, left, top, true).height,
+    height: height == null ? null : fitOnScreen(fittedWidth, height, at.x, at.y, true, view).height,
     transform: null,
   };
 };
 
-/** 最小・最大のなかに収める。画面に固定しているときは、右下が画面の中に残るようにする */
+/**
+ * 最小・最大のなかに収める。画面に固定しているときは、右下が画面の中に残るようにする。
+ * x, y と大きさはキャンバスの座標で、画面の端はいまの見え方で座標に直して比べる。
+ */
 function fitOnScreen(
   width: number,
   height: number,
   x: number,
   y: number,
   pinned: boolean,
+  view: CanvasView,
 ): { width: number; height: number } {
   let maxW = MAX_PANEL_WIDTH;
   let maxH = MAX_PANEL_HEIGHT;
   if (pinned && typeof window !== "undefined") {
-    maxW = Math.min(maxW, Math.max(MIN_PANEL_WIDTH, window.innerWidth - x - 8));
-    maxH = Math.min(maxH, Math.max(MIN_PANEL_HEIGHT, window.innerHeight - y - 8));
+    const at = toScreen(view, x, y);
+    const roomW = (window.innerWidth - at.x - 8) / view.scale;
+    const roomH = (window.innerHeight - at.y - 8) / view.scale;
+    maxW = Math.min(maxW, Math.max(MIN_PANEL_WIDTH, roomW));
+    maxH = Math.min(maxH, Math.max(MIN_PANEL_HEIGHT, roomH));
   }
   return {
     width: Math.round(Math.min(maxW, Math.max(MIN_PANEL_WIDTH, width))),
@@ -168,7 +196,21 @@ export function PanelLayer({
     return el;
   };
 
-  const stateOf = (spec: PanelSpec): PanelState => states[spec.id] ?? initialState(spec);
+  // まだ動かしていないパネルの最初の位置。開いた時点の見え方で決め、あとでキャンバスを動かしても変えない
+  const initials = useRef(new Map<string, PanelState>());
+  const initialOf = (spec: PanelSpec): PanelState => {
+    let st = initials.current.get(spec.id);
+    if (!st) {
+      st = initialState(spec, canvasView());
+      initials.current.set(spec.id, st);
+    }
+    return st;
+  };
+  const stateOf = (spec: PanelSpec): PanelState => states[spec.id] ?? initialOf(spec);
+  const initialRef = useRef(initialOf);
+  initialRef.current = initialOf;
+  /** 2D で置いているパネルのキャンバスの位置（キャンバスを動かしたとき、描き直さずに変形だけ直す） */
+  const flat = useRef(new Map<string, { x: number; y: number }>());
   const recallKeys = useRef(new Map<string, number>());
   const focusKeys = useRef(new Map<string, PanelSpec["focusKey"]>());
 
@@ -183,7 +225,10 @@ export function PanelLayer({
       engine?.panels.remove(id);
       el.remove();
       elements.current.delete(id);
+      initials.current.delete(id);
+      flat.current.delete(id);
     }
+    const view = canvasView();
     for (const p of panels) {
       const st = stateOf(p);
       const el = elementFor(p.id);
@@ -200,15 +245,34 @@ export function PanelLayer({
         if (el.parentElement !== overlay) overlay.appendChild(el);
         el.style.left = `${st.x}px`;
         el.style.top = `${st.y}px`;
+        el.style.transform = hostTransform(view, st.x, st.y);
         el.dataset.mode = "2d";
+        flat.current.set(p.id, { x: st.x, y: st.y });
       } else {
         el.style.left = "";
         el.style.top = "";
+        el.style.transform = "";
         el.dataset.mode = "3d";
+        flat.current.delete(p.id);
         engine.panels.place(p.id, el, st.transform);
       }
     }
   });
+
+  // キャンバスを動かす・拡大縮小する操作。見え方が変わったら、2D のパネルの変形だけを直す
+  useLayoutEffect(() => {
+    const off = installCanvasControls();
+    const unsubscribe = usePanelCanvas.subscribe((view) => {
+      for (const [id, at] of flat.current) {
+        const el = elements.current.get(id);
+        if (el) el.style.transform = hostTransform(view, at.x, at.y);
+      }
+    });
+    return () => {
+      unsubscribe();
+      off();
+    };
+  }, []);
 
   useLayoutEffect(() => {
     // 右ドラッグで動かした置き場所を覚える（覚えないと、次の描画で元の場所に戻る）
@@ -232,19 +296,32 @@ export function PanelLayer({
     for (const p of recalled) recallKeys.current.set(p.id, p.recallKey as number);
     setStates((prev) => {
       const next = { ...prev };
+      const view = canvasView();
+      const s = view.scale;
       for (const p of recalled) {
-        const st = prev[p.id] ?? initialState(p);
+        const st = prev[p.id] ?? initialRef.current(p);
         const insets = panelViewportInsets();
-        const x = Math.max(insets.left, Math.min(st.x, window.innerWidth - MIN_PANEL_WIDTH - 8));
-        const y = Math.max(insets.top, Math.min(st.y, window.innerHeight - MIN_PANEL_HEIGHT - 8));
-        const actualHeight = elements.current.get(p.id)?.getBoundingClientRect().height || 560;
-        const size = fitOnScreen(st.width, st.height ?? actualHeight, x, y, true);
+        // 画面の上で、作業領域の中に入るよう寄せてから、キャンバスの座標に戻す
+        const at = toScreen(view, st.x, st.y);
+        const sx = Math.max(
+          insets.left,
+          Math.min(at.x, window.innerWidth - MIN_PANEL_WIDTH * s - 8),
+        );
+        const sy = Math.max(
+          insets.top,
+          Math.min(at.y, window.innerHeight - MIN_PANEL_HEIGHT * s - 8),
+        );
+        const { x, y } = toCanvas(view, sx, sy);
+        const actualHeight =
+          (elements.current.get(p.id)?.getBoundingClientRect().height || 560 * s) / s;
+        const size = fitOnScreen(st.width, st.height ?? actualHeight, x, y, true, view);
         next[p.id] = {
           ...st,
           ...size,
           height: st.height == null ? null : size.height,
           x,
           y,
+          maxHeight: heightLimit(y, view),
           pinned: true,
         };
       }
@@ -266,7 +343,8 @@ export function PanelLayer({
       let next = prev;
       for (const job of ready) {
         const spec = panels.find((p) => p.id === job.id);
-        if (spec) next = placeLike(next, spec, job.mode, engine, elements.current);
+        if (spec)
+          next = placeLike(next, spec, job.mode, engine, elements.current, initialRef.current);
       }
       return next;
     });
@@ -283,7 +361,7 @@ export function PanelLayer({
       // 後ろのパネルがクリックを受け取れなくなるため）
       const rect = elements.current.get(id)?.getBoundingClientRect();
       setStates((prev) => {
-        const st = prev[id] ?? initialState(spec);
+        const st = prev[id] ?? initialRef.current(spec);
         if (st.pinned) {
           const others = Object.values(prev).filter((p) => !p.pinned).length;
           return {
@@ -306,18 +384,25 @@ export function PanelLayer({
     });
   }, []);
 
+  /** 画面の上で dx, dy（px）だけ動かす。キャンバスを拡大縮小していれば、その分を割り戻す */
   const moveBy = useCallback((spec: PanelSpec, dx: number, dy: number) => {
     setStates((prev) => {
-      const st = prev[spec.id] ?? initialState(spec);
+      const st = prev[spec.id] ?? initialRef.current(spec);
+      const view = canvasView();
       // 再描画前に複数回届いても、直前の更新結果に移動量を足す。
-      return { ...prev, [spec.id]: { ...st, x: st.x + dx, y: Math.max(0, st.y + dy) } };
+      // タイトルバーが画面の上へ出ていかないようにする
+      const y = Math.max(-view.y / view.scale, st.y + dy / view.scale);
+      return {
+        ...prev,
+        [spec.id]: { ...st, x: st.x + dx / view.scale, y, maxHeight: heightLimit(y, view) },
+      };
     });
   }, []);
 
   const resizeTo = useCallback((spec: PanelSpec, width: number, height: number) => {
     setStates((prev) => {
-      const st = prev[spec.id] ?? initialState(spec);
-      const next = fitOnScreen(width, height, st.x, st.y, st.pinned);
+      const st = prev[spec.id] ?? initialRef.current(spec);
+      const next = fitOnScreen(width, height, st.x, st.y, st.pinned, canvasView());
       if (st.width === next.width && st.height === next.height) return prev;
       return { ...prev, [spec.id]: { ...st, width: next.width, height: next.height } };
     });
@@ -363,7 +448,7 @@ export function PanelLayer({
               containKeys={p.containKeys}
               pinned={!engine || st.pinned}
               fixedHeight={st.height != null}
-              maxHeight={st.pinned ? `calc(100vh - ${st.y + 16}px)` : "620px"}
+              maxHeight={st.pinned ? `${Math.round(st.maxHeight)}px` : "620px"}
               actions={p.actions}
               onClose={p.onClose}
               onTogglePin={engine ? () => togglePin(p) : undefined}
@@ -389,8 +474,9 @@ function placeLike(
   mode: "2d" | "3d",
   engine: SessionEngine,
   elements: Map<string, HTMLElement>,
+  initialOf: (spec: PanelSpec) => PanelState,
 ): Record<string, PanelState> {
-  const st = prev[spec.id] ?? initialState(spec);
+  const st = prev[spec.id] ?? initialOf(spec);
   if (mode === "2d") {
     return st.pinned ? prev : { ...prev, [spec.id]: { ...st, pinned: true } };
   }
