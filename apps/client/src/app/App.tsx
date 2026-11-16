@@ -5,6 +5,7 @@ import { HomePage } from "../pages/HomePage";
 import { NewRepoPage } from "../pages/NewRepoPage";
 import { ProfilePage } from "../pages/ProfilePage";
 import { ProjectPage } from "../pages/ProjectPage";
+import { CanvasZoomBadge } from "../panels/CanvasZoomBadge";
 import { SessionView } from "../session/SessionView";
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
         <Route path="/explore" element={<ExplorePage />} />
       </Routes>
       <MainMenuHost />
+      <CanvasZoomBadge />
     </BrowserRouter>
   );
 }
