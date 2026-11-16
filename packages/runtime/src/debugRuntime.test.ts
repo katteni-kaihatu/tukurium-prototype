@@ -446,6 +446,7 @@ describe("待てるフレーム", () => {
     try {
       const frame = sim.stepDebug(0.1);
       const stop = await paused;
+      // 止まった画面に、まだ返していない e.get() の変更が出る
       expect(sim.world.get("e", "counter")?.n).toBe(1);
       sim.debug?.resume(stop.id);
       await frame;
@@ -454,7 +455,7 @@ describe("待てるフレーム", () => {
       sim.dispose();
     }
   });
-  it("停止のための途中表示が再開後の Host API の読み取りを変えない", async () => {
+  it("一時停止の所でも値を合わせ、e.get() に書いた値を Host API がすぐ読める（ADR 0082）", async () => {
     let reached!: (stop: DebugStop) => void;
     const paused = new Promise<DebugStop>((resolve) => {
       reached = resolve;
@@ -467,10 +468,39 @@ describe("待てるフレーム", () => {
     try {
       const frame = sim.stepDebug(0.1);
       const stop = await paused;
+      // 止まった画面に、まだ返していない e.get() の変更が出る
       expect(sim.world.get("e", "counter")?.n).toBe(1);
       sim.debug?.resume(stop.id);
       await frame;
-      expect(sim.world.get("e", "counter")?.n).toBe(0);
+      // world.get は、書いた値（1）を読む。ふつうの再生と同じ
+      expect(sim.world.get("e", "counter")?.n).toBe(1);
+    } finally {
+      sim.dispose();
+    }
+  });
+  it("デバッグ実行でも、消した Entity を飛ばし、作った Entity を同じ呼び出しで処理する（ADR 0082）", async () => {
+    const code = `import C from "./Counter.koko";
+export default system({query:{with:[C]},onUpdate(e){
+const c=e.get(C);
+if(c.n===0){
+world.spawn({name:"作った",states:{Counter:{n:10}}});
+const gone=world.spawn({name:"消した",states:{Counter:{n:20}}});
+world.destroy(gone);
+}
+c.n+=1;
+}});`;
+    const sim = await Simulation.create(debugProject(code), "out", {
+      realm: "r",
+      debug: { settings: () => ({ ...settings(), breakpoints: [] }), onPause: () => {} },
+    });
+    try {
+      await sim.stepDebug(0.1);
+      expect(sim.systemStatus()[0]?.error ?? null).toBe(null);
+      const values = sim.world
+        .query({ with: ["counter"] })
+        .map((id) => sim.world.get(id, "counter")?.n);
+      // 元の Entity は 1、作った Entity は同じ呼び出しで処理されて 11。消した Entity は残らない
+      expect(values.sort()).toEqual([1, 11]);
     } finally {
       sim.dispose();
     }

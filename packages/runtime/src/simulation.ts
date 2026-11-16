@@ -59,6 +59,7 @@ import {
   type DebugStateEdit,
   type HostCallContext,
   type RunChanges,
+  type RunSync,
   type ScriptEntity,
   ScriptError,
   ScriptSandbox,
@@ -410,7 +411,8 @@ export class Simulation {
   private debugStart: DebugCheckpoint | null = null;
   debug: DebugRuntime | null = null;
   private debugRunning = false;
-  private activeDebugApply: ((entities: ScriptEntity[]) => void) | null = null;
+  /** デバッグ実行の一時停止のときに、スクリプトが持っている値を World へ書く（一時停止も、合わせる境目。ADR 0082） */
+  private pauseSync: ((entities: ScriptEntity[]) => void) | null = null;
   /** いまの System の呼び出しの間に、Host API が World にしたこと（スクリプトが持っている並びと値へ写す。ADR 0082） */
   private runTrack: RunTrack | null = null;
   readonly world: World;
@@ -485,14 +487,13 @@ export class Simulation {
                 ref.sim?.debug?.point(point, (entities) => {
                   const sim = ref.sim;
                   if (!sim) return () => {};
-                  const runningWorld = sim.world.snapshot();
-                  sim.activeDebugApply?.(entities);
+                  // 一時停止の所も、合わせる境目にする（ADR 0082）。スクリプトが持っている値を World へ書くので、
+                  // 止まった画面に、まだ返していない e.get() の変更が出る。続けるときに戻す必要はない
+                  sim.pauseSync?.(entities);
                   return (edits) => {
-                    if (!sim.disposed) {
-                      sim.world.restore(runningWorld);
+                    if (!sim.disposed)
                       for (const edit of edits)
                         if (edit.kind === "state") sim.writeDebugState(edit);
-                    }
                   };
                 }) ?? [],
             },
@@ -2118,6 +2119,27 @@ export class Simulation {
   private runSystem(sys: LoadedSystem, handler: string, ids: EntityId[], args: Value[]): void {
     if (ids.length === 0 || !sys.enabled) return;
     const before = ids.map((id) => this.toScriptEntity(id, sys));
+    const run = this.beginRun(sys, handler, before);
+    try {
+      run.apply(this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys), run.sync));
+    } catch (e) {
+      this.fail(sys, e);
+      if (this.sandbox.broken) this.dispose();
+    } finally {
+      run.end();
+    }
+  }
+
+  /**
+   * System の一つの呼び出しの間、スクリプトとホストの World を合わせる口を作る（ADR 0082）。
+   * apply はスクリプトが持っている値を World へ書き、sync は Host API の境目で値と Entity の並びを合わせる。
+   * 終わったら end() を呼ぶ。ふつうの再生とデバッグ実行で、同じものを使う。
+   */
+  private beginRun(
+    sys: LoadedSystem,
+    handler: string,
+    before: ScriptEntity[],
+  ): { apply: (entities: ScriptEntity[]) => void; sync: RunSync; end: () => void } {
     // 最後に合わせた値（ADR 0082）。スクリプトが書いた値は、これと比べて、変わったフィールドだけを World へ書く。
     // 呼び出しの初めの値と比べると、途中で届けた値を初めの値へ戻したときに、届かなくなる
     const synced = new Map(before.map((e) => [e.id, e]));
@@ -2141,72 +2163,71 @@ export class Simulation {
     const writes = track.writes;
     this.runTrack = track;
     let added = 0;
-    try {
-      const after = this.sandbox.run(sys.id, handler, before, args, this.taggedFields(sys), {
-        push: apply,
-        pull: () => {
-          if (writes.size === 0 && track.gone.size === 0 && track.spawned.length === 0)
-            return undefined;
-          const changes: RunChanges = {};
-          // 消えた Entity（子も含む）。このあとの順番で飛ばし、書いた値も受け取らない
-          if (track.gone.size > 0) {
-            const gone = [...track.gone].filter((id) => synced.delete(id));
-            if (gone.length > 0) changes.gone = gone;
-            track.gone.clear();
-          }
-          // 作った Entity。全部を回す onUpdate でだけ、この System の Query に合うものを並びの後ろに足す
-          if (track.spawned.length > 0) {
-            const list: ScriptEntity[] = [];
-            for (const id of handler === "onUpdate" ? track.spawned : []) {
-              if (synced.has(id) || !this.world.has(id) || !this.entityMatches(sys, id)) continue;
-              if (added >= RUN_ADD_LIMIT) {
-                this.warn(
-                  sys.id,
-                  "run-add-limit",
-                  `一つの呼び出しの中で作った Entity が多いため、${RUN_ADD_LIMIT} 個を超えた分は、次の呼び出しから処理します`,
-                );
-                break;
-              }
-              added++;
-              const e = this.toScriptEntity(id, sys);
-              synced.set(id, e);
-              list.push(e);
+    const sync: RunSync = {
+      push: apply,
+      pull: () => {
+        if (writes.size === 0 && track.gone.size === 0 && track.spawned.length === 0)
+          return undefined;
+        const changes: RunChanges = {};
+        // 消えた Entity（子も含む）。このあとの順番で飛ばし、書いた値も受け取らない
+        if (track.gone.size > 0) {
+          const gone = [...track.gone].filter((id) => synced.delete(id));
+          if (gone.length > 0) changes.gone = gone;
+          track.gone.clear();
+        }
+        // 作った Entity。全部を回す onUpdate でだけ、この System の Query に合うものを並びの後ろに足す
+        if (track.spawned.length > 0) {
+          const list: ScriptEntity[] = [];
+          for (const id of handler === "onUpdate" ? track.spawned : []) {
+            if (synced.has(id) || !this.world.has(id) || !this.entityMatches(sys, id)) continue;
+            if (added >= RUN_ADD_LIMIT) {
+              this.warn(
+                sys.id,
+                "run-add-limit",
+                `一つの呼び出しの中で作った Entity が多いため、${RUN_ADD_LIMIT} 個を超えた分は、次の呼び出しから処理します`,
+              );
+              break;
             }
-            if (list.length > 0) changes.added = list;
-            track.spawned.length = 0;
+            added++;
+            const e = this.toScriptEntity(id, sys);
+            synced.set(id, e);
+            list.push(e);
           }
-          const out: ScriptEntity[] = [];
-          for (const [id, kokos] of writes) {
-            const prev = synced.get(id);
-            if (!prev || !this.world.has(id)) continue;
-            const states: ScriptEntity["states"] = {};
-            for (const [koko, names] of kokos) {
-              // スクリプトに渡した KokoState（Query の with）のものだけを返す
-              const key = this.localKey(koko, sys.realm);
-              const values = this.world.get(id, koko);
-              const known = prev.states[key];
-              if (!values || !known) continue;
-              const patch: Record<string, Value> = {};
-              for (const f of this.registry.require(koko).fields)
-                if (names.has(f.name)) patch[f.name] = cloneValue(values[f.id]);
-              states[key] = patch;
-              // 返した値は、スクリプトも同じ値を持つので、比べる相手にも入れる
-              prev.states[key] = { ...known, ...patch };
-            }
-            if (Object.keys(states).length > 0) out.push({ id, states });
+          if (list.length > 0) changes.added = list;
+          track.spawned.length = 0;
+        }
+        const out: ScriptEntity[] = [];
+        for (const [id, kokos] of writes) {
+          const prev = synced.get(id);
+          if (!prev || !this.world.has(id)) continue;
+          const states: ScriptEntity["states"] = {};
+          for (const [koko, names] of kokos) {
+            // スクリプトに渡した KokoState（Query の with）のものだけを返す
+            const key = this.localKey(koko, sys.realm);
+            const values = this.world.get(id, koko);
+            const known = prev.states[key];
+            if (!values || !known) continue;
+            const patch: Record<string, Value> = {};
+            for (const f of this.registry.require(koko).fields)
+              if (names.has(f.name)) patch[f.name] = cloneValue(values[f.id]);
+            states[key] = patch;
+            // 返した値は、スクリプトも同じ値を持つので、比べる相手にも入れる
+            prev.states[key] = { ...known, ...patch };
           }
-          writes.clear();
-          if (out.length > 0) changes.changed = out;
-          return changes.changed || changes.gone || changes.added ? changes : undefined;
-        },
-      });
-      apply(after);
-    } catch (e) {
-      this.fail(sys, e);
-      if (this.sandbox.broken) this.dispose();
-    } finally {
-      this.runTrack = outer;
-    }
+          if (Object.keys(states).length > 0) out.push({ id, states });
+        }
+        writes.clear();
+        if (out.length > 0) changes.changed = out;
+        return changes.changed || changes.gone || changes.added ? changes : undefined;
+      },
+    };
+    return {
+      apply,
+      sync,
+      end: () => {
+        this.runTrack = outer;
+      },
+    };
   }
 
   private async runSystemDebug(
@@ -2217,27 +2238,19 @@ export class Simulation {
   ): Promise<void> {
     if (ids.length === 0 || !sys.enabled || this.disposed) return;
     const before = ids.map((id) => this.toScriptEntity(id, sys));
-    const apply = (after: ScriptEntity[]) => {
-      after.forEach((e, i) => {
-        const prev = before[i];
-        if (!prev || e.id !== prev.id || !this.world.has(e.id)) return;
-        for (const [key, values] of Object.entries(e.states)) {
-          const koko = isShared(key) ? key : this.kid(sys.realm, key);
-          if (!this.world.hasState(e.id, koko) || !values || typeof values !== "object") continue;
-          this.writeNamed(e.id, koko, values, prev.states[key] ?? null);
-        }
-      });
-    };
-    this.activeDebugApply = apply;
+    const run = this.beginRun(sys, handler, before);
+    const apply = run.apply;
+    this.pauseSync = apply;
     this.debug?.beginSystem(before, sys.id);
     try {
-      const after = await this.sandbox.runAsync(sys.id, handler, before, args);
+      const after = await this.sandbox.runAsync(sys.id, handler, before, args, run.sync);
       if (!this.disposed) apply(after);
     } catch (e) {
       if (!this.disposed) this.fail(sys, e);
       if (this.sandbox.broken) this.dispose();
     } finally {
-      this.activeDebugApply = null;
+      this.pauseSync = null;
+      run.end();
       this.debug?.endSystem();
     }
   }

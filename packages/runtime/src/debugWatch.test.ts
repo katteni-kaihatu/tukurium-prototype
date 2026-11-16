@@ -130,11 +130,12 @@ describe("フィールドの変化", () => {
     expect(result.stops).toEqual([]);
     expect(result.value).toBe(0);
   });
-  it("手元の値とworld.setの変更を分け、停止用の表示で上書きしない", async () => {
+  it("手元の値とworld.setの変更を分けて止まり、world.set の値が手元の値にも届く（ADR 0082）", async () => {
     const result = await run("c.n=1;world.set(e.id,C,{n:2});log(world.get(e.id,C).n);");
     expect(result.stops.map((s) => s.change?.newValue)).toEqual([1, 2]);
     expect(result.stops[1]?.states.find((s) => s.id === "c")?.fields[0]?.value).toBe(2);
-    expect(result.value).toBe(1);
+    // world.set で書いた値は、手元の値（c.n）にも届くので、呼び出しの終わりにも 2 のまま
+    expect(result.value).toBe(2);
   });
   it("optional callの引数内の書き換えも捉える", async () => {
     const result = await run(
