@@ -26,7 +26,7 @@
 | 書いてから `world.get` で読む | 50.9 ms | 69〜73 ms（約 1.4 倍） |
 | Entity ごとに、自分へ `world.set` で書く | 48.0 ms | 91〜97 ms（約 1.9 倍） |
 
-Host API を呼ばない System と、Entity の値を見ない Host API は変わらない。自分へ `world.set` で書く形は、ホストへ送り、ホストから返すので、いちばん重い。あわせて、Host API の引数と戻り値の読み書きを軽くした（値の形式のタグがなければ、ふつうの JSON として扱う）。
+Host API を呼ばない System と、Entity の値を見ない Host API は変わらない。自分へ `world.set` で書く形は、ホストへ送り、ホストから返すので、いちばん重い。この形の約 1.9 倍は、受け入れる（計画者に確認した。`@deprecated` にした古い書き方で、`e.get()` に書けば重くならない）。あわせて、Host API の引数と戻り値の読み書きを軽くした（値の形式のタグがなければ、ふつうの JSON として扱う）。
 
 ### 2. System に Entity を渡す前に確かめる（実装済み）
 
@@ -88,9 +88,9 @@ type InstanceOf<T> = T extends PrefabType<any, any, infer I> ? I : never;
 - `Prefab` は、リソースの名前に使えない（予約語。これから）。
 - 静的に危ない Host API に `@deprecated` を付ける（実装済み）。
   - `HOST_API_SPEC` の項目に、理由と代わりの書き方（`deprecated: { reason, instead }`）を持たせる。持つものは、安定度が `deprecated` になり、宣言に `@deprecated` が付く。
-  - 付けたもの：`world.get`・`world.set`・`world.getState`・`world.setState`・`world.getField`・`world.setField`・`world.emit`・`world.find`・`world.spawn`・`world.destroy`・`audio.play`。Entity を ID の文字で受け取るもの、名前で探す・作る・消すもの。作ったインスタンスを読み書きする `world.getState` なども含む。
+  - 付けたもの：`world.get`・`world.set`・`world.getState`・`world.setState`・`world.getField`・`world.setField`・`world.emit`・`world.find`・`world.spawn`・`world.destroy`・`world.raycast`・`audio.play`。Entity を ID の文字で受け取る・返すもの、名前で探す・作る・消すもの。作ったインスタンスを読み書きする `world.getState` なども含む。
   - 代わりの書き方がまだないものは「追加予定」と書く。`world.spawn`・`world.destroy` の代わりは、`Prefab.spawn`・`Prefab.destroy` を作ったときに書き換える。
-  - `world.raycast` には付けていない。結果（`Hit`）が Entity の参照を持つが、引数に ID を取らず、代わりの形も決まっていない。付けるかは、計画者に聞く。
+  - `world.raycast` は、引数に ID を取らないが、結果（`Hit`）が当たった Entity を ID の文字で返すので、付ける（計画者に確認した）。代わりの形は、追加予定。
   - エディタでは、TypeScript の「提案」の診断（`reportsDeprecated`）を使って打ち消し線を引き、理由はコードホバーに出す。問題の一覧には出さない（公式ライブラリと同梱サンプルが多く使っていて、出すと問題だらけに見えるため）。
 
 ## 影響

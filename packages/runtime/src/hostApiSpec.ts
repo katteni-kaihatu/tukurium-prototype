@@ -168,6 +168,11 @@ export const HOST_API_SPEC = {
     doc: "音を鳴らす。clip は素材の名前か ID。null なら entity の AudioSource の音。entity を渡すと、その位置から聞こえる",
   }),
   "world.raycast": entry({
+    deprecated: {
+      reason:
+        "当たった Entity を ID の文字で返すので、消えた Entity や、思っていたのと違う Entity を指していても、型で気づけません",
+      instead: "追加予定（当たった物を、型の付いた参照で返す形）",
+    },
     args: z
       .tuple([
         vec3,

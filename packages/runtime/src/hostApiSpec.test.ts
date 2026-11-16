@@ -63,6 +63,7 @@ describe("Host API の一つの定義（HOST_API_SPEC）", () => {
       "world.get",
       "world.getField",
       "world.getState",
+      "world.raycast",
       "world.set",
       "world.setField",
       "world.setState",
@@ -75,8 +76,6 @@ describe("Host API の一つの定義（HOST_API_SPEC）", () => {
     expect(hostApiCompletions("world").find((c) => c.label === "spawn")?.info).toContain(
       "非推奨：",
     );
-    expect(hostApiCompletions("world").find((c) => c.label === "raycast")?.info).not.toContain(
-      "非推奨",
-    );
+    expect(hostApiCompletions("time").find((c) => c.label === "now")?.info).not.toContain("非推奨");
   });
 });
