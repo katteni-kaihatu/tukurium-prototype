@@ -54,6 +54,19 @@ export interface KokoStateDef {
    * フィールドの型の文で使える。名前ではなく ID で持つので、型の定義の名前を変えたり動かしたりしても切れない。
    */
   typeDefs?: string[];
+  /**
+   * フィールドの型で使うプレハブ（ADR 0082）。name は、型の文で使う名前（`Koma`・`InstanceOf<Koma>`）。
+   * プレハブは ID で持つので、プレハブの名前を変えたり動かしたりしても切れない。
+   */
+  prefabImports?: PrefabImport[];
+}
+
+/** KokoState が、フィールドの型で使うために import するプレハブ */
+export interface PrefabImport {
+  /** プレハブのリソース ID */
+  prefab: string;
+  /** この KokoState の型の文で使う名前 */
+  name: string;
 }
 
 /**

@@ -10,6 +10,7 @@ import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins"
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import { expandPrefabForEdit, expandPrefabs, prefabProblems } from "../prefab";
 import { prefabParamProblems } from "../prefabParams";
+import { type PrefabTypeInfo, prefabFitsType, prefabTypeInfo } from "../prefabTypes";
 import { ResourcePathIndex } from "../resourcePath";
 import type { EntityBase, KeepMark, ProjectSnapshot } from "../schema";
 import { compileSystem } from "../systemCompiler";
@@ -51,6 +52,12 @@ export function checkProjectReferences(
   );
   const outputs = new Map(snap.outputs.map((o) => [o.id, o]));
   const systems = new Set(snap.systems.map((s) => s.id));
+  /** プレハブ型の中身（印とパラメータ）。当てはまりの判定に使う。何度も引くので、取っておく */
+  const prefabInfos = new Map<string, PrefabTypeInfo | undefined>();
+  const prefabInfo = (id: string) => {
+    if (!prefabInfos.has(id)) prefabInfos.set(id, prefabTypeInfo(snap, defs, id));
+    return prefabInfos.get(id);
+  };
 
   /** 参照を確かめ、問題があれば出す。expected が null なら種類は問わない */
   const checkResource = (
@@ -101,6 +108,61 @@ export function checkProjectReferences(
   for (const m of snap.materials)
     if (m.map)
       checkResource({ kind: "material", id: m.id }, ["map"], m.map, "image", `「${m.name}」の map`);
+
+  // KokoState がフィールドの型で使うプレハブ（ADR 0082）：プレハブがない・名前が使えない・名前が重なる
+  const kokoNames = new Set([...BUILTIN_KOKOSTATES, ...snap.kokostates].map((k) => k.name));
+  const prefabIds = new Set((snap.prefabs ?? []).map((p) => p.id));
+  for (const k of snap.kokostates) {
+    const subject: ResourceRef = { kind: "kokostate", id: k.id };
+    const seen = new Set<string>();
+    for (const [i, imp] of (k.prefabImports ?? []).entries()) {
+      const location = { kind: "property" as const, path: ["prefabImports", String(i)] };
+      if (!prefabIds.has(imp.prefab) && !isPackageResourceId(imp.prefab))
+        push({
+          code: "missing-prefab-import",
+          severity: "error",
+          subject,
+          location,
+          related: [],
+          message: `「${k.name}」が import しているプレハブ「${imp.name}」がありません（import を外すか、選び直してください）`,
+          detail: `ID: ${imp.prefab}`,
+        });
+      if (!/^[A-Za-z_$][\w$]*$/.test(imp.name))
+        push({
+          code: "prefab-import-name-invalid",
+          severity: "error",
+          subject,
+          location,
+          related: [{ kind: "prefab", id: imp.prefab }],
+          message: `「${k.name}」が import するプレハブの名前「${imp.name}」は、型の文で使えません（英字で始まる、英数字と _ の名前にしてください）`,
+        });
+      else if (seen.has(imp.name) || kokoNames.has(imp.name))
+        push({
+          code: "prefab-import-name-collision",
+          severity: "error",
+          subject,
+          location,
+          related: [{ kind: "prefab", id: imp.prefab }],
+          message: seen.has(imp.name)
+            ? `「${k.name}」が import するプレハブの名前「${imp.name}」が重なっています（名前を変えてください）`
+            : `「${k.name}」が import するプレハブの名前「${imp.name}」は、同じ名前の KokoState と重なっています（${imp.name}Prefab のように、名前を変えてください）`,
+        });
+      seen.add(imp.name);
+    }
+    // インスタンス型のフィールドは、制作データでは必ず「なし」なので、型が undefined を受け入れること
+    for (const f of k.fields) {
+      const schema = schemaOfField(schemas, k.id, f);
+      if (schema?.kind === "ref" && schema.target === "entity" && schema.prefab !== undefined)
+        push({
+          code: "prefab-instance-needs-undefined",
+          severity: "error",
+          subject,
+          location: { kind: "property", path: ["fields", f.id] },
+          related: [],
+          message: `「${k.name}」の ${f.name} は、実行中に作ったインスタンスを入れるフィールドです。制作データでは「なし」なので、型に「| undefined」を足してください`,
+        });
+    }
+  }
 
   // プレハブのインスタンス（ADR 0076）：プレハブがない・プレハブが自分を含んでいる
   const prefabName = (id: string) => snap.prefabs?.find((p) => p.id === id)?.name ?? id;
@@ -227,8 +289,41 @@ export function checkProjectReferences(
         if (!schema) continue;
         const what = `${label}の ${def.name}.${f.name}`;
         const path = [...at, kokoId, f.id];
-        visitRefs(schema, values[f.id], (target, v) => {
-          if (target !== "entity")
+        visitRefs(schema, values[f.id], (target, v, ref) => {
+          if (target === "prefab") {
+            // プレハブ型のフィールド（ADR 0082）：プレハブがあり、書いた型に当てはまること
+            const found = prefabInfo(v);
+            const wanted = ref?.prefab ? prefabInfo(ref.prefab) : undefined;
+            if (!found)
+              push({
+                code: "missing-resource",
+                severity: "error",
+                subject,
+                location: { kind: "property", path },
+                related,
+                message: `${what} に指定したプレハブがありません`,
+                detail: `ID: ${v}`,
+              });
+            else if (wanted && !prefabFitsType(found, wanted))
+              push({
+                code: "prefab-type-mismatch",
+                severity: "error",
+                subject,
+                location: { kind: "property", path },
+                related: [...related, { kind: "prefab", id: v }],
+                message: `${what} に指定したプレハブ「${found.name}」は、プレハブ「${wanted.name}」の型に当てはまりません（「${wanted.name}」か、パラメータの合うそのバリアントを選んでください）`,
+              });
+          } else if (target === "entity" && ref?.prefab)
+            // インスタンス型のフィールド：実行中に作ったインスタンスだけが入る。制作データでは「なし」
+            push({
+              code: "prefab-instance-authored",
+              severity: "error",
+              subject,
+              location: { kind: "property", path },
+              related,
+              message: `${what} は、実行中に作ったインスタンスを入れるフィールドです。制作データでは「なし」にしてください`,
+            });
+          else if (target !== "entity")
             checkResource(subject, path, v, RESOURCE_FIELD_KIND[target], what, related);
           else if (!targetOf(v))
             push({

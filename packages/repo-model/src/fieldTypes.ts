@@ -121,6 +121,7 @@ export const REF_TARGET_LABEL: Record<RefTarget, string> = {
   material: "マテリアル",
   model: "モデル",
   audio: "音声",
+  prefab: "プレハブ",
 };
 
 const isRefTarget = (v: unknown): v is RefTarget =>
@@ -147,7 +148,13 @@ function parseSchema(v: unknown, depth: number): ValueSchema | undefined {
         ? { kind: "literal", value: s.value as string | number | boolean }
         : undefined;
     case "ref":
-      return isRefTarget(s.target) ? { kind: "ref", target: s.target } : undefined;
+      return isRefTarget(s.target)
+        ? {
+            kind: "ref",
+            target: s.target,
+            ...(typeof s.prefab === "string" ? { prefab: s.prefab } : {}),
+          }
+        : undefined;
     case "kokoRef":
       return typeof s.koko === "string" ? { kind: "kokoRef", koko: s.koko } : { kind: "kokoRef" };
     case "fieldRef": {

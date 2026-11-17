@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { checkProjectReferences } from "./diagnostics/references";
+import { fromFiles, toFiles } from "./files";
 import {
   inheritedParamCollisions,
+  newPrefabImportName,
   prefabChain,
   prefabFitsType,
   prefabInstanceFitsType,
   prefabTypeInfo,
 } from "./prefabTypes";
+import { ProjectDoc } from "./projectDoc";
 import type { PrefabParam, ProjectSnapshot } from "./schema";
 
 const defs = new Map([
@@ -152,5 +156,115 @@ describe("プレハブ型に当てはまるか", () => {
   it("バリアントで足したパラメータの名前が、元のものと重なっていれば分かる", () => {
     expect(inheritedParamCollisions(info("dup"))).toEqual(["Speed"]);
     expect(inheritedParamCollisions(info("aka"))).toEqual([]);
+  });
+});
+
+describe("KokoState が import するプレハブ", () => {
+  it("初めの名前は、プレハブの名前。KokoState やほかの import と重なるなら、Prefab を付ける", () => {
+    expect(newPrefabImportName(["Gun"], [], "Koma")).toBe("Koma");
+    expect(newPrefabImportName(["Bullet"], [], "Bullet")).toBe("BulletPrefab");
+    expect(newPrefabImportName(["Bullet"], [{ name: "BulletPrefab" }], "Bullet")).toBe(
+      "BulletPrefab2",
+    );
+    // 型の文で書けない名前は、書ける形にする
+    expect(newPrefabImportName([], [], "赤い駒")).toBe("Prefab");
+    expect(newPrefabImportName([], [], "Red Koma")).toBe("RedKoma");
+  });
+
+  it("import するプレハブは、共同編集の制作データと、Git のファイルに残る", () => {
+    const p = project();
+    const imports = [{ prefab: "koma", name: "Koma" }];
+    p.kokostates = [{ id: "ks_k", name: "K", fields: [], prefabImports: imports }];
+    expect(fromFiles(toFiles(p)).kokostates[0]?.prefabImports).toEqual(imports);
+    const doc = new ProjectDoc();
+    doc.load(p);
+    expect(doc.kokostate("ks_k")?.prefabImports).toEqual(imports);
+    const def = doc.kokostate("ks_k");
+    if (!def) throw new Error("KokoState がありません");
+    doc.updateKokoState({ ...def, prefabImports: [...imports, { prefab: "aka", name: "Aka" }] });
+    expect(doc.snapshot().kokostates[0]?.prefabImports?.map((i) => i.name)).toEqual([
+      "Koma",
+      "Aka",
+    ]);
+    const { prefabImports: _gone, ...rest } = doc.kokostate("ks_k") ?? def;
+    doc.updateKokoState(rest);
+    expect(doc.kokostate("ks_k")?.prefabImports).toBeUndefined();
+  });
+
+  it("プレハブがない・名前が使えない・名前が重なる import と、「なし」を受け入れないインスタンス型を問題にする", () => {
+    const p = project();
+    p.kokostates = [
+      { id: "ks_koma", name: "Koma", fields: [] },
+      {
+        id: "ks_k",
+        name: "K",
+        fields: [{ id: "f", name: "made", type: "InstanceOf<A>", default: undefined }],
+        prefabImports: [
+          { prefab: "koma", name: "A" },
+          { prefab: "aka", name: "A" },
+          { prefab: "betsu", name: "Koma" },
+          { prefab: "ou", name: "1x" },
+          { prefab: "gone", name: "Gone" },
+        ],
+      },
+    ];
+    const codes = checkProjectReferences(p, {
+      ks_k: { f: { kind: "ref", target: "entity", prefab: "koma" } },
+    })
+      .filter((d) => d.subject.id === "ks_k")
+      .map((d) => d.code);
+    expect(codes).toEqual([
+      "prefab-import-name-collision",
+      "prefab-import-name-collision",
+      "prefab-import-name-invalid",
+      "missing-prefab-import",
+      "prefab-instance-needs-undefined",
+    ]);
+  });
+
+  it("プレハブ型のフィールドの値は、当てはまるプレハブだけ。インスタンス型のフィールドは、制作データでは「なし」", () => {
+    const p = project();
+    p.kokostates = [
+      {
+        id: "ks_k",
+        name: "K",
+        fields: [
+          { id: "f", name: "prefab", type: "Koma | undefined", default: undefined },
+          { id: "g", name: "made", type: "InstanceOf<Koma> | undefined", default: undefined },
+        ],
+        prefabImports: [{ prefab: "koma", name: "Koma" }],
+      },
+    ];
+    p.outputs = [{ id: "out", name: "場", kind: "item", systems: [], keep: [] }];
+    const entity = (id: string, values: Record<string, string>) => ({
+      id,
+      name: id,
+      parent: null,
+      output: "out",
+      order: 0,
+      states: { ks_k: values },
+    });
+    p.entities = [
+      entity("ok", { f: "aka" }),
+      entity("required", { f: "ou" }),
+      entity("other", { f: "betsu" }),
+      entity("gone", { f: "nai" }),
+      entity("authored", { g: "ok" }),
+    ];
+    const undef = { kind: "undefined" as const };
+    const found = checkProjectReferences(p, {
+      ks_k: {
+        f: { kind: "union", options: [{ kind: "ref", target: "prefab", prefab: "koma" }, undef] },
+        g: { kind: "union", options: [{ kind: "ref", target: "entity", prefab: "koma" }, undef] },
+      },
+    })
+      .filter((d) => d.subject.kind === "entity")
+      .map((d) => [d.code, d.subject.id]);
+    expect(found).toEqual([
+      ["prefab-type-mismatch", "required"],
+      ["prefab-type-mismatch", "other"],
+      ["missing-resource", "gone"],
+      ["prefab-instance-authored", "authored"],
+    ]);
   });
 });

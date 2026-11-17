@@ -25,6 +25,7 @@ import {
   type Value,
   type ValueSchema,
   validateValue,
+  visitRefs,
   World,
   type WorldSnapshot,
 } from "@tukurium/eks";
@@ -47,11 +48,14 @@ import {
   type MaterialDef,
   type OutputExposure,
   type PackageResolution,
+  type PrefabTypeInfo,
   type PrefabTypeParam,
   type ProjectSnapshot,
   packageFieldSchemas,
   packageKokoStates,
   parsePackageResourceId,
+  prefabFitsType,
+  prefabInstanceFitsType,
   prefabTypeInfo,
   ResourcePathIndex,
   reachablePackages,
@@ -394,6 +398,8 @@ interface SpawnTemplate {
   names: Map<EntityId, string>;
   /** 渡せるパラメータ（元のプレハブから受け継いだものも含む） */
   params: PrefabTypeParam[];
+  /** 中に置いた、入れ子のプレハブのインスタンス（いちばん上の Entity の ID → プレハブの ID） */
+  instances: Map<EntityId, string>;
 }
 
 /** ひな形を作るときの、仮のインスタンスと、仮のアウトプットの ID */
@@ -459,6 +465,12 @@ export class Simulation {
    * `spawnedFrom` から求めて取っておき、作る・消すたびに捨てる
    */
   private readonly alivePrefabs = new Map<string, Set<string>>();
+  private readonly prefabRefSchemas = new WeakMap<ValueSchema, boolean>();
+  /** プレハブの型の中身（当てはまりの判定に使う）。制作データ（配置の版）ごとに取っておく */
+  private readonly prefabInfos = new WeakMap<
+    ProjectSnapshot,
+    Map<string, PrefabTypeInfo | undefined>
+  >();
   /** プレハブごとのひな形。制作データ（配置の版）ごとに取っておく */
   private readonly spawnTemplates = new WeakMap<
     ProjectSnapshot,
@@ -983,7 +995,7 @@ export class Simulation {
         const f = this.registry.get(k.koko)?.fields.find((x) => x.id === k.field);
         const schema = f ? this.schemaOf(k.koko, f) : undefined;
         const value = schema ? (conformValue(schema, k.value) as FieldValue) : k.value;
-        if (f && !this.accepts(k.koko, f, value)) {
+        if (f && !this.accepts(k.koko, f, value, () => part)) {
           report.kept--;
           report.dropped++;
           continue;
@@ -1370,10 +1382,88 @@ export class Simulation {
   }
 
   /** スクリプトなどが書こうとした値を、そのフィールドに入れてよいか */
-  private accepts(koko: KokoStateId, f: FieldDef, v: Value): boolean {
+  /**
+   * フィールドに入れてよい値か。part は、その値を持つ Entity の配置（プレハブの型のフィールドを確かめるのに使う。
+   * 分からないときは、プレハブの確かめを飛ばす）。
+   */
+  private accepts(
+    koko: KokoStateId,
+    f: FieldDef,
+    v: Value,
+    part?: () => Part | undefined,
+  ): boolean {
     const schema = this.schemaOf(koko, f);
+    if (!schema) return true;
     // Built-in の数（位置・速度など）は描画と物理がそのまま使うので、有限の数に限る
-    return !schema || validateValue(schema, v, { finite: isBuiltin(koko) }) === null;
+    if (validateValue(schema, v, { finite: isBuiltin(koko) }) !== null) return false;
+    if (!this.hasPrefabRef(schema)) return true;
+    const owner = part?.();
+    if (!owner) return true;
+    // プレハブの型のフィールド（ADR 0082）
+    // - プレハブ型：その配置から依存でたどれて、型に当てはまるプレハブだけ（たどれないものは、渡しても作れない）
+    // - インスタンス型：実行中に作ったインスタンスで、作った元のプレハブが、型に当てはまるものだけ
+    let ok = true;
+    visitRefs(schema, v, (target, id, ref) => {
+      if (target === "prefab") {
+        if (!this.reachablePrefabsOf(owner).has(id)) ok = false;
+        else if (ref?.prefab && !this.prefabFits(owner, id, ref.prefab, false)) ok = false;
+      } else if (target === "entity" && ref?.prefab) {
+        const made = this.spawnedPrefabOf(owner, id);
+        if (!made || !this.prefabFits(owner, made, ref.prefab, true)) ok = false;
+      }
+    });
+    return ok;
+  }
+
+  /** スキーマが、プレハブの型（プレハブ型・インスタンス型）を中に持つか。値を書くたびに調べないよう、取っておく */
+  private hasPrefabRef(schema: ValueSchema): boolean {
+    let found = this.prefabRefSchemas.get(schema);
+    if (found === undefined) {
+      found = /"target":"prefab"|"prefab":"/.test(JSON.stringify(schema));
+      this.prefabRefSchemas.set(schema, found);
+    }
+    return found;
+  }
+
+  /** candidate のプレハブ（か、そのインスタンス）が、type のプレハブの型に当てはまるか（repo-model の判定を使う） */
+  private prefabFits(part: Part, candidate: string, type: string, instance: boolean): boolean {
+    let infos = this.prefabInfos.get(part.snapshot);
+    if (!infos) {
+      infos = new Map();
+      this.prefabInfos.set(part.snapshot, infos);
+    }
+    const cache = infos;
+    const info = (id: string) => {
+      if (!cache.has(id)) {
+        const defs = [
+          ...BUILTIN_KOKOSTATES,
+          ...part.snapshot.kokostates,
+          ...packageKokoStates(reachablePackages(part.snapshot.dependencies, part.packages)),
+        ];
+        cache.set(id, prefabTypeInfo(part.snapshot, new Map(defs.map((k) => [k.id, k])), id));
+      }
+      return cache.get(id);
+    };
+    const a = info(candidate);
+    const b = info(type);
+    if (!a || !b) return false;
+    return instance ? prefabInstanceFitsType(a, b) : prefabFitsType(a, b);
+  }
+
+  /**
+   * 実行中に作ったインスタンスなら、その元のプレハブ。`Prefab.spawn` で作ったいちばん上の Entity と、
+   * その中の、入れ子のプレハブのインスタンスのいちばん上の Entity（どのプレハブのものかは、ひな形から求める）。
+   */
+  private spawnedPrefabOf(part: Part, id: EntityId): string | undefined {
+    if (!this.world.has(id) || !part.entities.has(id)) return undefined;
+    const direct = this.spawnedFrom.get(id);
+    if (direct) return direct;
+    const cut = id.indexOf("/");
+    if (cut < 0) return undefined;
+    const root = id.slice(0, cut);
+    const rootPrefab = this.spawnedFrom.get(root);
+    const template = rootPrefab ? this.spawnTemplate(part, rootPrefab) : null;
+    return template?.instances.get(`${SPAWN_TEMPLATE_ID}${id.slice(cut)}`);
   }
 
   /** realm が使う依存の KokoState を next にし、どの realm も使わなくなったものを外す */
@@ -1746,13 +1836,29 @@ export class Simulation {
       const index = ResourcePathIndex.fromSnapshot(snap);
       const packages = part.packages ? resolutionMap(snap.dependencies, part.packages) : undefined;
       const code = new Map(snap.systems.map((s) => [s.id, s.code]));
+      // フィールドの値（プレハブ型のフィールド）で指しているプレハブ
+      const valuesIn = (entities: Iterable<{ states: Record<string, KokoStateValues> }>) => {
+        const out: string[] = [];
+        for (const e of entities)
+          for (const [koko, values] of Object.entries(e.states)) {
+            const k = this.kid(part.realm, koko);
+            for (const f of this.registry.get(k)?.fields ?? []) {
+              const schema = this.schemaOf(k, f);
+              if (schema && this.hasPrefabRef(schema))
+                visitRefs(schema, values[f.id], (target, id) => {
+                  if (target === "prefab") out.push(id);
+                });
+            }
+          }
+        return out;
+      };
+      const placed = snap.entities.filter((e) => e.output === part.outputId);
       found = reachablePrefabs(
         snap,
         part.outputId,
-        // 置いたインスタンスのプレハブ。展開したあとの Entity に、どのプレハブから来たかが残っている
-        snap.entities.flatMap((e) =>
-          e.output === part.outputId && e.origin ? [e.origin.prefab] : [],
-        ),
+        // 置いたインスタンスのプレハブ（展開したあとの Entity に、どのプレハブから来たかが残っている）と、
+        // アウトプットの Entity が、フィールドの値で指しているプレハブ
+        [...placed.flatMap((e) => (e.origin ? [e.origin.prefab] : [])), ...valuesIn(placed)],
         (systemId) => {
           const source = code.get(systemId);
           if (source === undefined || !source.includes("import")) return [];
@@ -1760,6 +1866,7 @@ export class Simulation {
             .bindings.filter((b) => b.kind === "prefab")
             .map((b) => b.resourceId);
         },
+        (prefabId) => valuesIn((snap.prefabEntities ?? []).filter((e) => e.prefab === prefabId)),
       );
       byOutput.set(part.outputId, found);
     }
@@ -1788,30 +1895,36 @@ export class Simulation {
     let template: SpawnTemplate | null = null;
     if (info) {
       // インスタンスを一つだけ持つ、仮のアウトプットを展開する（今の展開の仕組みを、そのまま使う）
-      const { world, names } = buildWorld(
-        {
-          ...part.snapshot,
-          outputs: [
-            { id: SPAWN_TEMPLATE_ID, name: SPAWN_TEMPLATE_ID, kind: "item", systems: [], keep: [] },
-          ],
-          entities: [
-            {
-              id: SPAWN_TEMPLATE_ID,
-              name: info.name,
-              parent: null,
-              output: SPAWN_TEMPLATE_ID,
-              order: 0,
-              states: {},
-              instanceOf: { prefab: prefabId },
-            },
-          ],
-        },
-        SPAWN_TEMPLATE_ID,
-        registry,
-      );
+      const templateSnapshot: ProjectSnapshot = {
+        ...part.snapshot,
+        outputs: [
+          { id: SPAWN_TEMPLATE_ID, name: SPAWN_TEMPLATE_ID, kind: "item", systems: [], keep: [] },
+        ],
+        entities: [
+          {
+            id: SPAWN_TEMPLATE_ID,
+            name: info.name,
+            parent: null,
+            output: SPAWN_TEMPLATE_ID,
+            order: 0,
+            states: {},
+            instanceOf: { prefab: prefabId },
+          },
+        ],
+      };
+      const { world, names } = buildWorld(templateSnapshot, SPAWN_TEMPLATE_ID, registry);
       const entities = world.snapshot().entities;
+      // 入れ子のプレハブのインスタンスが、どのプレハブのものか（インスタンス型のフィールドに入れるときに確かめる）
+      const instances = new Map<EntityId, string>();
+      // いちばん上の Entity か：その Entity の由来が、由来のプレハブの、いちばん上の Entity になっている
+      for (const e of expandPrefabs(templateSnapshot, { kokostates: registry.all() }).entities)
+        if (
+          e.origin &&
+          part.snapshot.prefabs?.find((p) => p.id === e.origin?.prefab)?.root === e.origin.entity
+        )
+          instances.set(e.id, e.origin.prefab);
       if (entities.some((e) => e.id === SPAWN_TEMPLATE_ID))
-        template = { entities, names, params: info.params };
+        template = { entities, names, params: info.params, instances };
     }
     byPrefab.set(prefabId, template);
     return template;
@@ -1878,7 +1991,7 @@ export class Simulation {
         );
         continue;
       }
-      if (!this.accepts(koko, field, value as Value)) {
+      if (!this.accepts(koko, field, value as Value, () => part)) {
         this.warn(
           systemId,
           "prefab-param-type",
@@ -2302,7 +2415,7 @@ export class Simulation {
       },
       "world.setField": ([ref, value]) => {
         const at = fieldOf(ref);
-        if (!at || !this.accepts(at.koko, at.field, value as Value)) return false;
+        if (!at || !this.accepts(at.koko, at.field, value as Value, () => callers[0])) return false;
         at.values[at.field.id] = cloneValue(value) as FieldValue;
         if (ref) this.noteHostWrite(ref.entity, at.koko, [at.field.name]);
         return true;
@@ -2680,7 +2793,8 @@ export class Simulation {
     const values = this.world.get(edit.entity, edit.koko);
     const field = this.registry.get(edit.koko)?.fields.find((f) => f.id === edit.field);
     const value = decodeValue(edit.value) as Value;
-    if (!values || !field || !this.accepts(edit.koko, field, value)) return false;
+    if (!values || !field || !this.accepts(edit.koko, field, value, () => this.partOf(edit.entity)))
+      return false;
     values[field.id] = cloneValue(value) as FieldValue;
     // VM はフィールド名で保持する。返り値用の操作も、その名前へそろえる。
     edit.fieldName = field.name;
@@ -2741,7 +2855,8 @@ export class Simulation {
       if (!(f.name in values)) continue;
       const v = values[f.name];
       if (before && equalValues(before[f.name], v)) continue;
-      if (this.accepts(koko, f, v)) target[f.id] = cloneValue(v) as FieldValue;
+      if (this.accepts(koko, f, v, () => this.partOf(id)))
+        target[f.id] = cloneValue(v) as FieldValue;
     }
   }
 

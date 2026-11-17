@@ -181,7 +181,7 @@ export const BUILTIN_KOKOSTATES: KokoStateDef[] = [
 
 /** リソースの参照が指す先 → 参照するリソースの種類（マテリアルか、素材の種類） */
 export const RESOURCE_FIELD_KIND: Record<
-  Exclude<RefTarget, "entity">,
+  Exclude<RefTarget, "entity" | "prefab">,
   "material" | "model" | "image" | "audio"
 > = {
   texture: "image",

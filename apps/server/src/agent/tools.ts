@@ -237,6 +237,9 @@ function resolveNames(
       if (schema.target === "entity") return entityOf(project, value).id;
       if (schema.target === "material")
         return resolveNamed(readableSnapshot(project).materials, value, label);
+      // プレハブ型のフィールド（ADR 0082）：プレハブの名前か ID で指す
+      if (schema.target === "prefab")
+        return resolveNamed(readableSnapshot(project).prefabs ?? [], value, label);
       const kind = RESOURCE_FIELD_KIND[schema.target] as AssetKind;
       return resolveNamed(assetsOf(project, kind), value, label);
     }
