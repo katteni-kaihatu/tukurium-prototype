@@ -1695,6 +1695,8 @@ describe("リポジトリ・コミット・作品", () => {
       workspaceId: null,
       releaseId: rel.id,
       workspaceName: "射撃場 v1",
+      // 元のプロジェクト（読める人は、アイテムからワークスペースで開ける）
+      repoId: src.id,
     });
 
     const b = await client(url, "b");

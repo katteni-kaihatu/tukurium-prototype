@@ -100,6 +100,11 @@ export const PlacementInfo = z.object({
   yaw: z.number(),
   placedBy: id,
   grants: PlacementGrants,
+  /**
+   * 元のプロジェクト（リポジトリ）。読める人は、ここからワークスペースで開ける。
+   * 閉じたワークスペースから出した配置や、古いサーバーからは null
+   */
+  repoId: id.nullable().default(null),
 });
 export type PlacementInfo = z.infer<typeof PlacementInfo>;
 

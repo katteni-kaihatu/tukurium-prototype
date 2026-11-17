@@ -198,12 +198,15 @@ export async function createSessionAndWorkspace(
   await page.goto("/");
   await page.getByRole("button", { name: "セッションを作って入る" }).click();
   await page.waitForURL(/\/s\/s_/);
-  await page.getByRole("button", { name: "ワークスペース", exact: true }).click();
-  await page
-    .getByRole("button", {
-      name: kind === "sample" ? /サンプル「銃と的」で作る/ : /空のワークスペース/,
-    })
-    .click();
+  if (kind === "sample") {
+    // サンプルは、グローバルメニューの「ワークスペースを開く」から作る。
+    // 狭い画面ではこのウィンドウが左の欄の下に重なるので、ボタンへ直接クリックを送る
+    await page.getByRole("button", { name: "ワークスペースを開く", exact: true }).click();
+    await page.getByRole("button", { name: /サンプル「銃と的」で作る/ }).dispatchEvent("click");
+  } else {
+    await page.getByRole("button", { name: "ワークスペース", exact: true }).click();
+    await page.getByRole("button", { name: /空のワークスペース/ }).click();
+  }
   await page.locator('section[aria-label="Inspector"]').waitFor();
   return new URL(page.url()).pathname;
 }
