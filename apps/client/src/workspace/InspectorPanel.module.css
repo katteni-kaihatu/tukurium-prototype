@@ -397,8 +397,20 @@
   margin-top: 11px;
 }
 
-.fieldRow:has(> [data-block]) > .keep,
-.fieldRow:has(> [data-block]) > .keepOn {
+/* 行の終わりの印とボタン（パラメータ・維持）を、横に並べる */
+.fieldTail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fieldTail > button,
+.fieldTail > span {
+  flex: none;
+  white-space: nowrap;
+}
+
+.fieldRow:has(> [data-block]) > .fieldTail {
   margin-top: 4px;
 }
 

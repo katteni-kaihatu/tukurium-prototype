@@ -70,9 +70,16 @@ type InstanceOf<T> = T extends PrefabType<any, any, infer I> ? I : never;
 - `ValueSchema` に `{ kind: "prefab", prefab }` と `{ kind: "prefabInstance", prefab }` を足す。「なし」は `undefined`。インスタンス型のフィールドは、制作データでは必ず「なし」。
 - KokoState のフィールドの型の文では、KokoState の「import するプレハブ」（`prefabImports`。プレハブの ID と、型の文で使う名前）で付けた名前で指す。足すときに名前が重なるなら、初めの名前に `Prefab` を付ける。
 
-### 6. パラメータ（これから）
+### 6. パラメータ（実装済み。実行中に渡す所は、これから）
 
-`PrefabDef.params`：パラメータの ID → 名前・指すフィールド（ルートからの Entity の ID・KokoState・フィールド）・必須・説明・順番。制作データに置いたインスタンスでは、値は今の上書きそのもの。いちばん上の Entity の Transform を指すパラメータは、インスタンスの Transform に結び付ける。
+`PrefabDef.params`：パラメータの ID → 名前・指すフィールド（ルートからの Entity の ID・KokoState・フィールド）・必須・説明・順番。
+
+- 制作データに置いたインスタンスでは、値は今の上書きそのもの。Inspector の「プレハブの設定」は、上書きを書く別の入口になる。
+- いちばん上の Entity の Transform を指すパラメータは、インスタンスの Transform に結び付ける。置いたインスタンスは、いつも Transform を持つので、必須でも問題にしない。
+- 問題（エラー）：指す先がない（`prefab-param-target-missing`）、名前が重なる（`prefab-param-name-collision`）、名前が空（`prefab-param-name-invalid`）、置いたインスタンスが必須の値を決めていない（`prefab-param-required`）。
+- 必須の問題は、プレハブのいちばん上の Entity（バリアントの元のインスタンス）には出さない。プレハブの中に置いたインスタンスは、外側のプレハブの必須のパラメータがそのフィールドを指していれば、埋まったものとする。
+- 共同編集では、`params` をまとめて一つのキーで持つ（プレハブの定義の、ほかのキーと同じ持ち方）。二人が同じプレハブの別のパラメータを同時に変えると、あとの人のものが残る。プロトタイプの間は、これで足りるとする。
+- ライブラリの読み込みと抽出では、パラメータが指す Entity と KokoState の ID も付け替える。
 
 ### 7. 実行中に作る・消す（これから）
 
@@ -85,7 +92,7 @@ type InstanceOf<T> = T extends PrefabType<any, any, infer I> ? I : never;
 
 ### 8. そのほか
 
-- `Prefab` は、リソースの名前に使えない（予約語。これから）。
+- `Prefab` は、リソースの名前に使えない（予約語。実装済み。`reserved-name`）。大文字・小文字は区別し、フォルダは対象にしない。
 - 静的に危ない Host API に `@deprecated` を付ける（実装済み）。
   - `HOST_API_SPEC` の項目に、理由と代わりの書き方（`deprecated: { reason, instead }`）を持たせる。持つものは、安定度が `deprecated` になり、宣言に `@deprecated` が付く。
   - 付けたもの：`world.get`・`world.set`・`world.getState`・`world.setState`・`world.getField`・`world.setField`・`world.emit`・`world.find`・`world.spawn`・`world.destroy`・`world.raycast`・`audio.play`。Entity を ID の文字で受け取る・返すもの、名前で探す・作る・消すもの。作ったインスタンスを読み書きする `world.getState` なども含む。

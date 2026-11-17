@@ -23,6 +23,9 @@ const KIND_LABEL: Record<PathKind, string> = {
   prefab: "プレハブ",
 };
 
+/** リソースの名前に使えない、スクリプトの組み込みの名前（ADR 0082） */
+export const RESERVED_NAMES: readonly string[] = ["Prefab"];
+
 const ref = (kind: PathKind, id: string): ResourceRef => ({ kind, id });
 
 export function checkProjectStructure(
@@ -49,6 +52,23 @@ export function checkProjectStructure(
           message: `${KIND_LABEL[e.kind]}「${e.name}」の名前は使えません（${NAME_REASON[problem]}）`,
         }),
       );
+  }
+
+  // スクリプトで使う名前（ADR 0082）：`Prefab.spawn` などの Host API と同じ名前のリソースは作れない。
+  // 大文字・小文字は区別する（`prefab` はよい）。フォルダは、import する名前にならないので、対象にしない
+  for (const e of index.all()) {
+    if (e.kind === "folder" || !RESERVED_NAMES.includes(e.name)) continue;
+    out.push(
+      makeDiagnostic({
+        ...base,
+        code: "reserved-name",
+        severity: "error",
+        subject: ref(e.kind, e.id),
+        location: { kind: "name" },
+        related: [],
+        message: `${KIND_LABEL[e.kind]}の名前「${e.name}」は使えません（スクリプトで、プレハブを作る・消す Host API の名前に使っています。別の名前にしてください）`,
+      }),
+    );
   }
 
   for (const c of index.collisions()) {

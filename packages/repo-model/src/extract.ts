@@ -350,6 +350,17 @@ export function extractInto(
     root: entityId(p.root),
     systems: p.systems.map((s) => ({ ...s, id: r(s.id) })),
     keep: p.keep.map((k) => ({ ...k, entity: entityId(k.entity), koko: r(k.koko) })),
+    // パラメータが指す Entity と KokoState も、付け替えたあとの ID にする
+    ...(p.params
+      ? {
+          params: Object.fromEntries(
+            Object.entries(p.params).map(([key, param]) => [
+              key,
+              { ...param, entity: entityId(param.entity), koko: r(param.koko) },
+            ]),
+          ),
+        }
+      : {}),
     ...(p.deletedParents
       ? {
           deletedParents: Object.fromEntries(

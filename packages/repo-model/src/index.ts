@@ -17,6 +17,7 @@ export * from "./prefab";
 export * from "./prefabFromEntity";
 export * from "./prefabInstance";
 export * from "./prefabNesting";
+export * from "./prefabParams";
 export * from "./projectDoc";
 export * from "./resourcePath";
 export * from "./sampleModels";

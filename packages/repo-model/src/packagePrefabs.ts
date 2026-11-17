@@ -169,6 +169,17 @@ export function readPackageSnapshot(
         root: entity(p.root),
         systems: p.systems.map((s) => ({ ...s, id: resource(s.id) })),
         keep: p.keep.map((k) => ({ ...k, entity: entity(k.entity), koko: resource(k.koko) })),
+        // パラメータが指す Entity と KokoState も、取り込んだあとの ID にする（フィールドの ID は変わらない）
+        ...(p.params
+          ? {
+              params: Object.fromEntries(
+                Object.entries(p.params).map(([key, param]) => [
+                  key,
+                  { ...param, entity: entity(param.entity), koko: resource(param.koko) },
+                ]),
+              ),
+            }
+          : {}),
         ...(deletedParents
           ? {
               deletedParents: Object.fromEntries(
