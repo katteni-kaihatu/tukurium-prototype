@@ -13,6 +13,11 @@ on:
       - "docs/**"
       - ".claude/**"
 
+# PR では新しい push が来たら古いランを止める（main への push は止めない）。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -26,5 +31,39 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
       - run: pnpm build
+      # テスト分割（test ジョブの matrix）が全ファイルを漏れなく覆っているか確かめる。
+      - run: node scripts/check-test-shards.mjs
+
+  # テストは領域別に3つへ分けて並列に走らせる。分け方の正本は scripts/test-shards.mjs。
+  # fail-fast は切る: 1シャードの失敗で残りが止まると、失敗の全容が分からなくなる。
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: server
+            filters: "apps/server"
+          - name: runtime
+            filters: "packages/runtime"
+          - name: rest
+            filters: "apps/client packages/repo-model packages/typecheck packages/script packages/eks packages/shared"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run ${{ matrix.filters }} --reporter=default --reporter=json --outputFile=test-results.json
+      - if: always()
+        run: node scripts/summarize-test-results.mjs test-results.json "${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.name }}
+          path: test-results.json
+          retention-days: 7
