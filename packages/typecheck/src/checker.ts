@@ -14,6 +14,8 @@ import {
   kokoImports,
   kokoNames,
   kokoStateStub,
+  prefabDeclarations,
+  prefabImports,
   type TypeDefFile,
   typeDefFiles,
   typeImports,
@@ -148,7 +150,10 @@ export class TypeChecker {
    */
   private load(input: TypeCheckInput): FieldCheck {
     const typeDefs = typeDefFiles(input.snapshot, input.packages);
-    const fieldFiles = this.fieldFiles(input, typeDefs);
+    // プレハブの宣言（KokoState の「import するプレハブ」が使う。ADR 0082）。KokoState が仮の宣言の間は、
+    // パラメータの型が unknown になるが、プレハブ型・インスタンス型の印は、そのまま読める
+    const prefabs = prefabDeclarations(input.snapshot, input.packages);
+    const fieldFiles = this.fieldFiles(input, typeDefs, prefabs.specs);
     const fieldTexts = new Map(fieldFiles.map((f) => [f.path, f.text] as const));
     this.setFiles(
       new Map([
@@ -158,6 +163,7 @@ export class TypeChecker {
         ...kokoNames(input.snapshot, input.packages).map(
           (k) => [`${k.spec}.d.ts`, kokoStateStub(k.id)] as const,
         ),
+        ...prefabs.files,
         ...fieldTexts,
       ]),
     );
@@ -284,13 +290,18 @@ export class TypeChecker {
   }
 
   /** フィールドの型の文を、KokoState ごとのファイルにする（文として読めないものは入れない） */
-  private fieldFiles(input: TypeCheckInput, typeDefs: TypeDefFile[]): FieldFile[] {
+  private fieldFiles(
+    input: TypeCheckInput,
+    typeDefs: TypeDefFile[],
+    prefabSpecs: ReadonlyMap<string, string>,
+  ): FieldFile[] {
     const byId = new Map(typeDefs.map((f) => [f.id, f] as const));
     const names = kokoNames(input.snapshot, input.packages);
     return fieldOwners(input.snapshot, input.packages).map((owner, i) => {
-      // 使う型の定義が公開している型と、型の文に出てくる KokoState を、そのままの名前で使えるようにする
+      // 使う型の定義が公開している型・import したプレハブ・型の文に出てくる KokoState を、そのままの名前で使えるようにする
       const imports =
         typeImports(owner.typeDefs, byId) +
+        prefabImports(owner.prefabImports, prefabSpecs) +
         kokoImports(
           owner.fields.map((f) => f.type),
           names,

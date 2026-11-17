@@ -135,6 +135,21 @@ export function typeToSchema(ctx: SchemaContext, type: ts.Type, depth = 0): Valu
     if (brand) {
       const name = checker.getTypeOfSymbol(brand);
       const target = name.isStringLiteral() ? REF_BRANDS[name.value] : undefined;
+      // プレハブの型（ADR 0082）。印（自分と元のプレハブの ID を並べたもの）の先頭が、自分の ID
+      const selfOf = (property: string): string | undefined => {
+        const marks = type.getProperty(property);
+        const first = marks ? checker.getTypeOfSymbol(marks).getProperties()[0] : undefined;
+        return first?.getName();
+      };
+      if (name.isStringLiteral() && name.value === "Prefab") {
+        const prefab = selfOf("__prefab");
+        return { kind: "ref", target: "prefab", ...(prefab ? { prefab } : {}) };
+      }
+      // インスタンス型は Entity の参照でもある。ふつうの Entity の参照と取り違えないよう、先に見る
+      if (target === "entity" && type.getProperty("__instance")) {
+        const prefab = selfOf("__instance");
+        return { kind: "ref", target: "entity", ...(prefab ? { prefab } : {}) };
+      }
       if (target) return { kind: "ref", target };
     }
     if (!type.types.every((t) => t.flags & ts.TypeFlags.Object))

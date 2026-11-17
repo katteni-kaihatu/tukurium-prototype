@@ -5,6 +5,7 @@ import {
   isPackageResourceId,
   KOKO_ROLES,
   newId,
+  newPrefabImportName,
   type OutputDef,
   type OutputExposure,
   type OutputSystem,
@@ -613,6 +614,7 @@ function KokoDefProperties({ id }: { id: string }) {
         )}
       </div>
       <UsedTypeDefs def={def} editing={editing} onChange={save} />
+      <ImportedPrefabs def={def} editing={editing} onChange={save} />
       <div className={ui.section}>
         <h3 className={ui.sectionTitle}>持っている Entity</h3>
         {holders.length === 0 ? (
@@ -761,6 +763,107 @@ function UsedTypeDefs(props: {
 // ---------------------------------------------------------------------------
 
 /** 型の定義（ADR 0065）：名前・コード・使っている KokoState */
+/**
+ * KokoState が、フィールドの型で使うために import するプレハブ（ADR 0082）。付けた名前を、型の文で
+ * プレハブ型として使える（`Koma`・`InstanceOf<Koma>`）。ID で結び付くので、プレハブの名前を変えても切れない。
+ */
+function ImportedPrefabs(props: {
+  def: KokoStateDef;
+  editing: boolean;
+  onChange: (next: KokoStateDef) => void;
+}) {
+  const { def, editing } = props;
+  const project = useProject();
+  useWorkspace((s) => s.rev);
+  const snapshot = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
+  const prefabs = snapshot.prefabs ?? [];
+  const imports = def.prefabImports ?? [];
+  const index = ResourcePathIndex.fromSnapshot(snapshot);
+  const set = (next: NonNullable<KokoStateDef["prefabImports"]>) => {
+    const { prefabImports: _old, ...rest } = def;
+    props.onChange(next.length > 0 ? { ...rest, prefabImports: next } : rest);
+  };
+  const rest = prefabs.filter((p) => !imports.some((i) => i.prefab === p.id));
+  if (prefabs.length === 0 && imports.length === 0) return null;
+  const kokoNames = project
+    .registry()
+    .all()
+    .map((k) => k.name);
+  return (
+    <div className={ui.section}>
+      <h3 className={ui.sectionTitle}>import するプレハブ</h3>
+      <p className={ui.muted}>
+        フィールドの型で使うプレハブ。付けた名前を、型に書けます（例：Koma はプレハブを持つ型、
+        InstanceOf&lt;Koma&gt; | undefined は実行中に作ったインスタンスを持つ型）。
+      </p>
+      <ul className={ui.list} aria-label="import するプレハブ">
+        {imports.map((imp, i) => {
+          const prefab = prefabs.find((p) => p.id === imp.prefab);
+          return (
+            <li key={imp.prefab} className={ui.row}>
+              <span className={ui.muted}>import</span>
+              <input
+                className={ui.input}
+                style={{ flex: "0 1 140px", minWidth: 0 }}
+                aria-label="型の文で使う名前"
+                defaultValue={imp.name}
+                key={imp.name}
+                disabled={!editing}
+                onBlur={(e) => {
+                  const name = e.target.value.trim();
+                  if (name && name !== imp.name)
+                    set(imports.map((x, k) => (k === i ? { ...x, name } : x)));
+                  else e.target.value = imp.name;
+                }}
+              />
+              <span className={ui.muted} style={{ flex: 1, minWidth: 0 }}>
+                from{" "}
+                {prefab ? (
+                  `"${index.pathOf(prefab.id) ?? prefab.name}"`
+                ) : (
+                  <span className={ui.badgeError}>見つからないプレハブ</span>
+                )}
+              </span>
+              <button
+                type="button"
+                className={ui.iconBtn}
+                aria-label={`${imp.name} の import を外す`}
+                title="import を外す"
+                disabled={!editing}
+                onClick={() => set(imports.filter((_, k) => k !== i))}
+              >
+                ✕
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {editing && rest.length > 0 && (
+        <select
+          className={ui.select}
+          aria-label="import するプレハブを足す"
+          value=""
+          onChange={(e) => {
+            const prefab = prefabs.find((p) => p.id === e.target.value);
+            if (!prefab) return;
+            set([
+              ...imports,
+              { prefab: prefab.id, name: newPrefabImportName(kokoNames, imports, prefab.name) },
+            ]);
+          }}
+        >
+          <option value="">プレハブを import する…</option>
+          {rest.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function TypeDefProperties({ id }: { id: string }) {
   const { openSystem, openDetail, showProblem } = useWorkspace();
   const closeDetail = useCloseDetail();

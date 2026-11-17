@@ -83,6 +83,7 @@ const none = (): Json => encodeValue(undefined);
  * KokoState の定義を入れる Y.Map（ADR 0065）。フィールドごとに Y.Map を持つので、
  * 2 人が別のフィールドを同時に変えても、両方の変更が残る（フィールドごとの後勝ち）。
  * - id / name / role / typeDefs（使う型の定義の ID の一覧。一覧まるごとの後勝ち）
+ *   / prefabImports（フィールドの型で使うプレハブの一覧。一覧まるごとの後勝ち。ADR 0082）
  * - fields : Y.Map<フィールドの ID, Y.Map>  name, type, default（保存する形の値）, order（並べ替え用のキー）
  */
 type KokoMap = Y.Map<unknown>;
@@ -105,6 +106,11 @@ function kokoMapOf(def: KokoStateDef): KokoMap {
   if (def.description !== undefined) m.set("description", def.description);
   if (def.role !== undefined) m.set("role", def.role);
   if (def.typeDefs !== undefined) m.set("typeDefs", [...def.typeDefs]);
+  if (def.prefabImports !== undefined)
+    m.set(
+      "prefabImports",
+      def.prefabImports.map((i) => ({ prefab: i.prefab, name: i.name })),
+    );
   const fields = new Y.Map<FieldMap>();
   const keys = assignOrderKeys(def.fields.map(() => undefined));
   def.fields.forEach((f, i) => {
@@ -136,6 +142,7 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
   if (!(stored instanceof Y.Map)) return decodeKokoState(stored);
   const role = stored.get("role");
   const typeDefs = stored.get("typeDefs");
+  const prefabImports = stored.get("prefabImports") as unknown[] | undefined;
   return {
     id: String(stored.get("id")),
     name: String(stored.get("name")),
@@ -144,6 +151,16 @@ function readKoko(stored: KokoMap | StoredKokoState): KokoStateDef {
       : {}),
     ...(typeof role === "string" ? { role } : {}),
     ...(Array.isArray(typeDefs) ? { typeDefs: typeDefs.map(String) } : {}),
+    ...(Array.isArray(prefabImports)
+      ? {
+          prefabImports: prefabImports.flatMap((raw) => {
+            const i = (raw ?? {}) as { prefab?: unknown; name?: unknown };
+            return typeof i.prefab === "string" && typeof i.name === "string"
+              ? [{ prefab: i.prefab, name: i.name }]
+              : [];
+          }),
+        }
+      : {}),
     fields: readFields(stored.get("fields") as Y.Map<FieldMap>).map(({ order: _order, ...f }) => f),
   };
 }
@@ -440,6 +457,15 @@ export class ProjectDoc {
         if (!equalValues(prev?.typeDefs, def.typeDefs)) {
           if (def.typeDefs === undefined) stored.delete("typeDefs");
           else stored.set("typeDefs", [...def.typeDefs]);
+        }
+        // フィールドの型で使うプレハブ（ADR 0082）。一覧まるごとの後勝ち
+        if (!equalValues(prev?.prefabImports, def.prefabImports)) {
+          if (def.prefabImports === undefined) stored.delete("prefabImports");
+          else
+            stored.set(
+              "prefabImports",
+              def.prefabImports.map((i) => ({ prefab: i.prefab, name: i.name })),
+            );
         }
         const fields = stored.get("fields") as Y.Map<FieldMap>;
         for (const id of [...fields.keys()]) if (!ids.has(id)) fields.delete(id);

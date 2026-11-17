@@ -85,6 +85,10 @@ export class ProjectDependencyGraph {
     for (const k of snap.kokostates)
       for (const id of k.typeDefs ?? [])
         this.edge({ kind: "kokostate", id: k.id }, { kind: "typedef", id });
+    // KokoState → フィールドの型で使うプレハブ（ADR 0082）
+    for (const k of snap.kokostates)
+      for (const i of k.prefabImports ?? [])
+        this.edge({ kind: "kokostate", id: k.id }, { kind: "prefab", id: i.prefab });
 
     // 展開した Entity を指すときは、保存元のインスタンスに依存する。
     const entityOwner = (id: string) => id.split("/")[0] ?? id;
@@ -100,7 +104,11 @@ export class ProjectDependencyGraph {
           if (!schema) continue;
           visitRefs(schema, values[f.id], (target, id) => {
             if (target === "entity" && inPrefab) return;
-            const kind = target === "entity" || target === "material" ? target : "asset";
+            // フィールドの値で指すプレハブ（プレハブ型のフィールド。ADR 0082）も、一緒にたどる
+            const kind =
+              target === "entity" || target === "material" || target === "prefab"
+                ? target
+                : "asset";
             this.edge(from, { kind, id: target === "entity" ? entityOwner(id) : id });
           });
         }

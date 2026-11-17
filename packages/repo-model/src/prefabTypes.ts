@@ -105,7 +105,8 @@ export function prefabFitsType(candidate: PrefabTypeInfo, type: PrefabTypeInfo):
       if (c.required) return false;
       continue;
     }
-    if (!sameType(t.type, c.type)) return false;
+    // 同じフィールドを指すパラメータ（元から受け継いだもの）は、型も同じ。別のフィールドなら、型の文を比べる
+    if (!(t.koko === c.koko && t.field === c.field) && !sameType(t.type, c.type)) return false;
     if (c.required && !t.required) return false;
   }
   return true;
@@ -136,7 +137,8 @@ export function inheritedParamCollisions(info: PrefabTypeInfo): string[] {
  * プレハブの中に置いた別のプレハブ（入れ子と、バリアントの元）・System が import するプレハブを、先までたどる。
  * 輪になっていても、一度通ったものは飛ばす。
  *
- * - `placed`：アウトプットに置いたインスタンスのプレハブ（展開したあとの制作データでは、Entity の origin から集める）
+ * - `placed`：アウトプットに置いたインスタンスのプレハブ（展開したあとの制作データでは、Entity の origin から集める）と、
+ *   アウトプットの Entity が、フィールドの値で指しているプレハブ
  * - `importsOf`：System が import しているプレハブの ID（スクリプトを読んで求める）
  */
 export function reachablePrefabs(
@@ -144,6 +146,8 @@ export function reachablePrefabs(
   outputId: string,
   placed: Iterable<string>,
   importsOf: (systemId: string) => Iterable<string>,
+  /** プレハブの中の Entity が、フィールドの値（プレハブ型のフィールド）で指しているプレハブ */
+  valuesIn: (prefabId: string) => Iterable<string> = () => [],
 ): Set<string> {
   const prefabs = new Map((snap.prefabs ?? []).map((p) => [p.id, p]));
   const out = new Set<string>();
@@ -161,8 +165,29 @@ export function reachablePrefabs(
     if (!prefab || out.has(id)) continue;
     out.add(id);
     for (const s of prefab.systems) visitSystem(s.id);
+    for (const p of valuesIn(id)) queue.push(p);
     for (const e of snap.prefabEntities ?? [])
       if (e.prefab === id && e.instanceOf) queue.push(e.instanceOf.prefab);
   }
   return out;
+}
+
+/**
+ * KokoState が import するプレハブの、初めの名前（ADR 0082）。プレハブの名前を、型の文で書ける形にして使う。
+ * 同じ名前の KokoState（プロジェクトのどれも、型の文から名前で指せる）や、ほかの import と重なるなら、
+ * 後ろに `Prefab` を付け、それも重なるなら数字を付ける。KokoState「Bullet」とプレハブ「Bullet」のような、
+ * いちばんよくある形で、足したとたんに問題が出ないようにする。
+ */
+export function newPrefabImportName(
+  kokoNames: Iterable<string>,
+  imports: readonly { name: string }[] | undefined,
+  prefabName: string,
+): string {
+  const used = new Set([...kokoNames, ...(imports ?? []).map((i) => i.name)]);
+  const cleaned = prefabName.replace(/[^\w$]/g, "");
+  const base = /^[A-Za-z_$]/.test(cleaned) ? cleaned : "Prefab";
+  if (!used.has(base)) return base;
+  const withSuffix = base.endsWith("Prefab") ? base : `${base}Prefab`;
+  if (!used.has(withSuffix)) return withSuffix;
+  for (let i = 2; ; i++) if (!used.has(`${withSuffix}${i}`)) return `${withSuffix}${i}`;
 }

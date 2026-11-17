@@ -72,7 +72,7 @@ export function readPackageSnapshot(
         next[f.id] = mapRefs(schema, next[f.id], (target, id) =>
           target === "entity"
             ? entity(id)
-            : target === "material" || target === "kokostate"
+            : target === "material" || target === "kokostate" || target === "prefab"
               ? resource(id)
               : id,
         ) as FieldValue;
@@ -141,6 +141,10 @@ export function readPackageSnapshot(
           default: remapValues(e.id, { [f.id]: f.default })[f.id],
         })),
         ...(k.typeDefs ? { typeDefs: k.typeDefs.map(resource) } : {}),
+        // フィールドの型で使うプレハブも、取り込んだあとの ID にする（ADR 0082）
+        ...(k.prefabImports
+          ? { prefabImports: k.prefabImports.map((i) => ({ ...i, prefab: resource(i.prefab) })) }
+          : {}),
       });
     } else if (e.kind === "system" && typeof def.code === "string")
       snap.systems.push({ id, name: def.name, code: def.code });

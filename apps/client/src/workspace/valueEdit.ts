@@ -122,6 +122,7 @@ export function schemaLabel(schema: ValueSchema): string {
         material: "Material",
         model: "Model",
         audio: "Audio",
+        prefab: "Prefab",
       }[schema.target];
     case "kokoRef":
       return "KokoState の参照";

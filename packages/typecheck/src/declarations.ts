@@ -1,4 +1,4 @@
-import type { FieldDef, KokoStateDef } from "@tukurium/eks";
+import type { FieldDef, KokoStateDef, PrefabImport } from "@tukurium/eks";
 import {
   BUILTIN_KOKOSTATES,
   type PackageResolution,
@@ -293,6 +293,8 @@ export interface FieldOwner {
   fields: FieldDef[];
   /** 使う型の定義の ID（依存のものは `pkg:` の ID） */
   typeDefs?: string[];
+  /** フィールドの型で使うプレハブ（依存のものは `pkg:` の ID） */
+  prefabImports?: PrefabImport[];
   /** 制作データの KokoState か（型エラーを問題として出すのは、こちらだけ） */
   own: boolean;
 }
@@ -312,6 +314,7 @@ export function fieldOwners(
       fields: k.fields,
       own: true,
       ...(k.typeDefs ? { typeDefs: k.typeDefs } : {}),
+      ...(k.prefabImports ? { prefabImports: k.prefabImports } : {}),
     });
   for (const r of packages.values()) {
     if (r.status !== "ready") continue;
@@ -328,8 +331,121 @@ export function fieldOwners(
         ...(Array.isArray(def.typeDefs)
           ? { typeDefs: def.typeDefs.map((t) => packageResourceId(r.dependency, String(t))) }
           : {}),
+        // ライブラリの KokoState が import するプレハブも、同じライブラリの中の ID で書いてある
+        ...(Array.isArray(def.prefabImports)
+          ? {
+              prefabImports: def.prefabImports.map((i) => ({
+                ...i,
+                prefab: packageResourceId(r.dependency, String(i.prefab)),
+              })),
+            }
+          : {}),
       });
     }
+  }
+  return out;
+}
+
+/** プレハブの宣言ファイル（制作データのものと、ライブラリが公開しているもの） */
+export interface PrefabDeclarations {
+  /** 宣言ファイルのパス → 中身 */
+  files: Map<string, string>;
+  /** 宣言ファイルのパス → プレハブの ID（定義へ移動で、プレハブを開く） */
+  ids: Map<string, string>;
+  /** プレハブの ID → import に書く場所（宣言のファイルから `.d.ts` を除いたもの） */
+  specs: Map<string, string>;
+}
+
+/**
+ * プレハブの宣言ファイルを作る（ADR 0082）。System の import と、KokoState の「import するプレハブ」が使う。
+ * names は、名前で指せる KokoState（パラメータの型を、その宣言から引くために使う）。
+ * フィールドの型を確かめる前（KokoState が仮の宣言の間）でも使える：パラメータの型は unknown になるが、
+ * プレハブ型・インスタンス型の印は、そのまま使える。
+ */
+export function prefabDeclarations(
+  snap: ProjectSnapshot,
+  packages: ReadonlyMap<string, PackageResolution>,
+  index: ResourcePathIndex = ResourcePathIndex.fromSnapshot(snap),
+  names: readonly KokoName[] = kokoNames(snap, packages, index),
+): PrefabDeclarations {
+  const out: PrefabDeclarations = { files: new Map(), ids: new Map(), specs: new Map() };
+  const kokoSpec = new Map(names.map((k) => [k.id, k.spec] as const));
+  const add = (path: string, id: string, info: PrefabTypeInfo) => {
+    out.files.set(
+      `${path}.d.ts`,
+      prefabDeclaration(info, (koko) => kokoSpec.get(koko)),
+    );
+    out.ids.set(`${path}.d.ts`, id);
+    out.specs.set(id, path);
+  };
+  const defs = new Map([...BUILTIN_KOKOSTATES, ...snap.kokostates].map((k) => [k.id, k] as const));
+  for (const p of snap.prefabs ?? []) {
+    const path = index.pathOf(p.id);
+    const info = prefabTypeInfo(snap, defs, p.id);
+    if (path && info) add(path, p.id, info);
+  }
+  // ライブラリが公開しているプレハブ。パラメータの型は、同じライブラリの KokoState から引く
+  for (const [alias, r] of packages) {
+    if (r.status !== "ready") continue;
+    const fieldsOf = new Map<string, Pick<KokoStateDef, "fields">>(
+      BUILTIN_KOKOSTATES.map((k) => [k.id, k] as const),
+    );
+    for (const e of r.manifest.exports) {
+      const def = e.definition as Partial<KokoStateDef> | null;
+      if (e.kind === "kokostate" && Array.isArray(def?.fields))
+        fieldsOf.set(packageResourceId(r.dependency, e.id), { fields: def.fields });
+    }
+    for (const e of r.manifest.exports) {
+      const def = e.definition as { name?: unknown; params?: unknown } | null;
+      if (e.kind !== "prefab" || typeof def?.name !== "string") continue;
+      const id = packageResourceId(r.dependency, e.id);
+      // 取り込んだあとの ID で、型の中身を作る（パラメータが指す KokoState も、取り込んだあとの ID にする）
+      const params = (def.params ?? {}) as NonNullable<PrefabDef["params"]>;
+      const info = prefabTypeInfo(
+        {
+          ...snap,
+          prefabs: [
+            {
+              id,
+              name: def.name,
+              root: "",
+              systems: [],
+              keep: [],
+              params: Object.fromEntries(
+                Object.entries(params).map(([key, p]) => [
+                  key,
+                  {
+                    ...p,
+                    koko: fieldsOf.has(p.koko) ? p.koko : packageResourceId(r.dependency, p.koko),
+                  },
+                ]),
+              ),
+            },
+          ],
+          prefabEntities: [],
+        },
+        fieldsOf,
+        id,
+      );
+      if (info) add(`${PACKAGES_DIR}/${alias}/${e.path.replace(/^\/+/, "")}`, id, info);
+    }
+  }
+  return out;
+}
+
+/**
+ * KokoState の「import するプレハブ」の import 文（ADR 0082）。フィールドの型の文で、付けた名前を、
+ * プレハブ型として使える（`Koma`・`InstanceOf<Koma>`）。プレハブがない・名前が書けないものは、入れない。
+ */
+export function prefabImports(
+  imports: readonly { prefab: string; name: string }[] | undefined,
+  specs: ReadonlyMap<string, string>,
+): string {
+  let out = "";
+  for (const i of imports ?? []) {
+    const spec = specs.get(i.prefab);
+    if (!spec || !/^[A-Za-z_$][\w$]*$/.test(i.name)) continue;
+    out += `import type ${i.name} from ${JSON.stringify(spec)};\n`;
   }
   return out;
 }
@@ -352,8 +468,15 @@ export function virtualProject(
   for (const f of typeDefs.values()) files.set(f.file, f.code);
   // 型の文から名前で指せる KokoState（参照の型で使う）
   const names = kokoNames(snap, packages, index);
-  const importsOf = (def: Pick<KokoStateDef, "fields">, uses: readonly string[] | undefined) =>
+  // プレハブの宣言は、KokoState の「import するプレハブ」も使うので、先に作る
+  const prefabs = prefabDeclarations(snap, packages, index, names);
+  const importsOf = (
+    def: Pick<KokoStateDef, "fields">,
+    uses: readonly string[] | undefined,
+    usesPrefabs?: readonly PrefabImport[],
+  ) =>
     typeImports(uses, typeDefs) +
+    prefabImports(usesPrefabs, prefabs.specs) +
     kokoImports(
       def.fields.map((f) => f.type),
       names,
@@ -373,7 +496,12 @@ export function virtualProject(
     if (path)
       files.set(
         `${path}.d.ts`,
-        kokoStateDeclaration(k.id, k, badFields.get(k.id), importsOf(k, k.typeDefs)),
+        kokoStateDeclaration(
+          k.id,
+          k,
+          badFields.get(k.id),
+          importsOf(k, k.typeDefs, k.prefabImports),
+        ),
       );
   }
 
@@ -399,84 +527,24 @@ export function virtualProject(
             ...(typeof def.description === "string" ? { description: def.description } : {}),
           },
           badFields.get(id),
-          importsOf({ fields: def.fields }, uses),
+          importsOf(
+            { fields: def.fields },
+            uses,
+            Array.isArray(def.prefabImports)
+              ? def.prefabImports.map((i) => ({
+                  ...i,
+                  prefab: packageResourceId(r.dependency, String(i.prefab)),
+                }))
+              : undefined,
+          ),
         ),
       );
     }
   }
 
   // プレハブ・マテリアル・素材（ADR 0082）。System が、値として import する
-  const kokoSpec = new Map(names.map((k) => [k.id, k.spec] as const));
-  // ライブラリが公開しているもの。プレハブのパラメータの型は、同じライブラリの KokoState から引く
-  for (const [alias, r] of packages) {
-    if (r.status !== "ready") continue;
-    const file = (path: string) => `${PACKAGES_DIR}/${alias}/${path.replace(/^\/+/, "")}.d.ts`;
-    const fieldsOf = new Map<string, Pick<KokoStateDef, "fields">>(
-      BUILTIN_KOKOSTATES.map((k) => [k.id, k] as const),
-    );
-    for (const e of r.manifest.exports) {
-      const def = e.definition as Partial<KokoStateDef> | null;
-      if (e.kind === "kokostate" && Array.isArray(def?.fields))
-        fieldsOf.set(packageResourceId(r.dependency, e.id), { fields: def.fields });
-    }
-    for (const e of r.manifest.exports) {
-      const def = e.definition as { name?: unknown; kind?: unknown; params?: unknown } | null;
-      if (typeof def?.name !== "string") continue;
-      const id = packageResourceId(r.dependency, e.id);
-      if (e.kind === "material")
-        files.set(file(e.path), resourceDeclaration(def.name, "MaterialRef"));
-      else if (e.kind === "asset") {
-        const type = ASSET_REF[String(def.kind)];
-        if (type) files.set(file(e.path), resourceDeclaration(def.name, type));
-      } else if (e.kind === "prefab") {
-        // 取り込んだあとの ID で、型の中身を作る（パラメータが指す KokoState も、取り込んだあとの ID にする）
-        const params = (def.params ?? {}) as NonNullable<PrefabDef["params"]>;
-        const info = prefabTypeInfo(
-          {
-            ...snap,
-            prefabs: [
-              {
-                id,
-                name: def.name,
-                root: "",
-                systems: [],
-                keep: [],
-                params: Object.fromEntries(
-                  Object.entries(params).map(([key, p]) => [
-                    key,
-                    {
-                      ...p,
-                      koko: fieldsOf.has(p.koko) ? p.koko : packageResourceId(r.dependency, p.koko),
-                    },
-                  ]),
-                ),
-              },
-            ],
-            prefabEntities: [],
-          },
-          fieldsOf,
-          id,
-        );
-        if (!info) continue;
-        prefabFiles.set(file(e.path), id);
-        files.set(
-          file(e.path),
-          prefabDeclaration(info, (koko) => kokoSpec.get(koko)),
-        );
-      }
-    }
-  }
-  const defs = new Map([...BUILTIN_KOKOSTATES, ...snap.kokostates].map((k) => [k.id, k] as const));
-  for (const p of snap.prefabs ?? []) {
-    const path = index.pathOf(p.id);
-    const info = prefabTypeInfo(snap, defs, p.id);
-    if (!path || !info) continue;
-    prefabFiles.set(`${path}.d.ts`, p.id);
-    files.set(
-      `${path}.d.ts`,
-      prefabDeclaration(info, (koko) => kokoSpec.get(koko)),
-    );
-  }
+  for (const [file, text] of prefabs.files) files.set(file, text);
+  for (const [file, id] of prefabs.ids) prefabFiles.set(file, id);
   for (const m of snap.materials) {
     const path = index.pathOf(m.id);
     if (path) files.set(`${path}.d.ts`, resourceDeclaration(m.name, "MaterialRef"));
@@ -485,6 +553,19 @@ export function virtualProject(
     const path = index.pathOf(a.id);
     const type = ASSET_REF[a.kind];
     if (path && type) files.set(`${path}.d.ts`, resourceDeclaration(a.name, type));
+  }
+  for (const [alias, r] of packages) {
+    if (r.status !== "ready") continue;
+    for (const e of r.manifest.exports) {
+      const def = e.definition as { name?: unknown; kind?: unknown } | null;
+      if (typeof def?.name !== "string") continue;
+      const file = `${PACKAGES_DIR}/${alias}/${e.path.replace(/^\/+/, "")}.d.ts`;
+      if (e.kind === "material") files.set(file, resourceDeclaration(def.name, "MaterialRef"));
+      else if (e.kind === "asset") {
+        const type = ASSET_REF[String(def.kind)];
+        if (type) files.set(file, resourceDeclaration(def.name, type));
+      }
+    }
   }
 
   for (const s of snap.systems) {

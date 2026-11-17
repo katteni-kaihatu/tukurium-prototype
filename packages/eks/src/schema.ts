@@ -8,7 +8,7 @@ import { isPlainObject, type Value } from "./value";
  */
 
 /** 参照が指すもの（Entity と、リソースの種類） */
-export type RefTarget = "entity" | "texture" | "material" | "model" | "audio";
+export type RefTarget = "entity" | "texture" | "material" | "model" | "audio" | "prefab";
 
 export const REF_TARGETS: readonly RefTarget[] = [
   "entity",
@@ -16,6 +16,7 @@ export const REF_TARGETS: readonly RefTarget[] = [
   "material",
   "model",
   "audio",
+  "prefab",
 ];
 
 export type ValueSchema =
@@ -28,8 +29,13 @@ export type ValueSchema =
   | { kind: "literal"; value: string | number | boolean }
   /** 色（"#rrggbb" の文字） */
   | { kind: "color" }
-  /** Entity・リソースの ID */
-  | { kind: "ref"; target: RefTarget }
+  /**
+   * Entity・リソースの ID。prefab は、プレハブの型を書いたとき（ADR 0082）：
+   * - target が "prefab"：プレハブ型。値は、そのプレハブか、当てはまるバリアントの ID
+   * - target が "entity"：インスタンス型。値は、そのプレハブ（か、そのバリアント）から実行中に作ったインスタンス。
+   *   制作データでは、いつも「なし」（undefined）
+   */
+  | { kind: "ref"; target: RefTarget; prefab?: string }
   /**
    * Entity についた KokoState の参照（`KokoStateRef<K>`）。値は `{ entity, koko }`（Entity と KokoState の ID）。
    * koko：指せる KokoState の ID（ないときは、どの KokoState でも指せる）
@@ -267,11 +273,12 @@ export function validateValue(
 export function visitRefs(
   schema: ValueSchema,
   value: unknown,
-  visit: (target: RefTarget, id: string) => void,
+  /** ref は、その参照の型（プレハブ型・インスタンス型なら、prefab を持つ）。KokoState・フィールドの参照では undefined */
+  visit: (target: RefTarget, id: string, ref?: ValueSchema & { kind: "ref" }) => void,
 ): void {
   switch (schema.kind) {
     case "ref":
-      if (typeof value === "string" && value !== "") visit(schema.target, value);
+      if (typeof value === "string" && value !== "") visit(schema.target, value, schema);
       return;
     case "kokoRef":
     case "fieldRef":

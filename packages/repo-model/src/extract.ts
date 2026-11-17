@@ -96,6 +96,7 @@ export function collectSelection(
           if (schema)
             visitRefs(schema, value, (target, id) => {
               if (target === "material") out.materials.add(id);
+              else if (target === "prefab") out.prefabs.add(id);
               else if (target !== "entity") out.assets.add(id);
             });
           else if (typeof value === "string" && assetIds.has(value)) out.assets.add(value);
@@ -486,6 +487,15 @@ export function extractInto(
     at: new Date().toISOString(),
   };
   dst.provenance = [...(dst.provenance ?? []), record];
+  // KokoState がフィールドの型で使うプレハブ（ADR 0082）。プレハブを写したあとで、付け替えたあとの ID にする
+  for (const id of sel.kokostates) {
+    const k = dst.kokostates.find((x) => x.id === (remap.get(id) ?? id));
+    if (k?.prefabImports)
+      k.prefabImports = k.prefabImports.map((i) => ({
+        ...i,
+        prefab: remap.get(i.prefab) ?? i.prefab,
+      }));
+  }
   return dst;
 }
 

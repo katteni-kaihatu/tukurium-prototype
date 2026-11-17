@@ -9,7 +9,7 @@ import {
   type Value,
   type ValueSchema,
 } from "@tukurium/eks";
-import { RESOURCE_FIELD_KIND } from "@tukurium/repo-model";
+import { prefabFitsType, prefabTypeInfo, RESOURCE_FIELD_KIND } from "@tukurium/repo-model";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useProject } from "./hooks";
 import { useWorkspace } from "./store";
@@ -555,17 +555,63 @@ function UnionInput(props: InputProps<Kind<"union">>) {
   );
 }
 
+/**
+ * プレハブ型のフィールドで選べるプレハブ（ADR 0082）：その型のプレハブと、パラメータの合うバリアント。
+ * 型が決まっていなければ、どのプレハブでも選べる。
+ */
+function prefabChoices(
+  project: ReturnType<typeof useProject>,
+  typePrefab: string | undefined,
+): { id: string; name: string }[] {
+  const snap = project.snapshotWithPackages(useWorkspace.getState().fieldSchemas);
+  const defs = new Map(
+    project
+      .registry()
+      .all()
+      .map((k) => [k.id, k]),
+  );
+  const wanted = typePrefab === undefined ? undefined : prefabTypeInfo(snap, defs, typePrefab);
+  return (snap.prefabs ?? [])
+    .filter((p) => {
+      if (typePrefab === undefined) return true;
+      const info = prefabTypeInfo(snap, defs, p.id);
+      return !!wanted && !!info && prefabFitsType(info, wanted);
+    })
+    .map((p) => ({ id: p.id, name: p.name }));
+}
+
 /** Entity・リソースの参照。「なし」にできるのは、型が undefined を受け入れるときだけ */
 function RefInput(props: InputProps & { target: RefTarget }) {
   const { target, value, onChange } = props;
   const assets = props.choices.assets ?? [];
-  const kind = target === "entity" ? null : RESOURCE_FIELD_KIND[target];
+  const project = useProject();
+  useWorkspace((s) => s.rev);
+  // プレハブの型を書いた参照（ADR 0082）。「なし」を受け入れる型では、選択肢の一つとして入っている
+  const ref =
+    props.schema.kind === "ref"
+      ? props.schema
+      : props.schema.kind === "union"
+        ? props.schema.options.find((o) => o.kind === "ref")
+        : undefined;
+  const typePrefab = ref?.kind === "ref" ? ref.prefab : undefined;
+  // インスタンス型：実行中に作ったインスタンスだけが入る。制作データでは選べない（いつも「なし」）
+  if (target === "entity" && typePrefab !== undefined)
+    return (
+      <span className={ui.muted} title="Prefab.spawn で作ったインスタンスが、実行中に入ります">
+        {typeof value === "string" && value !== ""
+          ? `インスタンス（${value}）`
+          : "（なし）実行中に作ったインスタンスが入ります"}
+      </span>
+    );
+  const kind = target === "entity" || target === "prefab" ? null : RESOURCE_FIELD_KIND[target];
   const options =
     target === "entity"
       ? props.choices.entities
-      : kind === "material"
-        ? props.choices.materials
-        : assets.filter((a) => a.kind === kind);
+      : target === "prefab"
+        ? prefabChoices(project, typePrefab)
+        : kind === "material"
+          ? props.choices.materials
+          : assets.filter((a) => a.kind === kind);
   const optional = acceptsUndefined(props.schema);
   return (
     <select
