@@ -9,7 +9,14 @@ if (!path || !existsSync(path)) {
   process.exit(0);
 }
 
-const report = JSON.parse(readFileSync(path, "utf8"));
+// 要約は付随情報なので、壊れた JSON でジョブ自体を落とさない。
+let report;
+try {
+  report = JSON.parse(readFileSync(path, "utf8"));
+} catch {
+  console.log(`テスト結果の要約: ${label ?? ""} の JSON レポートを読めませんでした`);
+  process.exit(0);
+}
 const files = (report.testResults ?? [])
   .map((result) => {
     const totalMs = (result.assertionResults ?? []).reduce(
