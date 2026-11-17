@@ -9,7 +9,7 @@ import {
 
 /** import できる KokoState ひとつ */
 export interface ImportCandidate {
-  /** KokoState の名前（import のローカル名にそのまま使う） */
+  /** リソースの名前（import のローカル名にそのまま使う） */
   name: string;
   /** `from` に書くパス */
   spelling: string;
@@ -18,7 +18,7 @@ export interface ImportCandidate {
 }
 
 /**
- * このスクリプトから import できる KokoState。
+ * このスクリプトから import できるもの（KokoState・プレハブ・マテリアル・素材）。
  * プロジェクトのものはスクリプトの場所からの相対パス、Built-in は `@builtin/`、ライブラリは `@別名/`。
  */
 export function importCandidates(
@@ -35,6 +35,13 @@ export function importCandidates(
       index.spellingFor(k.id, systemId, "absolute");
     if (spelling) out.push({ name: k.name, spelling, source: "このプロジェクト" });
   }
+  // プレハブ・マテリアル・素材（ADR 0082）
+  for (const r of [...(snap.prefabs ?? []), ...snap.materials, ...(snap.assets ?? [])]) {
+    const spelling =
+      index.spellingFor(r.id, systemId, "relative") ??
+      index.spellingFor(r.id, systemId, "absolute");
+    if (spelling) out.push({ name: r.name, spelling, source: "このプロジェクト" });
+  }
   for (const b of BUILTIN_KOKOSTATES) {
     out.push({ name: b.name, spelling: `@builtin/${b.name}.koko`, source: "Built-in" });
   }
@@ -42,7 +49,11 @@ export function importCandidates(
     if (r.status !== "ready") continue;
     for (const e of r.manifest.exports) {
       const def = e.definition as { name?: unknown } | null;
-      if (e.kind !== "kokostate" || typeof def?.name !== "string") continue;
+      if (
+        !["kokostate", "prefab", "material", "asset"].includes(e.kind) ||
+        typeof def?.name !== "string"
+      )
+        continue;
       out.push({
         name: def.name,
         spelling: `@${alias}/${e.path.replace(/^\/+/, "")}`,

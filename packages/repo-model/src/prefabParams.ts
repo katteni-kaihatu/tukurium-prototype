@@ -1,6 +1,7 @@
 import type { KokoStateDef, KokoStateId, KokoStateValues } from "@tukurium/eks";
 import { BUILTIN } from "./builtins";
 import { expandPrefabForEdit } from "./prefab";
+import { inheritedParamCollisions, prefabTypeInfo } from "./prefabTypes";
 import type { EntityBase, PrefabDef, PrefabParam, ProjectSnapshot } from "./schema";
 
 /**
@@ -130,6 +131,16 @@ export function prefabParamProblems(
     }
     for (const [name, params] of byName)
       if (params.length > 1) out.push({ kind: "name-collision", prefab: prefab.id, params, name });
+    // バリアントで足すパラメータも、元のプレハブのパラメータと同じ名前にはできない
+    const info = prefabTypeInfo(snap, defs, prefab.id);
+    for (const name of info ? inheritedParamCollisions(info) : [])
+      if ((byName.get(name)?.length ?? 0) === 1)
+        out.push({
+          kind: "name-collision",
+          prefab: prefab.id,
+          params: byName.get(name) ?? [],
+          name,
+        });
   }
 
   const required = (prefabId: string) =>

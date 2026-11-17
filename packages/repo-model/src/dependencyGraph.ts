@@ -147,7 +147,8 @@ export class ProjectDependencyGraph {
       if (compiled.bindings.length === 0 && compiled.diagnostics.length === 0) continue;
       this.edge(from, PATHS_REF);
       for (const alias of compiled.packageImports) this.edge(from, packageAliasRef(alias));
-      for (const b of compiled.bindings) this.edge(from, { kind: "kokostate", id: b.resourceId });
+      // import した KokoState・プレハブ・マテリアル・素材（ADR 0082）
+      for (const b of compiled.bindings) this.edge(from, { kind: b.kind, id: b.resourceId });
     }
   }
 

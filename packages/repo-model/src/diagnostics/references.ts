@@ -150,7 +150,10 @@ export function checkProjectReferences(
         subject: { kind: "prefab", id: p.prefab },
         location: { kind: "property", path: ["params", p.params[0] ?? ""] },
         related: [],
-        message: `プレハブ「${prefabName(p.prefab)}」に、同じ名前のパラメータ「${p.name}」が ${p.params.length} 個あります（名前を変えてください）`,
+        message:
+          p.params.length > 1
+            ? `プレハブ「${prefabName(p.prefab)}」に、同じ名前のパラメータ「${p.name}」が ${p.params.length} 個あります（名前を変えてください）`
+            : `プレハブ「${prefabName(p.prefab)}」のパラメータ「${p.name}」は、元のプレハブのパラメータと同じ名前です（名前を変えてください）`,
       });
     else if (p.kind === "name-invalid")
       push({
@@ -514,7 +517,7 @@ export function checkProjectReferences(
           severity: "error",
           subject,
           location: { kind: "script", line: b.line, symbol: b.spelling },
-          related: [{ kind: "kokostate", id: b.resourceId }],
+          related: [{ kind: b.kind, id: b.resourceId }],
           message: `ライブラリ「${o.name}」に含めた System「${s.name}」が、含めていない「${b.name}」を import しています（使う側では見つかりません。「${b.name}」もライブラリに含めてください）`,
         });
       }
