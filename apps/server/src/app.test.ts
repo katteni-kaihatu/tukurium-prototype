@@ -1071,6 +1071,7 @@ describe("ワークスペースのホストと共有再生", () => {
       time: 1,
       bags: {},
       partEntities: {},
+      spawned: {},
       queues: { inputs: [], pending: [] },
       systems: [],
     };

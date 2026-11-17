@@ -124,6 +124,7 @@ client().on((msg) => {
             msg.resume.names,
             msg.resume.time,
             msg.resume.partEntities,
+            msg.resume.spawned,
           );
           // バッグも引き継ぐ（ADR 0018）
           sim.restoreBags(msg.resume.bags as Record<string, BagItem[]> | undefined);
@@ -243,6 +244,7 @@ export function sendSessionFrame(): void {
       status: sim.systemStatus(),
       bags: sim.bagsSnapshot(),
       partEntities: sim.partEntitiesSnapshot(),
+      spawned: sim.spawnedSnapshot(),
     },
   });
 }

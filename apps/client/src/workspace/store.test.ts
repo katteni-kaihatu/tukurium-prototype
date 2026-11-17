@@ -106,6 +106,7 @@ function simulation() {
     systemStatus: () => [],
     bagsSnapshot: () => ({}),
     partEntitiesSnapshot: () => ({}),
+    spawnedSnapshot: () => ({}),
     restore: vi.fn(),
     restoreBags: vi.fn(),
     nameOf: (id: string) => id,

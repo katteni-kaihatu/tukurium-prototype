@@ -202,6 +202,12 @@ export const BagItem = z.object({
 const Bags = z.record(z.string(), z.array(BagItem).max(64));
 /** 配置 → Entity。実行中に作った物の処理・削除のため、ホスト交代時にも所属を戻す。 */
 const PartEntities = z.record(z.string(), z.array(z.string()));
+/**
+ * 実行中に `Prefab.spawn` で作ったインスタンス（いちばん上の Entity → プレハブの ID。ADR 0082）。
+ * ホストが替わっても、どのプレハブから作ったかを持ち続ける（`Prefab.destroy` で消せる・プレハブの System が動く）。
+ * ないフレームは「作ったものはない」として読むので、足しても、前の形のフレームをそのまま受け取れる（通信の版は上げない）。
+ */
+const Spawned = z.record(z.string(), z.string()).default({});
 
 export const DebugStop = z.object({
   change: z
@@ -274,6 +280,7 @@ export const PlayFrame = z.object({
       time: z.number(),
       bags: Bags,
       partEntities: PartEntities,
+      spawned: Spawned,
       queues: z.unknown(),
       systems: z.array(SystemStatusInfo),
     })
@@ -290,6 +297,7 @@ export const PlayFrame = z.object({
   status: z.array(SystemStatusInfo),
   bags: Bags.optional(),
   partEntities: PartEntities,
+  spawned: Spawned,
 });
 export type PlayFrame = z.infer<typeof PlayFrame>;
 
@@ -305,6 +313,7 @@ export const SessionFrame = z.object({
   status: z.array(SystemStatusInfo),
   bags: Bags.optional(),
   partEntities: PartEntities,
+  spawned: Spawned,
 });
 export type SessionFrame = z.infer<typeof SessionFrame>;
 

@@ -1531,6 +1531,7 @@ export class Hub {
         names: {},
         status: [],
         partEntities: {},
+        spawned: {},
       };
       for (const c of w.conns) this.send(c, { t: "ws.frame", workspaceId: w.meta.id, frame });
       for (const c of w.conns) {
