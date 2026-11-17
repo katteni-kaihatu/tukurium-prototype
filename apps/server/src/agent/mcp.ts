@@ -63,6 +63,23 @@ const typeDefRefs = z
     "使う型の定義（ID か名前）。入れると、その型の定義が export している型を、フィールドの型の文で名前のまま使える",
   );
 
+const prefabImports = z
+  .array(
+    z.object({
+      prefab: z.string().describe("プレハブの ID か名前"),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          "型の文で使う名前。省くと、プレハブの名前から決める（KokoState と重なれば Prefab を付ける）",
+        ),
+    }),
+  )
+  .max(50)
+  .describe(
+    "import するプレハブ（ADR 0082）。入れると、フィールドの型の文で `Bullet`（プレハブ型）・`InstanceOf<Bullet>`（インスタンス型）と書ける。値は、プレハブ型ならプレハブの ID、インスタンス型なら Prefab.spawn で作ったインスタンス",
+  );
+
 export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: AssetStore) {
   const agent = new AgentClient(hub);
   const prepare = async () => {
@@ -260,20 +277,55 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     },
     (args) => run(() => T.createPrefab(T.writable(agent), args)),
   );
+  const prefabParams = z
+    .array(
+      z.object({
+        name: z.string().min(1).max(64).describe("パラメータの名前（Prefab.spawn で渡す名前）"),
+        entity: z
+          .string()
+          .optional()
+          .describe(
+            "指す Entity（get_prefab の中の Entity の ID か名前）。省くと、いちばん上の Entity",
+          ),
+        kokostate: z.string().describe("その Entity が持つ KokoState の ID か名前"),
+        field: z.string().describe("フィールドの ID か名前"),
+        required: z.boolean().optional().describe("必須にするか（初めは省略できる）"),
+        description: z.string().optional().describe("説明（コードのホバーに出る）"),
+      }),
+    )
+    .describe(
+      "パラメータ（外から受け取る値）の全部。同じ名前のものは引き継ぐ。並びがコードの補完の順になる。空の配列で全部外す",
+    );
   reg(
     "update_prefab",
     {
       title: "プレハブの設定を変える",
       description:
-        "名前・編集する場所・System の並びと入切を変える。中の Entity は update_entity で変える。ライブラリの中身は変えられない",
+        "名前・編集する場所・System の並びと入切・パラメータを変える。中の Entity は update_entity で変える。ライブラリの中身は変えられない",
       inputSchema: {
         prefab: z.string(),
         name: z.string().min(1).max(64).optional(),
         editIn: z.enum(["here", "isolated"]).optional(),
         systems: prefabSystems.optional(),
+        params: prefabParams.optional(),
       },
     },
     (args) => run(() => T.updatePrefab(T.writable(agent), args)),
+  );
+  reg(
+    "set_prefab_params",
+    {
+      title: "インスタンスにパラメータの値を入れる",
+      description:
+        "置いたプレハブのインスタンスに、パラメータの値を名前で入れる。値はそのインスタンスだけの上書きになる。必須のパラメータは、置いたら入れる",
+      inputSchema: {
+        instance: z.string().describe("インスタンスの Entity の ID か名前"),
+        values: z
+          .record(z.string(), z.unknown())
+          .describe("パラメータの名前 → 値（フィールドの値と同じ書き方）"),
+      },
+    },
+    (args) => run(() => T.setPrefabParams(T.writable(agent), args)),
   );
   reg(
     "make_prefab_from_entity",
@@ -462,6 +514,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
         description: z.string().optional().describe("KokoState の説明"),
         role: z.string().optional().describe("役割（guide を参照）"),
         typeDefs: typeDefRefs.optional(),
+        prefabImports: prefabImports.optional(),
       },
     },
     (args) => run(() => T.createKokoState(T.writable(agent), args)),
@@ -472,7 +525,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
     {
       title: "KokoState を変える",
       description:
-        "名前・フィールド・役割・使う型の定義を変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ。型を変えたフィールドの値は、初期値になる）。typeDefs は使う型の定義の全部",
+        "名前・フィールド・役割・使う型の定義・import するプレハブを変える。fields はフィールドの全部（同じ名前のフィールドは値を引き継ぐ。型を変えたフィールドの値は、初期値になる）。typeDefs は使う型の定義の全部。prefabImports は import するプレハブの全部",
       inputSchema: {
         kokostate: z.string(),
         name: z.string().min(1).max(64).optional(),
@@ -480,6 +533,7 @@ export function createAgentMcp(hub: Hub, repos: RepoService | null, assets: Asse
         description: z.string().optional().describe("KokoState の説明。空文字で消す"),
         role: z.string().optional(),
         typeDefs: typeDefRefs.optional(),
+        prefabImports: prefabImports.optional(),
       },
     },
     (args) => run(() => T.updateKokoState(T.writable(agent), args)),
