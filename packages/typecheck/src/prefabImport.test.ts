@@ -145,6 +145,33 @@ describe("System からプレハブ・マテリアルを import する", () => {
     expect(errors("const a: InstanceOf<typeof Bullet> = e.id; void a;")).toHaveLength(1);
   });
 
+  it("Prefab.spawn：パラメータの名前と型が確かめられ、戻り値は確かめてから使う", () => {
+    expect(
+      errors(
+        [
+          "const b = Prefab.spawn(Bullet, { Hp: 20 });",
+          "if (b) { const i: InstanceOf<typeof Bullet> = b; world.getState; void i; }",
+          "const r = Prefab.spawn(Red, { Hp: 1, Max: 2 });",
+          "if (r) { const i: InstanceOf<typeof Bullet> = r; void i; }",
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    expect(errors("Prefab.spawn(Bullet);")).toHaveLength(1);
+    expect(errors("Prefab.spawn(Bullet, { Max: 1 });")).toHaveLength(1);
+    expect(errors("Prefab.spawn(Bullet, { Hp: 1, Nai: 2 });")).toHaveLength(1);
+    expect(errors('Prefab.spawn(Bullet, { Hp: "多い" });')).toHaveLength(1);
+    expect(
+      errors("const i: InstanceOf<typeof Bullet> = Prefab.spawn(Bullet, { Hp: 1 }); void i;"),
+    ).toHaveLength(1);
+  });
+
+  it("Prefab.destroy：作ったインスタンスは渡せ、ふつうの Entity の参照は渡せない", () => {
+    expect(errors("const b = Prefab.spawn(Bullet, { Hp: 1 }); if (b) Prefab.destroy(b);")).toEqual(
+      [],
+    );
+    expect(errors("Prefab.destroy(e.id);")).toHaveLength(1);
+  });
+
   it("コードホバーにパラメータの説明が出て、定義へ移動でプレハブを指す", () => {
     const { snap } = project("const p: PrefabParamsOf<typeof Bullet> = { Hp: 3, Max: 1 }; void p;");
     const code = snap.systems.find((s) => s.id === "sys_t")?.code ?? "";

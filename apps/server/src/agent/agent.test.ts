@@ -362,6 +362,7 @@ describe("リモートの MCP（/mcp）", () => {
     a.close();
   });
 
+  // 道具をひととおり通すので、時間がかかる（手元で 2.5 秒ほど。CI の実行環境では、初めの制限の 5 秒を超えることがある）
   it("MCP の道具で、入って・作って・確かめて・動かせる", async () => {
     const app = await buildApp(
       {
@@ -831,7 +832,7 @@ export default system({
     await expect(call("get_entity", { entity: "ない箱" })).rejects.toThrow(/見つかりません/);
     await client.close();
     a.close();
-  });
+  }, 20_000);
 
   it("まとめて作り、素材を貼り、開いている画面を撮る", async () => {
     const app = await buildApp(

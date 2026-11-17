@@ -303,7 +303,7 @@ export const HOST_API_SPEC = {
   "world.spawn": entry({
     deprecated: {
       reason: "名前と KokoState を文字で指して作るので、間違えても型で気づけません",
-      instead: "追加予定（Prefab.spawn）",
+      instead: "Prefab.spawn（プレハブを import して、Prefab.spawn(Bullet, { … }) で作る）",
     },
     args: z
       .tuple([
@@ -330,7 +330,7 @@ export const HOST_API_SPEC = {
   "world.destroy": entry({
     deprecated: {
       reason: "制作データに置いた Entity も消せてしまい、消したあとの参照を型で守れません",
-      instead: "追加予定（Prefab.destroy）",
+      instead: "Prefab.destroy（Prefab.spawn で作ったインスタンスを渡して消す）",
     },
     args: z.tuple([lenient(z.string())]).rest(z.unknown()),
     capability: "entity.destroy",
@@ -384,6 +384,36 @@ export const HOST_API_SPEC = {
     params: '(token: string, contract: "Damage", payload: { amount: number; type?: string })',
     returns: "boolean",
     doc: "当たった相手が公開した Contract を呼ぶ（ふつうは hit.send を使う）",
+  }),
+  "Prefab.spawn": entry({
+    args: z
+      .tuple([
+        z.string({ error: "プレハブ（import したプレハブ）を渡してください" }),
+        lenient(record),
+      ])
+      .rest(z.unknown()),
+    capability: "entity.spawn",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "server-revalidate",
+    note: "作れるのは、呼んだ配置から依存でたどれるプレハブだけ。渡せるのは、プレハブのパラメータだけ。作った Entity は、呼んだ System の配置のものになる（ADR 0082）",
+    denied: undefined,
+    params:
+      "<T extends PrefabType<any, any, any>>(prefab: T, ...params: {} extends PrefabParamsOf<T> ? [params?: PrefabParamsOf<T>] : [params: PrefabParamsOf<T>])",
+    returns: "InstanceOf<T> | undefined",
+    doc: "プレハブのインスタンスを作る。第二引数に、プレハブのパラメータの名前と値を渡す。作れなかったとき（権限がない・その配置から使えないプレハブ・作れる数の上限）は undefined",
+  }),
+  "Prefab.destroy": entry({
+    args: z.tuple([entityId]).rest(z.unknown()),
+    capability: "entity.destroy",
+    currentReach: "own-placement",
+    crossPlacement: "deny",
+    authority: "server-revalidate",
+    note: "消せるのは、同じ配置で Prefab.spawn が作ったインスタンスだけ。制作データに置いた Entity と、インスタンスの中のインスタンスは消せない（ADR 0082）",
+    denied: false,
+    params: "(instance: PrefabInstance<{}>)",
+    returns: "boolean",
+    doc: "Prefab.spawn で作ったインスタンスを、中の Entity ごと消す。消せなかったら false",
   }),
 } satisfies Record<HostName, SpecEntry<z.ZodType>>;
 

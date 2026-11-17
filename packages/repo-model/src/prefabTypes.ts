@@ -15,6 +15,8 @@ export interface PrefabTypeParam {
   /** 指すフィールドの型の文。指す先がなければ null */
   type: string | null;
   description?: string;
+  /** 指す Entity。ルートからの ID（いちばん上の Entity は空文字） */
+  entity: string;
   koko: KokoStateId;
   /** フィールドの ID */
   field: string;
@@ -75,6 +77,7 @@ export function prefabTypeInfo(
         required: p.required,
         type: field?.type ?? null,
         ...(p.description ? { description: p.description } : {}),
+        entity: p.entity,
         koko: p.koko,
         field: p.field,
         fieldName: field?.name ?? null,
@@ -124,4 +127,42 @@ export function inheritedParamCollisions(info: PrefabTypeInfo): string[] {
       info.params.filter((p) => p.owner === info.id && inherited.has(p.name)).map((p) => p.name),
     ),
   ];
+}
+
+/**
+ * アウトプットから、依存でたどれるプレハブ（ADR 0082）。実行中に `Prefab.spawn` で作れるのは、これだけ
+ * （セッションの境界。型を外して ID の文字を渡しても、ここにないプレハブは作れない）。
+ * たどり方：アウトプットの System と、置いたインスタンスのプレハブから始め、プレハブの System・
+ * プレハブの中に置いた別のプレハブ（入れ子と、バリアントの元）・System が import するプレハブを、先までたどる。
+ * 輪になっていても、一度通ったものは飛ばす。
+ *
+ * - `placed`：アウトプットに置いたインスタンスのプレハブ（展開したあとの制作データでは、Entity の origin から集める）
+ * - `importsOf`：System が import しているプレハブの ID（スクリプトを読んで求める）
+ */
+export function reachablePrefabs(
+  snap: ProjectSnapshot,
+  outputId: string,
+  placed: Iterable<string>,
+  importsOf: (systemId: string) => Iterable<string>,
+): Set<string> {
+  const prefabs = new Map((snap.prefabs ?? []).map((p) => [p.id, p]));
+  const out = new Set<string>();
+  const seenSystems = new Set<string>();
+  const queue: string[] = [...placed];
+  const visitSystem = (id: string) => {
+    if (seenSystems.has(id)) return;
+    seenSystems.add(id);
+    for (const p of importsOf(id)) queue.push(p);
+  };
+  for (const s of snap.outputs.find((o) => o.id === outputId)?.systems ?? []) visitSystem(s.id);
+  while (queue.length > 0) {
+    const id = queue.pop() as string;
+    const prefab = prefabs.get(id);
+    if (!prefab || out.has(id)) continue;
+    out.add(id);
+    for (const s of prefab.systems) visitSystem(s.id);
+    for (const e of snap.prefabEntities ?? [])
+      if (e.prefab === id && e.instanceOf) queue.push(e.instanceOf.prefab);
+  }
+  return out;
 }

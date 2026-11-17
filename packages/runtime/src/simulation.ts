@@ -31,9 +31,11 @@ import {
 import {
   type AssetDef,
   BUILTIN,
+  BUILTIN_KOKOSTATES,
   buildRegistry,
   type CapabilityId,
   compileSystem,
+  type ExpandedSnapshot,
   expandPrefabs,
   type GuestPolicy,
   HOST_CAPABILITIES,
@@ -45,12 +47,15 @@ import {
   type MaterialDef,
   type OutputExposure,
   type PackageResolution,
+  type PrefabTypeParam,
   type ProjectSnapshot,
   packageFieldSchemas,
   packageKokoStates,
   parsePackageResourceId,
+  prefabTypeInfo,
   ResourcePathIndex,
   reachablePackages,
+  reachablePrefabs,
   resolutionMap,
   withPackagePrefabs,
 } from "@tukurium/repo-model";
@@ -353,6 +358,8 @@ export const HOST_API = [
   "bag.take",
   "bag.count",
   "bag.list",
+  "Prefab.spawn",
+  "Prefab.destroy",
 ] as const;
 
 /** System の呼び出しの間に、Host API が書いたフィールド（Entity → KokoState → フィールド名） */
@@ -366,6 +373,23 @@ interface RunTrack {
   /** 作った Entity */
   spawned: EntityId[];
 }
+
+/**
+ * 配置ごとに、実行中に作れる Entity の数（ADR 0082）。作り続けるスクリプトで、ホストのメモリと、
+ * 毎フレーム配る状態が増え続けないようにする。プレハブの中の Entity も一つずつ数え、消せば減る
+ */
+export const PART_RUNTIME_ENTITY_LIMIT = 1000;
+
+/** 実行中に作るプレハブのひな形：プレハブを一つだけ展開した Entity の並び（ID は、仮のインスタンスの ID から始まる） */
+interface SpawnTemplate {
+  entities: { id: EntityId; parent: EntityId | null; states: Record<string, KokoStateValues> }[];
+  names: Map<EntityId, string>;
+  /** 渡せるパラメータ（元のプレハブから受け継いだものも含む） */
+  params: PrefabTypeParam[];
+}
+
+/** ひな形を作るときの、仮のインスタンスと、仮のアウトプットの ID */
+const SPAWN_TEMPLATE_ID = "__spawn";
 
 /** 一つの呼び出しの途中で作り、同じ呼び出しの並びに足せる Entity の数（ADR 0082） */
 const RUN_ADD_LIMIT = 256;
@@ -384,6 +408,8 @@ const SYNC_HOST_API: readonly HostName[] = [
   "world.setField",
   "world.spawn",
   "world.destroy",
+  "Prefab.spawn",
+  "Prefab.destroy",
 ];
 export type HostName = (typeof HOST_API)[number];
 
@@ -415,6 +441,18 @@ export class Simulation {
   private pauseSync: ((entities: ScriptEntity[]) => void) | null = null;
   /** いまの System の呼び出しの間に、Host API が World にしたこと（スクリプトが持っている並びと値へ写す。ADR 0082） */
   private runTrack: RunTrack | null = null;
+  /**
+   * 実行中に `Prefab.spawn` で作ったインスタンス（いちばん上の Entity → プレハブの ID。ADR 0082）。
+   * `Prefab.destroy` で消せるのは、ここにあるものだけ。Entity がどの口で消えても、ここから外す
+   */
+  private readonly spawnedFrom = new Map<EntityId, string>();
+  /** プレハブごとのひな形。制作データ（配置の版）ごとに取っておく */
+  private readonly spawnTemplates = new WeakMap<
+    ProjectSnapshot,
+    Map<string, SpawnTemplate | null>
+  >();
+  /** 配置から、依存でたどれるプレハブ。制作データ（配置の版）とアウトプットごとに取っておく */
+  private readonly reachable = new WeakMap<ProjectSnapshot, Map<string, Set<string>>>();
   readonly world: World;
   readonly registry: KokoStateRegistry;
   time = 0;
@@ -1566,12 +1604,37 @@ export class Simulation {
     const outputName = part.snapshot.outputs.find((o) => o.id === part.outputId)?.name;
     this.names.set(rootId, outputName || part.outputId);
     part.entities.add(rootId);
-    for (const e of snap.entities) {
-      const id = this.eid(part, e.id);
-      // 予約した ID は、動作上の親に使う
-      if (id === rootId) continue;
+    this.addEntities(
+      part,
+      snap.entities.filter((e) => this.eid(part, e.id) !== rootId),
+      names,
+      (id) => this.eid(part, id),
+      rootId,
+    );
+  }
+
+  /**
+   * 制作データの Entity の並びを、配置の Entity として World に入れる。配置を作るときと、実行中に
+   * プレハブのインスタンスを作るとき（ADR 0082）に、同じ処理を通す：KokoState の ID に領域を付ける、
+   * 登録のない KokoState を飛ばす、値を型に合わせる、Mesh のマテリアルの ID を付け替える、
+   * Entity の参照を World の中の ID に付け替える。
+   * idOf は、制作データの中の ID を World の中の ID にする。親のない Entity は top の下に付ける。
+   */
+  private addEntities(
+    part: Part,
+    entities: readonly {
+      id: EntityId;
+      parent: EntityId | null;
+      states: Record<string, KokoStateValues>;
+    }[],
+    names: ReadonlyMap<EntityId, string>,
+    idOf: (id: EntityId) => EntityId,
+    top: EntityId | null,
+  ): void {
+    for (const e of entities) {
+      const id = idOf(e.id);
       if (this.world.has(id)) this.world.destroy(id);
-      this.world.spawn(id, e.parent === null ? rootId : this.eid(part, e.parent));
+      this.world.spawn(id, e.parent === null ? top : idOf(e.parent));
       for (const [koko, values] of Object.entries(e.states)) {
         const k = this.kid(part.realm, koko);
         if (!this.registry.get(k)) continue;
@@ -1587,7 +1650,7 @@ export class Simulation {
           // Entity の参照（入れ子の中も）を、この配置の中の ID に付け替える
           if (!hasRefs(schema)) continue;
           v[f.id] = mapRefs(schema, v[f.id], (target, ref) =>
-            target === "entity" ? this.eid(part, ref) : undefined,
+            target === "entity" ? idOf(ref) : undefined,
           ) as FieldValue;
         }
         this.world.add(id, k, v);
@@ -1602,8 +1665,198 @@ export class Simulation {
       this.world.destroy(id);
       this.physics.remove(id);
       this.names.delete(id);
+      this.spawnedFrom.delete(id);
     }
     part.entities.clear();
+  }
+
+  /** 配置で、実行中に作って残っている Entity の数（ID が `rt:` で始まるもの。制作データに置いた物は数えない） */
+  private runtimeEntityCount(part: Part): number {
+    let n = 0;
+    for (const id of part.entities) if (id.startsWith("rt:") && this.world.has(id)) n++;
+    return n;
+  }
+
+  /**
+   * スクリプトが、Entity を、その下の Entity ごと消す（`world.destroy`・`Prefab.destroy`）。
+   * 同じ呼び出しのあとの順番で渡さないように覚え、実行中に作ったインスタンスの記録・配置の Entity の一覧・
+   * 名前からも外す（どの口で消えても外す。残すと、作っては消すスクリプトで、一覧が増え続ける。ADR 0082）
+   */
+  private destroyByScript(id: EntityId, part: Part | undefined): void {
+    this.noteDestroy(id);
+    const forget = (target: EntityId) => {
+      for (const child of this.world.childrenOf(target)) forget(child);
+      this.spawnedFrom.delete(target);
+      part?.entities.delete(target);
+      this.names.delete(target);
+    };
+    forget(id);
+    this.world.destroy(id);
+  }
+
+  /** 配置から、依存でたどれるプレハブ（`Prefab.spawn` で作れるもの。ADR 0082） */
+  private reachablePrefabsOf(part: Part): Set<string> {
+    let byOutput = this.reachable.get(part.snapshot);
+    if (!byOutput) {
+      byOutput = new Map();
+      this.reachable.set(part.snapshot, byOutput);
+    }
+    let found = byOutput.get(part.outputId);
+    if (!found) {
+      const snap = part.snapshot as ExpandedSnapshot;
+      const index = ResourcePathIndex.fromSnapshot(snap);
+      const packages = part.packages ? resolutionMap(snap.dependencies, part.packages) : undefined;
+      const code = new Map(snap.systems.map((s) => [s.id, s.code]));
+      found = reachablePrefabs(
+        snap,
+        part.outputId,
+        // 置いたインスタンスのプレハブ。展開したあとの Entity に、どのプレハブから来たかが残っている
+        snap.entities.flatMap((e) =>
+          e.output === part.outputId && e.origin ? [e.origin.prefab] : [],
+        ),
+        (systemId) => {
+          const source = code.get(systemId);
+          if (source === undefined || !source.includes("import")) return [];
+          return compileSystem(systemId, source, index, packages)
+            .bindings.filter((b) => b.kind === "prefab")
+            .map((b) => b.resourceId);
+        },
+      );
+      byOutput.set(part.outputId, found);
+    }
+    return found;
+  }
+
+  /** プレハブのひな形：プレハブを一つだけ展開した Entity の並び。作るたびに展開し直さないよう、取っておく */
+  private spawnTemplate(part: Part, prefabId: string): SpawnTemplate | null {
+    let byPrefab = this.spawnTemplates.get(part.snapshot);
+    if (!byPrefab) {
+      byPrefab = new Map();
+      this.spawnTemplates.set(part.snapshot, byPrefab);
+    }
+    const cached = byPrefab.get(prefabId);
+    if (cached !== undefined) return cached;
+    const defs = [
+      ...part.snapshot.kokostates,
+      ...packageKokoStates(reachablePackages(part.snapshot.dependencies, part.packages)),
+    ];
+    const registry = buildRegistry(defs);
+    const info = prefabTypeInfo(
+      part.snapshot,
+      new Map([...BUILTIN_KOKOSTATES, ...defs].map((k) => [k.id, k])),
+      prefabId,
+    );
+    let template: SpawnTemplate | null = null;
+    if (info) {
+      // インスタンスを一つだけ持つ、仮のアウトプットを展開する（今の展開の仕組みを、そのまま使う）
+      const { world, names } = buildWorld(
+        {
+          ...part.snapshot,
+          outputs: [
+            { id: SPAWN_TEMPLATE_ID, name: SPAWN_TEMPLATE_ID, kind: "item", systems: [], keep: [] },
+          ],
+          entities: [
+            {
+              id: SPAWN_TEMPLATE_ID,
+              name: info.name,
+              parent: null,
+              output: SPAWN_TEMPLATE_ID,
+              order: 0,
+              states: {},
+              instanceOf: { prefab: prefabId },
+            },
+          ],
+        },
+        SPAWN_TEMPLATE_ID,
+        registry,
+      );
+      const entities = world.snapshot().entities;
+      if (entities.some((e) => e.id === SPAWN_TEMPLATE_ID))
+        template = { entities, names, params: info.params };
+    }
+    byPrefab.set(prefabId, template);
+    return template;
+  }
+
+  /**
+   * プレハブのインスタンスを、実行中に作る（`Prefab.spawn`。ADR 0082）。作れなかったら undefined。
+   * 渡せるのは、プレハブのパラメータだけ。型の合わない値・ないパラメータは使わず、注意として出す。
+   */
+  private spawnPrefab(
+    part: Part,
+    prefabId: string,
+    params: Record<string, unknown>,
+    systemId: string | null,
+  ): EntityId | undefined {
+    const name = part.snapshot.prefabs?.find((p) => p.id === prefabId)?.name ?? prefabId;
+    const template = this.reachablePrefabsOf(part).has(prefabId)
+      ? this.spawnTemplate(part, prefabId)
+      : null;
+    if (!template) {
+      this.warn(
+        systemId,
+        "prefab-not-reachable",
+        `プレハブ「${name}」は、この配置から使えないので、作れませんでした（スクリプトで import したプレハブか、置いたプレハブの中のものだけを作れます）`,
+      );
+      return undefined;
+    }
+    if (this.runtimeEntityCount(part) + template.entities.length > PART_RUNTIME_ENTITY_LIMIT) {
+      this.warn(
+        systemId,
+        "spawn-limit",
+        `実行中に作った Entity が ${PART_RUNTIME_ENTITY_LIMIT} 個に達したため、作れませんでした（要らなくなったものを消してください）`,
+      );
+      return undefined;
+    }
+    const root = this.world.newRuntimeId();
+    const idOf = (id: EntityId) =>
+      id === SPAWN_TEMPLATE_ID ? root : `${root}${id.slice(SPAWN_TEMPLATE_ID.length)}`;
+    const space = this.eid(part, SPACE_ROOT_ID);
+    this.addEntities(
+      part,
+      template.entities,
+      template.names,
+      idOf,
+      this.world.has(space) ? space : null,
+    );
+    this.spawnedFrom.set(root, prefabId);
+    // パラメータを重ねる。値は、すでに実行中の値（Entity の参照なら実行中の ID）なので、付け替えない
+    const known = new Map(template.params.map((p) => [p.name, p]));
+    for (const [key, value] of Object.entries(params)) {
+      const p = known.get(key);
+      const target = p ? (p.entity === "" ? root : `${root}/${p.entity}`) : undefined;
+      const koko = p ? this.kid(part.realm, p.koko) : undefined;
+      const values = target && koko ? this.world.get(target, koko) : undefined;
+      const field = koko
+        ? this.registry.get(koko)?.fields.find((f) => f.id === p?.field)
+        : undefined;
+      if (!p || !koko || !values || !field) {
+        this.warn(
+          systemId,
+          "prefab-param-unknown",
+          `プレハブ「${name}」に、パラメータ「${key}」はありません（渡した値は使いませんでした）`,
+        );
+        continue;
+      }
+      if (!this.accepts(koko, field, value as Value)) {
+        this.warn(
+          systemId,
+          "prefab-param-type",
+          `プレハブ「${name}」のパラメータ「${key}」に、型の合わない値を渡しました（プレハブの値のまま作りました）`,
+        );
+        continue;
+      }
+      values[field.id] = cloneValue(value as Value) as FieldValue;
+    }
+    for (const p of template.params)
+      if (p.required && !Object.hasOwn(params, p.name))
+        this.warn(
+          systemId,
+          "prefab-param-missing",
+          `プレハブ「${name}」の必須のパラメータ「${p.name}」を渡していません（プレハブの値のまま作りました）`,
+        );
+    this.runTrack?.spawned.push(...template.entities.map((e) => idOf(e.id)));
+    return root;
   }
 
   private dropSystem(sys: LoadedSystem): void {
@@ -1995,6 +2248,14 @@ export class Simulation {
           : space && this.world.has(space)
             ? space
             : null;
+        if (callers[0] && this.runtimeEntityCount(callers[0]) >= PART_RUNTIME_ENTITY_LIMIT) {
+          this.warn(
+            ctx.systemId,
+            "spawn-limit",
+            `実行中に作った Entity が ${PART_RUNTIME_ENTITY_LIMIT} 個に達したため、作れませんでした（要らなくなったものを消してください）`,
+          );
+          return null;
+        }
         const id = this.world.spawn(undefined, parent);
         this.names.set(id, desc?.name ?? id);
         // 作った Entity は、呼んだ System の配置のものにする
@@ -2012,11 +2273,27 @@ export class Simulation {
       },
       "world.destroy": ([id]) => {
         // 動作上の親を消すと、中の Entity も一緒に消える
-        if (own(id) && !isSpaceRoot(id)) {
-          this.noteDestroy(id);
-          this.world.destroy(id);
-        }
+        if (own(id) && !isSpaceRoot(id)) this.destroyByScript(id, this.partOf(id));
         return undefined;
+      },
+      "Prefab.spawn": ([prefabId, params]) => {
+        // 作った Entity は、呼んだ System の配置のものにする
+        const part = callers[0];
+        return part ? this.spawnPrefab(part, prefabId, params ?? {}, ctx.systemId) : undefined;
+      },
+      "Prefab.destroy": ([id]) => {
+        // 消せるのは、同じ配置で Prefab.spawn が作ったインスタンス（いちばん上）だけ
+        if (!own(id)) return false;
+        if (!this.spawnedFrom.has(id)) {
+          this.warn(
+            ctx.systemId,
+            "prefab-destroy-denied",
+            `「${this.nameOf(id)}」は、Prefab.spawn で作ったインスタンスではないので、消しませんでした（制作データに置いた Entity と、インスタンスの中のインスタンスは消せません）`,
+          );
+          return false;
+        }
+        this.destroyByScript(id, this.partOf(id));
+        return true;
       },
       "bag.add": ([type, values]) => {
         const bag = this.bagFor(ctx, type);

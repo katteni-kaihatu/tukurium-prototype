@@ -64,7 +64,7 @@ describe("エディタからの型の問い合わせ", () => {
     expect(ranges.map((r) => code.slice(r.from, r.to))).toEqual(["get", "raycast", "destroy"]);
     const hover = checker.query({ ...at, kind: "hover", position: code.indexOf("destroy") + 1 });
     expect(hover?.documentation).toContain("@deprecated");
-    expect(hover?.documentation).toContain("代わりの書き方：追加予定");
+    expect(hover?.documentation).toContain("代わりの書き方：Prefab.destroy");
     // 問題の一覧（型エラー）には出さない
     expect(hover?.diagnostics).toEqual([]);
     const id = checker.query({ ...at, kind: "hover", position: code.indexOf("e.id") + 2 });

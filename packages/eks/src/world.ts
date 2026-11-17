@@ -23,6 +23,11 @@ interface EntityRecord {
  */
 export class World {
   private readonly entities = new Map<EntityId, EntityRecord>();
+  /**
+   * 親 → 子の索引（作った順）。子を探す・消すたびに、すべての Entity を見なくて済むようにする
+   * （実行中に、たくさん作っては消すときに効く）。親が、まだない Entity の ID でも持てる
+   */
+  private readonly children = new Map<EntityId | null, Set<EntityId>>();
   private nextLocalId = 1;
 
   constructor(readonly registry: KokoStateRegistry) {}
@@ -35,15 +40,27 @@ export class World {
   spawn(id: EntityId = this.newRuntimeId(), parent: EntityId | null = null): EntityId {
     if (this.entities.has(id)) throw new Error(`Entity already exists: ${id}`);
     this.entities.set(id, { parent, states: new Map() });
+    this.link(id, parent);
     return id;
+  }
+
+  private link(id: EntityId, parent: EntityId | null): void {
+    const list = this.children.get(parent);
+    if (list) list.add(id);
+    else this.children.set(parent, new Set([id]));
   }
 
   /** Entity を削除する。子も再帰的に削除する。 */
   destroy(id: EntityId): void {
-    if (!this.entities.delete(id)) return;
-    for (const [childId, rec] of [...this.entities]) {
-      if (rec.parent === id) this.destroy(childId);
-    }
+    const rec = this.entities.get(id);
+    if (!rec) return;
+    this.entities.delete(id);
+    const siblings = this.children.get(rec.parent);
+    siblings?.delete(id);
+    if (siblings?.size === 0) this.children.delete(rec.parent);
+    const list = this.children.get(id);
+    if (list) for (const child of [...list]) this.destroy(child);
+    this.children.delete(id);
   }
 
   has(id: EntityId): boolean {
@@ -55,9 +72,7 @@ export class World {
   }
 
   childrenOf(id: EntityId | null): EntityId[] {
-    const out: EntityId[] = [];
-    for (const [eid, rec] of this.entities) if (rec.parent === id) out.push(eid);
-    return out;
+    return [...(this.children.get(id) ?? [])];
   }
 
   entityIds(): EntityId[] {
@@ -109,10 +124,12 @@ export class World {
 
   restore(snap: WorldSnapshot): void {
     this.entities.clear();
+    this.children.clear();
     for (const e of snap.entities) {
       const states = new Map<KokoStateId, KokoStateValues>();
       for (const [koko, values] of Object.entries(e.states)) states.set(koko, cloneValues(values));
       this.entities.set(e.id, { parent: e.parent, states });
+      this.link(e.id, e.parent);
       const m = /^rt:(\d+)$/.exec(e.id);
       if (m) this.nextLocalId = Math.max(this.nextLocalId, Number(m[1]) + 1);
     }
