@@ -1,4 +1,9 @@
-import { autocompletion, type Completion, type CompletionContext } from "@codemirror/autocomplete";
+import {
+  autocompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionSource,
+} from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
 import { StateEffect, StateField } from "@codemirror/state";
 import {
@@ -18,7 +23,11 @@ import type {
   EditorResults,
 } from "@tukurium/typecheck";
 import { debugHoverValue } from "./debugValues";
-import { type ImportCandidate, importCompletionSource } from "./importCompletion";
+import {
+  autoImportCompletion,
+  type ImportCandidate,
+  importCompletionSource,
+} from "./importCompletion";
 import { useWorkspace } from "./store";
 import { editorTypecheck } from "./typecheckClient";
 
@@ -151,15 +160,19 @@ const completionType = (kind: string) =>
     }) as Record<string, string>
   )[kind] ?? "variable";
 
-export function editorIntelligence(
+/**
+ * 入力の候補：import のパスと import 文は自前の候補を単独で返し、本文では
+ * TypeScript の候補に、まだ import していないものの自動 import の候補を合成する。
+ */
+export function editorCompletionSource(
   fileId: string,
   candidates: () => ImportCandidate[],
   getView: () => EditorView,
-) {
-  const paths = importCompletionSource(candidates);
-  const complete = async (context: CompletionContext) => {
-    const path = paths(context);
-    if (path) return path;
+): CompletionSource {
+  const own = importCompletionSource(candidates);
+  return async (context: CompletionContext) => {
+    const first = own(context);
+    if (first) return first;
     const node = syntaxTree(context.state).resolveInner(context.pos, -1);
     if (["String", "LineComment", "BlockComment", "TemplateString"].includes(node.name))
       return null;
@@ -172,33 +185,49 @@ export function editorIntelligence(
       return null;
     const view = getView();
     const doc = context.state.doc;
-    const options = await queryEditor(view, fileId, { kind: "completions", position: context.pos });
-    if (!options || context.aborted || view.state.doc !== doc) return null;
-    return {
-      from: word?.from ?? context.pos,
-      options: options.map(
-        (entry): Completion => ({
-          label: entry.name,
-          type: completionType(entry.kind),
-          apply: entry.insertText ?? entry.name,
-          info: async () => {
-            const dom = document.createElement("div");
-            dom.className = "cm-tk-documentation";
-            const info = await queryEditor(view, fileId, {
-              kind: "details",
-              position: context.pos,
-              name: entry.name,
-              ...(entry.source ? { source: entry.source } : {}),
-            });
-            if (info && view.state.doc === doc) renderDocumentation(dom, info);
-            return dom;
-          },
-        }),
-      ),
-    };
+    const auto = autoImportCompletion(context, candidates);
+    const entries = await queryEditor(view, fileId, {
+      kind: "completions",
+      position: context.pos,
+    });
+    if (context.aborted || view.state.doc !== doc) return null;
+    if (!entries) {
+      // TypeScript の答えが無い（Worker の準備前など）ときも、自動 import の候補だけは出す
+      return auto ? { from: auto.from, options: auto.options } : null;
+    }
+    const options: Completion[] = entries.map((entry) => ({
+      label: entry.name,
+      type: completionType(entry.kind),
+      apply: entry.insertText ?? entry.name,
+      info: async () => {
+        const dom = document.createElement("div");
+        dom.className = "cm-tk-documentation";
+        const info = await queryEditor(view, fileId, {
+          kind: "details",
+          position: context.pos,
+          name: entry.name,
+          ...(entry.source ? { source: entry.source } : {}),
+        });
+        if (info && view.state.doc === doc) renderDocumentation(dom, info);
+        return dom;
+      },
+    }));
+    if (!auto) return { from: word?.from ?? context.pos, options };
+    // 同じ名前は TypeScript の候補を残す（自動 import は、まだ import していないものの分だけ）
+    const known = new Set(options.map((o) => o.label));
+    const extra = auto.options.filter((o) => !known.has(o.label));
+    if (extra.length === 0) return { from: word?.from ?? context.pos, options };
+    return { from: auto.from, options: [...options, ...extra] };
   };
+}
+
+export function editorIntelligence(
+  fileId: string,
+  candidates: () => ImportCandidate[],
+  getView: () => EditorView,
+) {
   return [
-    autocompletion({ override: [complete] }),
+    autocompletion({ override: [editorCompletionSource(fileId, candidates, getView)] }),
     tooltips({
       position: "absolute",
       tooltipSpace: (view) =>
