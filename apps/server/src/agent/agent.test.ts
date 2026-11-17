@@ -140,6 +140,133 @@ describe("サーバーの中のエージェント（ADR 0054）", () => {
     expect(project.snapshot()).toEqual(before);
   });
 
+  it("プレハブのパラメータ・インスタンスの値・KokoState の import するプレハブ（ADR 0082）", async () => {
+    const project = new ProjectDoc(new Y.Doc());
+    project.load(gunAndTargetSample());
+    Tools.createKokoState(project, {
+      name: "Bullet",
+      fields: [
+        { name: "speed", type: "number", default: 5 },
+        { name: "damage", type: "number", default: 1 },
+      ],
+    });
+    const bullet = Tools.createPrefab(project, { name: "Shot" });
+    const body = Tools.createEntity(project, {
+      prefab: bullet.id,
+      parent: bullet.root,
+      name: "本体",
+      states: { Bullet: {} },
+    });
+    // パラメータは、プレハブの中のフィールドを名前で指す。entity を省くと、いちばん上
+    const detail = Tools.updatePrefab(project, {
+      prefab: "Shot",
+      params: [
+        { name: "Speed", entity: "本体", kokostate: "Bullet", field: "speed", required: true },
+        { name: "Pos", kokostate: "Transform", field: "position", description: "作る場所" },
+      ],
+    });
+    expect(detail.params).toEqual([
+      expect.objectContaining({ name: "Speed", entity: body.id, field: "speed", required: true }),
+      expect.objectContaining({ name: "Pos", entity: bullet.root, description: "作る場所" }),
+    ]);
+    // 同じ名前は ID を引き継ぐ。並びはそのまま順番になる
+    const before = Object.keys(project.prefab(bullet.id)?.params ?? {});
+    Tools.updatePrefab(project, {
+      prefab: bullet.id,
+      params: [
+        { name: "Pos", kokostate: "Transform", field: "position" },
+        { name: "Speed", entity: body.id, kokostate: "Bullet", field: "speed" },
+      ],
+    });
+    const after = project.prefab(bullet.id)?.params ?? {};
+    expect(Object.keys(after).sort()).toEqual([...before].sort());
+    expect(Object.values(after).find((p) => p.name === "Speed")).toMatchObject({
+      required: false,
+      order: 1,
+    });
+    // 指す先がないものは拒み、何も変えない
+    const kept = project.prefab(bullet.id);
+    expect(() =>
+      Tools.updatePrefab(project, {
+        prefab: bullet.id,
+        params: [{ name: "X", entity: "本体", kokostate: "Gun", field: "ammo" }],
+      }),
+    ).toThrow(/持っていません/);
+    expect(() =>
+      Tools.updatePrefab(project, {
+        prefab: bullet.id,
+        params: [
+          { name: "X", kokostate: "Transform", field: "position" },
+          { name: "X", kokostate: "Transform", field: "scale" },
+        ],
+      }),
+    ).toThrow(/同じ名前/);
+    expect(project.prefab(bullet.id)).toEqual(kept);
+
+    // 置いたインスタンスに、パラメータの値を名前で入れる（中の Entity の上書きになる）
+    const placed = Tools.placePrefab(project, { prefab: bullet.id, name: "置いた弾" });
+    Tools.setPrefabParams(project, { instance: placed.id, values: { Speed: 20 } });
+    const inner = Tools.getEntities(project, { entities: [`${placed.id}/${body.id}`] });
+    expect(JSON.stringify(inner)).toContain('"speed":20');
+    expect(() =>
+      Tools.setPrefabParams(project, { instance: placed.id, values: { Nai: 1 } }),
+    ).toThrow(/ありません/);
+    expect(() =>
+      Tools.setPrefabParams(project, { instance: placed.id, values: { Speed: "速い" } }),
+    ).toThrow(/使えない値/);
+    expect(() => Tools.setPrefabParams(project, { instance: "ent_gun", values: {} })).toThrow(
+      /インスタンスではありません/,
+    );
+    expect(() => Tools.updatePrefab(project, { prefab: bullet.id, params: [] })).not.toThrow();
+    expect(project.prefab(bullet.id)?.params).toBeUndefined();
+
+    // KokoState の import するプレハブ：名前を省くと、プレハブの名前になる
+    Tools.createKokoState(project, {
+      name: "Launcher",
+      prefabImports: [{ prefab: "Shot" }],
+      fields: [
+        { name: "shot", type: "Shot | undefined" },
+        { name: "last", type: "InstanceOf<Shot> | undefined" },
+      ],
+    });
+    const launcher = () =>
+      project
+        .registry()
+        .all()
+        .find((k) => k.name === "Launcher");
+    expect(launcher()?.prefabImports).toEqual([{ prefab: bullet.id, name: "Shot" }]);
+    expect(launcher()?.fields.map((f) => f.default)).toEqual([undefined, undefined]);
+    // 型の文が通る（import していない名前なら、型の問題になる）
+    const problems = async () =>
+      JSON.stringify(await Tools.check(project, new Map())).includes("Launcher");
+    expect(await problems()).toBe(false);
+    expect(
+      Tools.overview(project).kokostates.find((k) => k.name === "Launcher")?.prefabImports,
+    ).toEqual([{ name: "Shot", prefab: bullet.id, prefabName: "Shot" }]);
+    // 前から import しているプレハブは、名前を引き継ぐ。名前を変えることも、外すこともできる
+    Tools.updateKokoState(project, {
+      kokostate: "Launcher",
+      prefabImports: [{ prefab: bullet.id, name: "Projectile" }],
+    });
+    Tools.updateKokoState(project, { kokostate: "Launcher", prefabImports: [{ prefab: "Shot" }] });
+    expect(launcher()?.prefabImports).toEqual([{ prefab: bullet.id, name: "Projectile" }]);
+    expect(await problems()).toBe(true);
+    expect(() =>
+      Tools.updateKokoState(project, {
+        kokostate: "Launcher",
+        prefabImports: [{ prefab: bullet.id, name: "Gun" }],
+      }),
+    ).toThrow(/重なります/);
+    expect(() =>
+      Tools.updateKokoState(project, {
+        kokostate: "Launcher",
+        prefabImports: [{ prefab: bullet.id, name: "1x" }],
+      }),
+    ).toThrow(/使えません/);
+    Tools.updateKokoState(project, { kokostate: "Launcher", prefabImports: [] });
+    expect(launcher()?.prefabImports).toBeUndefined();
+  });
+
   it("人と同じ道で入って編集し、人に届く。保存はできず、ホストにもならない", async () => {
     const hub = new Hub(new MemoryStore(), { saveDelayMs: 10 });
     const { a, sessionId, workspaceId } = await roomWithWorkspace(hub);

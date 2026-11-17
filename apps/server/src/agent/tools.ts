@@ -7,6 +7,7 @@ import {
   isPlainObject,
   type KokoStateDef,
   knownSchema,
+  type PrefabImport,
   stringifyValue,
   type ValueSchema,
   type Vec3,
@@ -31,14 +32,21 @@ import {
   isPackageResourceId,
   KOKO_ROLES,
   newId,
+  newPrefabImportName,
   type PackageDependency,
   type PackageResolution,
+  type PrefabDef,
   type PrefabEntityDef,
   type PrefabInstancePlan,
   type PrefabOrigin,
+  type PrefabParam,
   type ProjectDoc,
   packageKokoStates,
+  paramEntityId,
+  paramEntityPath,
   prefabInstanceAddress,
+  prefabParamList,
+  prefabParamResolver,
   REF_TARGET_LABEL,
   RESOURCE_FIELD_KIND,
   ResourcePathIndex,
@@ -411,6 +419,16 @@ export function overview(project: ProjectDoc) {
       ...(k.typeDefs?.length
         ? { typeDefs: k.typeDefs.map((id) => project.typeDef(id)?.name ?? id) }
         : {}),
+      // フィールドの型の文で使うために import するプレハブ（名前 → プレハブ）
+      ...(k.prefabImports?.length
+        ? {
+            prefabImports: k.prefabImports.map((i) => ({
+              name: i.name,
+              prefab: i.prefab,
+              prefabName: project.prefab(i.prefab)?.name ?? i.prefab,
+            })),
+          }
+        : {}),
     })),
     typeDefs: (snap.types ?? []).map((t) => ({ id: t.id, name: t.name, path: index.pathOf(t.id) })),
     builtinKokostates: registry
@@ -426,6 +444,7 @@ export function overview(project: ProjectDoc) {
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, kind: a.kind })),
     prefabs: (snap.prefabs ?? []).map((p) => ({
       ...p,
+      ...paramsView(project, p),
       path: index.pathOf(p.id),
       entities: entities
         .filter((e) => "prefab" in e && e.prefab === p.id)
@@ -560,10 +579,138 @@ export function prefabDetail(project: ProjectDoc, ref: string) {
   const prefab = prefabOf(project, ref);
   return {
     ...prefab,
+    ...paramsView(project, prefab),
     entities: readableEntities(project)
       .filter((e) => "prefab" in e && e.prefab === prefab.id)
       .map((e) => entityDetail(project, e.id)),
   };
+}
+
+/**
+ * プレハブのパラメータ（ADR 0082）を、読める形にする。entity は、get_prefab の中の Entity の ID
+ * （いちばん上の Entity なら、その ID）。指す先が消えているものは missing を付ける。
+ */
+function paramsView(project: ProjectDoc, prefab: PrefabDef): { params?: unknown[] } {
+  const list = prefabParamList(prefab);
+  if (list.length === 0) return {};
+  const snap = readableSnapshot(project);
+  const defs = new Map(
+    project
+      .registry()
+      .all()
+      .map((k) => [k.id, k]),
+  );
+  const resolve = prefabParamResolver(snap, defs, prefab.id);
+  return {
+    params: list.map((p) => {
+      const t = resolve(p);
+      return {
+        name: p.name,
+        entity: paramEntityId(prefab, p.entity),
+        ...(t
+          ? {
+              entityName: t.entityName,
+              kokostate: t.koko.name,
+              field: t.field.name,
+              type: t.field.type,
+            }
+          : { kokostate: p.koko, field: p.field, missing: true }),
+        required: p.required,
+        ...(p.description ? { description: p.description } : {}),
+      };
+    }),
+  };
+}
+
+interface ParamSpec {
+  name: string;
+  /** プレハブの中の Entity の ID か名前。省くと、いちばん上の Entity */
+  entity?: string;
+  kokostate: string;
+  field: string;
+  required?: boolean;
+  description?: string;
+}
+
+/**
+ * パラメータの全部を、プレハブの params にする。同じ名前のパラメータは ID を引き継ぐ。
+ * 指す Entity・KokoState・フィールドが、プレハブの中にないものは拒む。
+ */
+function toParams(
+  project: ProjectDoc,
+  prefab: PrefabDef,
+  specs: ParamSpec[],
+): Record<string, PrefabParam> {
+  const snap = readableSnapshot(project);
+  const entities = expandPrefabForEdit(snap, prefab.id)?.entities ?? [];
+  const prev = prefabParamList(prefab);
+  const seen = new Set<string>();
+  const out: Record<string, PrefabParam> = {};
+  specs.forEach((spec, order) => {
+    const name = spec.name.trim();
+    if (name === "") throw new AgentError("パラメータの名前が空です");
+    if (seen.has(name)) throw new AgentError(`同じ名前のパラメータ「${name}」が二つあります`);
+    seen.add(name);
+    const entity =
+      spec.entity === undefined
+        ? entities.find((e) => e.id === prefab.root)
+        : (entities.find((e) => e.id === spec.entity) ??
+          pick(entities, spec.entity, "プレハブの中の Entity"));
+    if (!entity) throw new AgentError("プレハブのいちばん上の Entity が見つかりません");
+    const koko = kokoOf(project, spec.kokostate);
+    if (!(koko.id in entity.states))
+      throw new AgentError(`「${entity.name}」は KokoState「${koko.name}」を持っていません`);
+    const field = fieldOf(koko, spec.field);
+    const id =
+      prev.find((p) => p.name === name)?.id ??
+      `pp_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    out[id] = {
+      name,
+      entity: paramEntityPath(prefab, entity.id),
+      koko: koko.id,
+      field: field.id,
+      required: spec.required ?? false,
+      order,
+      ...(spec.description ? { description: spec.description } : {}),
+    };
+  });
+  return out;
+}
+
+function withParams(prefab: PrefabDef, params: Record<string, PrefabParam>): PrefabDef {
+  const { params: _old, ...rest } = prefab;
+  return Object.keys(params).length > 0 ? { ...rest, params } : rest;
+}
+
+/**
+ * 置いたインスタンスに、パラメータの値を名前で入れる（そのインスタンスの上書きになる）。
+ * いちばん上の Transform を指すパラメータは、インスタンスの置き方そのものを変える。
+ */
+export function setPrefabParams(
+  project: ProjectDoc,
+  args: { instance: string; values: Record<string, unknown> },
+) {
+  const instance = editableEntity(project, args.instance);
+  const prefabId = instance.instanceOf?.prefab;
+  if (!prefabId) throw new AgentError(`「${instance.name}」はプレハブのインスタンスではありません`);
+  const prefab = prefabOf(project, prefabId);
+  const list = prefabParamList(prefab);
+  const writes = Object.entries(args.values).map(([name, raw]) => {
+    const p = list.find((x) => x.name === name) ?? list.find((x) => norm(x.name) === norm(name));
+    if (!p)
+      throw new AgentError(
+        `プレハブ「${prefab.name}」にパラメータ「${name}」がありません（${list.map((x) => x.name).join("、") || "パラメータなし"}）`,
+      );
+    const koko = kokoOf(project, p.koko);
+    const field = koko.fields.find((f) => f.id === p.field);
+    if (!field) throw new AgentError(`パラメータ「${p.name}」の指すフィールドがありません`);
+    const entity = p.entity === "" ? instance.id : `${instance.id}/${p.entity}`;
+    return { entity, koko: koko.id, field: field.id, value: coerce(project, koko.id, field, raw) };
+  });
+  project.transact(() => {
+    for (const w of writes) project.setField(w.entity, w.koko, w.field, w.value);
+  });
+  return entityDetail(project, instance.id);
 }
 
 function prefabSystems(project: ProjectDoc, systems: { system: string; enabled?: boolean }[]) {
@@ -602,6 +749,7 @@ export function createPrefab(
     if (prefab)
       project.updatePrefab({ ...prefab, systems, ...(args.editIn ? { editIn: args.editIn } : {}) });
   });
+
   return prefabDetail(project, id);
 }
 
@@ -612,6 +760,7 @@ export function updatePrefab(
     name?: string;
     editIn?: "here" | "isolated";
     systems?: { system: string; enabled?: boolean }[];
+    params?: ParamSpec[];
   },
 ) {
   const prefab = prefabOf(project, args.prefab);
@@ -619,10 +768,11 @@ export function updatePrefab(
     throw new AgentError("ライブラリのプレハブの中身は変えられません");
   if (args.name !== undefined) checkPrefabName(project, args.name, prefab.id);
   const systems = args.systems ? prefabSystems(project, args.systems) : prefab.systems;
+  const next = args.params ? withParams(prefab, toParams(project, prefab, args.params)) : prefab;
   project.transact(() => {
     if (args.name !== undefined) project.renamePrefab(prefab.id, args.name);
     project.updatePrefab({
-      ...prefab,
+      ...next,
       name: args.name ?? prefab.name,
       systems,
       editIn: args.editIn ?? prefab.editIn,
@@ -878,6 +1028,7 @@ function toFields(
   specs: FieldSpec[],
   prev: FieldDef[] = [],
   typeDefs?: string[],
+  prefabImports?: PrefabImport[],
 ): FieldDef[] {
   const bases = specs.map((s) => {
     const id =
@@ -907,6 +1058,7 @@ function toFields(
               ...k,
               fields: bases.map((b) => b.base),
               ...(typeDefs ? { typeDefs } : {}),
+              ...(prefabImports ? { prefabImports } : {}),
             }
           : k,
       );
@@ -932,6 +1084,46 @@ function typeDefIds(project: ProjectDoc, refs: string[]): string[] {
   return [...new Set(refs.map((ref) => pick(all, ref, "型の定義").id))];
 }
 
+interface PrefabImportSpec {
+  /** プレハブの ID か名前 */
+  prefab: string;
+  /** 型の文で使う名前。省くと、プレハブの名前から決める */
+  name?: string;
+}
+
+/**
+ * import するプレハブの全部を、KokoState の prefabImports にする（ADR 0082）。
+ * 同じプレハブを前から import していれば、その名前を引き継ぐ。
+ */
+function toPrefabImports(
+  project: ProjectDoc,
+  kokoId: string,
+  specs: PrefabImportSpec[],
+  prev: readonly PrefabImport[] = [],
+): PrefabImport[] {
+  const kokoNames = project
+    .registry()
+    .all()
+    .filter((k) => k.id !== kokoId)
+    .map((k) => k.name);
+  const out: PrefabImport[] = [];
+  for (const spec of specs) {
+    const prefab = prefabOf(project, spec.prefab);
+    if (out.some((i) => i.prefab === prefab.id))
+      throw new AgentError(`プレハブ「${prefab.name}」を二度 import しています`);
+    const name =
+      spec.name?.trim() ||
+      prev.find((i) => i.prefab === prefab.id)?.name ||
+      newPrefabImportName(kokoNames, out, prefab.name);
+    if (!/^[A-Za-z_$][\w$]*$/.test(name))
+      throw new AgentError(`import の名前「${name}」は型の名前に使えません（英字で始まる英数字）`);
+    if (out.some((i) => i.name === name) || kokoNames.includes(name))
+      throw new AgentError(`import の名前「${name}」は、ほかの import か KokoState と重なります`);
+    out.push({ prefab: prefab.id, name });
+  }
+  return out;
+}
+
 export function createKokoState(
   project: ProjectDoc,
   args: {
@@ -939,6 +1131,7 @@ export function createKokoState(
     fields: FieldSpec[];
     role?: string;
     typeDefs?: string[];
+    prefabImports?: PrefabImportSpec[];
     description?: string;
   },
 ): NamedRef {
@@ -947,9 +1140,13 @@ export function createKokoState(
   const def = project.kokostate(id);
   if (!def) throw new AgentError("KokoState を作れませんでした");
   try {
+    const prefabImports = args.prefabImports
+      ? toPrefabImports(project, id, args.prefabImports)
+      : undefined;
     project.updateKokoState({
       ...def,
-      fields: toFields(project, id, args.fields, [], typeDefs),
+      fields: toFields(project, id, args.fields, [], typeDefs, prefabImports),
+      ...(prefabImports?.length ? { prefabImports } : {}),
       ...(args.description !== undefined ? { description: args.description } : {}),
       ...(args.role ? { role: args.role } : {}),
       ...(typeDefs?.length ? { typeDefs } : {}),
@@ -971,6 +1168,7 @@ export function updateKokoState(
     fields?: FieldSpec[];
     role?: string;
     typeDefs?: string[];
+    prefabImports?: PrefabImportSpec[];
   },
 ): NamedRef {
   const def = kokoOf(project, args.kokostate);
@@ -978,14 +1176,20 @@ export function updateKokoState(
   if (isPackageResourceId(def.id)) throw new AgentError("ライブラリの KokoState は変えられません");
   const name = args.name ?? def.name;
   const typeDefs = args.typeDefs ? typeDefIds(project, args.typeDefs) : def.typeDefs;
-  const { typeDefs: _old, ...rest } = def;
+  const prefabImports = args.prefabImports
+    ? toPrefabImports(project, def.id, args.prefabImports, def.prefabImports)
+    : def.prefabImports;
+  const { typeDefs: _old, prefabImports: _oldImports, ...rest } = def;
   project.updateKokoState({
     ...rest,
     name,
     ...(args.description !== undefined ? { description: args.description } : {}),
-    fields: args.fields ? toFields(project, def.id, args.fields, def.fields, typeDefs) : def.fields,
+    fields: args.fields
+      ? toFields(project, def.id, args.fields, def.fields, typeDefs, prefabImports)
+      : def.fields,
     ...(args.role !== undefined ? { role: args.role } : {}),
     ...(typeDefs?.length ? { typeDefs } : {}),
+    ...(prefabImports?.length ? { prefabImports } : {}),
   });
   return { id: def.id, name };
 }
@@ -1728,10 +1932,15 @@ export function guide(): string {
     "",
     "## プレハブ",
     "- プレハブは、Entity・KokoState・System をまとめた部品。create_prefab で空から作るか、make_prefab_from_entity で子を含めて作る。変換後は、返ってきた moved の ID 対応と scriptMentions を読む。スクリプト内の ID は自動では変わらない。",
-    "- get_prefab で中身を読み、create_entity の prefab で Entity を足す。update_entity / delete_entity には中の Entity の ID を渡す。いちばん上の Entity は消せない。update_prefab で名前・編集する場所・System を変える。",
+    "- get_prefab で中身を読み、create_entity の prefab で Entity を足す。update_entity / delete_entity には中の Entity の ID を渡す。いちばん上の Entity は消せない。update_prefab で名前・編集する場所・System・パラメータを変える。",
     "- place_prefab でアウトプットに何個でも置ける。プレハブの中身を変えると、同じプレハブから置いたものにも届く。ライブラリのプレハブの中身は変えられない。",
     "- get_project / get_entities には、展開した Entity の ID と、元のプレハブを表す origin が出る。update_entity で中のフィールド・親・並び順を変えられる。元の Entity や KokoState は消せない。duplicate_entity はインスタンスの複製も扱う。",
     "- revert_prefab_change で変更を一つずつ戻す。apply_prefab_instance は確認なしで変更をプレハブへ適用する。ライブラリのプレハブには適用できない。unpack_prefab_instance はつながりを切り、ふつうの Entity に戻す。",
+    "- パラメータ（外から受け取る値）：update_prefab の params で、プレハブの中のフィールドを一つずつ指して名前を付ける（required で必須）。置いたインスタンスには set_prefab_params で名前ごとに値を入れる。必須のパラメータが空のインスタンスは check で問題になる。いちばん上の Entity の Transform を指すパラメータは、インスタンスの置き方（作る場所）になる。",
+    '- スクリプトから作る・消す：System で `import Bullet from "./Bullet.prefab";`（パスは get_project の prefabs の path）と書き、`const b = Prefab.spawn(Bullet, { Speed: 20 });` で作る。渡せるのはパラメータだけで、名前・型・必須の抜けは型エラーになる。作れないと undefined が返るので確かめて使う。消すのは `Prefab.destroy(b)`（Prefab.spawn で作ったものだけ）。作ったインスタンスは、同じ呼び出しの中で Query に合えばハンドラが呼ばれる。',
+    "- 作れるのは、その System が依存でたどれるプレハブ（import したもの・フィールドの値に入れたものなど）だけ。実行中に作れる Entity は、置いた物ごとに 1000 個まで。プレハブの System は、アウトプットにインスタンスがなくても、作ったインスタンスで動く。",
+    "- プレハブを型で持つフィールド：create_kokostate / update_kokostate の prefabImports でプレハブを import すると、フィールドの型の文に `Bullet | undefined`（プレハブ型。値はプレハブの ID で、そのプレハブかパラメータの合うバリアントだけ）、`InstanceOf<Bullet> | undefined`（インスタンス型。制作データではいつも undefined で、実行中に Prefab.spawn で作ったものを入れる）と書ける。",
+    "- world.spawn / world.destroy は非推奨（エディタで打ち消し線）。代わりに Prefab.spawn / Prefab.destroy を使う。ID や名前の文字で Entity を指す world.get / world.set / world.getState などもいずれ外すので、Query の e.get(X) で読み書きできるときは、そちらを使う（代わりの書き方がまだないものは、今は使ってよい）。",
     "",
     `## KokoState の役割（role）: ${KOKO_ROLES.map((r) => `${r.id}=${r.label}`).join(", ")}`,
     "## フィールドの型",
