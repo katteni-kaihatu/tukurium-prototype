@@ -110,6 +110,29 @@ export interface PrefabDef {
   editIn?: PrefabEditPlace;
   /** 消した Entity の元の親。インスタンスの親が消えたとき、残っている祖先へたどる */
   deletedParents?: Record<EntityId, EntityId | null>;
+  /** 外から受け取る値（パラメータ。ADR 0082）。キーはパラメータの ID */
+  params?: Record<string, PrefabParam>;
+}
+
+/**
+ * プレハブのパラメータ（ADR 0082）：プレハブの中のフィールドを一つ指し、外から値を受け取れるようにする。
+ * 実行中に作るとき（`Prefab.spawn`）に渡せるのは、パラメータだけ。制作データに置いたインスタンスでは、
+ * 値は今の上書きそのもの（どのフィールドでも変えられるのは、今のまま）。
+ */
+export interface PrefabParam {
+  /** スクリプトから渡すときの名前。一つのプレハブの中で重ならない。初めはフィールドの名前 */
+  name: string;
+  /** 指す Entity。ルートからの ID（上書きのキーと同じ。いちばん上の Entity は空文字） */
+  entity: string;
+  koko: KokoStateId;
+  /** フィールドの ID */
+  field: string;
+  /** 必須か。必須でなければ、渡さないときはプレハブの値を使う */
+  required: boolean;
+  /** 説明。コードホバーに出す */
+  description?: string;
+  /** 並び順 */
+  order: number;
 }
 
 /** インスタンスで変えた所。キーはルートからの ID（ルート自身は空文字） */

@@ -1,0 +1,112 @@
+/* プレハブのパラメータ（ADR 0082） */
+.params {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 8px;
+}
+.param[data-problem] {
+  border-color: #b23b3b;
+}
+.paramHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.paramHead > input:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+}
+.required {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.adder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.adder > select {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+/* Inspector のフィールドごとの切り替えと印。「維持」のボタンと同じ大きさにそろえる */
+.toggle,
+.toggleOn,
+.badge {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--c-line);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--c-ink-4);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toggleOn,
+.badge {
+  border-color: #2f6f8f;
+  background: #e3f0f6;
+  color: #2f6f8f;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+}
+.toggle:disabled,
+.toggleOn:disabled {
+  opacity: 0.5;
+}
+
+/* 置いたインスタンスの「プレハブの設定」 */
+.instance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #2f6f8f;
+  border-radius: 8px;
+  background: #f3f9fb;
+}
+.instanceRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.instanceRow[data-problem] {
+  box-shadow: inset 3px 0 #b23b3b;
+  padding-left: 6px;
+}
+.instanceName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.requiredMark {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #2f6f8f;
+}

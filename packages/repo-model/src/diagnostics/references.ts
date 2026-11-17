@@ -9,6 +9,7 @@ import {
 import { BUILTIN_KOKOSTATES, isBuiltin, RESOURCE_FIELD_KIND } from "../builtins";
 import { belongsToDependency, isPackageResourceId } from "../packageDependency";
 import { expandPrefabForEdit, expandPrefabs, prefabProblems } from "../prefab";
+import { prefabParamProblems } from "../prefabParams";
 import { ResourcePathIndex } from "../resourcePath";
 import type { EntityBase, KeepMark, ProjectSnapshot } from "../schema";
 import { compileSystem } from "../systemCompiler";
@@ -128,6 +129,49 @@ export function checkProjectReferences(
         location: { kind: "property", path: ["instanceOf", p.entity] },
         related: p.path.filter((id) => id !== p.owner.id).map((id) => ({ kind: "prefab", id })),
         message: `プレハブ「${prefabName(p.owner.id)}」の中の「${name}」が、自分を含むプレハブ「${prefabName(p.prefab)}」のインスタンスになっています（展開しません）`,
+      });
+  }
+
+  // プレハブのパラメータ（ADR 0082）：指すものがない・名前が重なる・置いたインスタンスが必須の値を決めていない
+  for (const p of prefabParamProblems(snap, defs)) {
+    if (p.kind === "target-missing")
+      push({
+        code: "prefab-param-target-missing",
+        severity: "error",
+        subject: { kind: "prefab", id: p.prefab },
+        location: { kind: "property", path: ["params", p.param] },
+        related: [],
+        message: `プレハブ「${prefabName(p.prefab)}」のパラメータ「${p.name}」が指すフィールドがありません（Entity・KokoState・フィールドのどれかが消えています。パラメータを消すか、指し直してください）`,
+      });
+    else if (p.kind === "name-collision")
+      push({
+        code: "prefab-param-name-collision",
+        severity: "error",
+        subject: { kind: "prefab", id: p.prefab },
+        location: { kind: "property", path: ["params", p.params[0] ?? ""] },
+        related: [],
+        message: `プレハブ「${prefabName(p.prefab)}」に、同じ名前のパラメータ「${p.name}」が ${p.params.length} 個あります（名前を変えてください）`,
+      });
+    else if (p.kind === "name-invalid")
+      push({
+        code: "prefab-param-name-invalid",
+        severity: "error",
+        subject: { kind: "prefab", id: p.prefab },
+        location: { kind: "property", path: ["params", p.param] },
+        related: [],
+        message: `プレハブ「${prefabName(p.prefab)}」のパラメータの名前「${p.name}」は使えません（空の名前と、前後の空白は使えません）`,
+      });
+    else
+      push({
+        code: "prefab-param-required",
+        severity: "error",
+        subject:
+          p.owner.kind === "output"
+            ? { kind: "entity", id: p.owner.entity }
+            : { kind: "prefab", id: p.owner.id },
+        location: { kind: "property", path: ["instanceOf", p.owner.entity, p.param] },
+        related: [{ kind: "prefab", id: p.prefab }],
+        message: `「${p.entityName}」は、プレハブ「${prefabName(p.prefab)}」の必須のパラメータ「${p.name}」の値を決めていません（「プレハブの設定」で値を入れてください）`,
       });
   }
 

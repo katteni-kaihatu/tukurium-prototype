@@ -11,6 +11,7 @@ import {
   type PrefabEditPlace,
   packageSystems,
   packageTypeDefs,
+  paramsBrokenNote,
   parsePackageResourceId,
   ResourcePathIndex,
   usersOf,
@@ -38,6 +39,7 @@ import {
 import { FieldInput } from "./FieldInput";
 import { useCanEdit, useExpanded, useProject } from "./hooks";
 import { KokoFieldRow } from "./KokoFieldRow";
+import { PrefabParamsSection } from "./PrefabParams";
 import { problemKind, problemPlace } from "./ProblemsPanel";
 import { type DetailTarget, useWorkspace } from "./store";
 import { ThumbnailField } from "./ThumbnailField";
@@ -576,7 +578,16 @@ function KokoDefProperties({ id }: { id: string }) {
             mark={changed.fields[f.id] ?? null}
             editing={editing}
             onPatch={(patch) => setField(f.id, patch)}
-            onDelete={() => save({ ...def, fields: def.fields.filter((x) => x.id !== f.id) })}
+            onDelete={() => {
+              // パラメータが指しているフィールドなら、消す前に確かめる（ADR 0082）
+              const note = paramsBrokenNote(project.snapshot(), {
+                kind: "field",
+                koko: id,
+                field: f.id,
+              });
+              if (note && !window.confirm(`${f.name} を削除しますか？${note}`)) return;
+              save({ ...def, fields: def.fields.filter((x) => x.id !== f.id) });
+            }}
           />
         ))}
         {editing && (
@@ -657,7 +668,8 @@ function KokoDefProperties({ id }: { id: string }) {
                   holders.length === 0
                     ? `${def.name} を削除しますか？`
                     : `${def.name} を削除すると、${holders.length} 個の Entity から外れます。削除しますか？`;
-                if (window.confirm(message)) {
+                const note = paramsBrokenNote(project.snapshot(), { kind: "kokostate", koko: id });
+                if (window.confirm(message + note)) {
                   project.removeKokoState(id);
                   closeDetail();
                 }
@@ -1406,6 +1418,7 @@ function PrefabProperties({ id }: { id: string }) {
           </button>
         </div>
       </div>
+      <PrefabParamsSection id={id} canChange={canChange} />
       <div className={ui.section}>
         <div className={ui.sectionHead}>
           <h3 className={ui.sectionTitle}>Systems</h3>

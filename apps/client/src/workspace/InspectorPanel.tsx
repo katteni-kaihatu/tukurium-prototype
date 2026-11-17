@@ -6,12 +6,15 @@ import {
   fromFiles,
   getPrefabOverride,
   hasEffectivePrefabOverrides,
+  instanceSetsParam,
   isBuiltin,
   isInstanceRoot,
+  isPackageResourceId,
   type KeepMark,
   type MeshShape,
   type PrefabEntityDef,
   packageSystems,
+  paramsBrokenNote,
   prefabInstanceAddress,
 } from "@tukurium/repo-model";
 import {
@@ -58,6 +61,7 @@ import { KokoRoleIcon } from "./KokoRoleIcon";
 import { LibraryContents } from "./LibraryContents";
 import { MakePrefabIcon, PrefabFromEntityAsk } from "./PrefabFromEntityAsk";
 import { type PrefabInstanceAction, PrefabInstanceAsk } from "./PrefabInstanceAsk";
+import { InstanceParamsSection, ParamBadge, ParamToggle } from "./PrefabParams";
 import { BadgeDot, badgeFor } from "./ProblemBadge";
 import { prefabChangeParts, prefabPart } from "./prefabChanges";
 import { useWorkspace } from "./store";
@@ -473,6 +477,16 @@ function Hierarchy() {
 
   const remove = (entityId: string) => {
     const gone = new Set(selfAndDescendants(nodes, entityId));
+    // 開いているプレハブのパラメータが指している Entity なら、消す前に確かめる（ADR 0082）
+    const openPrefabId = useWorkspace.getState().editingPrefab?.id;
+    const note = openPrefabId
+      ? paramsBrokenNote(project.snapshot(), {
+          kind: "entity",
+          prefab: openPrefabId,
+          entity: entityId,
+        })
+      : "";
+    if (note && !window.confirm(`この Entity を削除しますか？${note}`)) return;
     try {
       setError(null);
       project.removeEntity(entityId);
@@ -1279,7 +1293,10 @@ function EntityProperties({ id }: { id: EntityId }) {
       nested > 0
         ? `${entity.name} を削除しますか？中にある ${nested} 個も一緒に消えます。`
         : `${entity.name} を削除しますか？`;
-    if (confirm(message))
+    const note = prefab
+      ? paramsBrokenNote(snapshot, { kind: "entity", prefab: prefab.id, entity: id })
+      : "";
+    if (confirm(message + note))
       safely(() => {
         project.removeEntity(id);
         select(null);
@@ -1458,6 +1475,19 @@ function EntityProperties({ id }: { id: EntityId }) {
                 ? `プレハブ「${prefabName}」から来た Entity です。ここで変えた所は、このインスタンスだけに残ります。プレハブから来た Entity と KokoState は消せません。`
                 : `プレハブ「${instanceName || prefabName}」のインスタンスです。場所・向き・大きさは、このインスタンスの置き方です。△ はプレハブから変えた所、丸は最後の保存から変えた所です。`}
             </p>
+            {mode === "edit" && instancePrefab && projectEntity && (
+              <InstanceParamsSection
+                instance={id}
+                prefab={instancePrefab}
+                statesOf={(eid) => target.snapshot.entities.find((e) => e.id === eid)?.states}
+                isSet={(p) => instanceSetsParam(projectEntity, p)}
+                choices={choices}
+                disabled={!editing}
+                onChange={(eid, koko, field, v) =>
+                  safely(() => project.setField(eid, koko, field, v))
+                }
+              />
+            )}
             {mode === "edit" && (origin || instancePrefab) && (
               <div className={ui.toolbar}>
                 {origin && project.prefab(origin.prefab) && (
@@ -1666,7 +1696,15 @@ function EntityProperties({ id }: { id: EntityId }) {
                     aria-label={`${def.name} を外す`}
                     title="外す"
                     onClick={() => {
-                      if (window.confirm(`${def.name} を外しますか？`))
+                      const note = prefab
+                        ? paramsBrokenNote(snapshot, {
+                            kind: "state",
+                            prefab: prefab.id,
+                            entity: id,
+                            koko,
+                          })
+                        : "";
+                      if (window.confirm(`${def.name} を外しますか？${note}`))
                         project.removeState(id, koko);
                     }}
                   >
@@ -1708,15 +1746,37 @@ function EntityProperties({ id }: { id: EntityId }) {
                         disabled={!editable(koko)}
                         onChange={(v) => safely(() => project.setField(id, koko, f.id, v))}
                       />
+                      {/* 行の終わりの印とボタン（パラメータ・維持）は、ひとまとまりで並べる */}
                       {mode === "edit" && (
-                        <KeepToggle
-                          entity={id}
-                          koko={koko}
-                          field={f.id}
-                          label={`${def.name}.${f.name}`}
-                          disabled={!editable(koko)}
-                          prefab={prefab?.id ?? null}
-                        />
+                        <div className={styles.fieldTail}>
+                          {address?.instance.instanceOf && (
+                            <ParamBadge
+                              prefab={address.instance.instanceOf.prefab}
+                              path={address.path}
+                              koko={koko}
+                              field={f.id}
+                            />
+                          )}
+                          {prefab && (
+                            <ParamToggle
+                              prefab={prefab.id}
+                              entity={id}
+                              koko={koko}
+                              field={f.id}
+                              fieldName={f.name}
+                              label={`${def.name}.${f.name}`}
+                              disabled={!editing || isPackageResourceId(prefab.id)}
+                            />
+                          )}
+                          <KeepToggle
+                            entity={id}
+                            koko={koko}
+                            field={f.id}
+                            label={`${def.name}.${f.name}`}
+                            disabled={!editable(koko)}
+                            prefab={prefab?.id ?? null}
+                          />
+                        </div>
                       )}
                     </div>
                   ))}
