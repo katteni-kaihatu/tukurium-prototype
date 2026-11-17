@@ -38,6 +38,8 @@ export const HOST_CAPABILITIES: Record<string, CapabilityId> = {
   "world.setField": "state.write",
   "world.spawn": "entity.spawn",
   "world.destroy": "entity.destroy",
+  "Prefab.spawn": "entity.spawn",
+  "Prefab.destroy": "entity.destroy",
   "contract.send": "interaction.send",
   "effects.spawn": "effects.spawn",
   "bag.add": "bag.write",

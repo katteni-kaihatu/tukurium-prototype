@@ -143,3 +143,60 @@ for (const n of [1, 10, 100, 300]) {
     buildWorldMs: time(() => void buildWorld(snap, OUT, undefined, { cache }), 5),
   });
 }
+
+// 実行中に作る（ADR 0082）：1 フレームに、駒（Entity 4 個）のインスタンスを 100 個作り、次のフレームで消す。
+// ひな形を取っておくので、作るたびには展開し直さない。
+async function measureSpawn() {
+  const { Simulation } = await import("@tukurium/runtime");
+  const doc = new ProjectDoc();
+  doc.load(emptyProject("bench"));
+  const tag = doc.addKokoState("Spawner");
+  const piece = doc.addPrefab("Piece");
+  const pieceRoot = doc.prefab(piece)?.root ?? "";
+  doc.addState(pieceRoot, BUILTIN.Mesh, { shape: "cylinder" });
+  for (let i = 0; i < 3; i++)
+    doc.addPrefabEntity({
+      prefab: piece,
+      name: `部品${i}`,
+      states: {
+        [BUILTIN.Transform]: { position: [0, i * 0.2, 0] },
+        [BUILTIN.Mesh]: { shape: "box" },
+      },
+    });
+  const out = doc.addOutput("main", "item");
+  doc.addEntity({ output: out, name: "作る物", states: { [tag]: {} } });
+  const code = (spawn: boolean) => `import Piece from "/Piece.prefab";
+import Spawner from "/Spawner.koko";
+let made = [];
+export default system({
+  query: { with: [Spawner] },
+  onUpdate(e) {
+    for (const b of made) Prefab.destroy(b);
+    made = [];
+    ${spawn ? "for (let i = 0; i < 100; i++) { const b = Prefab.spawn(Piece); if (b) made.push(b); }" : ""}
+  },
+});
+`;
+  const result: Record<string, string> = {};
+  for (const [name, spawn] of [
+    ["何も作らない", false],
+    ["100 個作って、次のフレームで消す", true],
+  ] as const) {
+    const d = new ProjectDoc();
+    d.load(doc.snapshot());
+    const sysId = d.addSystem("Spawn", code(spawn));
+    const o = d.output(out);
+    if (!o) throw new Error("アウトプットがありません");
+    d.updateOutput({ ...o, systems: [{ id: sysId, enabled: true }] });
+    const sim = await Simulation.create(d.snapshot(), out, { onLog: () => {}, timeLimitMs: 1000 });
+    for (let i = 0; i < 10; i++) sim.step(1 / 60);
+    const failed = sim.systemStatus().filter((s) => s.error);
+    if (failed.length > 0) throw new Error(`System が止まりました: ${failed[0]?.error}`);
+    const t0 = performance.now();
+    for (let i = 0; i < 60; i++) sim.step(1 / 60);
+    result[name] = `${((performance.now() - t0) / 60).toFixed(2)} ms`;
+    sim.dispose();
+  }
+  console.log({ spawnPerStep: result });
+}
+await measureSpawn();
