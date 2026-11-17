@@ -13,6 +13,7 @@ const placed = (over: Partial<PlacementInfo> & Pick<PlacementInfo, "id">): Place
   yaw: 0,
   placedBy: "u",
   grants: null,
+  repoId: null,
   ...over,
 });
 

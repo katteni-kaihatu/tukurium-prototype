@@ -1,23 +1,25 @@
-import {
-  emptyProject,
-  forestSample,
-  gunAndTargetSample,
-  gunSample,
-  marubatsuSample,
-  targetRangeSample,
-} from "@tukurium/repo-model";
-import type { SessionInfo } from "@tukurium/shared";
+import { emptyProject } from "@tukurium/repo-model";
+import type { PlacementInfo, SessionInfo } from "@tukurium/shared";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { beginEditing } from "../main-menu/editing";
 import { useMainMenu } from "../main-menu/store";
+import { api } from "../net/api";
+import { RECENT_LIMIT, useRecentProjects } from "../workspace/recentProjects";
 import { useWorkspace } from "../workspace/store";
 import { WorkspaceCloseButton, WorkspaceLeaveClose } from "../workspace/workspaceExit";
 import { GlobalNav } from "./GlobalNav";
 import styles from "./Header.module.css";
 import { useLayoutEdge } from "./layoutEdges";
 import { RightPanel } from "./RightPanel";
-import { canPutAway, listedSessionItems, whoPlaced } from "./sessionItemList";
+import { useReadableRepos } from "./readableRepos";
+import {
+  canPutAway,
+  type ItemProjectActions,
+  itemProjectActions,
+  listedSessionItems,
+  whoPlaced,
+} from "./sessionItemList";
 import { useApp } from "./store";
 
 /**
@@ -27,6 +29,7 @@ import { useApp } from "./store";
 export function Header({ inSession = false }: { inSession?: boolean }) {
   const session = useApp((s) => s.session);
   const present = inSession && session ? session : null;
+  useRecentProjectRecorder();
   return createPortal(
     <>
       <GlobalNav inSession={inSession} />
@@ -36,6 +39,22 @@ export function Header({ inSession = false }: { inSession?: boolean }) {
     </>,
     document.body,
   );
+}
+
+/** ワークスペースで開いたプロジェクトを、最近開いたものとして覚える */
+function useRecentProjectRecorder() {
+  const meId = useApp((s) => s.me?.id ?? null);
+  const workspaceId = useWorkspace((s) => s.workspaceId);
+  const ready = useWorkspace((s) => s.ready);
+  const repoId = useApp(
+    (s) => s.session?.workspaces.find((w) => w.id === workspaceId)?.repoId ?? null,
+  );
+  useEffect(() => {
+    useRecentProjects.getState().load(meId);
+  }, [meId]);
+  useEffect(() => {
+    if (meId && ready && repoId) useRecentProjects.getState().record(repoId);
+  }, [meId, ready, repoId]);
 }
 
 /** 左上の札。今いるセッションの名前・ワールドと、接続の状態 */
@@ -170,6 +189,17 @@ function SessionItems({ session }: { session: SessionInfo }) {
   const bagOpen = useWorkspace((s) => s.bagOpen);
   const items = listedSessionItems(session.placements);
   const world = session.placements.find((placement) => placement.outputKind === "world");
+  const repos = useReadableRepos((s) => s.repos);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  // 並んだアイテムの元のプロジェクトが変わったら、読める一覧を読み直す
+  const itemRepos = [...new Set(items.flatMap((p) => (p.repoId ? [p.repoId] : [])))]
+    .sort()
+    .join(",");
+  const meId = me?.id ?? null;
+  useEffect(() => {
+    void itemRepos;
+    void useReadableRepos.getState().refresh(meId);
+  }, [meId, itemRepos]);
   return (
     <>
       <div className={styles.sectionHead}>
@@ -214,8 +244,9 @@ function SessionItems({ session }: { session: SessionInfo }) {
           <ul className={styles.placed} aria-label="セッションに出ているアイテム">
             {items.map((placement) => {
               const who = whoPlaced(session.participants, placement.placedBy, me?.id);
-              return (
-                <li key={placement.id} className={styles.placedItem}>
+              const actions = itemProjectActions(placement, repos, me?.id);
+              const label = (
+                <>
                   <span className={styles.itemMark} data-tone="item" aria-hidden="true">
                     物
                   </span>
@@ -225,6 +256,26 @@ function SessionItems({ session }: { session: SessionInfo }) {
                       {who}が出しています · {placement.workspaceName}
                     </span>
                   </span>
+                </>
+              );
+              return (
+                <li key={placement.id} className={styles.placedItem}>
+                  {actions ? (
+                    <button
+                      type="button"
+                      className={styles.placedOpen}
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === placement.id}
+                      title="元のプロジェクトをワークスペースで開く"
+                      onClick={() =>
+                        setMenuFor((value) => (value === placement.id ? null : placement.id))
+                      }
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    label
+                  )}
                   {canPutAway(placement, me?.id, session.owner, session.workspaces) && (
                     <button
                       type="button"
@@ -234,6 +285,13 @@ function SessionItems({ session }: { session: SessionInfo }) {
                     >
                       外す
                     </button>
+                  )}
+                  {actions && menuFor === placement.id && (
+                    <ItemProjectMenu
+                      placement={placement}
+                      actions={actions}
+                      onDone={() => setMenuFor(null)}
+                    />
                   )}
                 </li>
               );
@@ -273,6 +331,99 @@ function SessionItems({ session }: { session: SessionInfo }) {
   );
 }
 
+/** アイテムを押したときのメニュー：元のプロジェクト（または自分のフォーク）をワークスペースで開く */
+function ItemProjectMenu({
+  placement,
+  actions,
+  onDone,
+}: {
+  placement: PlacementInfo;
+  actions: ItemProjectActions;
+  onDone: () => void;
+}) {
+  const { editingPending, editingError } = useMainMenu();
+  const meId = useApp((s) => s.me?.id ?? null);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => {
+      const row = root.current?.parentElement;
+      if (event.target instanceof Node && !row?.contains(event.target)) onDone();
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onDone();
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [onDone]);
+  const open = (repoId: string) => {
+    beginEditing(() => useWorkspace.getState().openRepo(repoId));
+  };
+  const forkAndOpen = (repoId: string) => {
+    beginEditing(async () => {
+      const fork = await api.fork(repoId);
+      void useReadableRepos.getState().refresh(meId);
+      useWorkspace.getState().openRepo(fork.id);
+    });
+  };
+  const { source } = actions;
+  return (
+    <div
+      ref={root}
+      className={styles.itemMenu}
+      role="menu"
+      aria-label={`${placement.outputName}のプロジェクト`}
+    >
+      {source && <p className={styles.itemMenuTitle}>プロジェクト「{source.name}」</p>}
+      {actions.canOpen && source && (
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.popBtn}
+          disabled={editingPending}
+          onClick={() => open(source.id)}
+        >
+          ワークスペースで開く
+        </button>
+      )}
+      {actions.canFork && source && (
+        <button
+          type="button"
+          role="menuitem"
+          className={styles.popBtn}
+          disabled={editingPending}
+          title="自分のプロジェクトとしてコピーしてから開く"
+          onClick={() => forkAndOpen(source.id)}
+        >
+          フォークしてワークスペースで開く
+        </button>
+      )}
+      {actions.forks.length > 0 && (
+        <>
+          <p className={styles.itemMenuTitle}>自分のフォーク</p>
+          {actions.forks.map((fork) => (
+            <button
+              key={fork.id}
+              type="button"
+              role="menuitem"
+              className={styles.popBtn}
+              disabled={editingPending}
+              onClick={() => open(fork.id)}
+            >
+              「{fork.name}」をワークスペースで開く
+            </button>
+          ))}
+        </>
+      )}
+      {editingPending && <p role="status">ワークスペースを開いています…</p>}
+      {editingError && <p role="alert">{editingError}</p>}
+    </div>
+  );
+}
+
 /** 閉じられた・開けなかった理由。制作を始めると消える。 */
 function WorkspaceNotice() {
   const notice = useWorkspace((s) => s.error);
@@ -290,10 +441,17 @@ function WorkspaceSwitcher() {
   const workspaceId = useWorkspace((s) => s.workspaceId);
   const ready = useWorkspace((s) => s.ready);
   const { editingPending, editingError } = useMainMenu();
+  const meId = useApp((s) => s.me?.id ?? null);
+  const recent = useRecentProjects((s) => s.list);
+  const repos = useReadableRepos((s) => s.repos);
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const wasPending = useRef(false);
   const current = session?.workspaces.find((w) => w.id === workspaceId);
+  // 最近開いたもののうち、いまも読めるもの
+  const recentRepos = recent
+    .flatMap((entry) => repos.filter((repo) => repo.id === entry.repoId))
+    .slice(0, RECENT_LIMIT);
   useEffect(() => {
     if (editingPending) wasPending.current = true;
     else if (wasPending.current) {
@@ -341,6 +499,7 @@ function WorkspaceSwitcher() {
             return;
           }
           useMainMenu.setState({ activeWindow: null });
+          if (!open) void useReadableRepos.getState().refresh(meId);
           setOpen((value) => !value);
         }}
       >
@@ -398,45 +557,65 @@ function WorkspaceSwitcher() {
                 </li>
               ))}
             </ul>
-            <div className={styles.popActions}>
-              {(
-                [
-                  ["空のワークスペース", () => emptyProject("新しいワークスペース")],
-                  ["サンプル「銃と的」で作る", gunAndTargetSample],
-                  ["サンプル「銃」", gunSample],
-                  ["サンプル「射撃場」", targetRangeSample],
-                  ["サンプル「森」", forestSample],
-                  ["サンプル「マルバツ」", marubatsuSample],
-                ] as const
-              ).map(([label, create]) => (
-                <button
-                  key={label}
-                  type="button"
-                  className={styles.popBtn}
-                  disabled={editingPending}
-                  onClick={() =>
-                    beginEditing(() => {
-                      const project = create();
-                      useWorkspace.getState().create(project.name, project);
-                    })
-                  }
-                >
-                  ＋ {label}
-                </button>
-              ))}
-              <button
-                type="button"
-                className={styles.popBtn}
-                onClick={() => {
-                  setOpen(false);
-                  useMainMenu.getState().showProject("/workspaces");
-                }}
-              >
-                プロジェクト・ほかのサンプルから開く
-              </button>
-              <WorkspaceLeaveClose className={styles.popBtn} closeClassName={styles.popBtnClose} />
-            </div>
           </section>
+          <section aria-label="最近開いたプロジェクト" className={styles.popActions}>
+            <p className={styles.popTitle}>最近開いたプロジェクト</p>
+            {recentRepos.length === 0 ? (
+              <p className={styles.popEmpty}>まだありません。</p>
+            ) : (
+              <ul className={styles.wsList} aria-label="最近開いたプロジェクト">
+                {recentRepos.map((repo) => {
+                  const openHere = session.workspaces.some((w) => w.repoId === repo.id);
+                  return (
+                    <li key={repo.id} className={styles.wsRow}>
+                      <button
+                        type="button"
+                        className={styles.wsItem}
+                        disabled={editingPending}
+                        onClick={() =>
+                          beginEditing(() => useWorkspace.getState().openRepo(repo.id))
+                        }
+                      >
+                        <b>{repo.name}</b>
+                        <span className={styles.wsMeta}>
+                          {repo.owner === meId ? "自分" : repo.ownerName}
+                          {repo.forkedFrom && ` · 「${repo.forkedFrom.repoName}」のフォーク`}
+                        </span>
+                        {openHere && <span className={styles.here}>開いています</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+          <div className={styles.popActions}>
+            <button
+              type="button"
+              className={styles.popBtn}
+              onClick={() => {
+                setOpen(false);
+                useMainMenu.getState().showProject("/u/me");
+              }}
+            >
+              プロジェクトを開く
+            </button>
+            <button
+              type="button"
+              className={styles.popBtn}
+              disabled={editingPending}
+              onClick={() =>
+                beginEditing(() =>
+                  useWorkspace
+                    .getState()
+                    .create("新しいワークスペース", emptyProject("新しいワークスペース")),
+                )
+              }
+            >
+              ＋ 空のワークスペース
+            </button>
+            <WorkspaceLeaveClose className={styles.popBtn} closeClassName={styles.popBtnClose} />
+          </div>
         </div>
       )}
     </div>

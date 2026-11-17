@@ -71,6 +71,8 @@ interface Placement {
   /** リリースから置いた配置の制作データと表示名 */
   snapshot?: unknown;
   label?: string;
+  /** リリースから置いた配置の、元のリポジトリ */
+  repoId?: string;
   outputId: string;
   position: [number, number, number];
   yaw: number;
@@ -131,7 +133,14 @@ function outputNameOf(snapshot: unknown, outputId: string): string | undefined {
 
 interface LoadedRelease {
   release: { id: string; version: number };
-  work: { id: string; name: string; owner: string; outputId: string; perms: { use: boolean } };
+  work: {
+    id: string;
+    repoId: string;
+    name: string;
+    owner: string;
+    outputId: string;
+    perms: { use: boolean };
+  };
   snapshot: { outputs: { id: string; name?: string; kind?: string }[] };
 }
 
@@ -864,6 +873,9 @@ export class Hub {
             : (p.label ?? "作品"),
           outputName: output?.name ?? p.outputId,
           outputKind: this.placementKind(s, p),
+          repoId: p.workspaceId
+            ? (this.workspaces.get(p.workspaceId)?.meta.repoId ?? null)
+            : (p.repoId ?? null),
         };
       }),
       participants: [...users.values()].map(userInfo),
@@ -1319,7 +1331,7 @@ export class Hub {
     userId: string,
     loaded: {
       release: { id: string; version: number };
-      work: { name: string; outputId: string };
+      work: { repoId: string; name: string; outputId: string };
       snapshot: unknown;
     },
     position: [number, number, number],
@@ -1329,6 +1341,7 @@ export class Hub {
       id: shortId("pl"),
       workspaceId: null,
       releaseId: loaded.release.id,
+      repoId: loaded.work.repoId,
       snapshot: loaded.snapshot,
       // 名前は、その版のアウトプットの名前（リリースしたときの名前は、見つからないときだけ）
       label: `${outputNameOf(loaded.snapshot, loaded.work.outputId) || loaded.work.name} v${loaded.release.version}`,

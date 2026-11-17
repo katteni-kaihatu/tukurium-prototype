@@ -1,6 +1,7 @@
 import type { PlacementInfo, WorkspaceInfo } from "@tukurium/shared";
 import { describe, expect, it } from "vitest";
-import { canPutAway, listedSessionItems, whoPlaced } from "./sessionItemList";
+import type { RepoMeta } from "../net/api";
+import { canPutAway, itemProjectActions, listedSessionItems, whoPlaced } from "./sessionItemList";
 
 const placed = (patch: Partial<PlacementInfo> & Pick<PlacementInfo, "id">): PlacementInfo => ({
   workspaceId: null,
@@ -13,6 +14,7 @@ const placed = (patch: Partial<PlacementInfo> & Pick<PlacementInfo, "id">): Plac
   yaw: 0,
   placedBy: "u",
   grants: null,
+  repoId: null,
   ...patch,
 });
 
@@ -53,5 +55,56 @@ describe("左の欄に出すアイテム", () => {
     expect(whoPlaced([{ id: "other", name: "花" }], "me", "me")).toBe("あなた");
     expect(whoPlaced([{ id: "other", name: "花" }], "other", "me")).toBe("花");
     expect(whoPlaced([], "gone", "me")).toBe("参加者");
+  });
+});
+
+const repo = (patch: Partial<RepoMeta> & Pick<RepoMeta, "id" | "owner">): RepoMeta => ({
+  ownerName: "",
+  name: patch.id,
+  description: "",
+  visibility: "public",
+  kind: "item",
+  forkedFrom: null,
+  createdAt: "",
+  ...patch,
+});
+
+describe("itemProjectActions", () => {
+  const source = repo({ id: "r1", owner: "a" });
+  const fork = repo({
+    id: "r2",
+    owner: "me",
+    forkedFrom: { repoId: "r1", repoName: "r1", commit: "c" },
+  });
+  const othersFork = repo({
+    id: "r3",
+    owner: "b",
+    forkedFrom: { repoId: "r1", repoName: "r1", commit: "c" },
+  });
+
+  it("持ち主はそのまま開ける", () => {
+    const actions = itemProjectActions(placed({ id: "p", repoId: "r1" }), [source], "a");
+    expect(actions).toMatchObject({ canOpen: true, canFork: false, forks: [] });
+  });
+
+  it("読めるだけならフォークして開く。自分のフォークも並べる", () => {
+    const actions = itemProjectActions(
+      placed({ id: "p", repoId: "r1" }),
+      [source, fork, othersFork],
+      "me",
+    );
+    expect(actions).toMatchObject({ canOpen: false, canFork: true });
+    expect(actions?.forks.map((r) => r.id)).toEqual(["r2"]);
+  });
+
+  it("元が読めなくても、自分のフォークがあれば開ける", () => {
+    const actions = itemProjectActions(placed({ id: "p", repoId: "r1" }), [fork], "me");
+    expect(actions).toMatchObject({ source: null, canOpen: false, canFork: false });
+    expect(actions?.forks).toHaveLength(1);
+  });
+
+  it("元が分からない・読めない・フォークもないなら何もできない", () => {
+    expect(itemProjectActions(placed({ id: "p" }), [source], "a")).toBeNull();
+    expect(itemProjectActions(placed({ id: "p", repoId: "r9" }), [source], "a")).toBeNull();
   });
 });
