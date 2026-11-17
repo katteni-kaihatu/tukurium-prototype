@@ -165,6 +165,7 @@ describe("サーバーの中のエージェント（ADR 0054）", () => {
         { name: "Pos", kokostate: "Transform", field: "position", description: "作る場所" },
       ],
     });
+    expect(Tools.overview(project).prefabs.find((p) => p.id === bullet.id)?.params).toHaveLength(2);
     expect(detail.params).toEqual([
       expect.objectContaining({ name: "Speed", entity: body.id, field: "speed", required: true }),
       expect.objectContaining({ name: "Pos", entity: bullet.root, description: "作る場所" }),
@@ -263,6 +264,25 @@ describe("サーバーの中のエージェント（ADR 0054）", () => {
         prefabImports: [{ prefab: bullet.id, name: "1x" }],
       }),
     ).toThrow(/使えません/);
+    // 名前を指定したものを先に取っておく：省いた分は、あとで指定した名前と重ならない名前になる
+    const other = Tools.createPrefab(project, { name: "Rocket" });
+    Tools.updateKokoState(project, {
+      kokostate: "Launcher",
+      prefabImports: [{ prefab: bullet.id }, { prefab: other.id, name: "Projectile" }],
+    });
+    expect(launcher()?.prefabImports).toEqual([
+      { prefab: bullet.id, name: "Shot" },
+      { prefab: other.id, name: "Projectile" },
+    ]);
+    expect(() =>
+      Tools.updateKokoState(project, {
+        kokostate: "Launcher",
+        prefabImports: [
+          { prefab: bullet.id, name: "Same" },
+          { prefab: other.id, name: "Same" },
+        ],
+      }),
+    ).toThrow(/重なります/);
     Tools.updateKokoState(project, { kokostate: "Launcher", prefabImports: [] });
     expect(launcher()?.prefabImports).toBeUndefined();
   });

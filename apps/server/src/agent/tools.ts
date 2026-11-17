@@ -389,6 +389,7 @@ export function overview(project: ProjectDoc) {
   const registry = project.registry();
   const nameOf = (id: string) => registry.get(id)?.name ?? id;
   const entities = readableEntities(project);
+  const paramsOfPrefab = paramsViewer(project);
   return {
     name: snap.name,
     outputs: snap.outputs.map((o) => ({
@@ -444,7 +445,7 @@ export function overview(project: ProjectDoc) {
     assets: (snap.assets ?? []).map((a) => ({ id: a.id, name: a.name, kind: a.kind })),
     prefabs: (snap.prefabs ?? []).map((p) => ({
       ...p,
-      ...paramsView(project, p),
+      ...paramsOfPrefab(p),
       path: index.pathOf(p.id),
       entities: entities
         .filter((e) => "prefab" in e && e.prefab === p.id)
@@ -579,7 +580,7 @@ export function prefabDetail(project: ProjectDoc, ref: string) {
   const prefab = prefabOf(project, ref);
   return {
     ...prefab,
-    ...paramsView(project, prefab),
+    ...paramsViewer(project)(prefab),
     entities: readableEntities(project)
       .filter((e) => "prefab" in e && e.prefab === prefab.id)
       .map((e) => entityDetail(project, e.id)),
@@ -590,17 +591,32 @@ export function prefabDetail(project: ProjectDoc, ref: string) {
  * プレハブのパラメータ（ADR 0082）を、読める形にする。entity は、get_prefab の中の Entity の ID
  * （いちばん上の Entity なら、その ID）。指す先が消えているものは missing を付ける。
  */
-function paramsView(project: ProjectDoc, prefab: PrefabDef): { params?: unknown[] } {
-  const list = prefabParamList(prefab);
-  if (list.length === 0) return {};
-  const snap = readableSnapshot(project);
-  const defs = new Map(
-    project
-      .registry()
-      .all()
-      .map((k) => [k.id, k]),
-  );
-  const resolve = prefabParamResolver(snap, defs, prefab.id);
+function paramsViewer(project: ProjectDoc): (prefab: PrefabDef) => { params?: unknown[] } {
+  // 制作データと KokoState の一覧は、一度だけ読む（get_project では、プレハブの数だけ呼ぶため）
+  let ctx:
+    | { snap: ReturnType<typeof readableSnapshot>; defs: Map<string, KokoStateDef> }
+    | undefined;
+  return (prefab) => {
+    const list = prefabParamList(prefab);
+    if (list.length === 0) return {};
+    ctx ??= {
+      snap: readableSnapshot(project),
+      defs: new Map(
+        project
+          .registry()
+          .all()
+          .map((k) => [k.id, k]),
+      ),
+    };
+    return paramsOf(prefab, list, prefabParamResolver(ctx.snap, ctx.defs, prefab.id));
+  };
+}
+
+function paramsOf(
+  prefab: PrefabDef,
+  list: ReturnType<typeof prefabParamList>,
+  resolve: ReturnType<typeof prefabParamResolver>,
+): { params: unknown[] } {
   return {
     params: list.map((p) => {
       const t = resolve(p);
@@ -1106,21 +1122,30 @@ function toPrefabImports(
     .all()
     .filter((k) => k.id !== kokoId)
     .map((k) => k.name);
+  const prefabs = specs.map((spec) => prefabOf(project, spec.prefab));
+  const explicit = specs.map((spec) => spec.name?.trim() || undefined);
+  // 名前を指定したものを先に取っておき、省いたものには、それと重ならない名前を付ける
+  const taken = explicit.flatMap((name) => (name ? [{ name }] : []));
   const out: PrefabImport[] = [];
-  for (const spec of specs) {
-    const prefab = prefabOf(project, spec.prefab);
-    if (out.some((i) => i.prefab === prefab.id))
+  prefabs.forEach((prefab, i) => {
+    if (out.some((x) => x.prefab === prefab.id))
       throw new AgentError(`プレハブ「${prefab.name}」を二度 import しています`);
-    const name =
-      spec.name?.trim() ||
-      prev.find((i) => i.prefab === prefab.id)?.name ||
-      newPrefabImportName(kokoNames, out, prefab.name);
+    const kept = prev.find((x) => x.prefab === prefab.id)?.name;
+    let name = explicit[i];
+    if (!name) {
+      // 前の名前は、ほかで指定した名前と重ならなければ引き継ぐ（KokoState と重なるときは、下で拒む）
+      name =
+        kept && !taken.some((x) => x.name === kept)
+          ? kept
+          : newPrefabImportName(kokoNames, taken, prefab.name);
+      taken.push({ name });
+    }
     if (!/^[A-Za-z_$][\w$]*$/.test(name))
       throw new AgentError(`import の名前「${name}」は型の名前に使えません（英字で始まる英数字）`);
-    if (out.some((i) => i.name === name) || kokoNames.includes(name))
+    if (out.some((x) => x.name === name) || kokoNames.includes(name))
       throw new AgentError(`import の名前「${name}」は、ほかの import か KokoState と重なります`);
     out.push({ prefab: prefab.id, name });
-  }
+  });
   return out;
 }
 
