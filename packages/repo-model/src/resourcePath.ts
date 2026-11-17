@@ -39,6 +39,13 @@ const EXT_KIND = new Map<string, PathKind>([
   ...Object.values(ASSET_EXT).map((ext) => [ext, "asset" as PathKind] as const),
 ]);
 
+/** パスの書き方の拡張子から、指すものの種類を読む（拡張子がない・知らない拡張子なら undefined） */
+export function pathKindOfSpelling(spelling: string): PathKind | undefined {
+  const leaf = spelling.slice(spelling.lastIndexOf("/") + 1);
+  const dot = leaf.lastIndexOf(".");
+  return dot > 0 ? EXT_KIND.get(leaf.slice(dot).toLowerCase()) : undefined;
+}
+
 export type NameProblem = "empty" | "slash" | "nul" | "dot" | "reserved";
 
 /** リソース・フォルダに使えない名前なら、その理由を返す */

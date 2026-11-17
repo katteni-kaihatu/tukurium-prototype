@@ -42,7 +42,7 @@ Host API の戻り値に、その呼び出しで消えた Entity（子も含む�
 
 前の Entity の値を変数に持って書き換えた分も、止まった画面には出る（一時停止では、渡した Entity すべての値を写すため）。
 
-### 4. 型の書き方（型の決まりは確かめた。宣言を作るのは、これから）
+### 4. 型の書き方（宣言を作る所まで実装済み。`Prefab.spawn`・`Prefab.destroy` は、これから）
 
 ```ts
 type PrefabType<B, P, I> = string & {
@@ -63,7 +63,16 @@ type InstanceOf<T> = T extends PrefabType<any, any, infer I> ? I : never;
 
 この決まりは `packages/typecheck/src/prefabTypes.test.ts` で確かめている。
 
-### 5. 値の形（これから）
+宣言の作り方：
+
+- プレハブごとに宣言ファイル（`/Bullet.prefab.d.ts`）を作り、`export default` で値（プレハブ型）を出す。インスタンス型は `InstanceOf<typeof Bullet>`。
+- 印とパラメータは、repo-model の `prefabTypeInfo()` が作る。バリアント（いちばん上の Entity が、別のプレハブのインスタンスになっているプレハブ）は、元の ID を印に持ち、元のパラメータを受け継ぐ。
+- 「このプレハブは、このプレハブ型に当てはまるか」は、同じ決まりを `prefabFitsType()`（repo-model）にも置く。Inspector の候補・値の確かめ・実行中の確かめは、これを使う。
+- パラメータの型は、指すフィールドの型を、その KokoState の宣言から引く（`FieldsOf<K>["名前"]`）。説明は JSDoc にする。
+- System は、プレハブ・マテリアル・素材を、値として default import できる。値は、リソースの ID の文字（`const Bullet = "<ID>"` に書き換える）。型は、プレハブ型・`MaterialRef`・`ModelRef`・`TextureRef`・`AudioRef`。
+- 定義へ移動で、プレハブを開く。import のパスの候補に、プレハブ・マテリアル・素材を出す。
+
+### 5. 値の形（import した値は実装済み。フィールドの型は、これから）
 
 - プレハブの値は、プレハブの ID の文字。`import Bullet from "./Bullet.prefab"` は `const Bullet = "<ID>"` に書き換える。セッションでも、領域を付けずに制作データの ID のまま持ち、作るときに、呼んだ配置の版の制作データで引く。System が触れるのは自分の配置の Entity だけなので、読む配置と作る配置がいつも同じになる。
 - インスタンスの値は、作ったいちばん上の Entity の ID。

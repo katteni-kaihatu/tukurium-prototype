@@ -6,7 +6,7 @@ import {
   packageResourceId,
   parsePackageSpelling,
 } from "./packageDependency";
-import { BUILTIN_PREFIX, ResourcePathIndex } from "./resourcePath";
+import { BUILTIN_PREFIX, pathKindOfSpelling, ResourcePathIndex } from "./resourcePath";
 import type { ProjectSnapshot } from "./schema";
 import { rangeInSource, stripTypes } from "./typescriptStrip";
 
@@ -20,10 +20,30 @@ import { rangeInSource, stripTypes } from "./typescriptStrip";
  * - 結び付けの表（bindings）は派生データで、保存しない。
  */
 
+/** System が値として import できるリソースの種類 */
+export type ImportKind = "kokostate" | "prefab" | "material" | "asset";
+const IMPORT_KINDS: readonly string[] = ["kokostate", "prefab", "material", "asset"];
+const IMPORT_LABEL: Record<ImportKind, string> = {
+  kokostate: "KokoState",
+  prefab: "プレハブ",
+  material: "マテリアル",
+  asset: "素材",
+};
+
+/**
+ * import を置き換える文。KokoState は `__koko(ID, 名前)`、ほかは ID の文字（ADR 0082）。
+ * プレハブ・マテリアル・素材の値は ID の文字なので、フィールドの値と同じに扱え、比べることもできる。
+ */
+const importReplacement = (kind: ImportKind, local: string, id: string, name: string) =>
+  kind === "kokostate"
+    ? `const ${local} = __koko(${JSON.stringify(id)}, ${JSON.stringify(name)});`
+    : `const ${local} = ${JSON.stringify(id)};`;
+
 export interface SystemBinding {
   /** System の中での名前（import のローカル名） */
   alias: string;
-  kind: "kokostate";
+  /** import したものの種類（KokoState のほか、プレハブ・マテリアル・素材。ADR 0082） */
+  kind: ImportKind;
   /** 書かれたパス */
   spelling: string;
   /** 解決した安定 ID */
@@ -47,8 +67,6 @@ export interface CompiledSystem {
   /** `@別名/...` で import しているライブラリの別名（解決できたかによらない） */
   packageImports: string[];
 }
-
-const KOKO_EXT = ".koko";
 
 /**
  * `packages` は依存の中身を取り出した結果（別名ごと。resolutionMap）。渡さないときは、
@@ -121,19 +139,20 @@ export function compileSystem(
     const spec = node.specifiers;
     let replacement = "";
     const only = spec.length === 1 ? spec[0] : undefined;
-    if (!spelling.endsWith(KOKO_EXT)) {
+    const wanted = pathKindOfSpelling(spelling);
+    if (!wanted || !IMPORT_KINDS.includes(wanted)) {
       problem(
         "import-unsupported",
         line,
         spelling,
-        `import できるのは KokoState（.koko）だけです：${spelling}`,
+        `import できるのは KokoState（.koko）・プレハブ（.prefab）・マテリアル（.material）・素材（.model・.image・.audio）だけです：${spelling}`,
       );
     } else if (only?.type !== "ImportDefaultSpecifier") {
       problem(
         "import-unsupported",
         line,
         spelling,
-        `KokoState は「import 名前 from "${spelling}"」の形で読み込みます`,
+        `「import 名前 from "${spelling}"」の形で読み込みます`,
       );
     } else if (parsePackageSpelling(spelling)) {
       const { alias, path } = parsePackageSpelling(spelling) as { alias: string; path: string };
@@ -163,7 +182,7 @@ export function compileSystem(
       } else {
         const found = findPackageExport(resolution.manifest, path);
         const def = found?.definition as { name?: unknown } | undefined;
-        if (found?.kind !== "kokostate" || typeof def?.name !== "string") {
+        if (!found || found.kind !== wanted || typeof def?.name !== "string") {
           // 公開していないものと、ないものを区別しない（中身を漏らさない）
           problem(
             "import-package-not-found",
@@ -175,7 +194,7 @@ export function compileSystem(
           const id = packageResourceId(resolution.dependency, found.id);
           bindings.push({
             alias: only.local.name,
-            kind: "kokostate",
+            kind: wanted as ImportKind,
             spelling,
             resourceId: id,
             name: def.name,
@@ -183,23 +202,23 @@ export function compileSystem(
             line,
             range: original([node.source.start, node.source.end]),
           });
-          replacement = `const ${only.local.name} = __koko(${JSON.stringify(id)}, ${JSON.stringify(def.name)});`;
+          replacement = importReplacement(wanted as ImportKind, only.local.name, id, def.name);
         }
       }
     } else {
       const r = index.resolve(spelling, systemId);
-      if (r.ok && r.kind === "kokostate") {
+      if (r.ok && r.kind === wanted) {
         const name = index.nameOf(r.id) ?? r.id;
         bindings.push({
           alias: only.local.name,
-          kind: "kokostate",
+          kind: wanted as ImportKind,
           spelling,
           resourceId: r.id,
           name,
           line,
           range: original([node.source.start, node.source.end]),
         });
-        replacement = `const ${only.local.name} = __koko(${JSON.stringify(r.id)}, ${JSON.stringify(name)});`;
+        replacement = importReplacement(wanted as ImportKind, only.local.name, r.id, name);
       } else if (!r.ok && r.reason === "ambiguous") {
         problem(
           "import-ambiguous",
@@ -208,7 +227,12 @@ export function compileSystem(
           `「${spelling}」に当てはまるものが複数あります（同じ場所で名前がぶつかっています）`,
         );
       } else {
-        problem("import-unresolved", line, spelling, `KokoState「${spelling}」が見つかりません`);
+        problem(
+          "import-unresolved",
+          line,
+          spelling,
+          `${IMPORT_LABEL[wanted as ImportKind]}「${spelling}」が見つかりません`,
+        );
       }
     }
     // 行の数を保つ：元の範囲にあった改行を足す
@@ -290,7 +314,11 @@ export function readSystemQuery(
         out.push({ name: el.value, id: index.kokoIdByName(el.value) });
       else if (el?.type === "Identifier") {
         const b = aliases.get(el.name);
-        out.push(b ? { name: b.name, id: b.resourceId } : { name: el.name, id: null });
+        out.push(
+          b?.kind === "kokostate"
+            ? { name: b.name, id: b.resourceId }
+            : { name: el.name, id: null },
+        );
       }
     }
     return out;

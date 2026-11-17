@@ -261,3 +261,75 @@ describe("planImportRefactor（名前の変更・移動に合わせて import �
     expect(planImportRefactor(prev, next)).toEqual([]);
   });
 });
+
+describe("プレハブ・マテリアル・素材の import（ADR 0082）", () => {
+  const project: ProjectSnapshot = {
+    ...snap,
+    assets: [{ id: "a_shot", name: "shot", kind: "audio", contentType: "audio/wav" }],
+    materials: [{ id: "m_wood", name: "wood", color: "#fff", roughness: 1, metalness: 0 }],
+    prefabs: [{ id: "pf_bullet", name: "Bullet", root: "r", systems: [], keep: [] }],
+    prefabEntities: [
+      { id: "r", name: "Bullet", prefab: "pf_bullet", parent: null, order: 0, states: {} },
+    ],
+    placement: { ...snap.placement, pf_bullet: "f_states" },
+  };
+  const idx = ResourcePathIndex.fromSnapshot(project);
+  const run = (src: string) => compileSystem("sys", src, idx);
+
+  it("値は、リソースの ID の文字になる。行の数は変えない", () => {
+    const src = [
+      'import Bullet from "../States/Bullet.prefab";',
+      'import Wood from "/wood.material";',
+      'import Shot from "/shot.audio";',
+      "export default system({});",
+    ].join("\n");
+    const out = run(src);
+    expect(out.diagnostics.map((d) => d.message)).toEqual([]);
+    expect(out.javascript.split("\n").slice(0, 3)).toEqual([
+      'const Bullet = "pf_bullet";',
+      'const Wood = "m_wood";',
+      'const Shot = "a_shot";',
+    ]);
+    expect(lines(out.javascript)).toBe(lines(src));
+    expect(out.bindings.map((b) => [b.alias, b.kind, b.resourceId])).toEqual([
+      ["Bullet", "prefab", "pf_bullet"],
+      ["Wood", "material", "m_wood"],
+      ["Shot", "asset", "a_shot"],
+    ]);
+  });
+
+  it("ないものと、種類の違う拡張子は、問題にする", () => {
+    const out = run(
+      ['import A from "/Nai.prefab";', 'import B from "../States/Bullet.material";'].join("\n"),
+    );
+    expect(out.diagnostics.map((d) => [d.code, d.location])).toEqual([
+      ["import-unresolved", expect.objectContaining({ line: 1 })],
+      ["import-unresolved", expect.objectContaining({ line: 2 })],
+    ]);
+    expect(out.diagnostics[0]?.message).toContain("プレハブ");
+  });
+
+  it("Query には、import した KokoState だけが読み替わる（プレハブは KokoState として読まない）", () => {
+    const src = `import Bullet from "../States/Bullet.prefab";\nimport Gun from "../States/Gun.koko";\nexport default system({ query: { with: [Gun, Bullet] } });`;
+    expect(readSystemQuery("sys", src, idx).with).toEqual([
+      { name: "Gun", id: "ks_gun" },
+      { name: "Bullet", id: null },
+    ]);
+  });
+
+  it("名前を変えると、プレハブの import のパスも書き直す", () => {
+    const withSystem = (p: ProjectSnapshot): ProjectSnapshot => ({
+      ...p,
+      systems: [
+        { id: "sys", name: "Shoot", code: 'import Bullet from "../States/Bullet.prefab";\n' },
+      ],
+    });
+    const next = withSystem({
+      ...project,
+      prefabs: [{ id: "pf_bullet", name: "Shell", root: "r", systems: [], keep: [] }],
+    });
+    expect(planImportRefactor(withSystem(project), next).map((e) => e.text)).toEqual([
+      '"../States/Shell.prefab"',
+    ]);
+  });
+});

@@ -19,7 +19,8 @@ export interface EditorDocumentation {
 }
 
 export interface EditorDefinition {
-  kind: "koko" | "code";
+  /** koko：KokoState の詳細、code：スクリプトの行、prefab：プレハブを開く */
+  kind: "koko" | "code" | "prefab";
   id: string;
   position: number;
   line: number;

@@ -81,7 +81,7 @@ export class TypeChecker {
   /** System の ID → そのファイルのパス（最後に読み込んだ制作データのもの） */
   private systemFiles = new Map<string, string>();
   private codeFiles = new Map<string, string>();
-  private definitions = new Map<string, { kind: "koko" | "code"; id: string }>();
+  private definitions = new Map<string, { kind: "koko" | "code" | "prefab"; id: string }>();
   private readonly service: ts.LanguageService;
 
   constructor(private readonly options: TypeCheckerOptions) {
@@ -168,8 +168,9 @@ export class TypeChecker {
     this.paths = v.paths;
     this.systemFiles = v.systemFiles;
     this.codeFiles = new Map([...v.systemFiles, ...typeDefs.map((f) => [f.id, f.file] as const)]);
-    this.definitions = new Map<string, { kind: "koko" | "code"; id: string }>([
+    this.definitions = new Map<string, { kind: "koko" | "code" | "prefab"; id: string }>([
       ...[...v.kokoFiles].map(([file, id]) => [file, { kind: "koko" as const, id }] as const),
+      ...[...v.prefabFiles].map(([file, id]) => [file, { kind: "prefab" as const, id }] as const),
       ...[...this.codeFiles].map(([id, file]) => [file, { kind: "code" as const, id }] as const),
     ]);
     return fields;

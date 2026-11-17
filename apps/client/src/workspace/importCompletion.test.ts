@@ -30,6 +30,19 @@ function complete(doc: string, explicit = false) {
 }
 
 describe("importCandidates", () => {
+  it("プレハブ・マテリアルも、import のパスの候補に出る（ADR 0082）", () => {
+    const snap = sample();
+    snap.prefabs = [{ id: "pf_bullet", name: "Bullet", root: "r", systems: [], keep: [] }];
+    snap.placement = { ...snap.placement, pf_bullet: "fld_states" };
+    const list = importCandidates(snap, "sys_shoot", new Map());
+    expect(list).toContainEqual({
+      name: "Bullet",
+      spelling: "../States/Bullet.prefab",
+      source: "このプロジェクト",
+    });
+    expect(list.some((c) => c.spelling.endsWith(".material"))).toBe(true);
+  });
+
   it("プロジェクトのものはスクリプトの場所からの相対パス、Built-in は @builtin/", () => {
     const list = importCandidates(sample(), "sys_shoot", new Map());
     expect(list).toContainEqual({

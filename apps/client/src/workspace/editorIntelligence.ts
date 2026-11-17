@@ -103,6 +103,10 @@ export function openEditorDefinition(target: EditorDefinition): void {
   const state = useWorkspace.getState();
   if (target.kind === "koko") {
     state.openDetail({ kind: "koko", id: target.id });
+  } else if (target.kind === "prefab") {
+    // プレハブは、詳細を出して、中身を開く（Play mode 中は開けないので、詳細だけ）
+    state.openDetail({ kind: "prefab", id: target.id });
+    if (state.mode === "edit") state.openPrefab(target.id);
   } else {
     state.openSystem(target.id);
     useWorkspace.setState({
