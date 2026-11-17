@@ -843,6 +843,7 @@ async function startSim(outputId: string, resume: PlayFrame | null) {
       resume.names,
       resume.time,
       resume.partEntities,
+      resume.spawned,
     );
     sim.restoreBags(resume.bags as Record<string, BagItem[]> | undefined);
   }
@@ -895,6 +896,7 @@ export function sendFrame(): void {
         debugStart: s.debugStop && sim.debug ? sim.debugCheckpoint() : null,
         bags: sim.bagsSnapshot(),
         partEntities: sim.partEntitiesSnapshot(),
+        spawned: sim.spawnedSnapshot(),
       }
     : {
         mode: "edit",
@@ -904,6 +906,7 @@ export function sendFrame(): void {
         names: {},
         status: [],
         partEntities: {},
+        spawned: {},
       };
   client().send({ t: "ws.frame", workspaceId: s.workspaceId, frame });
 }

@@ -292,6 +292,12 @@ interface LoadedSystem {
   warnings: Map<string, RuntimeWarning>;
   /** コードから読み取った、要る Capability（宣言） */
   capabilities: Set<CapabilityId>;
+  /**
+   * プレハブの System を、先に読み込んだだけの配置（配置の ID → その System を持つプレハブ。ADR 0082）。
+   * その配置では、そのプレハブのインスタンスを実行中に作って、残っている間だけ動かす。
+   * アウトプットの System の並びにある配置（置いたインスタンスのプレハブの分も含む）は、ここに入らず、いつも動く
+   */
+  onDemand?: Map<string, Set<string>>;
 }
 
 interface PendingEvent {
@@ -309,6 +315,8 @@ export interface DebugCheckpoint {
   time: number;
   bags: Record<string, BagItem[]>;
   partEntities: Record<string, EntityId[]>;
+  /** 実行中に作ったインスタンス（いちばん上の Entity → プレハブの ID） */
+  spawned: Record<string, string>;
   queues: Json;
   systems: SystemStatus[];
 }
@@ -446,6 +454,11 @@ export class Simulation {
    * `Prefab.destroy` で消せるのは、ここにあるものだけ。Entity がどの口で消えても、ここから外す
    */
   private readonly spawnedFrom = new Map<EntityId, string>();
+  /**
+   * 配置ごとの、実行中に作って残っているインスタンスのプレハブ（プレハブの System を動かすかを決める）。
+   * `spawnedFrom` から求めて取っておき、作る・消すたびに捨てる
+   */
+  private readonly alivePrefabs = new Map<string, Set<string>>();
   /** プレハブごとのひな形。制作データ（配置の版）ごとに取っておく */
   private readonly spawnTemplates = new WeakMap<
     ProjectSnapshot,
@@ -644,6 +657,7 @@ export class Simulation {
     this.parts.delete(id);
     for (const sys of [...this.systems]) {
       sys.users.delete(id);
+      sys.onDemand?.delete(id);
       if (sys.users.size === 0) this.dropSystem(sys);
     }
     this.dropUnusedRealm(part.realm);
@@ -732,6 +746,7 @@ export class Simulation {
       time: this.time,
       bags: this.bagsSnapshot(),
       partEntities: this.partEntitiesSnapshot(),
+      spawned: this.spawnedSnapshot(),
       queues: encodeValue({ inputs: this.inputs, pending: this.pending }),
       systems: structuredClone(this.systemStatus()),
     };
@@ -740,7 +755,13 @@ export class Simulation {
     return this.debug ? (this.debugStart ?? this.makeDebugCheckpoint()) : null;
   }
   restoreDebugCheckpoint(checkpoint: DebugCheckpoint) {
-    this.restore(checkpoint.world, checkpoint.names, checkpoint.time, checkpoint.partEntities);
+    this.restore(
+      checkpoint.world,
+      checkpoint.names,
+      checkpoint.time,
+      checkpoint.partEntities,
+      checkpoint.spawned,
+    );
     this.restoreBags(checkpoint.bags);
     const queues = decodeValue(checkpoint.queues) as {
       inputs: InputEvent[];
@@ -844,6 +865,14 @@ export class Simulation {
     }));
   }
 
+  /**
+   * 実行中に `Prefab.spawn` で作ったインスタンス（いちばん上の Entity → プレハブの ID。ADR 0082）。
+   * フレームと、ホストの引き継ぎ・デバッグ実行の巻き戻しの点に入れる。
+   */
+  spawnedSnapshot(): Record<string, string> {
+    return Object.fromEntries([...this.spawnedFrom].filter(([id]) => this.world.has(id)));
+  }
+
   /** 実行中に作った物も含め、どの配置がEntityを持つかをフレームへ記録する。 */
   partEntitiesSnapshot(): Record<string, EntityId[]> {
     return Object.fromEntries(
@@ -927,7 +956,10 @@ export class Simulation {
     // 2. System を外し、配置を新しい版で作り直す
     const ids = new Set(targets.map((p) => p.id));
     for (const sys of [...this.systems]) {
-      for (const id of ids) sys.users.delete(id);
+      for (const id of ids) {
+        sys.users.delete(id);
+        sys.onDemand?.delete(id);
+      }
       if (sys.users.size === 0) this.dropSystem(sys);
     }
     const oldRealms = new Set(targets.map((p) => p.realm));
@@ -1066,10 +1098,16 @@ export class Simulation {
     names: Record<string, string>,
     time: number,
     partEntities: Record<string, EntityId[]>,
+    spawned: Record<string, string> = {},
   ): void {
     // 配置や版が変わったら、発行済みの handle は使えなくする（ADR 0012 §6）
     this.handles.clear();
     this.world.restore(world);
+    // 実行中に作ったインスタンスの記録も戻す（Prefab.destroy で消せる・プレハブの System が動く。ADR 0082）
+    this.spawnedFrom.clear();
+    for (const [id, prefab] of Object.entries(spawned))
+      if (this.world.has(id)) this.spawnedFrom.set(id, prefab);
+    this.alivePrefabs.clear();
     for (const part of this.parts.values()) {
       const entities = partEntities[part.id] ?? [];
       part.entities = new Set(entities.filter((id) => this.world.has(id)));
@@ -1667,6 +1705,7 @@ export class Simulation {
       this.names.delete(id);
       this.spawnedFrom.delete(id);
     }
+    this.alivePrefabs.delete(part.id);
     part.entities.clear();
   }
 
@@ -1686,7 +1725,7 @@ export class Simulation {
     this.noteDestroy(id);
     const forget = (target: EntityId) => {
       for (const child of this.world.childrenOf(target)) forget(child);
-      this.spawnedFrom.delete(target);
+      if (this.spawnedFrom.delete(target)) this.alivePrefabs.clear();
       part?.entities.delete(target);
       this.names.delete(target);
     };
@@ -1820,6 +1859,7 @@ export class Simulation {
       this.world.has(space) ? space : null,
     );
     this.spawnedFrom.set(root, prefabId);
+    this.alivePrefabs.delete(part.id);
     // パラメータを重ねる。値は、すでに実行中の値（Entity の参照なら実行中の ID）なので、付け替えない
     const known = new Map(template.params.map((p) => [p.name, p]));
     for (const [key, value] of Object.entries(params)) {
@@ -1936,16 +1976,44 @@ export class Simulation {
       return index;
     };
     const packages = resolutionMap(part.snapshot.dependencies, part.packages);
-    for (const ref of output.systems) {
+    // 実行中に作れるプレハブの System は、ここで先に読み込んでおく（ADR 0082）。スクリプトの呼び出しの途中
+    // （Prefab.spawn の中）では、読み込めないため。アウトプットの System の後ろに並べる（ADR 0076 の足し合わせ）。
+    // どれかのプレハブで「入」なら「入」。アウトプットの並びにあるものは、アウトプットが勝つので、足さない
+    const listed = new Set(output.systems.map((s) => s.id));
+    const extra = new Map<string, { enabled: boolean; prefabs: Set<string> }>();
+    for (const prefabId of this.reachablePrefabsOf(part)) {
+      const prefab = part.snapshot.prefabs?.find((p) => p.id === prefabId);
+      for (const s of prefab?.systems ?? []) {
+        if (listed.has(s.id)) continue;
+        const entry = extra.get(s.id) ?? { enabled: false, prefabs: new Set<string>() };
+        entry.enabled ||= s.enabled;
+        entry.prefabs.add(prefabId);
+        extra.set(s.id, entry);
+      }
+    }
+    const refs: { id: string; enabled: boolean; prefabs: Set<string> | null }[] = [
+      ...output.systems.map((s) => ({ id: s.id, enabled: s.enabled, prefabs: null })),
+      ...[...extra].map(([id, e]) => ({ id, enabled: e.enabled, prefabs: e.prefabs })),
+    ];
+    for (const ref of refs) {
       const source = this.systemSource(part, ref.id, packages, ownIndex);
       if (!source) continue;
       const id = this.multi ? `${part.realm}:${ref.id}` : ref.id;
       const existing = this.systems.find((s) => s.id === id);
+      /** この配置で、いつも動かすか、インスタンスがある間だけ動かすかを書く */
+      const mark = (sys: LoadedSystem) => {
+        if (ref.prefabs) {
+          sys.onDemand ??= new Map();
+          sys.onDemand.set(part.id, ref.prefabs);
+        } else sys.onDemand?.delete(part.id);
+      };
       if (existing && (!reloaded || reloaded.has(id))) {
         existing.users.add(part.id);
+        mark(existing);
         continue;
       }
       const users = new Set(existing?.users);
+      const onDemand = existing?.onDemand;
       if (existing) this.dropSystem(existing);
       users.add(part.id);
       reloaded?.add(id);
@@ -1965,7 +2033,9 @@ export class Simulation {
         line: null,
         warnings: new Map(),
         capabilities: new Set(inferCapabilities(def.id, def.code).capabilities),
+        ...(onDemand ? { onDemand } : {}),
       };
+      mark(sys);
       this.systems.push(sys);
       if (!ref.enabled) continue;
       try {
@@ -2357,7 +2427,40 @@ export class Simulation {
   private matches(sys: LoadedSystem): EntityId[] {
     return this.world
       .query({ with: sys.with, without: sys.without })
-      .filter((id) => this.withinUsers(sys, id));
+      .filter((id) => this.withinUsers(sys, id) && this.awake(sys, id));
+  }
+
+  /**
+   * プレハブの System を、その Entity で動かしてよいか（ADR 0082）。先に読み込んだだけの配置では、
+   * そのプレハブのインスタンスを実行中に作って、残っている間だけ動かす。読み込んだだけで動かすと、
+   * プレハブの System の Query が、アウトプットにある関係ない Entity にも合って、動きが変わってしまう。
+   * 印は「System と配置の組」ごと：同じアウトプットを二つ置いても、作っていない配置では動かさない。
+   */
+  private awake(sys: LoadedSystem, id: EntityId): boolean {
+    if (!sys.onDemand || sys.onDemand.size === 0) return true;
+    const part = this.partOf(id);
+    const prefabs = part && sys.onDemand.get(part.id);
+    if (!part || !prefabs) return true;
+    const alive = this.alivePrefabsOf(part);
+    for (const p of prefabs) if (alive.has(p)) return true;
+    return false;
+  }
+
+  /** 配置で、実行中に作って残っているインスタンスのプレハブ（中に置いた入れ子のプレハブも含む） */
+  private alivePrefabsOf(part: Part): Set<string> {
+    let alive = this.alivePrefabs.get(part.id);
+    if (!alive) {
+      alive = new Set();
+      const add = (prefabId: string) => {
+        if (alive?.has(prefabId)) return;
+        alive?.add(prefabId);
+        for (const e of part.snapshot.prefabEntities ?? [])
+          if (e.prefab === prefabId && e.instanceOf) add(e.instanceOf.prefab);
+      };
+      for (const [root, prefabId] of this.spawnedFrom) if (part.entities.has(root)) add(prefabId);
+      this.alivePrefabs.set(part.id, alive);
+    }
+    return alive;
   }
 
   /**
@@ -2374,6 +2477,7 @@ export class Simulation {
   private entityMatches(sys: LoadedSystem, id: EntityId): boolean {
     return (
       this.withinUsers(sys, id) &&
+      this.awake(sys, id) &&
       sys.with.every((k) => this.world.hasState(id, k)) &&
       !sys.without.some((k) => this.world.hasState(id, k))
     );
